@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  /// Conexão direta (5432) para `prisma migrate dev` — o pooler 6543 retorna "bouncer config error".
+  directUrl = env("DIRECT_URL")
+}
+
+/// Trilha de auditoria persistida no servidor.
+model LogsAuditoria {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  action    String
+  userLabel String
+  detail    String
+  metadata  String?
+  source    String   @default("dashboard")
+
+  @@index([createdAt])
+  @@index([action])
+  @@map("logs_auditoria")
+}
+
+/// Último resumo do dia enviado pelo cliente para o webhook/server usar no fechamento.
+model LedgerSnapshot {
+  date      String   @id
+  payload   String
+  updatedAt DateTime @updatedAt
+
+  @@map("ledger_snapshots")
+}
+
+/// Confirmações pendentes (botões WhatsApp) — uma por número normalizado.
+model WhatsAppPendingAction {
+  id        String   @id @default(cuid())
+  phoneKey  String   @unique
+  kind      String
+  payload   String
+  createdAt DateTime @default(now())
+
+  @@map("whatsapp_pending_actions")
+}
+
+/// Produtos em estoque (PDV / gestão) — alinhado a `InventoryItem` no cliente.
+model EstoqueProduto {
+  id           String   @id
+  lojaId       String   @default("loja-1")
+  name         String
+  stock        Int      @default(0)
+  cost         Float    @default(0)
+  price        Float    @default(0)
+  category     String   @default("")
+  vendaPorPeso Boolean  @default(false)
+  precoPorKg   Float?
+  atributos    Json?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([lojaId])
+  @@map("estoque_produtos")
+}
+
+/// Ordens de serviço — payload JSON espelha `OrdemServico` do app até sync granular.
+model OrdemServicoDb {
+  id        String   @id
+  lojaId    String   @default("loja-1")
+  numero    String
+  payload   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([lojaId, numero])
+  @@index([lojaId])
+  @@map("ordens_servico")
+}
+
+/// Preferências globais da loja (uma linha — id fixo `default`).
+model AppLojaSettings {
+  id         String @id @default("default")
+  perfilLoja String @default("assistencia")
+  updatedAt  DateTime @updatedAt
+
+  @@map("app_loja_settings")
+}

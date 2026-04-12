@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="64" y1="48" x2="448" y2="464" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0c4a6e"/>
+      <stop offset="1" stop-color="#0369a1"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="160" y1="120" x2="380" y2="392" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#0ea5e9"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M148 168c0-22 18-40 40-40h136c22 0 40 18 40 40v48c0 22-18 40-40 40H188c-22 0-40-18-40-40v-48z" fill="url(#accent)" opacity="0.95"/>
+  <path d="M196 232v72c0 33 27 60 60 60h60v-40h-60c-11 0-20-9-20-20v-72h-40z" fill="#e0f2fe"/>
+  <path d="M288 148l-32 32 24 24 32-32c8-8 22-8 30 0l8 8c8 8 8 22 0 30l-32 32 24 24 32-32c28-28 28-74 0-102l-8-8c-28-28-74-28-102 0z" fill="#f0f9ff"/>
+  <text x="256" y="392" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="36" font-weight="700" fill="#e0f2fe" letter-spacing="-1">OmniGest�o</text>
+  <text x="256" y="448" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="38" font-weight="600" fill="#7dd3fc" letter-spacing="2">PRO</text>
+</svg>

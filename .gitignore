@@ -1,0 +1,36 @@
+# v0 sandbox internal files
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.v0-trash/
+.vercel/
+next.user-config.*
+
+# Environment variables
+.env
+.env*.local
+
+# SQLite (desenvolvimento local)
+prisma/*.db
+prisma/*.db-journal
+*.db
+*.db-journal
+
+# Prisma — cliente gerado fora de node_modules (`schema.prisma` → output ../generated/prisma)
+/generated/prisma
+
+# Common ignores
+node_modules
+.next/
+.DS_Store
+
+# PWA — gerados no build (Workbox / service worker)
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/workbox-*.js.map
+public/worker-*.js
+public/worker-*.js.map
+public/swe-worker-*.js
+public/fallback-*.js
