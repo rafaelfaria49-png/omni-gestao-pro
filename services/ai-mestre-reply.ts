@@ -1,5 +1,5 @@
 import type { OrchestratorDecision, PlanoAssinatura } from "@/services/ai-orchestrator"
-import { resolveLlmEnv } from "@/lib/resolve-llm-env"
+import { getGoogleGenerativeAiKey, resolveLlmEnv } from "@/lib/resolve-llm-env"
 
 export type StockSummaryRow = { name: string; stock: number; price: number; category: string }
 
@@ -108,8 +108,22 @@ export async function composeMestreUserMessage(
           .join("\n")
 
   const system = buildSystemPrompt(decision, plano, stockBlock)
-  const llm = resolveLlmEnv()
+  const lines = stock.slice(0, 15).map((s) => `- ${s.name}: ${s.stock} un., R$ ${s.price.toFixed(2)}`)
+  const stockOnlyReply = `Roteado para ${decision.label}. Estoque atual:\n${lines.join("\n") || "(vazio)"}`
 
+  const geminiKey = getGoogleGenerativeAiKey()
+  if (geminiKey.length > 0) {
+    try {
+      const text = await geminiComplete(system, userText, geminiKey)
+      if (text) {
+        return { message: text, meta: { llmConfigured: true, backend: "gemini" as const } }
+      }
+    } catch (e) {
+      console.error("[IA Mestre] Gemini:", e instanceof Error ? e.message : e)
+    }
+  }
+
+  const llm = resolveLlmEnv()
   if (llm.ok) {
     try {
       const text =
@@ -120,15 +134,12 @@ export async function composeMestreUserMessage(
         return { message: text, meta: { llmConfigured: true, backend: llm.backend } }
       }
     } catch (e) {
-      const err = e instanceof Error ? e.message : String(e)
-      throw new Error(err)
+      console.error("[IA Mestre] LLM:", e instanceof Error ? e.message : e)
     }
   }
 
-  const lines = stock.slice(0, 15).map((s) => `- ${s.name}: ${s.stock} un., R$ ${s.price.toFixed(2)}`)
-  const fallback = `Roteado para ${decision.label}. Estoque atual:\n${lines.join("\n") || "(vazio)"}\n\nNenhuma chave de IA encontrada no servidor. Adicione OPENAI_API_KEY ou GOOGLE_GENERATIVE_AI_API_KEY (grátis no Google AI Studio) no arquivo .env e reinicie o Next.js.`
   return {
-    message: fallback,
+    message: stockOnlyReply,
     meta: { llmConfigured: false, backend: null },
   }
 }

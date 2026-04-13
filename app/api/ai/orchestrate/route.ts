@@ -75,7 +75,7 @@ export async function POST(req: Request) {
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
     console.error("[orchestrate] compose:", err)
-    message = `Roteado para ${result.decision.label}. Erro ao chamar a IA: ${err.slice(0, 160)}`
+    message = `Roteado para ${result.decision.label}. Tente novamente em instantes.`
     meta = {
       llmConfigured: llmResolved.ok,
       backend: llmResolved.ok ? llmResolved.backend : null,

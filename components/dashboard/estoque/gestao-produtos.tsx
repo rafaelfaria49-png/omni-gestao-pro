@@ -20,12 +20,27 @@ import {
   Mic,
   Smartphone,
   Shield,
-  Wallet
+  Wallet,
+  Sparkles,
 } from "lucide-react"
 import { Progress } from "@/components/ui/progress"
 import { mergeCadastroRelampago } from "@/lib/merge-cadastro-relampago"
 import type { VisionProductResult } from "@/lib/vision-product-openai"
 import type { ProductVoiceMetadata } from "@/lib/product-voice-metadata-openai"
+import type { VoiceFormExtract } from "@/lib/product-ncm-fiscal-ai"
+import {
+  getSpeechRecognitionConstructor,
+  disposeSpeechRecognition,
+  logSpeechRecognitionError,
+  humanizeSpeechError,
+  isBenignSpeechError,
+  logVoiceEnvironmentOnce,
+} from "@/lib/web-speech-recognition"
+import type {
+  SpeechRecognitionEventLike,
+  SpeechRecognitionInstance,
+  SpeechRecognitionErrorEventLike,
+} from "@/lib/web-speech-recognition"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -259,6 +274,11 @@ export function GestaoProdutos({
   const [activeTab, setActiveTab] = useState("geral")
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
   const [iaSyncLoading, setIaSyncLoading] = useState(false)
+  const [visionQuickScanLoading, setVisionQuickScanLoading] = useState(false)
+  const [ncmSuggestLoading, setNcmSuggestLoading] = useState(false)
+  const [fiscalClassifyLoading, setFiscalClassifyLoading] = useState(false)
+  const [formVoiceProcessing, setFormVoiceProcessing] = useState(false)
+  const [formVoiceListening, setFormVoiceListening] = useState(false)
   const [syncProgress, setSyncProgress] = useState(0)
   const [relampagoImageDataUrl, setRelampagoImageDataUrl] = useState<string | null>(null)
   const [relampagoAudioBlob, setRelampagoAudioBlob] = useState<Blob | null>(null)
@@ -267,6 +287,8 @@ export function GestaoProdutos({
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const visionScanInputRef = useRef<HTMLInputElement>(null)
   const relampagoAudioInputRef = useRef<HTMLInputElement>(null)
+  const formVoiceFileInputRef = useRef<HTMLInputElement>(null)
+  const formSpeechRecRef = useRef<SpeechRecognitionInstance | null>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<BlobPart[]>([])
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -328,6 +350,11 @@ export function GestaoProdutos({
     }
     setActiveTab("geral")
     setIaSyncLoading(false)
+    setVisionQuickScanLoading(false)
+    setNcmSuggestLoading(false)
+    setFiscalClassifyLoading(false)
+    setFormVoiceProcessing(false)
+    stopFormVoiceListening()
     setRelampagoImageDataUrl(null)
     setRelampagoAudioBlob(null)
     setIsModalOpen(true)
@@ -424,6 +451,247 @@ export function GestaoProdutos({
       reader.readAsDataURL(blob)
     })
 
+  const applyVoiceFormExtract = (meta: VoiceFormExtract) => {
+    setFormData((prev) => ({
+      ...prev,
+      nome: meta.nome?.trim() ? meta.nome.trim() : prev.nome,
+      categoria: meta.categoria ?? prev.categoria,
+      precoCusto:
+        meta.preco_custo != null && meta.preco_custo >= 0 ? meta.preco_custo : prev.precoCusto,
+      precoVenda:
+        meta.preco_venda != null && meta.preco_venda >= 0 ? meta.preco_venda : prev.precoVenda,
+      estoqueAtual:
+        meta.quantidade_estoque != null && meta.quantidade_estoque >= 0
+          ? meta.quantidade_estoque
+          : prev.estoqueAtual,
+      ncm: meta.ncm?.trim()
+        ? meta.ncm.replace(/\D/g, "").slice(0, 8)
+        : prev.ncm,
+    }))
+  }
+
+  const submitFormVoiceText = async (transcript: string) => {
+    setFormVoiceProcessing(true)
+    try {
+      const res = await fetch("/api/product/voice-form-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript }),
+      })
+      const data = (await res.json()) as VoiceFormExtract & { error?: string }
+      if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+      applyVoiceFormExtract(data)
+      toast({
+        title: "Campos atualizados pela fala",
+        description: "Revise nome, valores e NCM antes de salvar.",
+      })
+    } catch (err) {
+      toast({
+        title: "Não foi possível interpretar a fala",
+        description: err instanceof Error ? err.message : "Tente de novo ou digite manualmente.",
+        variant: "destructive",
+      })
+    } finally {
+      setFormVoiceProcessing(false)
+    }
+  }
+
+  const stopFormVoiceListening = () => {
+    disposeSpeechRecognition(formSpeechRecRef.current)
+    formSpeechRecRef.current = null
+    setFormVoiceListening(false)
+  }
+
+  const startFormVoiceListening = () => {
+    if (formVoiceProcessing || iaSyncLoading || visionQuickScanLoading) return
+    logVoiceEnvironmentOnce()
+    const Ctor = getSpeechRecognitionConstructor()
+    if (!Ctor) {
+      toast({
+        title: "Reconhecimento de voz indisponível",
+        description: "Use o botão ao lado para enviar um arquivo de áudio com o comando.",
+      })
+      formVoiceFileInputRef.current?.click()
+      return
+    }
+    disposeSpeechRecognition(formSpeechRecRef.current)
+    const rec = new Ctor()
+    rec.lang = "pt-BR"
+    rec.continuous = false
+    rec.interimResults = false
+    rec.onresult = (ev: Event) => {
+      const e = ev as SpeechRecognitionEventLike
+      let text = ""
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          text += e.results[i][0]?.transcript ?? ""
+        }
+      }
+      const t = text.trim()
+      if (t) void submitFormVoiceText(t)
+    }
+    rec.onerror = (ev: Event) => {
+      logSpeechRecognitionError("gestao-produtos form voice", ev)
+      const code = (ev as SpeechRecognitionErrorEventLike).error
+      if (!isBenignSpeechError(code)) {
+        toast({
+          title: "Voz",
+          description: humanizeSpeechError(code),
+          variant: "destructive",
+        })
+      }
+    }
+    rec.onend = () => {
+      formSpeechRecRef.current = null
+      setFormVoiceListening(false)
+    }
+    formSpeechRecRef.current = rec
+    setFormVoiceListening(true)
+    try {
+      rec.start()
+    } catch {
+      setFormVoiceListening(false)
+      formSpeechRecRef.current = null
+      toast({
+        title: "Microfone",
+        description: "Não foi possível iniciar o reconhecimento de voz.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleFormVoiceAudioFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file || !file.type.startsWith("audio/")) {
+      toast({
+        title: "Áudio inválido",
+        description: "Selecione um arquivo de áudio.",
+        variant: "destructive",
+      })
+      return
+    }
+    setFormVoiceProcessing(true)
+    try {
+      const audioBase64 = await blobToDataUrl(file)
+      const res = await fetch("/api/product/voice-form", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audioBase64 }),
+      })
+      const data = (await res.json()) as VoiceFormExtract & { error?: string; transcript?: string }
+      if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+      applyVoiceFormExtract(data)
+      toast({
+        title: "Áudio interpretado",
+        description: data.transcript
+          ? `Trecho: “${data.transcript.slice(0, 120)}${data.transcript.length > 120 ? "…" : ""}”`
+          : "Revise os campos antes de salvar.",
+      })
+    } catch (err) {
+      toast({
+        title: "Falha ao processar áudio",
+        description: err instanceof Error ? err.message : "Verifique OPENAI_API_KEY para transcrição.",
+        variant: "destructive",
+      })
+    } finally {
+      setFormVoiceProcessing(false)
+    }
+  }
+
+  const handleSuggestNcmFromName = async () => {
+    const nome = formData.nome.trim()
+    if (!nome) {
+      toast({
+        title: "Nome obrigatório",
+        description: "Preencha o nome do item para sugerir o NCM.",
+        variant: "destructive",
+      })
+      return
+    }
+    setNcmSuggestLoading(true)
+    try {
+      const res = await fetch("/api/product/ncm-suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome }),
+      })
+      const data = (await res.json()) as { ncm?: string; descricao?: string; error?: string }
+      if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+      const ncm = (data.ncm ?? "").replace(/\D/g, "").slice(0, 8)
+      if (ncm.length === 8) {
+        setFormData((prev) => ({ ...prev, ncm }))
+        toast({
+          title: "NCM sugerido",
+          description: data.descricao || ncm,
+        })
+      }
+    } catch (err) {
+      toast({
+        title: "Sugestão de NCM",
+        description: err instanceof Error ? err.message : "Tente novamente.",
+        variant: "destructive",
+      })
+    } finally {
+      setNcmSuggestLoading(false)
+    }
+  }
+
+  const handleFiscalClassify = async () => {
+    const nome = formData.nome.trim()
+    if (!nome) {
+      toast({
+        title: "Nome obrigatório",
+        description: "Preencha o nome do item para classificar tributariamente.",
+        variant: "destructive",
+      })
+      return
+    }
+    setFiscalClassifyLoading(true)
+    try {
+      const res = await fetch("/api/product/fiscal-classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome,
+          descricao: (formData.descricaoVenda ?? "").trim() || undefined,
+          categoria: formData.categoria,
+        }),
+      })
+      const data = (await res.json()) as {
+        ncm?: string
+        cest?: string
+        cfop?: string
+        origemMercadoria?: string
+        observacao?: string
+        error?: string
+      }
+      if (!res.ok) throw new Error(data.error || `Erro ${res.status}`)
+      setFormData((prev) => ({
+        ...prev,
+        ncm: (data.ncm ?? prev.ncm ?? "").replace(/\D/g, "").slice(0, 8) || prev.ncm,
+        cest: (data.cest ?? prev.cest ?? "").replace(/\D/g, "").slice(0, 7) || prev.cest,
+        cfop: (data.cfop ?? prev.cfop ?? "").replace(/\D/g, "").slice(0, 4) || prev.cfop,
+        origemMercadoria:
+          data.origemMercadoria != null && /^[0-8]$/.test(String(data.origemMercadoria))
+            ? String(data.origemMercadoria)
+            : prev.origemMercadoria,
+      }))
+      toast({
+        title: "Classificação tributária (IA)",
+        description: data.observacao || "Revise NCM, CEST, CFOP e origem com seu contador.",
+      })
+    } catch (err) {
+      toast({
+        title: "Classificação fiscal",
+        description: err instanceof Error ? err.message : "Tente novamente.",
+        variant: "destructive",
+      })
+    } finally {
+      setFiscalClassifyLoading(false)
+    }
+  }
+
   const handleVisionScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ""
@@ -447,10 +715,59 @@ export function GestaoProdutos({
     setRelampagoImageDataUrl(dataUrl)
     setRelampagoAudioBlob(null)
     toast({
-      title: "Foto do cadastro relâmpago",
+      title: "Foto capturada",
       description:
-        "Opcional: grave áudio com custo, venda e estoque. Depois toque em Sincronizar dados do produto.",
+        "Identificando o item… Opcional: grave áudio e use Sincronizar para custo, venda e estoque.",
     })
+
+    setVisionQuickScanLoading(true)
+    try {
+      const res = await fetch("/api/vision/product-scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: dataUrl }),
+      })
+      const visionRaw = (await res.json()) as VisionProductResult & { error?: string }
+      if (!res.ok) throw new Error(visionRaw.error || `Erro ${res.status}`)
+
+      const cat = visionRaw.categoria as Product["categoria"] | undefined
+      const categoriaOk =
+        cat === "peca" || cat === "acessorio" || cat === "servico" ? cat : "peca"
+
+      const vision: VisionProductResult = {
+        nome: (visionRaw.nome ?? "").trim() || "Produto",
+        categoria: categoriaOk,
+        ncm: (visionRaw.ncm ?? "").replace(/\D/g, "").slice(0, 8),
+        descricaoVenda: (visionRaw.descricaoVenda ?? "").trim(),
+      }
+
+      setFormData((prev) => ({
+        ...prev,
+        ...mergeCadastroRelampago(vision, null, {
+          nome: prev.nome,
+          categoria: prev.categoria,
+          ncm: prev.ncm || "",
+          descricaoVenda: prev.descricaoVenda ?? "",
+          precoCusto: prev.precoCusto,
+          precoVenda: prev.precoVenda,
+          estoqueAtual: prev.estoqueAtual,
+        }),
+      }))
+
+      toast({
+        title: "Item identificado na foto",
+        description: "Nome, descrição e NCM sugeridos. Revise antes de salvar.",
+      })
+    } catch (err) {
+      toast({
+        title: "Não foi possível ler a foto automaticamente",
+        description:
+          err instanceof Error ? err.message : "Preencha manualmente ou tente outra imagem.",
+        variant: "destructive",
+      })
+    } finally {
+      setVisionQuickScanLoading(false)
+    }
   }
 
   const startRelampagoRecording = async () => {
@@ -992,6 +1309,13 @@ export function GestaoProdutos({
             setFormData(emptyProduct)
             setPreviewImage(null)
             setIaSyncLoading(false)
+            setVisionQuickScanLoading(false)
+            setNcmSuggestLoading(false)
+            setFiscalClassifyLoading(false)
+            setFormVoiceProcessing(false)
+            disposeSpeechRecognition(formSpeechRecRef.current)
+            formSpeechRecRef.current = null
+            setFormVoiceListening(false)
             setRelampagoImageDataUrl(null)
             setRelampagoAudioBlob(null)
             stopRelampagoRecording()
@@ -1175,22 +1499,67 @@ export function GestaoProdutos({
                       className="hidden"
                       onChange={handleVisionScanFile}
                     />
+                    <input
+                      ref={formVoiceFileInputRef}
+                      type="file"
+                      accept="audio/*"
+                      className="hidden"
+                      onChange={handleFormVoiceAudioFile}
+                    />
                     <Button
                       type="button"
                       variant="outline"
                       size="icon"
                       className="h-12 w-12 shrink-0 border-primary/40"
-                      disabled={iaSyncLoading}
-                      title="Cadastro relâmpago: foto, depois áudio opcional com valores; em seguida Sincronizar"
+                      disabled={iaSyncLoading || visionQuickScanLoading}
+                      title="Identificar na foto: nome, descrição e NCM (cadastro relâmpago: áudio opcional abaixo)"
                       onClick={() => visionScanInputRef.current?.click()}
                     >
-                      {iaSyncLoading ? (
+                      {iaSyncLoading || visionQuickScanLoading ? (
                         <Loader2 className="w-5 h-5 animate-spin text-primary" />
                       ) : (
                         <Camera className="w-5 h-5" />
                       )}
                     </Button>
+                    <Button
+                      type="button"
+                      variant={formVoiceListening ? "destructive" : "outline"}
+                      size="icon"
+                      className="h-12 w-12 shrink-0"
+                      disabled={
+                        iaSyncLoading || visionQuickScanLoading || formVoiceProcessing
+                      }
+                      title={
+                        formVoiceListening
+                          ? "Parar escuta"
+                          : "Falar para preencher nome, preços, estoque e NCM"
+                      }
+                      onClick={() =>
+                        formVoiceListening ? stopFormVoiceListening() : startFormVoiceListening()
+                      }
+                    >
+                      {formVoiceProcessing ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Mic className="w-5 h-5" />
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-12 w-12 shrink-0"
+                      disabled={formVoiceProcessing}
+                      title="Enviar arquivo de áudio (Whisper) se o reconhecimento do navegador não existir"
+                      onClick={() => formVoiceFileInputRef.current?.click()}
+                    >
+                      <Upload className="w-5 h-5" />
+                    </Button>
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    Câmera: identifica o produto na foto. Microfone: ditado para preencher campos. Ícone de
+                    envio: áudio gravado no celular.
+                  </p>
                 </div>
 
                 <div className="sm:col-span-2 space-y-2">
@@ -1295,18 +1664,65 @@ export function GestaoProdutos({
 
             {/* Aba Dados Fiscais */}
             <TabsContent value="fiscal" className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-lg border border-primary/25 bg-primary/5">
+                <div className="flex items-start gap-2 min-w-0">
+                  <Sparkles className="w-5 h-5 text-primary shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Classificação tributária automática</p>
+                    <p className="text-xs text-muted-foreground">
+                      IA sugere NCM, CEST, CFOP e origem com base no nome e na categoria. Valide com seu contador.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="shrink-0"
+                  disabled={fiscalClassifyLoading || !formData.nome.trim()}
+                  onClick={handleFiscalClassify}
+                >
+                  {fiscalClassifyLoading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-2" />
+                  )}
+                  Classificar com IA
+                </Button>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-2">
+                <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="ncm">NCM</Label>
-                  <Input
-                    id="ncm"
-                    value={formData.ncm || ""}
-                    onChange={(e) => setFormData(prev => ({ ...prev, ncm: e.target.value }))}
-                    placeholder="Ex: 85177090"
-                    className="h-12 bg-secondary border-border"
-                    maxLength={8}
-                  />
-                  <p className="text-xs text-muted-foreground">Nomenclatura Comum do Mercosul (8 dígitos)</p>
+                  <div className="flex gap-2 flex-wrap items-stretch">
+                    <Input
+                      id="ncm"
+                      value={formData.ncm || ""}
+                      onChange={(e) => setFormData(prev => ({ ...prev, ncm: e.target.value.replace(/\D/g, "").slice(0, 8) }))}
+                      placeholder="Ex: 85177090"
+                      className="h-12 flex-1 min-w-[10rem] bg-secondary border-border"
+                      maxLength={8}
+                      inputMode="numeric"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-12 shrink-0"
+                      disabled={ncmSuggestLoading || !formData.nome.trim()}
+                      onClick={handleSuggestNcmFromName}
+                      title="Buscar NCM pelo nome do produto (IA)"
+                    >
+                      {ncmSuggestLoading ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4 mr-2" />
+                      )}
+                      Sugerir pelo nome
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Nomenclatura Comum do Mercosul (8 dígitos). Use a busca automática a partir do nome ou a
+                    classificação completa acima.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

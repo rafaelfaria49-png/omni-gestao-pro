@@ -14,19 +14,27 @@ export type ResolvedLlmEnv =
   | { ok: false; reason: "missing" }
 
 /**
- * Prioridade: OpenAI → Gemini (Google AI Studio / Generative Language API).
+ * Chave explícita do Google (Vercel / AI Studio). Usada para forçar Gemini antes de OpenAI.
  */
-export function resolveLlmEnv(): ResolvedLlmEnv {
-  const openai = stripEnv(process.env.OPENAI_API_KEY)
-  if (openai.length >= 8 && openai.startsWith("sk-")) {
-    return { ok: true, backend: "openai", key: openai }
-  }
-  const gemini =
+export function getGoogleGenerativeAiKey(): string {
+  return (
     stripEnv(process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
     stripEnv(process.env.GEMINI_API_KEY) ||
     stripEnv(process.env.GOOGLE_AI_API_KEY)
-  if (gemini.length >= 8) {
+  )
+}
+
+/**
+ * Prioridade: GOOGLE_GENERATIVE_AI_API_KEY (Gemini) → OpenAI.
+ */
+export function resolveLlmEnv(): ResolvedLlmEnv {
+  const gemini = getGoogleGenerativeAiKey()
+  if (gemini.length > 0) {
     return { ok: true, backend: "gemini", key: gemini }
+  }
+  const openai = stripEnv(process.env.OPENAI_API_KEY)
+  if (openai.length >= 8 && openai.startsWith("sk-")) {
+    return { ok: true, backend: "openai", key: openai }
   }
   if (openai.length >= 8) {
     return { ok: true, backend: "openai", key: openai }

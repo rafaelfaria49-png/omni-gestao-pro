@@ -105,8 +105,9 @@ export function extractFromEvolutionLikePayload(body: unknown): InboundExtract |
   const tbr = message.templateButtonReplyMessage as { selectedId?: string; selectedDisplayText?: string } | undefined
   if (tbr && typeof tbr === "object") {
     if (typeof tbr.selectedId === "string") buttonId = buttonId ?? tbr.selectedId
-    if (typeof tbr.selectedDisplayText === "string")
+    if (typeof tbr.selectedDisplayText === "string") {
       buttonDisplayText = buttonDisplayText ?? tbr.selectedDisplayText
+    }
   }
   const ir = message.interactiveResponseMessage as
     | {
