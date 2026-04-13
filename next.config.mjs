@@ -13,6 +13,10 @@ const withPWA = withPWAInit({
 
 const isVercel = process.env.VERCEL === "1"
 
+const env = {
+  GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+}
+
 /** Cabeçalhos de segurança (produção Vercel). COOP permissivo para não quebrar popups de pagamento/login. */
 const securityHeaders = [
   { key: "X-DNS-Prefetch-Control", value: "on" },
@@ -36,6 +40,7 @@ if (isVercel) {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  env,
   typescript: {
     ignoreBuildErrors: true,
   },
