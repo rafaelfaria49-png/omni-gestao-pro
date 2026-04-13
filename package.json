@@ -8,7 +8,6 @@
   "scripts": {
     "dev": "next dev --webpack",
     "dev:https": "next dev --webpack --experimental-https",
-    "prebuild": "node scripts/generate-pwa-icons.mjs",
     "build": "prisma migrate deploy && prisma generate && next build --webpack",
     "start": "next start",
     "lint": "eslint .",
