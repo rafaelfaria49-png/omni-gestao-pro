@@ -102,7 +102,7 @@ async function parseCsv(file: File): Promise<ParsedSheet> {
 
 async function parseXlsx(file: File): Promise<ParsedSheet> {
   const buf = await file.arrayBuffer()
-  const worker = new Worker(new URL("./xlsx-parse.worker.ts", import.meta.url), { type: "module" })
+  const worker = new Worker(new URL("./xlsx-parse.worker", import.meta.url), { type: "module" })
   try {
     const res = await new Promise<ParsedSheet>((resolve, reject) => {
       worker.onmessage = (ev: MessageEvent<{ ok: boolean; sheet?: ParsedSheet; error?: string }>) => {
@@ -110,7 +110,10 @@ async function parseXlsx(file: File): Promise<ParsedSheet> {
         if (data?.ok && data.sheet) resolve(data.sheet)
         else reject(new Error(data?.error || "Falha ao ler XLSX no worker."))
       }
-      worker.onerror = () => reject(new Error("Falha ao iniciar worker de XLSX."))
+      worker.onerror = (err) => {
+        console.error("[backup-import] worker XLSX não carregou", err)
+        reject(new Error("Não foi possível carregar o worker de XLSX. Verifique o arquivo `xlsx-parse.worker` nesta pasta."))
+      }
       worker.postMessage({ fileName: file.name, buffer: buf }, [buf])
     })
     return res
