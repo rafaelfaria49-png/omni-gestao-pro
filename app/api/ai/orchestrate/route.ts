@@ -75,7 +75,14 @@ export async function POST(req: Request) {
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
     console.error("[orchestrate] compose:", err)
-    message = `Roteado para ${result.decision.label}. Tente novamente em instantes.`
+    if (err === "MESTRE_GEMINI_KEY_MISSING") {
+      message = "Assistente temporariamente indisponível."
+    } else if (err === "GEMINI_FAILED") {
+      message =
+        "Não obtive resposta do assistente agora. Tente de novo em alguns segundos."
+    } else {
+      message = "Não consegui completar a resposta. Tente novamente em instantes."
+    }
     meta = {
       llmConfigured: llmResolved.ok,
       backend: llmResolved.ok ? llmResolved.backend : null,
