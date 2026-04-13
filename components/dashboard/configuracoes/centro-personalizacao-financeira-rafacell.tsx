@@ -8,8 +8,10 @@ import {
   CreditCard,
   Landmark,
   Pencil,
+  Plus,
   QrCode,
   Target,
+  Trash2,
   Wallet,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -28,6 +30,16 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import {
   Dialog,
   DialogContent,
   DialogFooter,
@@ -39,10 +51,10 @@ import {
   type CentroFinanceiroV3,
   type ContaBanco,
   type ContaTemplate,
-  type MaquininhaSlug,
   defaultCentroFinanceiroV3,
   loadCentroFinanceiroV3,
   normalizeCentroV3,
+  novaMaquininhaVazia,
   persistCentroFinanceiroV3,
   taxasSugeridasPagBank,
 } from "@/lib/rafacell-centro-financeiro"
@@ -91,6 +103,10 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
   const [editNome, setEditNome] = useState("")
   const [editSaldo, setEditSaldo] = useState("")
 
+  const [editMaqId, setEditMaqId] = useState<string | null>(null)
+  const [editMaqNome, setEditMaqNome] = useState("")
+  const [deleteMaqId, setDeleteMaqId] = useState<string | null>(null)
+
   const [custoPeca, setCustoPeca] = useState("")
   const [modoRepasse, setModoRepasse] = useState<string>("debito")
 
@@ -118,17 +134,17 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
 
   const maquininhasAtivas = useMemo(() => draft.maquininhas.filter((m) => m.ativo), [draft.maquininhas])
 
-  const calcSlugEfetivo = useMemo((): MaquininhaSlug => {
-    if (maquininhasAtivas.some((m) => m.slug === draft.maquininhaEdicaoSlug)) {
-      return draft.maquininhaEdicaoSlug
+  const calcMaquininhaIdEfetivo = useMemo(() => {
+    if (maquininhasAtivas.some((m) => m.id === draft.maquininhaEdicaoId)) {
+      return draft.maquininhaEdicaoId
     }
-    return maquininhasAtivas[0]?.slug ?? "pagbank"
-  }, [draft.maquininhaEdicaoSlug, maquininhasAtivas])
+    return maquininhasAtivas[0]?.id ?? draft.maquininhas[0]?.id ?? ""
+  }, [draft.maquininhaEdicaoId, draft.maquininhas, maquininhasAtivas])
 
   const taxasCalculadora = useMemo(() => {
-    const m = draft.maquininhas.find((x) => x.slug === calcSlugEfetivo)
+    const m = draft.maquininhas.find((x) => x.id === calcMaquininhaIdEfetivo)
     return m?.taxas ?? taxasSugeridasPagBank()
-  }, [draft.maquininhas, calcSlugEfetivo])
+  }, [draft.maquininhas, calcMaquininhaIdEfetivo])
 
   const salvarAlteracoes = useCallback(() => {
     const normalized = normalizeCentroV3(draft)
@@ -141,29 +157,27 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
     })
   }, [draft, toast])
 
-  const setAtivoMaquininha = (slug: MaquininhaSlug, ativo: boolean) => {
+  const setAtivoMaquininha = (id: string, ativo: boolean) => {
     setDraft((prev) => {
-      const nextM = prev.maquininhas.map((m) =>
-        m.slug === slug ? { ...m, ativo } : m
-      ) as CentroFinanceiroV3["maquininhas"]
-      let ed = prev.maquininhaEdicaoSlug
-      if (!ativo && ed === slug) {
+      const nextM = prev.maquininhas.map((m) => (m.id === id ? { ...m, ativo } : m))
+      let ed = prev.maquininhaEdicaoId
+      if (!ativo && ed === id) {
         const firstOn = nextM.find((m) => m.ativo)
-        ed = firstOn?.slug ?? "pagbank"
+        ed = firstOn?.id ?? nextM[0]?.id ?? ""
       }
-      if (ativo && !nextM.find((m) => m.slug === ed)?.ativo) {
-        ed = slug
+      if (ativo && !nextM.find((m) => m.id === ed)?.ativo) {
+        ed = id
       }
-      return { ...prev, maquininhas: nextM, maquininhaEdicaoSlug: ed }
+      return { ...prev, maquininhas: nextM, maquininhaEdicaoId: ed }
     })
   }
 
-  const setTaxaCampo = (slug: MaquininhaSlug, field: "debito" | "credito", v: number) => {
+  const setTaxaCampo = (id: string, field: "debito" | "credito", v: number) => {
     const val = Number.isFinite(v) ? v : 0
     setDraft((prev) => ({
       ...prev,
       maquininhas: prev.maquininhas.map((m) =>
-        m.slug === slug
+        m.id === id
           ? {
               ...m,
               taxas: {
@@ -172,20 +186,62 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
               },
             }
           : m
-      ) as CentroFinanceiroV3["maquininhas"],
+      ),
     }))
   }
 
-  const setParcela = (slug: MaquininhaSlug, index: number, v: number) => {
+  const setParcela = (id: string, index: number, v: number) => {
     setDraft((prev) => ({
       ...prev,
       maquininhas: prev.maquininhas.map((m) => {
-        if (m.slug !== slug) return m
+        if (m.id !== id) return m
         const next = [...m.taxas.parcelas2a12]
         next[index] = Number.isFinite(v) ? v : 0
         return { ...m, taxas: { ...m.taxas, parcelas2a12: next } }
-      }) as CentroFinanceiroV3["maquininhas"],
+      }),
     }))
+  }
+
+  const adicionarMaquininha = () => {
+    const nova = novaMaquininhaVazia()
+    setDraft((prev) => ({
+      ...prev,
+      maquininhas: [...prev.maquininhas, nova],
+      maquininhaEdicaoId: nova.id,
+    }))
+  }
+
+  const confirmarExcluirMaquininha = () => {
+    if (!deleteMaqId) return
+    setDraft((prev) => {
+      const nextM = prev.maquininhas.filter((m) => m.id !== deleteMaqId)
+      let ed = prev.maquininhaEdicaoId
+      if (ed === deleteMaqId) {
+        const firstOn = nextM.find((m) => m.ativo)
+        ed = firstOn?.id ?? nextM[0]?.id ?? ""
+      }
+      return { ...prev, maquininhas: nextM, maquininhaEdicaoId: ed }
+    })
+    setDeleteMaqId(null)
+  }
+
+  const abrirRenomearMaquininha = (id: string, nomeAtual: string) => {
+    setEditMaqId(id)
+    setEditMaqNome(nomeAtual)
+  }
+
+  const aplicarRenomearMaquininha = () => {
+    if (!editMaqId) return
+    const nome = editMaqNome.trim()
+    if (!nome) {
+      setEditMaqId(null)
+      return
+    }
+    setDraft((prev) => ({
+      ...prev,
+      maquininhas: prev.maquininhas.map((m) => (m.id === editMaqId ? { ...m, nome } : m)),
+    }))
+    setEditMaqId(null)
   }
 
   const precoParaCobrirCusto = (custo: number, taxaPercent: number): number => {
@@ -350,58 +406,88 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
             Ative a sua maquininha abaixo para configurar as taxas e habilitar a calculadora de repasse no caixa.
           </p>
 
+          {draft.maquininhas.length === 0 && (
+            <p className="text-sm text-amber-600/90 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+              Nenhuma maquininha cadastrada. Use o botão abaixo para adicionar e preencher as taxas.
+            </p>
+          )}
+
           {draft.maquininhas.map((maq) => {
             const editavel = maq.ativo
             return (
-              <Card key={maq.slug} className="border-border bg-card">
+              <Card key={maq.id} className="border-border bg-card">
                 <CardHeader className="space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div>
-                      <CardTitle className="text-lg">{maq.nome}</CardTitle>
+                    <div className="min-w-0 flex-1">
+                      <CardTitle className="text-lg flex flex-wrap items-center gap-2">
+                        <span className="break-words">{maq.nome}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-primary"
+                          onClick={() => abrirRenomearMaquininha(maq.id, maq.nome)}
+                          aria-label="Renomear maquininha"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </Button>
+                      </CardTitle>
                       <CardDescription>
                         Taxas sugeridas pré-preenchidas; só é possível alterar com a maquininha{" "}
                         <strong>ativada</strong>.
                       </CardDescription>
                     </div>
-                    <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 bg-secondary/40">
-                      <Label htmlFor={`ativar-${maq.slug}`} className="text-sm cursor-pointer">
-                        Ativar no caixa
-                      </Label>
-                      <Switch
-                        id={`ativar-${maq.slug}`}
-                        checked={maq.ativo}
-                        onCheckedChange={(v) => setAtivoMaquininha(maq.slug, v)}
-                      />
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                        onClick={() => setDeleteMaqId(maq.id)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 mr-1" />
+                        Excluir
+                      </Button>
+                      <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 bg-secondary/40">
+                        <Label htmlFor={`ativar-${maq.id}`} className="text-sm cursor-pointer whitespace-nowrap">
+                          Ativar no caixa
+                        </Label>
+                        <Switch
+                          id={`ativar-${maq.id}`}
+                          checked={maq.ativo}
+                          onCheckedChange={(v) => setAtivoMaquininha(maq.id, v)}
+                        />
+                      </div>
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent className={`space-y-6 ${!editavel ? "opacity-55" : ""}`}>
                   <div className="grid gap-6 sm:grid-cols-2 max-w-xl">
                     <div className="space-y-2">
-                      <Label htmlFor={`tx-debito-${maq.slug}`}>Débito (%)</Label>
+                      <Label htmlFor={`tx-debito-${maq.id}`}>Débito (%)</Label>
                       <Input
-                        id={`tx-debito-${maq.slug}`}
+                        id={`tx-debito-${maq.id}`}
                         type="number"
                         step="0.01"
                         min={0}
                         max={100}
                         disabled={!editavel}
                         value={maq.taxas.debito}
-                        onChange={(e) => setTaxaCampo(maq.slug, "debito", parseFloat(e.target.value) || 0)}
+                        onChange={(e) => setTaxaCampo(maq.id, "debito", parseFloat(e.target.value) || 0)}
                         className="h-11 bg-secondary border-border disabled:cursor-not-allowed"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor={`tx-credito-${maq.slug}`}>Crédito à vista (%)</Label>
+                      <Label htmlFor={`tx-credito-${maq.id}`}>Crédito à vista (%)</Label>
                       <Input
-                        id={`tx-credito-${maq.slug}`}
+                        id={`tx-credito-${maq.id}`}
                         type="number"
                         step="0.01"
                         min={0}
                         max={100}
                         disabled={!editavel}
                         value={maq.taxas.credito}
-                        onChange={(e) => setTaxaCampo(maq.slug, "credito", parseFloat(e.target.value) || 0)}
+                        onChange={(e) => setTaxaCampo(maq.id, "credito", parseFloat(e.target.value) || 0)}
                         className="h-11 bg-secondary border-border disabled:cursor-not-allowed"
                       />
                     </div>
@@ -413,19 +499,19 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                       {maq.taxas.parcelas2a12.map((pct, idx) => {
                         const n = idx + 2
                         return (
-                          <div key={`${maq.slug}-p${n}`} className="space-y-1.5">
-                            <Label htmlFor={`tx-${maq.slug}-p${n}`} className="text-xs text-muted-foreground">
+                          <div key={`${maq.id}-p${n}`} className="space-y-1.5">
+                            <Label htmlFor={`tx-${maq.id}-p${n}`} className="text-xs text-muted-foreground">
                               {n}x
                             </Label>
                             <Input
-                              id={`tx-${maq.slug}-p${n}`}
+                              id={`tx-${maq.id}-p${n}`}
                               type="number"
                               step="0.01"
                               min={0}
                               max={100}
                               disabled={!editavel}
                               value={pct}
-                              onChange={(e) => setParcela(maq.slug, idx, parseFloat(e.target.value) || 0)}
+                              onChange={(e) => setParcela(maq.id, idx, parseFloat(e.target.value) || 0)}
                               className="h-10 bg-secondary border-border text-sm disabled:cursor-not-allowed"
                             />
                           </div>
@@ -437,6 +523,16 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
               </Card>
             )
           })}
+
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full border-dashed border-primary/40 text-primary hover:bg-primary/10"
+            onClick={adicionarMaquininha}
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Adicionar Outra Maquininha
+          </Button>
 
           <Separator />
 
@@ -458,17 +554,15 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                   <div className="space-y-2">
                     <Label>Maquininha (ativas)</Label>
                     <Select
-                      value={calcSlugEfetivo}
-                      onValueChange={(v) =>
-                        setDraft((prev) => ({ ...prev, maquininhaEdicaoSlug: v as MaquininhaSlug }))
-                      }
+                      value={calcMaquininhaIdEfetivo}
+                      onValueChange={(v) => setDraft((prev) => ({ ...prev, maquininhaEdicaoId: v }))}
                     >
                       <SelectTrigger className="h-11 bg-background border-border">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         {maquininhasAtivas.map((m) => (
-                          <SelectItem key={m.slug} value={m.slug}>
+                          <SelectItem key={m.id} value={m.id}>
                             {m.nome}
                           </SelectItem>
                         ))}
@@ -617,6 +711,58 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!editMaqId} onOpenChange={(o) => !o && setEditMaqId(null)}>
+        <DialogContent className="sm:max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle>Nome da maquininha</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-maq-nome">Como aparece no caixa e nas taxas</Label>
+              <Input
+                id="edit-maq-nome"
+                value={editMaqNome}
+                onChange={(e) => setEditMaqNome(e.target.value)}
+                placeholder="Ex.: PagBank loja 2"
+                className="h-11 bg-secondary border-border"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") aplicarRenomearMaquininha()
+                }}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setEditMaqId(null)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={aplicarRenomearMaquininha}>
+              Salvar nome
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={!!deleteMaqId} onOpenChange={(o) => !o && setDeleteMaqId(null)}>
+        <AlertDialogContent className="bg-card border-border">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir esta maquininha?</AlertDialogTitle>
+            <AlertDialogDescription>
+              As taxas e o nome serão removidos deste navegador. Se não houver nenhuma maquininha ativa, débito e
+              crédito ficam desativados no PDV até você adicionar outra.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmarExcluirMaquininha}
+            >
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

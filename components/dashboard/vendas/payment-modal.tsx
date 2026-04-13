@@ -38,7 +38,8 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useToast } from "@/hooks/use-toast"
-import { temMaquininhaAtivaNoCaixa } from "@/lib/rafacell-centro-financeiro"
+import type { MaquininhaConfig } from "@/lib/rafacell-centro-financeiro"
+import { getMaquininhasAtivas, temMaquininhaAtivaNoCaixa } from "@/lib/rafacell-centro-financeiro"
 
 export type PaymentMethodType =
   | "dinheiro"
@@ -48,11 +49,14 @@ export type PaymentMethodType =
   | "carne"
   | "credito_vale"
 
-interface PaymentMethod {
+export interface PaymentMethod {
   id: string
   type: PaymentMethodType
   value: number
   installments?: number
+  /** Maquininha usada no caixa (cartão débito/crédito). */
+  maquininhaId?: string
+  maquininhaNome?: string
 }
 
 interface Customer {
@@ -105,9 +109,18 @@ export function PaymentModal({
   const totalPaid = payments.reduce((sum, p) => sum + p.value, 0)
   const remaining = Math.max(0, total - totalPaid)
   const [cartaoLiberado, setCartaoLiberado] = useState(true)
+  const [maquininhasAtivasPdv, setMaquininhasAtivasPdv] = useState<MaquininhaConfig[]>([])
+  const [maquininhaPdvId, setMaquininhaPdvId] = useState("")
   useEffect(() => {
     if (!isOpen) return
     setCartaoLiberado(temMaquininhaAtivaNoCaixa())
+    const ativas = getMaquininhasAtivas()
+    setMaquininhasAtivasPdv(ativas)
+    setMaquininhaPdvId((prev) => {
+      if (ativas.length === 0) return ""
+      if (prev && ativas.some((m) => m.id === prev)) return prev
+      return ativas[0]!.id
+    })
   }, [isOpen])
   const lucro = total - custoPeca
   const margemLucro = ((lucro / total) * 100).toFixed(1)
@@ -128,11 +141,19 @@ export function PaymentModal({
     const value = parseFloat(currentValue) || max
     if (value <= 0) return
 
+    const maq =
+      type === "cartao_debito" || type === "cartao_credito"
+        ? maquininhasAtivasPdv.find((m) => m.id === maquininhaPdvId) ?? maquininhasAtivasPdv[0]
+        : undefined
+
     const newPayment: PaymentMethod = {
       id: Date.now().toString(),
       type,
       value: Math.min(value, max),
-      installments: type === "carne" ? parseInt(carneInstallments) : undefined
+      installments: type === "carne" ? parseInt(carneInstallments) : undefined,
+      ...(maq
+        ? { maquininhaId: maq.id, maquininhaNome: maq.nome }
+        : {}),
     }
 
     setPayments([...payments, newPayment])
@@ -207,15 +228,23 @@ export function PaymentModal({
     }
   }
 
-  const getPaymentLabel = (type: string) => {
-    switch (type) {
-      case "dinheiro": return "Dinheiro"
-      case "pix": return "Pix"
-      case "cartao_debito": return "Cartão débito"
-      case "cartao_credito": return "Cartão crédito"
-      case "carne": return "Carnê"
-      case "credito_vale": return "Crédito/Vale"
-      default: return type
+  const getPaymentLabel = (payment: PaymentMethod) => {
+    const nomeMaq = payment.maquininhaNome ? ` — ${payment.maquininhaNome}` : ""
+    switch (payment.type) {
+      case "dinheiro":
+        return "Dinheiro"
+      case "pix":
+        return "Pix"
+      case "cartao_debito":
+        return `Cartão débito${nomeMaq}`
+      case "cartao_credito":
+        return `Cartão crédito${nomeMaq}`
+      case "carne":
+        return "Carnê"
+      case "credito_vale":
+        return "Crédito/Vale"
+      default:
+        return payment.type
     }
   }
 
@@ -311,7 +340,7 @@ export function PaymentModal({
                     className="px-3 py-2 text-sm flex items-center gap-2 bg-secondary"
                   >
                     {getPaymentIcon(payment.type)}
-                    {getPaymentLabel(payment.type)}
+                    {getPaymentLabel(payment)}
                     {payment.installments && ` ${payment.installments}x`}
                     : {formatCurrency(payment.value)}
                     <button
@@ -395,6 +424,23 @@ export function PaymentModal({
                   Cartão débito/crédito: ative uma maquininha em{" "}
                   <strong>Configurações → Financeiro RAFACELL</strong> (aba Taxas de cartão).
                 </p>
+              )}
+              {cartaoLiberado && maquininhasAtivasPdv.length > 1 && (
+                <div className="space-y-2 max-w-md">
+                  <Label className="text-xs text-muted-foreground">Maquininha (nome no caixa)</Label>
+                  <Select value={maquininhaPdvId} onValueChange={setMaquininhaPdvId}>
+                    <SelectTrigger className="h-11 bg-secondary border-border">
+                      <SelectValue placeholder="Selecione" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {maquininhasAtivasPdv.map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.nome}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <Button
