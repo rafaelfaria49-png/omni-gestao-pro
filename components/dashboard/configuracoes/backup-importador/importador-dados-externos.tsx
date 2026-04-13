@@ -117,12 +117,16 @@ async function parseXlsx(file: File): Promise<ParsedSheet> {
   const sheet = first ? wb.Sheets[first] : undefined
   if (!sheet) return { fileName: file.name, headers: [], rows: [] }
 
-  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as unknown[][]
-  const headerRow = Array.isArray(grid[0]) ? (grid[0] as unknown[]) : []
-  const headers = headerRow.map((x) => String(x ?? "").trim()).filter(Boolean)
+  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: "" }) as unknown[][]
+  // Alguns XLSX vêm com linhas vazias antes do cabeçalho. Encontra a 1ª linha com pelo menos 1 célula preenchida.
+  const headerIndex = grid.findIndex((row) => Array.isArray(row) && row.some((v) => String(v ?? "").trim() !== ""))
+  const headerRow = headerIndex >= 0 && Array.isArray(grid[headerIndex]) ? (grid[headerIndex] as unknown[]) : []
+  const headers = headerRow
+    .map((x) => String(x ?? "").trim())
+    .filter((h) => h !== "")
 
   const rows: Record<string, unknown>[] = []
-  for (let r = 1; r < grid.length; r += 1) {
+  for (let r = Math.max(0, headerIndex + 1); r < grid.length; r += 1) {
     const row = grid[r]
     if (!Array.isArray(row)) continue
     // Ignora linha completamente vazia (Excel às vezes inclui linhas “fantasma”)
@@ -136,6 +140,10 @@ async function parseXlsx(file: File): Promise<ParsedSheet> {
     if (hasAny) rows.push(obj)
   }
 
+  // Fallback: se não detectou headers, tenta inferir do 1º objeto ao invés de ficar sem opções no Select.
+  if (headers.length === 0 && rows.length > 0) {
+    return { fileName: file.name, headers: Object.keys(rows[0]!), rows }
+  }
   return { fileName: file.name, headers, rows }
 }
 
