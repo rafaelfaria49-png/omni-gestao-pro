@@ -38,6 +38,8 @@ type MapTarget =
 
 type MappingState = Partial<Record<MapTarget, string>>
 
+const SELECT_NONE = "__none__"
+
 function normHeader(s: string): string {
   return String(s || "")
     .trim()
@@ -123,6 +125,9 @@ async function parseXlsx(file: File): Promise<ParsedSheet> {
   for (let r = 1; r < grid.length; r += 1) {
     const row = grid[r]
     if (!Array.isArray(row)) continue
+    // Ignora linha completamente vazia (Excel às vezes inclui linhas “fantasma”)
+    const hasAnyCell = row.some((v) => String(v ?? "").trim() !== "")
+    if (!hasAnyCell) continue
     const obj: Record<string, unknown> = {}
     for (let c = 0; c < headers.length; c += 1) {
       obj[headers[c]!] = row[c]
@@ -468,17 +473,19 @@ export function ImportadorDadosExternos() {
                     <div key={f.key} className="grid gap-2 sm:grid-cols-2 sm:items-center">
                       <Label className="text-sm">{f.label}</Label>
                       <Select
-                        value={mapping[f.key] ?? ""}
-                        onValueChange={(v) => setMapping((prev) => ({ ...prev, [f.key]: v }))}
+                        value={mapping[f.key] && String(mapping[f.key]).trim() ? (mapping[f.key] as string) : SELECT_NONE}
+                        onValueChange={(v) =>
+                          setMapping((prev) => ({ ...prev, [f.key]: v === SELECT_NONE ? "" : v }))
+                        }
                       >
                         <SelectTrigger className="h-11 bg-secondary border-border">
                           <SelectValue placeholder="Selecione uma coluna do seu arquivo" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">— (não mapear)</SelectItem>
+                          <SelectItem value={SELECT_NONE}>— (não mapear)</SelectItem>
                           {sheet.headers.map((h) => (
                             <SelectItem key={h} value={h}>
-                              {h}
+                              {h || "N/A"}
                             </SelectItem>
                           ))}
                         </SelectContent>
