@@ -2,6 +2,8 @@
 
 import { useMemo, useRef, useState } from "react"
 import { FileSpreadsheet, Link2, UploadCloud } from "lucide-react"
+import Papa from "papaparse"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -9,11 +11,10 @@ import { Progress } from "@/components/ui/progress"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import Papa from "papaparse"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 
-type ImportKind = "clientes" | "produtos" | "ordens_servico" | "vendas_financeiro" | "servicos"
+type ImportKind = "clientes" | "produtos" | "ordens_servico"
 
 type ParsedSheet = {
   fileName: string
@@ -32,11 +33,7 @@ type MapTarget =
   | "produtos.preco_custo"
   | "produtos.preco_venda"
   | "produtos.estoque"
-  | "servicos.nome"
-  | "servicos.descricao"
-  | "servicos.preco"
   | "ordens.doc_cliente"
-  | "vendas.doc_cliente"
 
 type MappingState = Partial<Record<MapTarget, string>>
 
@@ -148,41 +145,32 @@ function defaultMappingFor(kind: ImportKind, headers: string[]): MappingState {
     map["produtos.estoque"] = bestMatch(headers, ["estoque", "quantidade", "saldo", "estoque atual"]) ?? ""
   }
 
-  if (kind === "servicos") {
-    map["servicos.nome"] = bestMatch(headers, ["nome", "servico", "serviço", "descricao", "descrição"]) ?? ""
-    map["servicos.descricao"] = bestMatch(headers, ["descricao", "descrição", "observacao", "observação"]) ?? ""
-    map["servicos.preco"] = bestMatch(headers, ["preco", "preço", "valor"]) ?? ""
-  }
-
   if (kind === "ordens_servico") {
     map["ordens.doc_cliente"] = bestMatch(headers, ["cpf", "cnpj", "cpf/cnpj", "documento cliente", "cliente cpf"]) ?? ""
-  }
-
-  if (kind === "vendas_financeiro") {
-    map["vendas.doc_cliente"] = bestMatch(headers, ["cpf", "cnpj", "cpf/cnpj", "documento", "cliente cpf"]) ?? ""
   }
 
   return map
 }
 
-export default function MigracaoPage() {
+export function ImportadorDadosExternos() {
   const inputRef = useRef<HTMLInputElement | null>(null)
   const { lojaAtivaId } = useLojaAtiva()
+
   const [kind, setKind] = useState<ImportKind>("clientes")
   const [parseError, setParseError] = useState<string | null>(null)
   const [sheet, setSheet] = useState<ParsedSheet | null>(null)
   const [mapping, setMapping] = useState<MappingState>({})
+
   const [importLog, setImportLog] = useState<string>("")
   const [isImporting, setIsImporting] = useState(false)
   const [progressNow, setProgressNow] = useState(0)
   const [progressTotal, setProgressTotal] = useState(0)
   const [progressLabel, setProgressLabel] = useState("")
+
   const [counts, setCounts] = useState<Record<ImportKind, number>>({
     clientes: 0,
     produtos: 0,
     ordens_servico: 0,
-    vendas_financeiro: 0,
-    servicos: 0,
   })
 
   const expectedFields = useMemo(() => {
@@ -204,47 +192,11 @@ export default function MigracaoPage() {
         { key: "produtos.estoque" as const, label: "Estoque" },
       ]
     }
-    if (kind === "servicos") {
-      return [
-        { key: "servicos.nome" as const, label: "Nome do Serviço" },
-        { key: "servicos.descricao" as const, label: "Descrição" },
-        { key: "servicos.preco" as const, label: "Preço" },
-      ]
-    }
-    if (kind === "ordens_servico") {
-      return [{ key: "ordens.doc_cliente" as const, label: "CPF/CNPJ do Cliente (para vínculo automático)" }]
-    }
-    return [{ key: "vendas.doc_cliente" as const, label: "CPF/CNPJ do Cliente (para vínculo automático)" }]
+    return [{ key: "ordens.doc_cliente" as const, label: "CPF/CNPJ do Cliente (para vínculo automático)" }]
   }, [kind])
-
-  const handleUpload = async (file: File) => {
-    setParseError(null)
-    setSheet(null)
-    setImportLog("")
-    setProgressNow(0)
-    setProgressTotal(0)
-    setProgressLabel("")
-    try {
-      const parsed = await parseFileUniversal(file)
-      if (parsed.headers.length === 0) {
-        setParseError("Não foi possível detectar colunas (primeira linha).")
-        return
-      }
-      setSheet(parsed)
-      setMapping(defaultMappingFor(kind, parsed.headers))
-    } catch (e) {
-      setParseError(e instanceof Error ? e.message : "Falha ao ler o arquivo.")
-    }
-  }
-
-  const mappedPreview = useMemo(() => {
-    if (!sheet) return []
-    return sheet.rows.slice(0, 5)
-  }, [sheet])
 
   const canImport = useMemo(() => {
     if (!sheet) return false
-    // exige pelo menos o primeiro campo do bloco
     const first = expectedFields[0]?.key
     if (!first) return false
     return Boolean(mapping[first] && String(mapping[first]).trim())
@@ -282,8 +234,7 @@ export default function MigracaoPage() {
       const end = Math.min(total, start + batchSize)
       const chunk = items.slice(start, end)
 
-      const loteAtual = b + 1
-      setProgressLabel(`Enviando lote ${loteAtual}/${batches}... (até item ${end} de ${total})`)
+      setProgressLabel(`Enviando lote ${b + 1}/${batches}... (até item ${end} de ${total})`)
       await yieldToUi()
 
       const res = await fetchWithTimeout("/api/ops/inventory/import", {
@@ -296,23 +247,41 @@ export default function MigracaoPage() {
         credentials: "include",
         timeoutMs: 60_000,
       })
-
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
         throw new Error(data?.error || data?.detail || `Falha no lote ${b + 1}/${batches} (HTTP ${res.status})`)
       }
 
-      // Atualiza progresso somente após o lote finalizar no servidor.
       setProgressNow(end)
       setProgressLabel(`Item ${end} de ${total}...`)
       await yieldToUi()
     }
   }
 
+  const handleUpload = async (file: File) => {
+    setParseError(null)
+    setSheet(null)
+    setImportLog("")
+    setProgressNow(0)
+    setProgressTotal(0)
+    setProgressLabel("")
+    try {
+      const parsed = await parseFileUniversal(file)
+      if (parsed.headers.length === 0) {
+        setParseError("Não foi possível detectar colunas (primeira linha).")
+        return
+      }
+      setSheet(parsed)
+      setMapping(defaultMappingFor(kind, parsed.headers))
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : "Falha ao ler o arquivo.")
+    }
+  }
+
   const runImport = async () => {
-    if (!sheet) return
-    if (isImporting) return
+    if (!sheet || isImporting) return
     setIsImporting(true)
+    setParseError(null)
 
     if (kind === "produtos") {
       try {
@@ -357,7 +326,7 @@ export default function MigracaoPage() {
 
         setProgressNow(0)
         setProgressTotal(items.length)
-        setProgressLabel("Enviando para o banco em lotes de 100...")
+        setProgressLabel("Enviando para o banco em lotes de 500...")
         await yieldToUi()
 
         await uploadInventoryInBatches(items)
@@ -365,8 +334,9 @@ export default function MigracaoPage() {
         setCounts((prev) => ({ ...prev, produtos: prev.produtos + items.length }))
         setImportLog((prev) => {
           const head = prev ? `${prev}\n` : ""
-          return `${head}Sucesso: +${items.length} produtos`
+          return `${head}Sucesso: +${items.length} Produtos importados`
         })
+
         setProgressLabel("")
         setIsImporting(false)
         return
@@ -377,72 +347,33 @@ export default function MigracaoPage() {
       }
     }
 
-    // Base de clientes para vínculo (na sessão) — simples: pega docs mapeados.
-    const docKey = mapping["clientes.doc"]
-    const docsImported = new Set<string>()
-    if (docKey && kind === "clientes") {
-      const total = sheet.rows.length
-      setProgressTotal(total)
-      setProgressNow(0)
-      for (let i = 0; i < total; i += 1) {
-        const r = sheet.rows[i]!
-        const doc = digitsOnly(r[docKey])
-        if (doc.length === 11 || doc.length === 14) docsImported.add(doc)
-        if ((i + 1) % 100 === 0 || i + 1 === total) {
-          setProgressNow(i + 1)
-          setProgressLabel(`Importando item ${i + 1} de ${total}...`)
-          await yieldToUi()
-        }
+    // Mantém as outras abas como “pré-processamento + log” (sem persistência pesada aqui).
+    const total = sheet.rows.length
+    setProgressTotal(total)
+    setProgressNow(0)
+    for (let i = 0; i < total; i += 1) {
+      if ((i + 1) % 500 === 0 || i + 1 === total) {
+        setProgressNow(i + 1)
+        setProgressLabel(`Processando item ${i + 1} de ${total}...`)
+        await yieldToUi()
       }
     }
-
-    const linkKey =
-      kind === "ordens_servico" ? mapping["ordens.doc_cliente"] : kind === "vendas_financeiro" ? mapping["vendas.doc_cliente"] : ""
-    let vinculados = 0
-    if ((kind === "ordens_servico" || kind === "vendas_financeiro") && linkKey) {
-      const total = sheet.rows.length
-      setProgressTotal(total)
-      setProgressNow(0)
-      for (let i = 0; i < total; i += 1) {
-        const r = sheet.rows[i]!
-        const doc = digitsOnly(r[linkKey])
-        if (docsImported.has(doc)) vinculados += 1
-        if ((i + 1) % 100 === 0 || i + 1 === total) {
-          setProgressNow(i + 1)
-          setProgressLabel(`Importando item ${i + 1} de ${total}...`)
-          await yieldToUi()
-        }
-      }
-    }
-
-    const qtd = sheet.rows.length
-    setCounts((prev) => ({ ...prev, [kind]: prev[kind] + qtd }))
+    setCounts((prev) => ({ ...prev, [kind]: prev[kind] + total }))
     setImportLog((prev) => {
       const head = prev ? `${prev}\n` : ""
-      const vinc = vinculados > 0 ? ` (vinculados ao Cliente: ${vinculados})` : ""
-      return `${head}Sucesso: +${qtd} ${kind}${vinc}`
+      return `${head}Sucesso: +${total} ${kind} (prévia)`
     })
-
     setProgressLabel("")
     setIsImporting(false)
   }
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      <div className="space-y-1">
-        <h1 className="text-2xl font-bold text-foreground">Módulo de Migração (Importador Multidimensional)</h1>
-        <p className="text-sm text-muted-foreground">
-          Selecione o tipo de importação, envie um arquivo do GestãoClick (CSV/XLSX) e ajuste o mapeamento das colunas.
-        </p>
-      </div>
-
+    <div className="space-y-6">
       <Tabs value={kind} onValueChange={(v) => setKind(v as ImportKind)} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 h-auto gap-1 bg-secondary p-1">
+        <TabsList className="grid w-full grid-cols-3 h-auto gap-1 bg-secondary p-1">
           <TabsTrigger value="clientes">Clientes</TabsTrigger>
           <TabsTrigger value="produtos">Produtos</TabsTrigger>
           <TabsTrigger value="ordens_servico">O.S.</TabsTrigger>
-          <TabsTrigger value="vendas_financeiro">Vendas/Financeiro</TabsTrigger>
-          <TabsTrigger value="servicos">Serviços</TabsTrigger>
         </TabsList>
 
         <TabsContent value={kind} className="mt-6 space-y-6">
@@ -465,8 +396,6 @@ export default function MigracaoPage() {
                       <SelectItem value="clientes">Clientes</SelectItem>
                       <SelectItem value="produtos">Produtos</SelectItem>
                       <SelectItem value="ordens_servico">Ordens de Serviço</SelectItem>
-                      <SelectItem value="vendas_financeiro">Vendas e Financeiro</SelectItem>
-                      <SelectItem value="servicos">Serviços</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -503,21 +432,6 @@ export default function MigracaoPage() {
                     Arquivo: <strong className="text-foreground">{sheet.fileName}</strong> · Linhas:{" "}
                     <strong className="text-foreground">{sheet.rows.length}</strong>
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    {sheet.headers.slice(0, 40).map((c) => (
-                      <span
-                        key={c}
-                        className="text-xs px-2 py-1 rounded-md bg-secondary text-secondary-foreground border border-border"
-                      >
-                        {c}
-                      </span>
-                    ))}
-                    {sheet.headers.length > 40 && (
-                      <span className="text-xs px-2 py-1 rounded-md bg-secondary text-secondary-foreground border border-border">
-                        +{sheet.headers.length - 40} colunas…
-                      </span>
-                    )}
-                  </div>
                 </div>
               )}
             </CardContent>
@@ -532,9 +446,7 @@ export default function MigracaoPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {!sheet ? (
-                <p className="text-sm text-muted-foreground">
-                  Envie um arquivo para detectar as colunas e liberar o mapeamento.
-                </p>
+                <p className="text-sm text-muted-foreground">Envie um arquivo para detectar as colunas e liberar o mapeamento.</p>
               ) : (
                 <div className="grid gap-4">
                   {expectedFields.map((f) => (
@@ -565,7 +477,7 @@ export default function MigracaoPage() {
 
               <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
                 <p className="text-xs text-muted-foreground">
-                  Importação inicial: processa as linhas e gera log (persistência completa por módulo será evoluída em seguida).
+                  Produtos: importação real no banco em lotes de 500. Clientes/O.S.: prévia (a persistência será adicionada em seguida).
                 </p>
                 <Button type="button" disabled={!canImport || isImporting} onClick={() => void runImport()}>
                   Importar agora
@@ -575,7 +487,7 @@ export default function MigracaoPage() {
               {isImporting && progressTotal > 0 && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{progressLabel || `Importando item ${progressNow} de ${progressTotal}...`}</span>
+                    <span>{progressLabel || `Item ${progressNow} de ${progressTotal}...`}</span>
                     <span className="tabular-nums">
                       {Math.round((progressNow / Math.max(1, progressTotal)) * 100)}%
                     </span>
@@ -585,19 +497,6 @@ export default function MigracaoPage() {
               )}
             </CardContent>
           </Card>
-
-          {sheet && (
-            <Card className="border-border bg-card">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Prévia (primeiras 5 linhas)</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <pre className="text-xs rounded-lg bg-secondary/40 border border-border p-3 overflow-auto max-h-[240px]">
-                  {JSON.stringify(mappedPreview, null, 2)}
-                </pre>
-              </CardContent>
-            </Card>
-          )}
         </TabsContent>
       </Tabs>
 
@@ -606,7 +505,7 @@ export default function MigracaoPage() {
           <CardTitle className="text-base">Log final</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5 text-sm">
+          <div className="grid gap-2 sm:grid-cols-3 text-sm">
             <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2">
               <span className="text-muted-foreground">Clientes</span>
               <div className="font-semibold">{counts.clientes}</div>
@@ -619,19 +518,9 @@ export default function MigracaoPage() {
               <span className="text-muted-foreground">O.S.</span>
               <div className="font-semibold">{counts.ordens_servico}</div>
             </div>
-            <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2">
-              <span className="text-muted-foreground">Vendas/Financeiro</span>
-              <div className="font-semibold">{counts.vendas_financeiro}</div>
-            </div>
-            <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2">
-              <span className="text-muted-foreground">Serviços</span>
-              <div className="font-semibold">{counts.servicos}</div>
-            </div>
           </div>
-
           <pre className="text-xs rounded-lg bg-secondary/40 border border-border p-3 whitespace-pre-wrap">
-            {importLog ||
-              "Sucesso: 0 Clientes, 0 Produtos, 0 O.S., 0 Vendas/Financeiro, 0 Serviços importados (envie um arquivo e clique em Importar)."}
+            {importLog || "Sucesso: 0 Clientes, 0 Produtos, 0 O.S. importadas"}
           </pre>
         </CardContent>
       </Card>

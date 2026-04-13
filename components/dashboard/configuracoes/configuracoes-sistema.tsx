@@ -63,6 +63,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { CentroPersonalizacaoFinanceiraRafacell } from "@/components/dashboard/configuracoes/centro-personalizacao-financeira-rafacell"
+import { ImportadorDadosExternos } from "@/components/dashboard/configuracoes/backup-importador/importador-dados-externos"
 
 const ATALHOS_PDV_MAX = 24
 
@@ -1424,32 +1425,49 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
         </TabsContent>
 
         <TabsContent value="backup" className="mt-6">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Database className="w-5 h-5 text-primary" />
-                Backup do Sistema
-              </CardTitle>
-              <CardDescription>
-                Gere um arquivo JSON com dados da RAFACELL ASSISTEC (CNPJ 48.241.205/0001-95), termos e lojas.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 text-sm text-muted-foreground">
-                Recomendação: gerar backup diário ao final do expediente para manter histórico e segurança jurídica.
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  onClick={handleBackup}
-                  className="bg-primary hover:bg-primary/90"
-                  disabled={isGeneratingBackup}
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  {isGeneratingBackup ? "Gerando..." : "Gerar Backup"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="space-y-6">
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-primary" />
+                  Backup do Sistema
+                </CardTitle>
+                <CardDescription>
+                  Gere um arquivo JSON com dados da RAFACELL ASSISTEC (CNPJ 48.241.205/0001-95), termos e lojas.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 text-sm text-muted-foreground">
+                  Recomendação: gerar backup diário ao final do expediente para manter histórico e segurança jurídica.
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={handleBackup}
+                    className="bg-primary hover:bg-primary/90"
+                    disabled={isGeneratingBackup}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    {isGeneratingBackup ? "Gerando..." : "Gerar Backup"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-primary" />
+                  Importar Dados Externos
+                </CardTitle>
+                <CardDescription>
+                  Importe dados do GestãoClick. Produtos são enviados ao banco em lotes de 500, com progresso em tempo real.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ImportadorDadosExternos />
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="multilojas" className="mt-6 space-y-6">
