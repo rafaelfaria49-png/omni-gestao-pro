@@ -38,6 +38,7 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useToast } from "@/hooks/use-toast"
+import { temMaquininhaAtivaNoCaixa } from "@/lib/rafacell-centro-financeiro"
 
 export type PaymentMethodType =
   | "dinheiro"
@@ -103,6 +104,11 @@ export function PaymentModal({
 
   const totalPaid = payments.reduce((sum, p) => sum + p.value, 0)
   const remaining = Math.max(0, total - totalPaid)
+  const [cartaoLiberado, setCartaoLiberado] = useState(true)
+  useEffect(() => {
+    if (!isOpen) return
+    setCartaoLiberado(temMaquininhaAtivaNoCaixa())
+  }, [isOpen])
   const lucro = total - custoPeca
   const margemLucro = ((lucro / total) * 100).toFixed(1)
 
@@ -384,6 +390,12 @@ export function PaymentModal({
                   Crédito em haver disponível: <span className="text-primary font-medium">{formatCurrency(customerStoreCredit)}</span>
                 </p>
               )}
+              {!cartaoLiberado && (
+                <p className="text-xs text-amber-600/90">
+                  Cartão débito/crédito: ative uma maquininha em{" "}
+                  <strong>Configurações → Financeiro RAFACELL</strong> (aba Taxas de cartão).
+                </p>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <Button
                   size="lg"
@@ -422,6 +434,12 @@ export function PaymentModal({
                 <Button
                   size="lg"
                   variant={selectedType === "cartao_debito" ? "default" : "outline"}
+                  disabled={!cartaoLiberado}
+                  title={
+                    !cartaoLiberado
+                      ? "Ative pelo menos uma maquininha em Configurações → Financeiro RAFACELL"
+                      : undefined
+                  }
                   onClick={() => {
                     setSelectedType("cartao_debito")
                     handleAddPayment("cartao_debito")
@@ -439,6 +457,12 @@ export function PaymentModal({
                 <Button
                   size="lg"
                   variant={selectedType === "cartao_credito" ? "default" : "outline"}
+                  disabled={!cartaoLiberado}
+                  title={
+                    !cartaoLiberado
+                      ? "Ative pelo menos uma maquininha em Configurações → Financeiro RAFACELL"
+                      : undefined
+                  }
                   onClick={() => {
                     setSelectedType("cartao_credito")
                     handleAddPayment("cartao_credito")

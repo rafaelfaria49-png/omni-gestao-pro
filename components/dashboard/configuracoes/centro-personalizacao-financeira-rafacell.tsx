@@ -7,6 +7,7 @@ import {
   Calculator,
   CreditCard,
   Landmark,
+  Pencil,
   QrCode,
   Target,
   Wallet,
@@ -25,105 +26,55 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { useToast } from "@/hooks/use-toast"
+import {
+  type CentroFinanceiroV3,
+  type ContaBanco,
+  type ContaTemplate,
+  type MaquininhaSlug,
+  defaultCentroFinanceiroV3,
+  loadCentroFinanceiroV3,
+  normalizeCentroV3,
+  persistCentroFinanceiroV3,
+  taxasSugeridasPagBank,
+} from "@/lib/rafacell-centro-financeiro"
 
-const STORAGE_KEY = "rafacell-centro-financeiro-v1"
+export type { ContaTemplate, MaquininhaSlug } from "@/lib/rafacell-centro-financeiro"
 
-export type BancoPixId =
-  | "pagbank"
-  | "nubank"
-  | "sicredi"
-  | "mercado_pago"
-  | "santander"
-  | "caixa_fisico"
-
-type Persisted = {
-  saldos: Record<BancoPixId, number>
-  pagbankTaxas: {
-    debito: number
-    credito: number
-    parcelas2a12: number[]
-  }
-  pixPadrao: BancoPixId
-  metaFaturamento: number
-  metaObservacao: string
-}
-
-const BANCOS: Array<{
-  id: BancoPixId
-  label: string
-  short: string
+const TEMPLATES: Array<{
+  template: ContaTemplate
+  labelDefault: string
   Icon: typeof Landmark
   accent: string
 }> = [
-  { id: "pagbank", label: "PagBank", short: "PagBank", Icon: CreditCard, accent: "from-green-600/20 to-green-600/5" },
-  { id: "nubank", label: "Nubank", short: "Nubank", Icon: Wallet, accent: "from-purple-600/20 to-purple-600/5" },
-  { id: "sicredi", label: "Sicredi", short: "Sicredi", Icon: Landmark, accent: "from-emerald-700/20 to-emerald-700/5" },
+  { template: "pagbank", labelDefault: "PagBank", Icon: CreditCard, accent: "from-green-600/20 to-green-600/5" },
+  { template: "nubank", labelDefault: "Nubank", Icon: Wallet, accent: "from-purple-600/20 to-purple-600/5" },
+  { template: "sicredi", labelDefault: "Sicredi", Icon: Landmark, accent: "from-emerald-700/20 to-emerald-700/5" },
   {
-    id: "mercado_pago",
-    label: "Mercado Pago",
-    short: "Mercado Pago",
+    template: "mercado_pago",
+    labelDefault: "Mercado Pago",
     Icon: CreditCard,
     accent: "from-blue-500/20 to-blue-500/5",
   },
-  { id: "santander", label: "Santander", short: "Santander", Icon: Building2, accent: "from-red-600/15 to-red-600/5" },
+  { template: "santander", labelDefault: "Santander", Icon: Building2, accent: "from-red-600/15 to-red-600/5" },
   {
-    id: "caixa_fisico",
-    label: "Caixa físico",
-    short: "Caixa físico",
+    template: "caixa_fisico",
+    labelDefault: "Caixa físico",
     Icon: Banknote,
     accent: "from-amber-600/20 to-amber-600/5",
   },
 ]
 
-function defaultPersisted(): Persisted {
-  const parcelas2a12 = Array.from({ length: 11 }, (_, i) => {
-    const n = i + 2
-    return 2.2 + (n - 2) * 0.35
-  })
-  return {
-    saldos: {
-      pagbank: 0,
-      nubank: 0,
-      sicredi: 0,
-      mercado_pago: 0,
-      santander: 0,
-      caixa_fisico: 0,
-    },
-    pagbankTaxas: {
-      debito: 1.99,
-      credito: 3.19,
-      parcelas2a12,
-    },
-    pixPadrao: "pagbank",
-    metaFaturamento: 0,
-    metaObservacao: "",
-  }
-}
-
-function loadPersisted(): Persisted {
-  if (typeof window === "undefined") return defaultPersisted()
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return defaultPersisted()
-    const p = JSON.parse(raw) as Partial<Persisted>
-    const base = defaultPersisted()
-    return {
-      saldos: { ...base.saldos, ...p.saldos },
-      pagbankTaxas: {
-        debito: typeof p.pagbankTaxas?.debito === "number" ? p.pagbankTaxas.debito : base.pagbankTaxas.debito,
-        credito: typeof p.pagbankTaxas?.credito === "number" ? p.pagbankTaxas.credito : base.pagbankTaxas.credito,
-        parcelas2a12:
-          Array.isArray(p.pagbankTaxas?.parcelas2a12) && p.pagbankTaxas.parcelas2a12.length === 11
-            ? p.pagbankTaxas.parcelas2a12.map((x) => (typeof x === "number" ? x : 0))
-            : base.pagbankTaxas.parcelas2a12,
-      },
-      pixPadrao: (p.pixPadrao as BancoPixId) && BANCOS.some((b) => b.id === p.pixPadrao) ? p.pixPadrao! : base.pixPadrao,
-      metaFaturamento: typeof p.metaFaturamento === "number" ? p.metaFaturamento : 0,
-      metaObservacao: typeof p.metaObservacao === "string" ? p.metaObservacao : "",
-    }
-  } catch {
-    return defaultPersisted()
-  }
+function templateMeta(t: ContaTemplate) {
+  return TEMPLATES.find((x) => x.template === t) ?? TEMPLATES[0]
 }
 
 function formatBRL(n: number): string {
@@ -131,68 +82,131 @@ function formatBRL(n: number): string {
 }
 
 export function CentroPersonalizacaoFinanceiraRafacell() {
-  const [data, setData] = useState<Persisted>(() => defaultPersisted())
+  const { toast } = useToast()
   const [hydrated, setHydrated] = useState(false)
+  const [draft, setDraft] = useState<CentroFinanceiroV3>(() => defaultCentroFinanceiroV3())
+  const [baselineJson, setBaselineJson] = useState("")
+
+  const [editConta, setEditConta] = useState<ContaBanco | null>(null)
+  const [editNome, setEditNome] = useState("")
+  const [editSaldo, setEditSaldo] = useState("")
+
+  const [custoPeca, setCustoPeca] = useState("")
+  const [modoRepasse, setModoRepasse] = useState<string>("debito")
 
   useEffect(() => {
-    setData(loadPersisted())
+    const loaded = loadCentroFinanceiroV3()
+    setDraft(loaded)
+    setBaselineJson(JSON.stringify(loaded))
     setHydrated(true)
   }, [])
 
-  const persist = useCallback((next: Persisted) => {
-    setData(next)
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next))
-    } catch {
-      /* ignore */
+  const isDirty = useMemo(
+    () => hydrated && JSON.stringify(draft) !== baselineJson,
+    [draft, baselineJson, hydrated]
+  )
+
+  useEffect(() => {
+    if (!isDirty) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ""
     }
-  }, [])
+    window.addEventListener("beforeunload", handler)
+    return () => window.removeEventListener("beforeunload", handler)
+  }, [isDirty])
 
-  const setSaldo = (id: BancoPixId, v: number) => {
-    persist({
-      ...data,
-      saldos: { ...data.saldos, [id]: Number.isFinite(v) ? v : 0 },
+  const maquininhasAtivas = useMemo(() => draft.maquininhas.filter((m) => m.ativo), [draft.maquininhas])
+
+  const calcSlugEfetivo = useMemo((): MaquininhaSlug => {
+    if (maquininhasAtivas.some((m) => m.slug === draft.maquininhaEdicaoSlug)) {
+      return draft.maquininhaEdicaoSlug
+    }
+    return maquininhasAtivas[0]?.slug ?? "pagbank"
+  }, [draft.maquininhaEdicaoSlug, maquininhasAtivas])
+
+  const taxasCalculadora = useMemo(() => {
+    const m = draft.maquininhas.find((x) => x.slug === calcSlugEfetivo)
+    return m?.taxas ?? taxasSugeridasPagBank()
+  }, [draft.maquininhas, calcSlugEfetivo])
+
+  const salvarAlteracoes = useCallback(() => {
+    const normalized = normalizeCentroV3(draft)
+    setDraft(normalized)
+    persistCentroFinanceiroV3(normalized)
+    setBaselineJson(JSON.stringify(normalized))
+    toast({
+      title: "Alterações salvas",
+      description: "Configurações gravadas neste navegador (localStorage).",
+    })
+  }, [draft, toast])
+
+  const setAtivoMaquininha = (slug: MaquininhaSlug, ativo: boolean) => {
+    setDraft((prev) => {
+      const nextM = prev.maquininhas.map((m) =>
+        m.slug === slug ? { ...m, ativo } : m
+      ) as CentroFinanceiroV3["maquininhas"]
+      let ed = prev.maquininhaEdicaoSlug
+      if (!ativo && ed === slug) {
+        const firstOn = nextM.find((m) => m.ativo)
+        ed = firstOn?.slug ?? "pagbank"
+      }
+      if (ativo && !nextM.find((m) => m.slug === ed)?.ativo) {
+        ed = slug
+      }
+      return { ...prev, maquininhas: nextM, maquininhaEdicaoSlug: ed }
     })
   }
 
-  const setTaxa = (field: "debito" | "credito", v: number) => {
-    persist({
-      ...data,
-      pagbankTaxas: { ...data.pagbankTaxas, [field]: Number.isFinite(v) ? v : 0 },
-    })
+  const setTaxaCampo = (slug: MaquininhaSlug, field: "debito" | "credito", v: number) => {
+    const val = Number.isFinite(v) ? v : 0
+    setDraft((prev) => ({
+      ...prev,
+      maquininhas: prev.maquininhas.map((m) =>
+        m.slug === slug
+          ? {
+              ...m,
+              taxas: {
+                ...m.taxas,
+                [field]: val,
+              },
+            }
+          : m
+      ) as CentroFinanceiroV3["maquininhas"],
+    }))
   }
 
-  const setParcela = (index: number, v: number) => {
-    const next = [...data.pagbankTaxas.parcelas2a12]
-    next[index] = Number.isFinite(v) ? v : 0
-    persist({
-      ...data,
-      pagbankTaxas: { ...data.pagbankTaxas, parcelas2a12: next },
-    })
+  const setParcela = (slug: MaquininhaSlug, index: number, v: number) => {
+    setDraft((prev) => ({
+      ...prev,
+      maquininhas: prev.maquininhas.map((m) => {
+        if (m.slug !== slug) return m
+        const next = [...m.taxas.parcelas2a12]
+        next[index] = Number.isFinite(v) ? v : 0
+        return { ...m, taxas: { ...m.taxas, parcelas2a12: next } }
+      }) as CentroFinanceiroV3["maquininhas"],
+    }))
   }
 
-  /** Preço de venda mínimo para cobrir custo após descontar a taxa (taxa em %). */
   const precoParaCobrirCusto = (custo: number, taxaPercent: number): number => {
     if (custo <= 0) return 0
     const t = Math.min(Math.max(taxaPercent, 0), 99.99)
     return custo / (1 - t / 100)
   }
 
-  const [custoPeca, setCustoPeca] = useState("")
-  const [modoRepasse, setModoRepasse] = useState<string>("debito")
-
   const custoNum = parseFloat(custoPeca.replace(",", ".")) || 0
 
   const taxaAtualRepasse = useMemo(() => {
-    if (modoRepasse === "debito") return data.pagbankTaxas.debito
-    if (modoRepasse === "credito") return data.pagbankTaxas.credito
+    if (maquininhasAtivas.length === 0) return 0
+    if (modoRepasse === "debito") return taxasCalculadora.debito
+    if (modoRepasse === "credito") return taxasCalculadora.credito
     const m = /^p(\d+)$/.exec(modoRepasse)
     if (m) {
       const n = parseInt(m[1], 10)
-      if (n >= 2 && n <= 12) return data.pagbankTaxas.parcelas2a12[n - 2] ?? 0
+      if (n >= 2 && n <= 12) return taxasCalculadora.parcelas2a12[n - 2] ?? 0
     }
-    return data.pagbankTaxas.debito
-  }, [modoRepasse, data.pagbankTaxas])
+    return taxasCalculadora.debito
+  }, [modoRepasse, taxasCalculadora, maquininhasAtivas.length])
 
   const precoSugerido = precoParaCobrirCusto(custoNum, taxaAtualRepasse)
 
@@ -203,6 +217,24 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
     if (m) return `crédito ${m[1]}x`
     return modoRepasse
   }, [modoRepasse])
+
+  const abrirEditarConta = (c: ContaBanco) => {
+    setEditConta(c)
+    setEditNome(c.nomeExibicao)
+    setEditSaldo(c.saldo === 0 ? "" : String(c.saldo))
+  }
+
+  const aplicarEdicaoConta = () => {
+    if (!editConta) return
+    const saldo = parseFloat(editSaldo.replace(",", ".")) || 0
+    setDraft((prev) => ({
+      ...prev,
+      contas: prev.contas.map((c) =>
+        c.id === editConta.id ? { ...c, nomeExibicao: editNome.trim() || c.nomeExibicao, saldo } : c
+      ),
+    }))
+    setEditConta(null)
+  }
 
   if (!hydrated) {
     return (
@@ -220,7 +252,8 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
           Centro de Personalização Financeira
         </h2>
         <p className="text-sm text-muted-foreground">
-          RAFACELL ASSISTEC — contas, taxas PagBank, metas e calculadora de repasse para não perder margem no cartão.
+          RAFACELL ASSISTEC — contas, maquininhas e taxas.{" "}
+          {isDirty && <span className="text-amber-600 font-medium">Alterações não salvas.</span>}
         </p>
       </div>
 
@@ -248,7 +281,7 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                 Gerenciamento de contas / bancos
               </CardTitle>
               <CardDescription>
-                Saldo de referência por conta (uso interno). O QR Code de Pix usará o banco padrão abaixo.
+                Saldo de referência por conta. Use <strong>Editar</strong> para alterar o nome exibido ou o saldo.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -259,147 +292,189 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                     Banco padrão para Pix (QR Code)
                   </Label>
                   <Select
-                    value={data.pixPadrao}
-                    onValueChange={(v) => persist({ ...data, pixPadrao: v as BancoPixId })}
+                    value={draft.pixPadraoContaId}
+                    onValueChange={(v) => setDraft((prev) => ({ ...prev, pixPadraoContaId: v }))}
                   >
                     <SelectTrigger className="h-11 bg-secondary border-border">
                       <SelectValue placeholder="Selecione" />
                     </SelectTrigger>
                     <SelectContent>
-                      {BANCOS.map((b) => (
-                        <SelectItem key={b.id} value={b.id}>
-                          {b.label}
+                      {draft.contas.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.nomeExibicao}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    O PDV e emissões de cobrança podem usar esta conta como destino do Pix.
-                  </p>
                 </div>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {BANCOS.map(({ id, label, Icon, accent }) => (
-                  <Card
-                    key={id}
-                    className={`border-border overflow-hidden bg-gradient-to-br ${accent} to-card`}
-                  >
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-base flex items-center gap-2">
-                        <Icon className="w-5 h-5 text-primary shrink-0" />
-                        {label}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-2">
-                      <Label htmlFor={`saldo-${id}`} className="text-xs text-muted-foreground">
-                        Saldo atual
-                      </Label>
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">
-                          R$
-                        </span>
-                        <Input
-                          id={`saldo-${id}`}
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          className="pl-10 h-11 bg-background/80 border-border"
-                          value={data.saldos[id] === 0 ? "" : data.saldos[id]}
-                          placeholder="0,00"
-                          onChange={(e) => setSaldo(id, parseFloat(e.target.value) || 0)}
-                        />
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                {draft.contas.map((conta) => {
+                  const { Icon, accent } = templateMeta(conta.template)
+                  return (
+                    <Card
+                      key={conta.id}
+                      className={`border-border overflow-hidden bg-gradient-to-br ${accent} to-card`}
+                    >
+                      <CardHeader className="pb-2 flex flex-row items-start justify-between gap-2 space-y-0">
+                        <CardTitle className="text-base flex items-center gap-2 pr-2">
+                          <Icon className="w-5 h-5 text-primary shrink-0" />
+                          <span className="line-clamp-2">{conta.nomeExibicao}</span>
+                        </CardTitle>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="shrink-0 h-8"
+                          onClick={() => abrirEditarConta(conta)}
+                        >
+                          <Pencil className="w-3.5 h-3.5 mr-1" />
+                          Editar
+                        </Button>
+                      </CardHeader>
+                      <CardContent className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Saldo atual (referência)</p>
+                        <p className="text-lg font-semibold tabular-nums">{formatBRL(conta.saldo)}</p>
+                      </CardContent>
+                    </Card>
+                  )
+                })}
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="taxas" className="mt-6 space-y-6">
-          <Card className="border-border bg-card">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <CreditCard className="w-5 h-5 text-primary" />
-                Taxas de cartão — PagBank
-              </CardTitle>
-              <CardDescription>
-                Informe os percentuais cobrados pela maquininha (MCC). Usados na calculadora de repasse.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-6 sm:grid-cols-2 max-w-xl">
-                <div className="space-y-2">
-                  <Label htmlFor="tx-debito">Débito (%)</Label>
-                  <Input
-                    id="tx-debito"
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    max={100}
-                    value={data.pagbankTaxas.debito}
-                    onChange={(e) => setTaxa("debito", parseFloat(e.target.value) || 0)}
-                    className="h-11 bg-secondary border-border"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="tx-credito">Crédito à vista (%)</Label>
-                  <Input
-                    id="tx-credito"
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    max={100}
-                    value={data.pagbankTaxas.credito}
-                    onChange={(e) => setTaxa("credito", parseFloat(e.target.value) || 0)}
-                    className="h-11 bg-secondary border-border"
-                  />
-                </div>
-              </div>
+          <p className="text-sm text-muted-foreground leading-relaxed max-w-3xl">
+            Ative a sua maquininha abaixo para configurar as taxas e habilitar a calculadora de repasse no caixa.
+          </p>
 
-              <div>
-                <Label className="text-sm font-medium">Parcelamento crédito (2x a 12x) — % por parcela</Label>
-                <p className="text-xs text-muted-foreground mb-3">
-                  Taxa efetiva de cada opção de parcelamento.
-                </p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {data.pagbankTaxas.parcelas2a12.map((pct, idx) => {
-                    const n = idx + 2
-                    return (
-                      <div key={n} className="space-y-1.5">
-                        <Label htmlFor={`tx-p${n}`} className="text-xs text-muted-foreground">
-                          {n}x
-                        </Label>
-                        <Input
-                          id={`tx-p${n}`}
-                          type="number"
-                          step="0.01"
-                          min={0}
-                          max={100}
-                          value={pct}
-                          onChange={(e) => setParcela(idx, parseFloat(e.target.value) || 0)}
-                          className="h-10 bg-secondary border-border text-sm"
-                        />
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
+          {draft.maquininhas.map((maq) => {
+            const editavel = maq.ativo
+            return (
+              <Card key={maq.slug} className="border-border bg-card">
+                <CardHeader className="space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-lg">{maq.nome}</CardTitle>
+                      <CardDescription>
+                        Taxas sugeridas pré-preenchidas; só é possível alterar com a maquininha{" "}
+                        <strong>ativada</strong>.
+                      </CardDescription>
+                    </div>
+                    <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2 bg-secondary/40">
+                      <Label htmlFor={`ativar-${maq.slug}`} className="text-sm cursor-pointer">
+                        Ativar no caixa
+                      </Label>
+                      <Switch
+                        id={`ativar-${maq.slug}`}
+                        checked={maq.ativo}
+                        onCheckedChange={(v) => setAtivoMaquininha(maq.slug, v)}
+                      />
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className={`space-y-6 ${!editavel ? "opacity-55" : ""}`}>
+                  <div className="grid gap-6 sm:grid-cols-2 max-w-xl">
+                    <div className="space-y-2">
+                      <Label htmlFor={`tx-debito-${maq.slug}`}>Débito (%)</Label>
+                      <Input
+                        id={`tx-debito-${maq.slug}`}
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        max={100}
+                        disabled={!editavel}
+                        value={maq.taxas.debito}
+                        onChange={(e) => setTaxaCampo(maq.slug, "debito", parseFloat(e.target.value) || 0)}
+                        className="h-11 bg-secondary border-border disabled:cursor-not-allowed"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor={`tx-credito-${maq.slug}`}>Crédito à vista (%)</Label>
+                      <Input
+                        id={`tx-credito-${maq.slug}`}
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        max={100}
+                        disabled={!editavel}
+                        value={maq.taxas.credito}
+                        onChange={(e) => setTaxaCampo(maq.slug, "credito", parseFloat(e.target.value) || 0)}
+                        className="h-11 bg-secondary border-border disabled:cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
 
-              <Separator />
+                  <div>
+                    <Label className="text-sm font-medium">Parcelamento crédito (2x a 12x) — % por parcela</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-3">
+                      {maq.taxas.parcelas2a12.map((pct, idx) => {
+                        const n = idx + 2
+                        return (
+                          <div key={`${maq.slug}-p${n}`} className="space-y-1.5">
+                            <Label htmlFor={`tx-${maq.slug}-p${n}`} className="text-xs text-muted-foreground">
+                              {n}x
+                            </Label>
+                            <Input
+                              id={`tx-${maq.slug}-p${n}`}
+                              type="number"
+                              step="0.01"
+                              min={0}
+                              max={100}
+                              disabled={!editavel}
+                              value={pct}
+                              onChange={(e) => setParcela(maq.slug, idx, parseFloat(e.target.value) || 0)}
+                              className="h-10 bg-secondary border-border text-sm disabled:cursor-not-allowed"
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
 
-              <div className="rounded-xl border border-border bg-secondary/30 p-4 space-y-4">
-                <div className="flex items-center gap-2 text-primary">
-                  <Calculator className="w-5 h-5" />
-                  <span className="font-semibold">Calculadora de repasse</span>
-                </div>
+          <Separator />
+
+          <div className="rounded-xl border border-border bg-secondary/30 p-4 space-y-4">
+            <div className="flex items-center gap-2 text-primary">
+              <Calculator className="w-5 h-5" />
+              <span className="font-semibold">Calculadora de repasse</span>
+            </div>
+            {maquininhasAtivas.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Ative pelo menos uma maquininha acima para usar a calculadora e liberar débito/crédito no PDV.
+              </p>
+            ) : (
+              <>
                 <p className="text-sm text-muted-foreground">
-                  Digite quanto você pagou na peça (custo). O sistema calcula o valor mínimo a cobrar no cartão para
-                  cobrir custo + taxa PagBank (sem lucro extra).
+                  Maquininha usada nos cálculos: escolha entre as que estão <strong>ativas no caixa</strong>.
                 </p>
                 <div className="grid gap-4 sm:grid-cols-2 max-w-2xl">
+                  <div className="space-y-2">
+                    <Label>Maquininha (ativas)</Label>
+                    <Select
+                      value={calcSlugEfetivo}
+                      onValueChange={(v) =>
+                        setDraft((prev) => ({ ...prev, maquininhaEdicaoSlug: v as MaquininhaSlug }))
+                      }
+                    >
+                      <SelectTrigger className="h-11 bg-background border-border">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {maquininhasAtivas.map((m) => (
+                          <SelectItem key={m.slug} value={m.slug}>
+                            {m.nome}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="custo-peca">Custo da peça (R$)</Label>
                     <Input
@@ -411,8 +486,8 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                       className="h-11 bg-background border-border"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Forma de pagamento na maquininha</Label>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Forma de pagamento</Label>
                     <Select value={modoRepasse} onValueChange={setModoRepasse}>
                       <SelectTrigger className="h-11 bg-background border-border">
                         <SelectValue />
@@ -432,20 +507,17 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                 {custoNum > 0 && (
                   <div className="rounded-lg bg-primary/10 border border-primary/20 px-4 py-3 space-y-1">
                     <p className="text-sm text-muted-foreground">
-                      Taxa considerada: <span className="font-medium text-foreground">{taxaAtualRepasse.toFixed(2)}%</span>{" "}
-                      ({labelModo})
+                      Taxa: <span className="font-medium text-foreground">{taxaAtualRepasse.toFixed(2)}%</span> ({labelModo})
                     </p>
                     <p className="text-lg font-semibold text-foreground">
                       Venda mínima sugerida: {formatBRL(precoSugerido)}
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Fórmula: custo ÷ (1 − taxa/100). Ajuste à vista se quiser incluir lucro ou frete.
-                    </p>
+                    <p className="text-xs text-muted-foreground">custo ÷ (1 − taxa/100)</p>
                   </div>
                 )}
-              </div>
-            </CardContent>
-          </Card>
+              </>
+            )}
+          </div>
         </TabsContent>
 
         <TabsContent value="metas" className="mt-6 space-y-6">
@@ -455,7 +527,7 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                 <Target className="w-5 h-5 text-primary" />
                 Metas RAFACELL
               </CardTitle>
-              <CardDescription>Faturamento e anotações de gestão (referência local neste aparelho).</CardDescription>
+              <CardDescription>Metas e anotações (gravadas ao salvar).</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 max-w-xl">
               <div className="space-y-2">
@@ -465,9 +537,9 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                   type="number"
                   step="0.01"
                   min={0}
-                  value={data.metaFaturamento === 0 ? "" : data.metaFaturamento}
+                  value={draft.metaFaturamento === 0 ? "" : draft.metaFaturamento}
                   onChange={(e) =>
-                    persist({ ...data, metaFaturamento: parseFloat(e.target.value) || 0 })
+                    setDraft((prev) => ({ ...prev, metaFaturamento: parseFloat(e.target.value) || 0 }))
                   }
                   className="h-11 bg-secondary border-border"
                   placeholder="0,00"
@@ -477,26 +549,74 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
                 <Label htmlFor="meta-obs">Observações / lembretes</Label>
                 <Textarea
                   id="meta-obs"
-                  value={data.metaObservacao}
-                  onChange={(e) => persist({ ...data, metaObservacao: e.target.value })}
-                  placeholder="Ex.: foco em películas em novembro; reforçar estoque de baterias…"
+                  value={draft.metaObservacao}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, metaObservacao: e.target.value }))}
+                  placeholder="Ex.: foco em películas em novembro…"
                   className="min-h-[120px] bg-secondary border-border resize-y"
                 />
               </div>
               <Button
                 type="button"
                 variant="secondary"
-                onClick={() => {
-                  const next = { ...data, metaFaturamento: 0, metaObservacao: "" }
-                  persist(next)
-                }}
+                onClick={() => setDraft((prev) => ({ ...prev, metaFaturamento: 0, metaObservacao: "" }))}
               >
-                Limpar metas
+                Limpar metas (ainda não salvo até confirmar)
               </Button>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      <div className="sticky bottom-0 z-10 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4 pb-2 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 -mx-1 px-1">
+        {isDirty && (
+          <p className="text-sm text-amber-600 sm:mr-auto order-2 sm:order-1">
+            Você tem alterações não salvas.
+          </p>
+        )}
+        <Button type="button" size="lg" className="order-1 sm:order-2 min-w-[200px]" onClick={salvarAlteracoes}>
+          Salvar alterações
+        </Button>
+      </div>
+
+      <Dialog open={!!editConta} onOpenChange={(o) => !o && setEditConta(null)}>
+        <DialogContent className="sm:max-w-md bg-card border-border">
+          <DialogHeader>
+            <DialogTitle>Editar conta</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-nome">Nome exibido</Label>
+              <Input
+                id="edit-nome"
+                value={editNome}
+                onChange={(e) => setEditNome(e.target.value)}
+                placeholder="Ex.: Sicredi — conta loja"
+                className="h-11 bg-secondary border-border"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-saldo">Saldo atual (R$)</Label>
+              <Input
+                id="edit-saldo"
+                type="number"
+                step="0.01"
+                value={editSaldo}
+                onChange={(e) => setEditSaldo(e.target.value)}
+                placeholder="0,00"
+                className="h-11 bg-secondary border-border"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setEditConta(null)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={aplicarEdicaoConta}>
+              Aplicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
