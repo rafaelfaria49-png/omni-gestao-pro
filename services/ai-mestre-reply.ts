@@ -1,5 +1,11 @@
 import type { OrchestratorDecision, PlanoAssinatura } from "@/services/ai-orchestrator"
-import { getGoogleGenerativeAiKey } from "@/lib/resolve-llm-env"
+
+/** Chave Google AI (Vercel): leitura explícita — mesma variável que o painel injeta. */
+function mestreGoogleApiKey(): string {
+  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY
+  if (typeof apiKey !== "string") return ""
+  return apiKey.replace(/^[\s'"]+|[\s'"]+$/g, "").trim()
+}
 
 export type StockSummaryRow = { name: string; stock: number; price: number; category: string }
 
@@ -37,6 +43,7 @@ type GeminiGenResponse = {
 
 async function geminiGenerateContent(
   model: string,
+  /** Sempre `process.env.GOOGLE_GENERATIVE_AI_API_KEY` (via mestreGoogleApiKey). */
   apiKey: string,
   body: Record<string, unknown>
 ): Promise<{ ok: true; text: string } | { ok: false; raw: string }> {
@@ -71,7 +78,8 @@ async function geminiGenerateContent(
  * Google Generative AI (Gemini) apenas — múltiplos formatos e modelos de fallback.
  */
 async function geminiCompleteMestre(system: string, userText: string, apiKey: string): Promise<string> {
-  const models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+  /** `gemini-1.5-flash`: melhor compatibilidade com Edge / ambientes restritos na Vercel. */
+  const models = ["gemini-1.5-flash"]
   const attempts: Array<Record<string, unknown>> = [
     {
       systemInstruction: { parts: [{ text: system }] },
@@ -122,14 +130,14 @@ export async function composeMestreUserMessage(
           .join("\n")
 
   const system = buildSystemPrompt(decision, plano, stockBlock)
-  const geminiKey = getGoogleGenerativeAiKey()
+  const apiKey = mestreGoogleApiKey()
 
-  if (!geminiKey.length) {
+  if (!apiKey.length) {
     console.error("[IA Mestre] GOOGLE_GENERATIVE_AI_API_KEY ausente no processo do servidor")
     throw new Error("MESTRE_GEMINI_KEY_MISSING")
   }
 
-  const text = await geminiCompleteMestre(system, userText, geminiKey)
+  const text = await geminiCompleteMestre(system, userText, apiKey)
   return {
     message: text,
     meta: { llmConfigured: true, backend: "gemini" },

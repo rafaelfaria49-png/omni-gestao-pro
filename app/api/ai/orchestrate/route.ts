@@ -5,6 +5,7 @@ import { orchestrateCommand, type PlanoAssinatura } from "@/services/ai-orchestr
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { composeMestreUserMessage } from "@/services/ai-mestre-reply"
 
+/** Prisma exige Node; a chamada Gemini em si é compatível com Edge, mas este handler não. */
 export const runtime = "nodejs"
 
 type Body = {

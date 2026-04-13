@@ -1,6 +1,11 @@
+export const runtime = "edge"
+
 /**
  * Orquestrador de IA (Mestre): classifica o comando e escolhe o backend adequado.
  * Planos: "ouro" = Premium (mesmo nome de produto). IAs pesadas exigem Premium.
+ *
+ * O handler HTTP que consulta estoque (Prisma) permanece em `nodejs` em
+ * `app/api/ai/orchestrate/route.ts`; a lógica pura deste módulo alinha-se ao Edge.
  */
 
 export type PlanoAssinatura = "bronze" | "prata" | "ouro"
