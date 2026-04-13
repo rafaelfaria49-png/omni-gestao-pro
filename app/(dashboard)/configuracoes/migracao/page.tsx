@@ -258,7 +258,7 @@ export default function MigracaoPage() {
     input: RequestInfo | URL,
     init: RequestInit & { timeoutMs?: number } = {}
   ) => {
-    const timeoutMs = init.timeoutMs ?? 120_000
+    const timeoutMs = init.timeoutMs ?? 60_000
     const ctrl = new AbortController()
     const t = window.setTimeout(() => ctrl.abort(), timeoutMs)
     try {
@@ -272,7 +272,7 @@ export default function MigracaoPage() {
     items: Array<{ id: string; name: string; stock: number; cost: number; price: number; category: string }>
   ) => {
     const total = items.length
-    const batchSize = 100
+    const batchSize = 500
     const batches = Math.ceil(total / batchSize)
     setProgressTotal(total)
     setProgressNow(0)
@@ -282,8 +282,8 @@ export default function MigracaoPage() {
       const end = Math.min(total, start + batchSize)
       const chunk = items.slice(start, end)
 
-      setProgressNow(end)
-      setProgressLabel(`Item ${end} de ${total}...`)
+      const loteAtual = b + 1
+      setProgressLabel(`Enviando lote ${loteAtual}/${batches}... (até item ${end} de ${total})`)
       await yieldToUi()
 
       const res = await fetchWithTimeout("/api/ops/inventory/import", {
@@ -294,13 +294,18 @@ export default function MigracaoPage() {
         },
         body: JSON.stringify({ items: chunk, replace: true, batchIndex: b }),
         credentials: "include",
-        timeoutMs: 120_000,
+        timeoutMs: 60_000,
       })
 
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
         throw new Error(data?.error || data?.detail || `Falha no lote ${b + 1}/${batches} (HTTP ${res.status})`)
       }
+
+      // Atualiza progresso somente após o lote finalizar no servidor.
+      setProgressNow(end)
+      setProgressLabel(`Item ${end} de ${total}...`)
+      await yieldToUi()
     }
   }
 
@@ -343,7 +348,7 @@ export default function MigracaoPage() {
             category: "peca",
           })
 
-          if ((i + 1) % 100 === 0 || i + 1 === totalRows) {
+          if ((i + 1) % 500 === 0 || i + 1 === totalRows) {
             setProgressNow(i + 1)
             setProgressLabel(`Preparando item ${i + 1} de ${totalRows}...`)
             await yieldToUi()
