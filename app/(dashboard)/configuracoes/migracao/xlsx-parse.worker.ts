@@ -44,12 +44,10 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     const { fileName, buffer } = ev.data
     const sheet = parseXlsxFromBuffer(fileName, buffer)
     const res: WorkerResponse = { ok: true, sheet }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(self as any).postMessage(res)
+    self.postMessage(res)
   } catch (e) {
     const res: WorkerResponse = { ok: false, error: e instanceof Error ? e.message : String(e) }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ;(self as any).postMessage(res)
+    self.postMessage(res)
   }
 }
 

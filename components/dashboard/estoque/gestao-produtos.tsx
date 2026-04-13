@@ -74,6 +74,8 @@ import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/hooks/use-toast"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { appendAuditLog } from "@/lib/audit-log"
+import { useLojaAtiva } from "@/lib/loja-ativa"
+import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -119,94 +121,7 @@ type NFeItem = {
   valorUnitario: number
 }
 
-const mockProducts: Product[] = [
-  {
-    id: "1",
-    nome: "Tela iPhone 13",
-    codigo: "7891234567890",
-    categoria: "peca",
-    precoCusto: 180.00,
-    precoVenda: 350.00,
-    estoqueAtual: 8,
-    estoqueMinimo: 5,
-    ncm: "85177090",
-    cfop: "5102",
-    origemMercadoria: "1",
-  },
-  {
-    id: "2",
-    nome: "Tela iPhone 12",
-    codigo: "7891234567891",
-    categoria: "peca",
-    precoCusto: 150.00,
-    precoVenda: 280.00,
-    estoqueAtual: 3,
-    estoqueMinimo: 5,
-    ncm: "85177090",
-    cfop: "5102",
-  },
-  {
-    id: "3",
-    nome: "Bateria iPhone 11",
-    codigo: "7891234567892",
-    categoria: "peca",
-    precoCusto: 45.00,
-    precoVenda: 120.00,
-    estoqueAtual: 15,
-    estoqueMinimo: 10,
-    ncm: "85076000",
-    cfop: "5102",
-  },
-  {
-    id: "4",
-    nome: "Película de Vidro Universal",
-    codigo: "7891234567893",
-    categoria: "acessorio",
-    precoCusto: 5.00,
-    precoVenda: 25.00,
-    estoqueAtual: 50,
-    estoqueMinimo: 20,
-    ncm: "70072900",
-    cfop: "5102",
-  },
-  {
-    id: "5",
-    nome: "Capinha Silicone iPhone 14",
-    codigo: "7891234567894",
-    categoria: "acessorio",
-    precoCusto: 12.00,
-    precoVenda: 45.00,
-    estoqueAtual: 2,
-    estoqueMinimo: 10,
-    ncm: "39269090",
-    cfop: "5102",
-  },
-  {
-    id: "6",
-    nome: "Troca de Tela",
-    codigo: "SERV001",
-    categoria: "servico",
-    precoCusto: 0,
-    precoVenda: 80.00,
-    estoqueAtual: 999,
-    estoqueMinimo: 0,
-  },
-  {
-    id: "7",
-    nome: "iPhone 12 Pro Max 128GB",
-    codigo: "7891234567897",
-    categoria: "peca",
-    precoCusto: 2800.00,
-    precoVenda: 3500.00,
-    estoqueAtual: 2,
-    estoqueMinimo: 1,
-    ncm: "85171231",
-    cfop: "5102",
-    imei: "354678091234567",
-    possuiGarantia: true,
-    diasGarantia: 90,
-  },
-]
+const mockProducts: Product[] = []
 
 const emptyProduct: Omit<Product, "id"> = {
   nome: "",
@@ -257,9 +172,10 @@ export function GestaoProdutos({
 }: GestaoProdutosProps) {
   const { toast } = useToast()
   const { config } = useConfigEmpresa()
+  const { lojaAtivaId } = useLojaAtiva()
   const auditUser = () =>
     `${(config.empresa.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`
-  const [products, setProducts] = useState<Product[]>(mockProducts)
+  const [products, setProducts] = useState<Product[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -292,6 +208,40 @@ export function GestaoProdutos({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<BlobPart[]>([])
   const importInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/ops/inventory${lojaAtivaId ? `?lojaId=${encodeURIComponent(lojaAtivaId)}` : ""}`, {
+          credentials: "include",
+          headers: lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : undefined,
+        })
+        if (!res.ok) return
+        const data = (await res.json().catch(() => null)) as { items?: Array<{ id: string; name: string; stock: number; cost: number; price: number; category: string }> } | null
+        const items = data?.items ?? []
+        if (cancelled) return
+        setProducts(
+          items.map((it) => ({
+            id: it.id,
+            nome: it.name,
+            codigo: it.id,
+            categoria: it.category === "acessorio" || it.category === "servico" || it.category === "peca" ? (it.category as Product["categoria"]) : "peca",
+            precoCusto: typeof it.cost === "number" ? it.cost : 0,
+            precoVenda: typeof it.price === "number" ? it.price : 0,
+            estoqueAtual: typeof it.stock === "number" ? it.stock : 0,
+            estoqueMinimo: 0,
+          }))
+        )
+      } catch {
+        /* ignore */
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [lojaAtivaId])
 
   useEffect(() => {
     if (!iaSyncLoading) {

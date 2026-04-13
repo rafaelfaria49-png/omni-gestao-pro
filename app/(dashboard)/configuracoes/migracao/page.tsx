@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import Papa from "papaparse"
-import * as XLSX from "xlsx"
+import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
+import { useLojaAtiva } from "@/lib/loja-ativa"
 
 type ImportKind = "clientes" | "produtos" | "ordens_servico" | "vendas_financeiro" | "servicos"
 
@@ -53,6 +54,24 @@ function digitsOnly(s: unknown): string {
   return String(s ?? "").replace(/\D/g, "")
 }
 
+function toNumberPtBr(raw: unknown): number {
+  const s = String(raw ?? "").trim()
+  if (!s) return 0
+  const norm = s.replace(/\./g, "").replace(",", ".")
+  const n = parseFloat(norm)
+  return Number.isFinite(n) ? n : 0
+}
+
+function sanitizeId(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-+|-+$)/g, "")
+}
+
 function bestMatch(headers: string[], candidates: string[]): string | undefined {
   const hNorm = headers.map((h) => ({ h, n: normHeader(h) }))
   for (const c of candidates) {
@@ -86,26 +105,21 @@ async function parseCsv(file: File): Promise<ParsedSheet> {
 
 async function parseXlsx(file: File): Promise<ParsedSheet> {
   const buf = await file.arrayBuffer()
-  const wb = XLSX.read(buf, { type: "array" })
-  const first = wb.SheetNames[0]
-  const sheet = first ? wb.Sheets[first] : undefined
-  if (!sheet) return { fileName: file.name, headers: [], rows: [] }
-
-  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as unknown[][]
-  const headerRow = Array.isArray(grid[0]) ? (grid[0] as unknown[]) : []
-  const headers = headerRow.map((x) => String(x ?? "").trim()).filter(Boolean)
-  const rows: Record<string, unknown>[] = []
-  for (let r = 1; r < grid.length; r += 1) {
-    const row = grid[r]
-    if (!Array.isArray(row)) continue
-    const obj: Record<string, unknown> = {}
-    for (let c = 0; c < headers.length; c += 1) {
-      obj[headers[c]!] = row[c]
-    }
-    const hasAny = Object.values(obj).some((v) => String(v ?? "").trim() !== "")
-    if (hasAny) rows.push(obj)
+  const worker = new Worker(new URL("./xlsx-parse.worker.ts", import.meta.url), { type: "module" })
+  try {
+    const res = await new Promise<ParsedSheet>((resolve, reject) => {
+      worker.onmessage = (ev: MessageEvent<{ ok: boolean; sheet?: ParsedSheet; error?: string }>) => {
+        const data = ev.data
+        if (data?.ok && data.sheet) resolve(data.sheet)
+        else reject(new Error(data?.error || "Falha ao ler XLSX no worker."))
+      }
+      worker.onerror = () => reject(new Error("Falha ao iniciar worker de XLSX."))
+      worker.postMessage({ fileName: file.name, buffer: buf }, [buf])
+    })
+    return res
+  } finally {
+    worker.terminate()
   }
-  return { fileName: file.name, headers, rows }
 }
 
 async function parseFileUniversal(file: File): Promise<ParsedSheet> {
@@ -153,6 +167,7 @@ function defaultMappingFor(kind: ImportKind, headers: string[]): MappingState {
 
 export default function MigracaoPage() {
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const { lojaAtivaId } = useLojaAtiva()
   const [kind, setKind] = useState<ImportKind>("clientes")
   const [parseError, setParseError] = useState<string | null>(null)
   const [sheet, setSheet] = useState<ParsedSheet | null>(null)
@@ -239,10 +254,123 @@ export default function MigracaoPage() {
     await new Promise<void>((r) => setTimeout(r, 0))
   }
 
+  const fetchWithTimeout = async (
+    input: RequestInfo | URL,
+    init: RequestInit & { timeoutMs?: number } = {}
+  ) => {
+    const timeoutMs = init.timeoutMs ?? 120_000
+    const ctrl = new AbortController()
+    const t = window.setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      return await fetch(input, { ...init, signal: ctrl.signal })
+    } finally {
+      window.clearTimeout(t)
+    }
+  }
+
+  const uploadInventoryInBatches = async (
+    items: Array<{ id: string; name: string; stock: number; cost: number; price: number; category: string }>
+  ) => {
+    const total = items.length
+    const batchSize = 100
+    const batches = Math.ceil(total / batchSize)
+    setProgressTotal(total)
+    setProgressNow(0)
+
+    for (let b = 0; b < batches; b += 1) {
+      const start = b * batchSize
+      const end = Math.min(total, start + batchSize)
+      const chunk = items.slice(start, end)
+
+      setProgressNow(end)
+      setProgressLabel(`Item ${end} de ${total}...`)
+      await yieldToUi()
+
+      const res = await fetchWithTimeout("/api/ops/inventory/import", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : {}),
+        },
+        body: JSON.stringify({ items: chunk, replace: true, batchIndex: b }),
+        credentials: "include",
+        timeoutMs: 120_000,
+      })
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
+        throw new Error(data?.error || data?.detail || `Falha no lote ${b + 1}/${batches} (HTTP ${res.status})`)
+      }
+    }
+  }
+
   const runImport = async () => {
     if (!sheet) return
     if (isImporting) return
     setIsImporting(true)
+
+    if (kind === "produtos") {
+      try {
+        const colNome = mapping["produtos.nome"] || ""
+        const colSku = mapping["produtos.sku"] || ""
+        const colCusto = mapping["produtos.preco_custo"] || ""
+        const colVenda = mapping["produtos.preco_venda"] || ""
+        const colEstoque = mapping["produtos.estoque"] || ""
+        if (!colNome) throw new Error("Mapeie ao menos a coluna de Nome do Produto.")
+
+        const items: Array<{ id: string; name: string; stock: number; cost: number; price: number; category: string }> = []
+        const seen = new Set<string>()
+        const totalRows = sheet.rows.length
+
+        setProgressTotal(totalRows)
+        setProgressNow(0)
+        for (let i = 0; i < totalRows; i += 1) {
+          const r = sheet.rows[i]!
+          const name = String(r[colNome] ?? "").trim()
+          if (!name) continue
+          const skuRaw = String(r[colSku] ?? "").trim()
+          const base = sanitizeId(skuRaw || name)
+          let id = base ? `gc-${base}` : `gc-item-${i + 1}`
+          if (seen.has(id)) id = `${id}-${i + 1}`
+          seen.add(id)
+
+          items.push({
+            id,
+            name,
+            cost: toNumberPtBr(r[colCusto]),
+            price: toNumberPtBr(r[colVenda]),
+            stock: Math.max(0, Math.floor(toNumberPtBr(r[colEstoque]))),
+            category: "peca",
+          })
+
+          if ((i + 1) % 100 === 0 || i + 1 === totalRows) {
+            setProgressNow(i + 1)
+            setProgressLabel(`Preparando item ${i + 1} de ${totalRows}...`)
+            await yieldToUi()
+          }
+        }
+
+        setProgressNow(0)
+        setProgressTotal(items.length)
+        setProgressLabel("Enviando para o banco em lotes de 100...")
+        await yieldToUi()
+
+        await uploadInventoryInBatches(items)
+
+        setCounts((prev) => ({ ...prev, produtos: prev.produtos + items.length }))
+        setImportLog((prev) => {
+          const head = prev ? `${prev}\n` : ""
+          return `${head}Sucesso: +${items.length} produtos`
+        })
+        setProgressLabel("")
+        setIsImporting(false)
+        return
+      } catch (e) {
+        setParseError(e instanceof Error ? e.message : "Falha ao importar produtos.")
+        setIsImporting(false)
+        return
+      }
+    }
 
     // Base de clientes para vínculo (na sessão) — simples: pega docs mapeados.
     const docKey = mapping["clientes.doc"]
