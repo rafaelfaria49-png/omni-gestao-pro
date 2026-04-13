@@ -93,7 +93,7 @@ const menuItems: MenuItem[] = [
     submenu: [
       { label: "Dados da Empresa", href: "#", page: "config-empresa" },
       { label: "Ajustes", href: "#", page: "config-ajustes" },
-      { label: "Personalização do PDV", href: "#", page: "config-pdv" },
+      { label: "Centro financeiro RAFACELL", href: "#", page: "config-pdv" },
       { label: "Marca/Logo", href: "#", page: "config-marca" },
       { label: "Certificado Digital", href: "#", page: "config-certificado" },
       { label: "Termos de Garantia", href: "#", page: "config-garantia" },

@@ -25,6 +25,7 @@ import {
   MessageCircle,
   LayoutGrid,
   UtensilsCrossed,
+  Wallet,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -61,6 +62,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { CentroPersonalizacaoFinanceiraRafacell } from "@/components/dashboard/configuracoes/centro-personalizacao-financeira-rafacell"
 
 const ATALHOS_PDV_MAX = 24
 
@@ -511,9 +513,9 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             value="pdv-personalizacao"
             className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
           >
-            <LayoutGrid className="w-4 h-4 mr-2 hidden sm:inline" />
-            <span className="hidden xl:inline">Personalização PDV</span>
-            <span className="xl:hidden">PDV</span>
+            <Wallet className="w-4 h-4 mr-2 hidden sm:inline" />
+            <span className="hidden xl:inline">Financeiro RAFACELL</span>
+            <span className="xl:hidden">Financeiro</span>
           </TabsTrigger>
           <TabsTrigger 
             value="marca-logo"
@@ -831,10 +833,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
               </div>
             </CardContent>
           </Card>
-        </TabsContent>
 
-        {/* Personalização do PDV: cards rápidos, categorias, reset */}
-        <TabsContent value="pdv-personalizacao" className="mt-6 space-y-6">
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -996,6 +995,10 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             </CardContent>
           </Card>
 
+        </TabsContent>
+
+        <TabsContent value="pdv-personalizacao" className="mt-6 space-y-6">
+          <CentroPersonalizacaoFinanceiraRafacell />
         </TabsContent>
 
         {/* ABA 2: MARCA E LOGO */}

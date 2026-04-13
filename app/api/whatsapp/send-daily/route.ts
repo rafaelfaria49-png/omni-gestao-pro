@@ -6,6 +6,7 @@ import { sendDailyClosingToPhone } from "@/lib/whatsapp-daily-server"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
 
 export const runtime = "nodejs"
+export const maxDuration = 60
 
 /**
  * Envia o fechamento diário via API Evolution para o número informado.

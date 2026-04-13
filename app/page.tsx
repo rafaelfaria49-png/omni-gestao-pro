@@ -427,14 +427,14 @@ function DashboardContent() {
                 <div className="p-6 rounded-xl border border-border bg-card max-w-lg">
                   <h2 className="text-xl font-semibold text-foreground">Controle de Consumo</h2>
                   <p className="text-muted-foreground mt-2">
-                    Ative o módulo em Configurações → Personalização do PDV para usar mesas e comandas.
+                    Ative o módulo em Configurações → Ajustes para usar mesas e comandas.
                   </p>
                   <button
                     type="button"
                     className="mt-4 h-10 px-4 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
-                    onClick={() => goToPage("config-pdv")}
+                    onClick={() => goToPage("config-ajustes")}
                   >
-                    Abrir Personalização do PDV
+                    Abrir Configurações (aba Ajustes)
                   </button>
                 </div>
               )
@@ -540,7 +540,7 @@ function DashboardContent() {
                 </div>
                 <RelatoriosGerenciais />
               </>
-            ) : currentPage === "configuracoes" || currentPage === "config-empresa" || currentPage === "config-ajustes" || currentPage === "config-marca" || currentPage === "config-certificado" || currentPage === "config-garantia" || currentPage === "config-backup" || currentPage === "config-multilojas" ? (
+            ) : currentPage === "configuracoes" || currentPage === "config-empresa" || currentPage === "config-ajustes" || currentPage === "config-pdv" || currentPage === "config-marca" || currentPage === "config-certificado" || currentPage === "config-garantia" || currentPage === "config-backup" || currentPage === "config-multilojas" ? (
               <>
                 <div>
                   <h1 className="text-2xl font-bold text-foreground">Configurações do Sistema</h1>
