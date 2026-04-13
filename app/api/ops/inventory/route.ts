@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma"
 import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
-import type { EstoqueProduto } from "@/generated/prisma"
+import type { EstoqueProduto, Prisma } from "@/generated/prisma"
+import { normalizeNameForMatch } from "@/lib/import-normalize"
 
 export const runtime = "nodejs"
 
@@ -39,13 +40,17 @@ function itemToCreate(lojaId: string, item: InvPayload) {
     id: item.id,
     lojaId,
     name: item.name,
+    nameNorm: normalizeNameForMatch(item.name),
     stock: Math.max(0, Math.floor(item.stock)),
     cost: item.cost,
     price: item.price,
     category: item.category ?? "",
     vendaPorPeso: item.vendaPorPeso ?? false,
     precoPorKg: item.precoPorKg ?? null,
-    atributos: item.atributos ?? null,
+    atributos:
+      item.atributos !== undefined && item.atributos !== null
+        ? (item.atributos as Prisma.InputJsonValue)
+        : undefined,
   }
 }
 

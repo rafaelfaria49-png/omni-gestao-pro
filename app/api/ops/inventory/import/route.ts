@@ -4,6 +4,7 @@ import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import type { Prisma } from "@/generated/prisma"
+import { normalizeNameForMatch } from "@/lib/import-normalize"
 
 export const runtime = "nodejs"
 
@@ -24,6 +25,7 @@ function itemToCreate(lojaId: string, item: InvPayload) {
     id: item.id,
     lojaId,
     name: item.name,
+    nameNorm: normalizeNameForMatch(item.name),
     stock: Math.max(0, Math.floor(item.stock)),
     cost: item.cost,
     price: item.price,
@@ -32,6 +34,11 @@ function itemToCreate(lojaId: string, item: InvPayload) {
     precoPorKg: item.precoPorKg ?? null,
     atributos: (item.atributos ?? null) as Prisma.InputJsonValue,
   }
+}
+
+function omitId<T extends { id: string }>(data: T): Omit<T, "id"> {
+  const { id: _id, ...rest } = data
+  return rest
 }
 
 async function requireSubscription() {
@@ -67,8 +74,6 @@ export async function PUT(req: Request) {
   }
 
   const items = (body as { items?: unknown }).items
-  const replace = Boolean((body as { replace?: unknown }).replace)
-  const batchIndex = typeof (body as { batchIndex?: unknown }).batchIndex === "number" ? (body as { batchIndex: number }).batchIndex : 0
 
   if (!Array.isArray(items)) {
     return NextResponse.json({ error: "items deve ser um array" }, { status: 400 })
@@ -95,14 +100,46 @@ export async function PUT(req: Request) {
   }
 
   try {
-    if (replace && batchIndex === 0) {
-      await prisma.estoqueProduto.deleteMany({ where: { lojaId } })
-    }
-    await prisma.estoqueProduto.createMany({
-      data: normalized.map((it) => itemToCreate(lojaId, it)),
-      skipDuplicates: true,
+    const ids = [...new Set(normalized.map((it) => it.id))]
+    const nameNorms = [...new Set(normalized.map((it) => normalizeNameForMatch(it.name)))]
+
+    const existingById = await prisma.estoqueProduto.findMany({
+      where: { lojaId, id: { in: ids } },
     })
-    return NextResponse.json({ ok: true, count: normalized.length })
+    const byIdMap = new Map(existingById.map((r) => [r.id, r]))
+
+    const existingByName = await prisma.estoqueProduto.findMany({
+      where: { lojaId, nameNorm: { in: nameNorms } },
+    })
+    const nameNormToId = new Map<string, string>()
+    for (const r of existingByName) {
+      if (!nameNormToId.has(r.nameNorm)) nameNormToId.set(r.nameNorm, r.id)
+    }
+
+    let updated = 0
+    let created = 0
+    for (const it of normalized) {
+      const data = itemToCreate(lojaId, it)
+      let targetId: string | null = null
+      if (byIdMap.has(it.id)) {
+        targetId = it.id
+      } else if (nameNormToId.has(data.nameNorm)) {
+        targetId = nameNormToId.get(data.nameNorm)!
+      }
+      if (targetId) {
+        await prisma.estoqueProduto.update({
+          where: { id: targetId },
+          data: omitId(data),
+        })
+        updated += 1
+        nameNormToId.set(data.nameNorm, targetId)
+        continue
+      }
+      await prisma.estoqueProduto.create({ data })
+      created += 1
+      nameNormToId.set(data.nameNorm, data.id)
+    }
+    return NextResponse.json({ ok: true, count: normalized.length, created, updated })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error("[ops/inventory/import PUT]", msg)

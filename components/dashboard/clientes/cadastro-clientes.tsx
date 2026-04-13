@@ -28,6 +28,9 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
+import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
+import { subscribeClientesRevalidate } from "@/lib/clientes-revalidate"
+import { useLojaAtiva } from "@/lib/loja-ativa"
 
 type ScoreInterno = {
   valor: number
@@ -46,42 +49,6 @@ type Cliente = {
   ultimaVisita: string
 }
 
-const clientes: Cliente[] = [
-  {
-    id: "1",
-    nome: "João Silva",
-    cpf: "123.456.789-00",
-    telefone: "(11) 99999-1234",
-    email: "joao@email.com",
-    endereco: "Rua das Flores, 123 - Centro",
-    aparelhosRecorrentes: ["iPhone 13", "iPad Pro", "MacBook Air"],
-    totalOS: 5,
-    ultimaVisita: "10/01/2026"
-  },
-  {
-    id: "2",
-    nome: "Maria Oliveira",
-    cpf: "987.654.321-00",
-    telefone: "(11) 98888-5678",
-    email: "maria@email.com",
-    endereco: "Av. Brasil, 456 - Jardim",
-    aparelhosRecorrentes: ["Samsung S23", "Galaxy Tab"],
-    totalOS: 3,
-    ultimaVisita: "08/01/2026"
-  },
-  {
-    id: "3",
-    nome: "Carlos Santos",
-    cpf: "456.789.123-00",
-    telefone: "(11) 97777-9012",
-    email: "carlos@email.com",
-    endereco: "Rua São Paulo, 789 - Vila Nova",
-    aparelhosRecorrentes: ["Motorola Edge", "Notebook Lenovo"],
-    totalOS: 8,
-    ultimaVisita: "05/01/2026"
-  },
-]
-
 interface CadastroClientesProps {
   /** Incrementado pelo fluxo de voz (página principal) para abrir o modal de novo cliente. */
   voiceOpenNewCliente?: number
@@ -92,6 +59,43 @@ export function CadastroClientes({
   voiceOpenNewCliente = 0,
   onVoiceOpenNewClienteConsumed,
 }: CadastroClientesProps = {}) {
+  const { lojaAtivaId } = useLojaAtiva()
+  const [clientes, setClientes] = useState<Cliente[]>([])
+  const [clientesLoading, setClientesLoading] = useState(true)
+  const [clientesError, setClientesError] = useState<string | null>(null)
+
+  const loadClientes = useCallback(async () => {
+    setClientesError(null)
+    setClientesLoading(true)
+    try {
+      const res = await fetch("/api/ops/import/clientes", {
+        credentials: "include",
+        headers: lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : {},
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null
+        throw new Error(data?.error || `Falha ao carregar (HTTP ${res.status})`)
+      }
+      const data = (await res.json()) as { clientes?: Cliente[] }
+      setClientes(Array.isArray(data.clientes) ? data.clientes : [])
+    } catch (e) {
+      setClientesError(e instanceof Error ? e.message : "Falha ao carregar clientes")
+      setClientes([])
+    } finally {
+      setClientesLoading(false)
+    }
+  }, [lojaAtivaId])
+
+  useEffect(() => {
+    void loadClientes()
+  }, [loadClientes])
+
+  useEffect(() => {
+    return subscribeClientesRevalidate(() => {
+      void loadClientes()
+    })
+  }, [loadClientes])
+
   const [searchTerm, setSearchTerm] = useState("")
   const [isNewClientOpen, setIsNewClientOpen] = useState(false)
 
@@ -447,6 +451,18 @@ export function CadastroClientes({
 
       {/* Lista de Clientes */}
       <div className="grid gap-4">
+        {clientesLoading && (
+          <p className="text-sm text-muted-foreground">Carregando clientes…</p>
+        )}
+        {clientesError && !clientesLoading && (
+          <p className="text-sm text-destructive">{clientesError}</p>
+        )}
+        {!clientesLoading && !clientesError && clientes.length === 0 && (
+          <p className="text-sm text-muted-foreground">Nenhum cliente cadastrado. Importe na aba Backup ou cadastre manualmente.</p>
+        )}
+        {!clientesLoading && !clientesError && clientes.length > 0 && filteredClientes.length === 0 && (
+          <p className="text-sm text-muted-foreground">Nenhum cliente corresponde à busca.</p>
+        )}
         {filteredClientes.map((cliente) => (
           <Card key={cliente.id} className="bg-card border-border hover:border-primary/50 transition-colors">
             <CardContent className="pt-6">
@@ -476,7 +492,11 @@ export function CadastroClientes({
                   </div>
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <MapPin className="w-4 h-4" />
-                    <span className="truncate">{cliente.endereco.split(" - ")[1]}</span>
+                    <span className="truncate">
+                      {cliente.endereco?.includes(" - ")
+                        ? cliente.endereco.split(" - ")[1]
+                        : cliente.endereco || "—"}
+                    </span>
                   </div>
                 </div>
 

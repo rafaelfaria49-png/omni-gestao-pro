@@ -57,11 +57,34 @@ model EstoqueProduto {
   vendaPorPeso Boolean  @default(false)
   precoPorKg   Float?
   atributos    Json?
+  /// Nome normalizado (lowercase, sem acento) para deduplicar na importação.
+  nameNorm     String   @default("")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([lojaId])
+  @@index([lojaId, nameNorm])
   @@map("estoque_produtos")
+}
+
+/// Clientes importados pelo painel (dedupe por CPF/CNPJ ou nome na mesma loja).
+model ClienteImportado {
+  id        String   @id @default(cuid())
+  lojaId    String
+  nome      String
+  nomeNorm  String
+  /// Somente dígitos; null = sem documento (dedupe só por nome).
+  docDigits String?
+  telefone  String   @default("")
+  email     String   @default("")
+  endereco  String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([lojaId, nomeNorm])
+  @@unique([lojaId, docDigits])
+  @@index([lojaId])
+  @@map("clientes_importados")
 }
 
 /// Ordens de serviço — payload JSON espelha `OrdemServico` do app até sync granular.

@@ -13,7 +13,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
+import { dispatchClientesRevalidate } from "@/lib/clientes-revalidate"
 import { useLojaAtiva } from "@/lib/loja-ativa"
+import { defaultChecklist, horaAtualHHMM } from "@/components/dashboard/os/ordens-servico"
 
 type ImportKind = "clientes" | "produtos" | "ordens_servico"
 
@@ -34,7 +36,10 @@ type MapTarget =
   | "produtos.preco_custo"
   | "produtos.preco_venda"
   | "produtos.estoque"
+  | "ordens.numero"
+  | "ordens.cliente_nome"
   | "ordens.doc_cliente"
+  | "ordens.telefone"
 
 type MappingState = Partial<Record<MapTarget, string>>
 
@@ -48,10 +53,6 @@ function normHeader(s: string): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
-}
-
-function digitsOnly(s: unknown): string {
-  return String(s ?? "").replace(/\D/g, "")
 }
 
 function toNumberPtBr(raw: unknown): number {
@@ -174,14 +175,68 @@ function defaultMappingFor(kind: ImportKind, headers: string[]): MappingState {
   }
 
   if (kind === "ordens_servico") {
+    map["ordens.numero"] =
+      bestMatch(headers, ["numero", "número", "os", "ordem", "ordem servico", "ordem de servico", "n os"]) ?? ""
+    map["ordens.cliente_nome"] = bestMatch(headers, ["nome cliente", "cliente", "nome", "razao social"]) ?? ""
     map["ordens.doc_cliente"] = bestMatch(headers, ["cpf", "cnpj", "cpf/cnpj", "documento cliente", "cliente cpf"]) ?? ""
+    map["ordens.telefone"] = bestMatch(headers, ["telefone", "celular", "whatsapp", "fone"]) ?? ""
   }
 
   return map
 }
 
+function buildOrdemPayloadFromRow(
+  row: Record<string, unknown>,
+  mapping: MappingState,
+  index: number
+): Record<string, unknown> {
+  const colNum = mapping["ordens.numero"]
+  const colNome = mapping["ordens.cliente_nome"]
+  const colDoc = mapping["ordens.doc_cliente"]
+  const colTel = mapping["ordens.telefone"]
+
+  const numRaw = colNum ? String(row[colNum] ?? "").trim() : ""
+  const numero = numRaw
+    ? numRaw.toUpperCase().startsWith("OS")
+      ? numRaw
+      : `OS-${numRaw.replace(/^os-?/i, "").trim()}`
+    : `OS-IMP-${index + 1}`
+
+  const nome = colNome ? String(row[colNome] ?? "").trim() : ""
+  const docRaw = colDoc ? String(row[colDoc] ?? "").trim() : ""
+  const tel = colTel ? String(row[colTel] ?? "").trim() : ""
+
+  const today = new Date().toISOString().slice(0, 10)
+  return {
+    id: `imp-${sanitizeId(numero)}-${index}`,
+    numero,
+    cliente: {
+      nome: nome || "Cliente",
+      telefone: tel,
+      cpf: docRaw,
+    },
+    aparelho: { marca: "", modelo: "", imei: "", cor: "" },
+    checklist: defaultChecklist.map((x) => ({ ...x })),
+    defeito: "",
+    solucao: "",
+    status: "aguardando_peca",
+    dataEntrada: today,
+    horaEntrada: horaAtualHHMM(),
+    dataPrevisao: today,
+    dataSaida: null,
+    horaSaida: null,
+    valorServico: 0,
+    valorPecas: 0,
+    fotos: [],
+    observacoes: "",
+    termoGarantia: "",
+    textoGarantiaEditado: "",
+  }
+}
+
 export function ImportadorDadosExternos() {
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const importRunRef = useRef(false)
   const { lojaAtivaId } = useLojaAtiva()
 
   const [kind, setKind] = useState<ImportKind>("clientes")
@@ -220,15 +275,26 @@ export function ImportadorDadosExternos() {
         { key: "produtos.estoque" as const, label: "Estoque" },
       ]
     }
-    return [{ key: "ordens.doc_cliente" as const, label: "CPF/CNPJ do Cliente (para vínculo automático)" }]
+    return [
+      { key: "ordens.numero" as const, label: "Número da O.S." },
+      { key: "ordens.cliente_nome" as const, label: "Nome do cliente" },
+      { key: "ordens.doc_cliente" as const, label: "CPF/CNPJ do cliente" },
+      { key: "ordens.telefone" as const, label: "Telefone do cliente" },
+    ]
   }, [kind])
 
   const canImport = useMemo(() => {
     if (!sheet) return false
+    if (kind === "ordens_servico") {
+      const n = mapping["ordens.numero"] && String(mapping["ordens.numero"]).trim()
+      const nome = mapping["ordens.cliente_nome"] && String(mapping["ordens.cliente_nome"]).trim()
+      const doc = mapping["ordens.doc_cliente"] && String(mapping["ordens.doc_cliente"]).trim()
+      return Boolean(n || nome || doc)
+    }
     const first = expectedFields[0]?.key
     if (!first) return false
     return Boolean(mapping[first] && String(mapping[first]).trim())
-  }, [expectedFields, mapping, sheet])
+  }, [expectedFields, kind, mapping, sheet])
 
   const yieldToUi = async () => {
     await new Promise<void>((r) => setTimeout(r, 0))
@@ -271,7 +337,7 @@ export function ImportadorDadosExternos() {
           "Content-Type": "application/json",
           ...(lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : {}),
         },
-        body: JSON.stringify({ items: chunk, replace: true, batchIndex: b }),
+        body: JSON.stringify({ items: chunk }),
         credentials: "include",
         timeoutMs: 60_000,
       })
@@ -282,6 +348,78 @@ export function ImportadorDadosExternos() {
 
       setProgressNow(end)
       setProgressLabel(`Item ${end} de ${total}...`)
+      await yieldToUi()
+    }
+  }
+
+  const uploadClientesInBatches = async (
+    items: Array<{ nome: string; doc?: string; telefone?: string; email?: string; endereco?: string }>
+  ) => {
+    const total = items.length
+    const batchSize = 200
+    const batches = Math.ceil(total / batchSize)
+    setProgressTotal(total)
+    setProgressNow(0)
+
+    for (let b = 0; b < batches; b += 1) {
+      const start = b * batchSize
+      const end = Math.min(total, start + batchSize)
+      const chunk = items.slice(start, end)
+
+      setProgressLabel(`Clientes: lote ${b + 1}/${batches}... (até ${end} de ${total})`)
+      await yieldToUi()
+
+      const res = await fetchWithTimeout("/api/ops/import/clientes", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : {}),
+        },
+        body: JSON.stringify({ items: chunk }),
+        credentials: "include",
+        timeoutMs: 120_000,
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
+        throw new Error(data?.error || data?.detail || `Falha no lote ${b + 1}/${batches} (HTTP ${res.status})`)
+      }
+
+      setProgressNow(end)
+      await yieldToUi()
+    }
+  }
+
+  const uploadOrdensInBatches = async (items: Record<string, unknown>[]) => {
+    const total = items.length
+    const batchSize = 100
+    const batches = Math.ceil(total / batchSize)
+    setProgressTotal(total)
+    setProgressNow(0)
+
+    for (let b = 0; b < batches; b += 1) {
+      const start = b * batchSize
+      const end = Math.min(total, start + batchSize)
+      const chunk = items.slice(start, end)
+
+      setProgressLabel(`O.S.: lote ${b + 1}/${batches}... (até ${end} de ${total})`)
+      await yieldToUi()
+
+      const res = await fetchWithTimeout("/api/ops/ordens/import", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : {}),
+        },
+        body: JSON.stringify({ ordens: chunk }),
+        credentials: "include",
+        timeoutMs: 120_000,
+      })
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
+        throw new Error(data?.error || data?.detail || `Falha no lote ${b + 1}/${batches} (HTTP ${res.status})`)
+      }
+
+      setProgressNow(end)
       await yieldToUi()
     }
   }
@@ -307,12 +445,13 @@ export function ImportadorDadosExternos() {
   }
 
   const runImport = async () => {
-    if (!sheet || isImporting) return
+    if (!sheet || importRunRef.current || isImporting) return
+    importRunRef.current = true
     setIsImporting(true)
     setParseError(null)
 
-    if (kind === "produtos") {
-      try {
+    try {
+      if (kind === "produtos") {
         const colNome = mapping["produtos.nome"] || ""
         const colSku = mapping["produtos.sku"] || ""
         const colCusto = mapping["produtos.preco_custo"] || ""
@@ -354,7 +493,7 @@ export function ImportadorDadosExternos() {
 
         setProgressNow(0)
         setProgressTotal(items.length)
-        setProgressLabel("Enviando para o banco em lotes de 500...")
+        setProgressLabel("Enviando para o banco em lotes de 500 (atualiza se já existir por nome ou SKU)...")
         await yieldToUi()
 
         await uploadInventoryInBatches(items)
@@ -362,37 +501,97 @@ export function ImportadorDadosExternos() {
         setCounts((prev) => ({ ...prev, produtos: prev.produtos + items.length }))
         setImportLog((prev) => {
           const head = prev ? `${prev}\n` : ""
-          return `${head}Sucesso: +${items.length} Produtos importados`
+          return `${head}Sucesso: ${items.length} produto(s) processados (criados ou atualizados conforme nome/SKU no banco).`
         })
-
-        setProgressLabel("")
-        setIsImporting(false)
-        return
-      } catch (e) {
-        setParseError(e instanceof Error ? e.message : "Falha ao importar produtos.")
-        setIsImporting(false)
         return
       }
-    }
 
-    // Mantém as outras abas como “pré-processamento + log” (sem persistência pesada aqui).
-    const total = sheet.rows.length
-    setProgressTotal(total)
-    setProgressNow(0)
-    for (let i = 0; i < total; i += 1) {
-      if ((i + 1) % 500 === 0 || i + 1 === total) {
-        setProgressNow(i + 1)
-        setProgressLabel(`Processando item ${i + 1} de ${total}...`)
+      if (kind === "clientes") {
+        const colNome = mapping["clientes.nome"] || ""
+        const colDoc = mapping["clientes.doc"] || ""
+        const colTel = mapping["clientes.telefone"] || ""
+        const colEmail = mapping["clientes.email"] || ""
+        const colEnd = mapping["clientes.endereco"] || ""
+        if (!colNome) throw new Error("Mapeie a coluna Nome.")
+
+        const items: Array<{ nome: string; doc?: string; telefone?: string; email?: string; endereco?: string }> = []
+        const totalRows = sheet.rows.length
+        setProgressTotal(totalRows)
+        setProgressNow(0)
+
+        for (let i = 0; i < totalRows; i += 1) {
+          const r = sheet.rows[i]!
+          const nome = String(r[colNome] ?? "").trim()
+          if (!nome) continue
+          items.push({
+            nome,
+            doc: colDoc ? String(r[colDoc] ?? "").trim() : undefined,
+            telefone: colTel ? String(r[colTel] ?? "").trim() : undefined,
+            email: colEmail ? String(r[colEmail] ?? "").trim() : undefined,
+            endereco: colEnd ? String(r[colEnd] ?? "").trim() : undefined,
+          })
+          if ((i + 1) % 500 === 0 || i + 1 === totalRows) {
+            setProgressNow(i + 1)
+            setProgressLabel(`Preparando cliente ${i + 1} de ${totalRows}...`)
+            await yieldToUi()
+          }
+        }
+
+        if (items.length === 0) throw new Error("Nenhuma linha com nome de cliente.")
+
+        setProgressNow(0)
+        setProgressTotal(items.length)
+        setProgressLabel("Enviando clientes (atualiza se CPF/CNPJ ou nome já existir)...")
         await yieldToUi()
+
+        await uploadClientesInBatches(items)
+        dispatchClientesRevalidate()
+
+        setCounts((prev) => ({ ...prev, clientes: prev.clientes + items.length }))
+        setImportLog((prev) => {
+          const head = prev ? `${prev}\n` : ""
+          return `${head}Sucesso: ${items.length} cliente(s) processados (criados ou atualizados).`
+        })
+        return
       }
+
+      if (kind === "ordens_servico") {
+        const totalRows = sheet.rows.length
+        const ordens: Record<string, unknown>[] = []
+        setProgressTotal(totalRows)
+        setProgressNow(0)
+
+        for (let i = 0; i < totalRows; i += 1) {
+          const r = sheet.rows[i]!
+          ordens.push(buildOrdemPayloadFromRow(r, mapping, i))
+          if ((i + 1) % 500 === 0 || i + 1 === totalRows) {
+            setProgressNow(i + 1)
+            setProgressLabel(`Preparando O.S. ${i + 1} de ${totalRows}...`)
+            await yieldToUi()
+          }
+        }
+
+        setProgressNow(0)
+        setProgressTotal(ordens.length)
+        setProgressLabel("Enviando ordens (atualiza por número, CPF/CNPJ ou nome do cliente)...")
+        await yieldToUi()
+
+        await uploadOrdensInBatches(ordens)
+
+        setCounts((prev) => ({ ...prev, ordens_servico: prev.ordens_servico + ordens.length }))
+        setImportLog((prev) => {
+          const head = prev ? `${prev}\n` : ""
+          return `${head}Sucesso: ${ordens.length} O.S. processada(s) (criadas ou atualizadas).`
+        })
+        return
+      }
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : "Falha na importação.")
+    } finally {
+      importRunRef.current = false
+      setIsImporting(false)
+      setProgressLabel("")
     }
-    setCounts((prev) => ({ ...prev, [kind]: prev[kind] + total }))
-    setImportLog((prev) => {
-      const head = prev ? `${prev}\n` : ""
-      return `${head}Sucesso: +${total} ${kind} (prévia)`
-    })
-    setProgressLabel("")
-    setIsImporting(false)
   }
 
   return (
@@ -507,7 +706,8 @@ export function ImportadorDadosExternos() {
 
               <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
                 <p className="text-xs text-muted-foreground">
-                  Produtos: importação real no banco em lotes de 500. Clientes/O.S.: prévia (a persistência será adicionada em seguida).
+                  Clientes, produtos e O.S. são gravados no banco. Registros com o mesmo CPF/CNPJ ou mesmo nome (clientes e
+                  produtos) ou mesmo número / mesmo cliente (O.S.) são atualizados em vez de duplicados.
                 </p>
                 <Button type="button" disabled={!canImport || isImporting} onClick={() => void runImport()}>
                   Importar agora
