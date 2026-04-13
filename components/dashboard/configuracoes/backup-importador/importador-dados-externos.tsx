@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react"
 import { FileSpreadsheet, Link2, UploadCloud } from "lucide-react"
 import Papa from "papaparse"
+import * as XLSX from "xlsx"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -85,12 +86,19 @@ function bestMatch(headers: string[], candidates: string[]): string | undefined 
 }
 
 async function parseCsv(file: File): Promise<ParsedSheet> {
+  const textSample = await file.slice(0, 64 * 1024).text().catch(() => "")
+  const sampleLine = (textSample.split(/\r?\n/)[0] ?? "").slice(0, 8_000)
+  const count = (ch: string) => (sampleLine.match(new RegExp(`\\${ch}`, "g")) ?? []).length
+  const delimiter =
+    count(";") > count(",") && count(";") > count("\t") ? ";" : count("\t") > count(",") ? "\t" : ","
+
   return await new Promise((resolve, reject) => {
     Papa.parse<Record<string, unknown>>(file, {
       header: true,
       skipEmptyLines: true,
       dynamicTyping: false,
-      worker: true,
+      worker: false,
+      delimiter,
       complete: (result) => {
         const headers = (result.meta.fields ?? []).filter(Boolean) as string[]
         resolve({ fileName: file.name, headers, rows: (result.data ?? []) as Record<string, unknown>[] })
@@ -102,24 +110,28 @@ async function parseCsv(file: File): Promise<ParsedSheet> {
 
 async function parseXlsx(file: File): Promise<ParsedSheet> {
   const buf = await file.arrayBuffer()
-  const worker = new Worker(new URL("./xlsx-parse.worker", import.meta.url), { type: "module" })
-  try {
-    const res = await new Promise<ParsedSheet>((resolve, reject) => {
-      worker.onmessage = (ev: MessageEvent<{ ok: boolean; sheet?: ParsedSheet; error?: string }>) => {
-        const data = ev.data
-        if (data?.ok && data.sheet) resolve(data.sheet)
-        else reject(new Error(data?.error || "Falha ao ler XLSX no worker."))
-      }
-      worker.onerror = (err) => {
-        console.error("[backup-import] worker XLSX não carregou", err)
-        reject(new Error("Não foi possível carregar o worker de XLSX. Verifique o arquivo `xlsx-parse.worker` nesta pasta."))
-      }
-      worker.postMessage({ fileName: file.name, buffer: buf }, [buf])
-    })
-    return res
-  } finally {
-    worker.terminate()
+  const wb = XLSX.read(buf, { type: "array" })
+  const first = wb.SheetNames[0]
+  const sheet = first ? wb.Sheets[first] : undefined
+  if (!sheet) return { fileName: file.name, headers: [], rows: [] }
+
+  const grid = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false }) as unknown[][]
+  const headerRow = Array.isArray(grid[0]) ? (grid[0] as unknown[]) : []
+  const headers = headerRow.map((x) => String(x ?? "").trim()).filter(Boolean)
+
+  const rows: Record<string, unknown>[] = []
+  for (let r = 1; r < grid.length; r += 1) {
+    const row = grid[r]
+    if (!Array.isArray(row)) continue
+    const obj: Record<string, unknown> = {}
+    for (let c = 0; c < headers.length; c += 1) {
+      obj[headers[c]!] = row[c]
+    }
+    const hasAny = Object.values(obj).some((v) => String(v ?? "").trim() !== "")
+    if (hasAny) rows.push(obj)
   }
+
+  return { fileName: file.name, headers, rows }
 }
 
 async function parseFileUniversal(file: File): Promise<ParsedSheet> {
