@@ -15,6 +15,10 @@ import {
   type PerfilLojaId,
   perfilMostraModuloTecnicoAssistencia,
 } from "@/lib/perfil-loja-types"
+import { useLojaAtiva } from "@/lib/loja-ativa"
+import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
+import { ASSISTEC_STORES_SYNC_STORAGE_KEY } from "@/lib/loja-ativa"
 
 type PerfilLojaContextType = {
   perfilLoja: PerfilLojaId
@@ -29,12 +33,18 @@ const PerfilLojaContext = createContext<PerfilLojaContextType | null>(null)
 export function PerfilLojaProvider({ children }: { children: ReactNode }) {
   const [perfilLoja, setPerfilLojaState] = useState<PerfilLojaId>(PERFIL_LOJA_DEFAULT)
   const [perfilHydrated, setPerfilHydrated] = useState(false)
+  const { lojaAtivaId } = useLojaAtiva()
+  const lojaHeader = lojaAtivaId || LEGACY_PRIMARY_STORE_ID
 
   useEffect(() => {
     let cancelled = false
-    void (async () => {
+    const load = async () => {
       try {
-        const r = await fetch("/api/settings/perfil-loja", { credentials: "include", cache: "no-store" })
+        const r = await fetch("/api/settings/perfil-loja", {
+          credentials: "include",
+          cache: "no-store",
+          headers: { [ASSISTEC_LOJA_HEADER]: lojaHeader },
+        })
         const j = (await r.json()) as { perfilLoja?: string }
         if (!cancelled) setPerfilLojaState(parsePerfilLoja(j.perfilLoja))
       } catch {
@@ -42,25 +52,42 @@ export function PerfilLojaProvider({ children }: { children: ReactNode }) {
       } finally {
         if (!cancelled) setPerfilHydrated(true)
       }
-    })()
+    }
+    void load()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [lojaHeader])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== ASSISTEC_STORES_SYNC_STORAGE_KEY) return
+      // Perfil é atributo do Store: refetch quando outra aba/fluxo salvar os dados.
+      void (async () => {
+        try {
+          const r = await fetch("/api/settings/perfil-loja", {
+            credentials: "include",
+            cache: "no-store",
+            headers: { [ASSISTEC_LOJA_HEADER]: lojaHeader },
+          })
+          const j = (await r.json()) as { perfilLoja?: string }
+          setPerfilLojaState(parsePerfilLoja(j.perfilLoja))
+        } catch {
+          setPerfilLojaState(PERFIL_LOJA_DEFAULT)
+        }
+      })()
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [lojaHeader])
 
   const setPerfilLoja = useCallback(async (p: PerfilLojaId) => {
-    setPerfilLojaState(p)
-    try {
-      await fetch("/api/settings/perfil-loja", {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ perfilLoja: p }),
-      })
-    } catch {
-      /* rede — estado local já atualizado */
-    }
-  }, [])
+    // Perfil é atributo da Store e deve ser editado em "Gestão de Unidades".
+    // Mantemos a função para compatibilidade, mas sem persistência.
+    void p
+    console.warn('[PerfilLojaProvider] setPerfilLoja ignorado. Edite o perfil em "Gestão de Unidades".')
+  }, [lojaHeader])
 
   const value = useMemo<PerfilLojaContextType>(
     () => ({

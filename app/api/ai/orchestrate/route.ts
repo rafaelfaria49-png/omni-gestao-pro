@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
-import { resolveLlmEnv } from "@/lib/resolve-llm-env"
 import { orchestrateCommand, type PlanoAssinatura } from "@/services/ai-orchestrator"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
-import { composeMestreUserMessage } from "@/services/ai-mestre-reply"
+import { storeIdFromAssistecRequestForRead } from "@/lib/store-id-from-request"
+import { composeMestreUserMessage, type StockSummaryRow } from "@/services/ai-mestre-reply"
+import { pickMestreModel } from "@/lib/ai-model-policy"
+import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 
 /** Prisma exige Node; a chamada Gemini em si é compatível com Edge, mas este handler não. */
 export const runtime = "nodejs"
@@ -13,13 +15,16 @@ type Body = {
   /** Plano enviado pelo cliente; em produção, validar também cookie/servidor. */
   plano?: PlanoAssinatura | string
   lojaId?: string
+  /** Modelo sugerido pelo cliente (ex.: Gemini Flash no básico; GPT/Claude no premium). */
+  model?: string
 }
 
 function lojaIdFromRequest(req: Request, body: Body): string {
   const h = req.headers.get(ASSISTEC_LOJA_HEADER)?.trim()
   if (h) return h
   const b = typeof body.lojaId === "string" ? body.lojaId.trim() : ""
-  return b || "loja-1"
+  if (b) return b
+  return storeIdFromAssistecRequestForRead(req)
 }
 
 export async function POST(req: Request) {
@@ -35,20 +40,51 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "command obrigatório" }, { status: 400 })
   }
 
-  const plano = (body.plano as PlanoAssinatura) ?? "bronze"
   const lojaId = lojaIdFromRequest(req, body)
 
-  /** Força leitura no handler (evita cache estático de módulos em dev). */
-  const llmResolved = resolveLlmEnv()
-
-  let stockRows: { name: string; stock: number; price: number; category: string }[] = []
+  // Plano: preferir cookie verificado quando existir (estrutura pronta para DB no futuro).
+  let plano: PlanoAssinatura | string = (body.plano as PlanoAssinatura) ?? "bronze"
   try {
-    stockRows = await prisma.estoqueProduto.findMany({
-      where: { lojaId },
+    const sub = await getVerifiedSubscriptionFromCookies()
+    if (sub.ok && typeof sub.plano === "string" && sub.plano.trim()) {
+      plano = sub.plano.trim()
+    }
+  } catch {
+    /* ignora */
+  }
+
+  // Modelo: básico travado no backend; premium pode escolher (request + preferência salva).
+  let storedModel: string | null = null
+  let planoOverride: PlanoAssinatura | null = null
+  try {
+    const st = await prisma.storeSettings.findUnique({ where: { storeId: lojaId }, select: { printerConfig: true } })
+    const cfg = st?.printerConfig && typeof st.printerConfig === "object" ? (st.printerConfig as Record<string, unknown>) : null
+    storedModel = cfg && typeof (cfg as any).aiMestreModel === "string" ? String((cfg as any).aiMestreModel).trim() : null
+    const raw = cfg && typeof (cfg as any).planoAssinaturaOverride === "string" ? String((cfg as any).planoAssinaturaOverride).trim() : ""
+    planoOverride = raw === "bronze" || raw === "prata" || raw === "ouro" ? (raw as PlanoAssinatura) : null
+  } catch {
+    storedModel = null
+    planoOverride = null
+  }
+  if (planoOverride) {
+    plano = planoOverride
+  }
+  const model = pickMestreModel({ plano, requestedModel: body.model, storedModel })
+
+  let stockRows: StockSummaryRow[] = []
+  try {
+    const rows = await prisma.produto.findMany({
+      where: { storeId: lojaId },
       select: { name: true, stock: true, price: true, category: true },
       orderBy: { name: "asc" },
       take: 120,
     })
+    stockRows = rows.map((r) => ({
+      name: r.name,
+      stock: r.stock,
+      price: r.price,
+      category: r.category ?? "",
+    }))
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error("[orchestrate] estoque:", msg)
@@ -60,33 +96,34 @@ export async function POST(req: Request) {
   }
 
   let message = ""
-  let meta: { llmConfigured: boolean; backend: "openai" | "gemini" | null; stockRowsLoaded: boolean } = {
-    llmConfigured: llmResolved.ok,
-    backend: llmResolved.ok ? llmResolved.backend : null,
+  let meta: { llmConfigured: boolean; backend: "openrouter" | "gemini" | "openai" | null; stockRowsLoaded: boolean; fallbackUsed?: boolean } = {
+    llmConfigured: true,
+    backend: "openrouter",
     stockRowsLoaded: stockRows.length > 0,
   }
   try {
-    const composed = await composeMestreUserMessage(command, result.decision, plano, stockRows)
+    const composed = await composeMestreUserMessage(command, result.decision, plano, stockRows, model)
     message = composed.message
     meta = {
       llmConfigured: composed.meta.llmConfigured,
       backend: composed.meta.backend,
       stockRowsLoaded: stockRows.length > 0,
+      fallbackUsed: composed.meta.fallbackUsed,
     }
   } catch (e) {
     const err = e instanceof Error ? e.message : String(e)
     console.error("[orchestrate] compose:", err)
-    if (err === "MESTRE_GEMINI_KEY_MISSING") {
+    if (err === "OPENROUTER_KEY_MISSING") {
       message = "Assistente temporariamente indisponível."
-    } else if (err === "GEMINI_FAILED") {
+    } else if (err === "OPENROUTER_FAILED") {
       message =
         "Não obtive resposta do assistente agora. Tente de novo em alguns segundos."
     } else {
       message = "Não consegui completar a resposta. Tente novamente em instantes."
     }
     meta = {
-      llmConfigured: llmResolved.ok,
-      backend: llmResolved.ok ? llmResolved.backend : null,
+      llmConfigured: false,
+      backend: null,
       stockRowsLoaded: stockRows.length > 0,
     }
   }

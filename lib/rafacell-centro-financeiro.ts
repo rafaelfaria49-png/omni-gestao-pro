@@ -1,11 +1,19 @@
 /**
- * Centro financeiro RAFACELL — persistência em localStorage (v3).
+ * Centro financeiro (maquininhas e taxas) — persistência em localStorage (v3).
  * Maquininhas: lista dinâmica (id + nome + ativo + taxas); padrão com três sugestões (PagBank, Sicredi, Mercado Pago).
  */
+
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 
 export const STORAGE_KEY_V1 = "rafacell-centro-financeiro-v1"
 export const STORAGE_KEY_V2 = "rafacell-centro-financeiro-v2"
 export const STORAGE_KEY_V3 = "rafacell-centro-financeiro-v3"
+
+/** Chave v3 por unidade (multiloja) — cada `storeId` tem silo próprio. */
+export function centroFinanceiroStorageKeyV3(storeId: string): string {
+  const sid = (storeId || LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID
+  return `${STORAGE_KEY_V3}::${sid}`
+}
 
 /** IDs estáveis das três maquininhas iniciais (migração a partir de slug). */
 export const MAQ_ID_PAGBANK = "maq-pagbank"
@@ -366,25 +374,42 @@ function migrateV1JsonToV3(raw: string): CentroFinanceiroV3 | null {
   }
 }
 
-export function loadCentroFinanceiroV3(): CentroFinanceiroV3 {
+export function loadCentroFinanceiroV3ForStore(storeId: string): CentroFinanceiroV3 {
   if (typeof window === "undefined") return defaultCentroFinanceiroV3()
+  const sid = (storeId || LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID
+  const perStoreKey = centroFinanceiroStorageKeyV3(sid)
   try {
-    const v3 = localStorage.getItem(STORAGE_KEY_V3)
-    if (v3) {
-      const parsed = JSON.parse(v3) as Partial<CentroFinanceiroV3> & { maquininhaEdicaoSlug?: string }
+    const scoped = localStorage.getItem(perStoreKey)
+    if (scoped) {
+      const parsed = JSON.parse(scoped) as Partial<CentroFinanceiroV3> & { maquininhaEdicaoSlug?: string }
       if (parsed.version === 3) {
         return normalizeCentroV3(parsed as CentroFinanceiroV3)
       }
     }
-    const v2 = localStorage.getItem(STORAGE_KEY_V2)
-    if (v2) {
-      const m = migrateV2JsonToV3(v2)
-      if (m) return m
-    }
-    const v1 = localStorage.getItem(STORAGE_KEY_V1)
-    if (v1) {
-      const m = migrateV1JsonToV3(v1)
-      if (m) return m
+    if (sid === LEGACY_PRIMARY_STORE_ID) {
+      const v3 = localStorage.getItem(STORAGE_KEY_V3)
+      if (v3) {
+        const parsed = JSON.parse(v3) as Partial<CentroFinanceiroV3> & { maquininhaEdicaoSlug?: string }
+        if (parsed.version === 3) {
+          const normalized = normalizeCentroV3(parsed as CentroFinanceiroV3)
+          try {
+            localStorage.setItem(perStoreKey, JSON.stringify(normalized))
+          } catch {
+            /* ignore */
+          }
+          return normalized
+        }
+      }
+      const v2 = localStorage.getItem(STORAGE_KEY_V2)
+      if (v2) {
+        const m = migrateV2JsonToV3(v2)
+        if (m) return m
+      }
+      const v1 = localStorage.getItem(STORAGE_KEY_V1)
+      if (v1) {
+        const m = migrateV1JsonToV3(v1)
+        if (m) return m
+      }
     }
   } catch {
     /* fallthrough */
@@ -392,21 +417,65 @@ export function loadCentroFinanceiroV3(): CentroFinanceiroV3 {
   return defaultCentroFinanceiroV3()
 }
 
-export function persistCentroFinanceiroV3(data: CentroFinanceiroV3): void {
+/** @deprecated Preferir {@link loadCentroFinanceiroV3ForStore} com `storeId` da unidade ativa. */
+export function loadCentroFinanceiroV3(): CentroFinanceiroV3 {
+  return loadCentroFinanceiroV3ForStore(LEGACY_PRIMARY_STORE_ID)
+}
+
+export function persistCentroFinanceiroV3ForStore(storeId: string, data: CentroFinanceiroV3): void {
+  const sid = (storeId || LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID
+  const normalized = normalizeCentroV3(data)
   try {
-    localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(normalizeCentroV3(data)))
+    localStorage.setItem(centroFinanceiroStorageKeyV3(sid), JSON.stringify(normalized))
+    if (sid === LEGACY_PRIMARY_STORE_ID) {
+      localStorage.setItem(STORAGE_KEY_V3, JSON.stringify(normalized))
+    }
   } catch {
     /* ignore */
   }
 }
 
+/** @deprecated Preferir {@link persistCentroFinanceiroV3ForStore}. */
+export function persistCentroFinanceiroV3(data: CentroFinanceiroV3): void {
+  persistCentroFinanceiroV3ForStore(LEGACY_PRIMARY_STORE_ID, data)
+}
+
 /** Maquininhas com ativo=true (para PDV / calculadora). */
-export function getMaquininhasAtivas(): MaquininhaConfig[] {
-  const c = loadCentroFinanceiroV3()
+export function getMaquininhasAtivasForStore(storeId: string): MaquininhaConfig[] {
+  const c = loadCentroFinanceiroV3ForStore(storeId)
   return c.maquininhas.filter((m) => m.ativo)
 }
 
+/** @deprecated Preferir {@link getMaquininhasAtivasForStore}. */
+export function getMaquininhasAtivas(): MaquininhaConfig[] {
+  return getMaquininhasAtivasForStore(LEGACY_PRIMARY_STORE_ID)
+}
+
+/**
+ * Maquininhas usadas no PDV (débito/crédito): as ativas na configuração, ou a primeira
+ * cadastrada quando nenhuma está com `ativo` — o caixa não fica bloqueado antes de marcar
+ * uma maquininha. Para taxas e rótulos exatos, use Configurações → Financeiro (cartões) e ative a desejada.
+ */
+export function getMaquininhasParaPdvForStore(storeId: string): MaquininhaConfig[] {
+  const c = loadCentroFinanceiroV3ForStore(storeId)
+  const ativas = c.maquininhas.filter((m) => m.ativo)
+  if (ativas.length > 0) return ativas
+  const first = c.maquininhas[0]
+  if (first) return [first]
+  return [defaultMaquininhasLista()[0]!]
+}
+
+/** @deprecated Preferir {@link getMaquininhasParaPdvForStore}. */
+export function getMaquininhasParaPdv(): MaquininhaConfig[] {
+  return getMaquininhasParaPdvForStore(LEGACY_PRIMARY_STORE_ID)
+}
+
 /** Há pelo menos uma maquininha ativa — exibir débito/crédito no caixa. */
+export function temMaquininhaAtivaNoCaixaForStore(storeId: string): boolean {
+  return getMaquininhasAtivasForStore(storeId).length > 0
+}
+
+/** @deprecated Preferir {@link temMaquininhaAtivaNoCaixaForStore}. */
 export function temMaquininhaAtivaNoCaixa(): boolean {
-  return getMaquininhasAtivas().length > 0
+  return temMaquininhaAtivaNoCaixaForStore(LEGACY_PRIMARY_STORE_ID)
 }

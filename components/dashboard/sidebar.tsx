@@ -2,6 +2,7 @@
 
 import { 
   Home, 
+  LayoutDashboard,
   ShoppingCart, 
   FileText, 
   ClipboardList, 
@@ -10,6 +11,7 @@ import {
   Users, 
   BarChart3, 
   Settings,
+  Store,
   Zap,
   ChevronDown,
   PanelLeftClose,
@@ -21,7 +23,12 @@ import { APP_DISPLAY_NAME } from "@/lib/app-brand"
 import { useState } from "react"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useStoreSettings } from "@/lib/store-settings-provider"
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
+import {
+  nomeFantasiaOuFallbackUnidadePorOrdem,
+} from "@/lib/store-display-name"
+import { usePerfilLoja } from "@/lib/perfil-loja-provider"
 
 type SubMenuItem = { 
   label: string
@@ -36,10 +43,12 @@ type MenuItem = {
   label: string
   href: string
   page?: string
+  externalPath?: string
   submenu?: SubMenuItem[]
 }
 
 const menuItems: MenuItem[] = [
+  { icon: LayoutDashboard, label: "Painel inicial", href: "#", page: "dashboard-omni", externalPath: "/dashboard" },
   { icon: Home, label: "Início", href: "#", page: "dashboard" },
   { icon: FileText, label: "Orçamentos", href: "#", page: "orcamentos" },
   {
@@ -48,16 +57,26 @@ const menuItems: MenuItem[] = [
     href: "#",
     submenu: [
       { label: "PDV / Caixa", href: "#", page: "vendas" },
+      { label: "Histórico de Vendas", href: "#", page: "vendas-arquivo" },
       { label: "Controle de Consumo (mesas)", href: "#", page: "controle-consumo" },
       { label: "Trocas e devolução", href: "#", page: "trocas" },
     ],
   },
-  { icon: ClipboardList, label: "Ordens de Serviço", href: "#", page: "os" },
+  {
+    icon: ClipboardList,
+    label: "Ordens de Serviço",
+    href: "#",
+    submenu: [
+      { label: "Gestão de OS", href: "#", page: "os-gestao", externalPath: "/dashboard/os" },
+      { label: "Painel integrado", href: "#", page: "os" },
+    ],
+  },
   { 
     icon: Package, 
     label: "Estoque", 
     href: "#",
     submenu: [
+      { label: "Gestão de Estoque", href: "#", page: "estoque-gestao", externalPath: "/dashboard/estoque" },
       { label: "Produtos", href: "#", page: "produtos" },
       { label: "Serviços", href: "#", page: "servicos" },
       { label: "Planejamento de Compras", href: "#", page: "planejamento-compras" },
@@ -81,11 +100,26 @@ const menuItems: MenuItem[] = [
     label: "Clientes", 
     href: "#",
     submenu: [
+      { label: "Gestão de Clientes", href: "#", page: "clientes-gestao", externalPath: "/dashboard/clientes" },
       { label: "Cadastro de Clientes", href: "#", page: "clientes" },
       { label: "Consulta de Crédito", href: "#", page: "credito" },
     ]
   },
-  { icon: BarChart3, label: "Relatórios", href: "#", page: "relatorios" },
+  {
+    icon: BarChart3,
+    label: "Relatórios",
+    href: "#",
+    submenu: [
+      { label: "Relatórios gerenciais", href: "#", page: "relatorios" },
+      { label: "Dashboard 360", href: "#", page: "dashboard-360" },
+    ],
+  },
+  {
+    icon: Store,
+    label: "Gestão da Rede",
+    href: "#",
+    submenu: [{ label: "Gestão de Unidades", href: "#", page: "config-multilojas" }],
+  },
   { 
     icon: Settings, 
     label: "Configurações", 
@@ -93,12 +127,11 @@ const menuItems: MenuItem[] = [
     submenu: [
       { label: "Dados da Empresa", href: "#", page: "config-empresa" },
       { label: "Ajustes", href: "#", page: "config-ajustes" },
-      { label: "Centro financeiro RAFACELL", href: "#", page: "config-pdv" },
+      { label: "Financeiro (cartões)", href: "#", page: "config-pdv" },
       { label: "Marca/Logo", href: "#", page: "config-marca" },
       { label: "Certificado Digital", href: "#", page: "config-certificado" },
       { label: "Termos de Garantia", href: "#", page: "config-garantia" },
       { label: "Backup", href: "#", page: "config-backup" },
-      { label: "Minhas Lojas", href: "#", page: "config-multilojas" },
       { label: "Conexão WhatsApp", href: "#", page: "whatsapp" },
       { label: "Logs do Sistema", href: "#", page: "logs-sistema" },
       { label: "Meu Plano", href: "#", page: "plano" },
@@ -116,12 +149,26 @@ interface SidebarProps {
 
 export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = false, onToggleCollapse }: SidebarProps) {
   const { config } = useConfigEmpresa()
-  const { lojas, lojaAtivaId, setLojaAtivaId } = useLojaAtiva()
-  const [openMenus, setOpenMenus] = useState<string[]>(["Configurações", "Vendas"])
+  const { lojas, lojaAtivaId, setLojaAtivaId, cadastroBasicoIncompleto } = useLojaAtiva()
+  const { pdvParams } = useStoreSettings()
+  const { perfilLoja } = usePerfilLoja()
+  const [openMenus, setOpenMenus] = useState<string[]>([
+    "Configurações",
+    "Gestão da Rede",
+    "Vendas",
+    "Clientes",
+    "Estoque",
+    "Ordens de Serviço",
+    "Relatórios",
+  ])
   const isBronze = config.assinatura.plano === "bronze"
+  const hideOsMenus = perfilLoja === "variedades" || perfilLoja === "supermercado"
 
   const visibleItems = menuItems.map((item) => {
     if (!item.submenu) return item
+    if (hideOsMenus && item.label === "Ordens de Serviço") {
+      return { ...item, submenu: [] }
+    }
     if (item.label === "Clientes") {
       return {
         ...item,
@@ -134,16 +181,22 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
         submenu: item.submenu.filter((s) => (isBronze ? s.page !== "config-multilojas" : true)),
       }
     }
+    if (item.label === "Gestão da Rede") {
+      return {
+        ...item,
+        submenu: item.submenu.filter((s) => (isBronze ? s.page !== "config-multilojas" : true)),
+      }
+    }
     if (item.label === "Vendas") {
       return {
         ...item,
         submenu: item.submenu?.filter(
-          (s) => (s.page === "controle-consumo" ? config.pdv.moduloControleConsumo === true : true)
+          (s) => (s.page === "controle-consumo" ? pdvParams.moduloControleConsumo === true : true)
         ),
       }
     }
     return item
-  })
+  }).filter((it) => !(hideOsMenus && it.label === "Ordens de Serviço"))
 
   const toggleSubmenu = (label: string) => {
     setOpenMenus(prev => 
@@ -154,6 +207,17 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
   }
 
   const handleNavigation = (page?: string, externalPath?: string) => {
+    if (page && cadastroBasicoIncompleto) {
+      const blocked = new Set([
+        "vendas",
+        "carteiras",
+        "fluxo-caixa",
+        "contas-pagar",
+        "contas-receber",
+        "relatorios-financeiros",
+      ])
+      if (blocked.has(page)) return
+    }
     if (externalPath) {
       window.location.href = externalPath
       return
@@ -175,7 +239,7 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
           {!collapsed && (
             <div>
               <h1 className="text-lg font-bold text-sidebar-foreground">{APP_DISPLAY_NAME}</h1>
-              <p className="text-xs text-muted-foreground">ERP · gestão empresarial</p>
+              <p className="text-xs text-black/70">ERP · gestão empresarial</p>
             </div>
           )}
         </div>
@@ -193,20 +257,34 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
 
       {!collapsed && lojas.length >= 2 && (
         <div className="px-4 pb-3 border-b border-sidebar-border">
-          <p className="text-xs text-muted-foreground mb-1.5">Unidade ativa</p>
+          <p className="text-xs text-black/70 mb-1.5">Unidade ativa</p>
           <Select
             value={lojaAtivaId ?? lojas[0]?.id ?? ""}
             onValueChange={(v) => setLojaAtivaId(v)}
           >
             <SelectTrigger className="w-full h-9 bg-sidebar-accent/30 border-sidebar-border">
-              <SelectValue placeholder="Selecione a loja" />
+              {(() => {
+                const id = (lojaAtivaId ?? lojas[0]?.id ?? "").trim()
+                const linha = lojas.find((x) => x.id === id)
+                const idx = linha ? lojas.findIndex((x) => x.id === linha.id) : null
+                const nome = linha ? nomeFantasiaOuFallbackUnidadePorOrdem(linha.id, linha.nomeFantasia, idx) : "Unidade"
+                return (
+                  <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
+                    <span className="truncate text-sm font-medium text-sidebar-foreground">{nome}</span>
+                  </div>
+                )
+              })()}
             </SelectTrigger>
             <SelectContent>
-              {lojas.map((l) => (
-                <SelectItem key={l.id} value={l.id}>
-                  {(l.nomeFantasia || l.razaoSocial || "Loja").trim()}
-                </SelectItem>
-              ))}
+              {lojas.map((l) => {
+                const idx = lojas.findIndex((x) => x.id === l.id)
+                const nome = nomeFantasiaOuFallbackUnidadePorOrdem(l.id, l.nomeFantasia, idx)
+                return (
+                  <SelectItem key={l.id} value={l.id} textValue={nome}>
+                    <span className="truncate font-medium">{nome}</span>
+                  </SelectItem>
+                )
+              })}
             </SelectContent>
           </Select>
         </div>
@@ -222,7 +300,7 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
                     onClick={() => toggleSubmenu(item.label)}
                     className={cn(
                       "flex items-center justify-between w-full px-4 py-3 rounded-lg text-sm font-medium transition-colors",
-                      "text-sidebar-foreground hover:bg-sidebar-accent"
+                      "bg-white text-black border border-border hover:bg-black hover:text-white"
                     )}
                   >
                     <div className="flex items-center gap-3">
@@ -244,12 +322,24 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
                       <li key={subitem.label}>
                         <button
                           onClick={() => handleNavigation(subitem.page, subitem.externalPath)}
+                          disabled={
+                            cadastroBasicoIncompleto &&
+                            !!subitem.page &&
+                            [
+                              "vendas",
+                              "carteiras",
+                              "fluxo-caixa",
+                              "contas-pagar",
+                              "contas-receber",
+                              "relatorios-financeiros",
+                            ].includes(subitem.page)
+                          }
                           className={cn(
                             "flex items-center gap-3 w-full text-left px-4 py-2 pl-12 rounded-lg text-sm transition-colors",
                             collapsed && "hidden",
                             isActive(subitem.page)
-                              ? "bg-primary/10 text-primary font-medium"
-                              : "text-muted-foreground hover:text-sidebar-foreground hover:bg-sidebar-accent"
+                              ? "bg-black text-white font-semibold"
+                              : "bg-white text-black hover:bg-black hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
                           )}
                         >
                           {subitem.externalPath ? (
@@ -267,13 +357,20 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
                 </div>
               ) : (
                 <button
-                  onClick={() => handleNavigation(item.page)}
+                  onClick={() => handleNavigation(item.page, item.externalPath)}
+                  disabled={
+                    cadastroBasicoIncompleto &&
+                    !!item.page &&
+                    ["vendas", "carteiras", "fluxo-caixa", "contas-pagar", "contas-receber", "relatorios-financeiros"].includes(
+                      item.page
+                    )
+                  }
                   className={cn(
                     "flex items-center gap-3 w-full px-4 py-3 rounded-lg text-sm font-medium transition-colors",
                     collapsed && "justify-center",
                     isActive(item.page)
-                      ? "bg-primary text-primary-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent"
+                      ? "bg-black text-white"
+                      : "bg-white text-black border border-border hover:bg-black hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-black"
                   )}
                 >
                   <item.icon className="w-5 h-5" />
@@ -292,7 +389,7 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
           </div>
           {!collapsed && <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-sidebar-foreground truncate">Admin</p>
-            <p className="text-xs text-muted-foreground truncate">admin@seudominio.com</p>
+            <p className="text-xs text-black/70 truncate">admin@seudominio.com</p>
           </div>}
         </div>
       </div>

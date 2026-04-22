@@ -14,7 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog"
 import { useCaixa } from "./caixa-provider"
-import { useConfigEmpresa } from "@/lib/config-empresa"
+import { useLojaAtiva } from "@/lib/loja-ativa"
 import { appendAuditLog } from "@/lib/audit-log"
 
 interface AberturaCaixaModalProps {
@@ -24,7 +24,7 @@ interface AberturaCaixaModalProps {
 
 export function AberturaCaixaModal({ isOpen, onClose }: AberturaCaixaModalProps) {
   const { abrirCaixa } = useCaixa()
-  const { config } = useConfigEmpresa()
+  const { empresaDocumentos } = useLojaAtiva()
   const [saldoInicial, setSaldoInicial] = useState("")
 
   const formatCurrency = (value: number) => {
@@ -43,7 +43,7 @@ export function AberturaCaixaModal({ isOpen, onClose }: AberturaCaixaModalProps)
     abrirCaixa(valor)
     appendAuditLog({
       action: "caixa_aberto",
-      userLabel: `${(config.empresa.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`,
+      userLabel: `${(empresaDocumentos.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`,
       detail: `Saldo inicial ${formatCurrency(valor)}`,
     })
     setSaldoInicial("")

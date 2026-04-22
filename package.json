@@ -6,15 +6,21 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev --webpack",
+    "dev": "next dev --webpack -p 3000 -H 0.0.0.0",
+    "dev:clean": "npx kill-port 3000 && npm run dev",
     "dev:https": "next dev --webpack --experimental-https",
-    "build": "prisma generate && next build",
+    "build": "prisma generate && next build --webpack",
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev"
+    "db:push:node": "node scripts/run-prisma-db-push.mjs",
+    "db:migrate": "prisma migrate dev",
+    "db:smoke": "node --env-file=.env scripts/prisma-smoke.mjs",
+    "db:migrate-loja": "node --env-file=.env scripts/migrate-loja-ids.mjs",
+    "db:check-rls": "node --env-file=.env scripts/check-rls-tables.mjs",
+    "db:migrate-legacy-financeiro": "node --env-file=.env scripts/migrate-legacy-financeiro.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -51,6 +57,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "1.1.1",
+    "cors": "^2.8.6",
     "date-fns": "4.1.0",
     "embla-carousel-react": "8.6.0",
     "input-otp": "1.4.2",
@@ -80,6 +87,7 @@
     "@types/react-dom": "19.2.3",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.3",
+    "kill-port": "^2.0.1",
     "postcss": "^8.5",
     "prisma": "^6.19.3",
     "sharp": "^0.34.5",

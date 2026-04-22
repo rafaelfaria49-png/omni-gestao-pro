@@ -4,6 +4,8 @@ import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import type { Prisma } from "@/generated/prisma"
+import { StatusOrdemServico } from "@/generated/prisma"
+import { storeIdFromAssistecRequestForRead, storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 
 export const runtime = "nodejs"
 
@@ -19,24 +21,16 @@ async function requireSubscription() {
   return { ok: true as const, sub }
 }
 
-function lojaIdFromRequest(req: Request): string {
-  const h = req.headers.get("x-assistec-loja-id")?.trim()
-  if (h) return h
-  const url = new URL(req.url)
-  const q = url.searchParams.get("lojaId")?.trim()
-  return q || "loja-1"
-}
-
 export async function GET(req: Request) {
   const gate = await requireSubscription()
   if (!gate.ok) return gate.res
-  const lojaId = lojaIdFromRequest(req)
+  const storeId = storeIdFromAssistecRequestForRead(req)
   try {
-    const rows = await prisma.ordemServicoDb.findMany({
-      where: { lojaId },
+    const rows = await prisma.ordemServico.findMany({
+      where: { storeId },
       orderBy: { updatedAt: "desc" },
     })
-    const ordens = rows.map((r) => r.payload)
+    const ordens = rows.map((r) => (r.payload ?? {}) as Record<string, unknown>)
     return NextResponse.json({ ordens })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -52,7 +46,13 @@ export async function GET(req: Request) {
 export async function PUT(req: Request) {
   const gate = await requireSubscription()
   if (!gate.ok) return gate.res
-  const lojaId = lojaIdFromRequest(req)
+  const storeId = storeIdFromAssistecRequestForWrite(req)
+  if (!storeId) {
+    return NextResponse.json(
+      { error: "Unidade obrigatória: envie o header x-assistec-loja-id ou query storeId / lojaId." },
+      { status: 400 }
+    )
+  }
 
   let body: unknown
   try {
@@ -66,7 +66,18 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "ordens deve ser um array" }, { status: 400 })
   }
 
-  const rows: { id: string; lojaId: string; numero: string; payload: Prisma.InputJsonValue }[] = []
+  const rows: {
+    id: string
+    storeId: string
+    numero: string
+    payload: Prisma.InputJsonValue
+    clienteId: null
+    equipamento: string
+    defeito: string
+    valorBase: number
+    valorTotal: number
+    status: StatusOrdemServico
+  }[] = []
   for (const raw of list) {
     if (!raw || typeof raw !== "object") continue
     const o = raw as Record<string, unknown>
@@ -75,16 +86,22 @@ export async function PUT(req: Request) {
     if (!id || !numero) continue
     rows.push({
       id,
-      lojaId,
+      storeId,
       numero,
       payload: o as Prisma.InputJsonValue,
+      clienteId: null,
+      equipamento: "",
+      defeito: "",
+      valorBase: 0,
+      valorTotal: 0,
+      status: StatusOrdemServico.Aberto,
     })
   }
 
   try {
     await prisma.$transaction([
-      prisma.ordemServicoDb.deleteMany({ where: { lojaId } }),
-      prisma.ordemServicoDb.createMany({ data: rows }),
+      prisma.ordemServico.deleteMany({ where: { storeId } }),
+      prisma.ordemServico.createMany({ data: rows }),
     ])
     return NextResponse.json({ ok: true, count: rows.length })
   } catch (e) {

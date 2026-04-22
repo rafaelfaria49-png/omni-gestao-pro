@@ -1,5 +1,5 @@
 /**
- * Apenas o número do proprietário (ex.: Rafael) pode usar IA orquestrada, financeiro e visão.
+ * Apenas o número cadastrado como proprietário da loja pode usar IA orquestrada, financeiro e visão.
  * Defina ASSISTEC_WHATSAPP_OWNER_DIGITS (só dígitos, com ou sem 55).
  */
 

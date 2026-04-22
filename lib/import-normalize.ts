@@ -1,3 +1,18 @@
+/** Converte célula de planilha (texto, número, data) em string para importação. */
+export function cellToTrimmedString(v: unknown): string {
+  if (v == null) return ""
+  if (typeof v === "string") return v.trim()
+  if (typeof v === "number" && Number.isFinite(v)) {
+    const abs = Math.abs(v)
+    // Telefones/CPF como número no Excel: evita notação científica em valores grandes.
+    if (abs >= 1e9 && abs < 1e15) return String(Math.round(v))
+    return String(v)
+  }
+  if (typeof v === "boolean") return v ? "sim" : ""
+  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  return String(v).trim()
+}
+
 /** Nome para comparação/dedupe (lowercase, sem acento, espaços colapsados). */
 export function normalizeNameForMatch(s: string): string {
   return String(s || "")

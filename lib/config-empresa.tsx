@@ -60,11 +60,14 @@ export interface ConfiguracaoEmpresa {
 /** Multiloja: 1 (bronze), 2 (prata), até 5 (ouro) — estoque/vendas por unidade ativa. */
 export interface PerfilLojaUnidade {
   id: string
+  /** Nome fantasia = `Store.name` (API). */
   nomeFantasia: string
   razaoSocial: string
   cnpj: string
   endereco: EnderecoEmpresa
   logoUrl: string
+  /** Perfil operacional da unidade (`Store.profile`). */
+  storeProfile?: "ASSISTENCIA" | "VARIEDADES" | "SUPERMERCADO"
 }
 
 export interface MinhasLojasConfig {
@@ -238,28 +241,35 @@ export const IDS_GARANTIA_OS = [
   "conectores_oxidacao",
 ] as const
 
-// Dados padrão baseados no JSON fornecido
+/** Placeholders white-label (sem dados reais de tenant). Substitua em Configurações → Dados da Empresa. */
+export const WHITELABEL_NOME_FANTASIA_PADRAO = "Minha Loja"
+export const WHITELABEL_RAZAO_SOCIAL_PADRAO = "Minha Loja"
+export const WHITELABEL_CNPJ_PADRAO = "00.000.000/0001-00"
+export const WHITELABEL_TELEFONE_PADRAO = "(00) 00000-0000"
+export const WHITELABEL_EMAIL_PADRAO = "contato@minhaempresa.com.br"
+
+// Dados padrão neutros até o cliente preencher (localStorage vazio ou novo ambiente).
 export const configPadrao: ConfigSistema = {
   minhasLojas: {
     lojas: [],
   },
   empresa: {
-    nomeFantasia: "RAFACELL ASSISTEC",
-    razaoSocial: "RAFACELL ASSISTEC LTDA",
-    cnpj: "48.241.205/0001-95",
+    nomeFantasia: WHITELABEL_NOME_FANTASIA_PADRAO,
+    razaoSocial: WHITELABEL_RAZAO_SOCIAL_PADRAO,
+    cnpj: WHITELABEL_CNPJ_PADRAO,
     endereco: {
-      rua: "Rua Dona Beni",
-      numero: "000",
+      rua: "Rua Exemplo",
+      numero: "0",
       bairro: "Centro",
-      cidade: "Taguaí",
+      cidade: "São Paulo",
       estado: "SP",
-      cep: "18890-000"
+      cep: "00000-000"
     },
     contato: {
-      telefone: "(14) 99856-4545",
-      whatsapp: "(14) 99856-4545",
+      telefone: WHITELABEL_TELEFONE_PADRAO,
+      whatsapp: WHITELABEL_TELEFONE_PADRAO,
       whatsappDono: "",
-      email: "contato@rafacell.com.br"
+      email: WHITELABEL_EMAIL_PADRAO
     },
     identidadeVisual: {
       logoUrl: "",
@@ -320,7 +330,8 @@ export const configPadrao: ConfigSistema = {
   assinatura: {
     plano: "bronze",
     status: "ativa",
-    vencimento: new Date(new Date().setDate(new Date().getDate() + 7)).toISOString().split("T")[0],
+    /** Data fixa no bundle para SSR e cliente coincidirem (evita hydration mismatch). Após hidratar localStorage, o valor real substitui. */
+    vencimento: "2099-12-31",
     periodo: "mensal",
     valor: 49.9,
     formaPagamento: "pix",
@@ -375,6 +386,7 @@ export function ConfigEmpresaProvider({ children }: { children: ReactNode }) {
         const parsed = JSON.parse(raw) as StoredConfigBlob
         setConfig(mergeConfigArmazenada(configPadrao, normalizeArmazenado(parsed)))
       }
+      /** Sem `raw`: estado inicial = apenas `configPadrao` (white-label neutro; nada vem do servidor aqui). */
     } catch {
       /* ignore */
     }

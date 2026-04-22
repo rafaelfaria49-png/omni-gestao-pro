@@ -326,7 +326,7 @@ export function GestaoCarteiras() {
           <CardTitle className="text-lg">Lançamento inteligente (texto ou voz)</CardTitle>
           <CardDescription>
             Ex.: &quot;Gastei 50 reais de gasolina na carteira Pessoal&quot; ou &quot;Entrada de 200 reais na carteira
-            RAFACELL&quot;. Se não disser a carteira, o sistema pergunta onde lançar.
+            Empresa&quot;. Se não disser a carteira, o sistema pergunta onde lançar.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

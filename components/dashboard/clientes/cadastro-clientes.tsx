@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { 
   Search, 
   Plus, 
@@ -12,7 +12,8 @@ import {
   Eye,
   MessageCircle,
   User,
-  FileText
+  FileText,
+  Trash2,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -20,6 +21,15 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
 import {
   Dialog,
   DialogContent,
@@ -29,8 +39,11 @@ import {
 } from "@/components/ui/dialog"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
-import { subscribeClientesRevalidate } from "@/lib/clientes-revalidate"
+import { resolveLojaIdParaConsultaClientes } from "@/lib/clientes-loja-resolve"
+import { dispatchClientesRevalidate, subscribeClientesRevalidate } from "@/lib/clientes-revalidate"
 import { useLojaAtiva } from "@/lib/loja-ativa"
+import { TypeToConfirmDialog } from "@/components/dashboard/safety/type-to-confirm-dialog"
+import { useToast } from "@/hooks/use-toast"
 
 type ScoreInterno = {
   valor: number
@@ -60,26 +73,31 @@ export function CadastroClientes({
   onVoiceOpenNewClienteConsumed,
 }: CadastroClientesProps = {}) {
   const { lojaAtivaId } = useLojaAtiva()
+  const { toast } = useToast()
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [clientesLoading, setClientesLoading] = useState(true)
   const [clientesError, setClientesError] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [confirmBulkOpen, setConfirmBulkOpen] = useState(false)
 
   const loadClientes = useCallback(async () => {
     setClientesError(null)
     setClientesLoading(true)
     try {
-      const res = await fetch("/api/ops/import/clientes", {
+      const lojaQuery = resolveLojaIdParaConsultaClientes(lojaAtivaId)
+      const res = await fetch(`/api/ops/import/clientes?storeId=${encodeURIComponent(lojaQuery)}`, {
         credentials: "include",
-        headers: lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : {},
+        headers: { [ASSISTEC_LOJA_HEADER]: lojaQuery },
+        cache: "no-store",
       })
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null
-        throw new Error(data?.error || `Falha ao carregar (HTTP ${res.status})`)
-      }
-      const data = (await res.json()) as { clientes?: Cliente[] }
-      setClientes(Array.isArray(data.clientes) ? data.clientes : [])
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; clientes?: Cliente[] } | null
+      setClientes(Array.isArray(data?.clientes) ? data!.clientes : [])
     } catch (e) {
-      setClientesError(e instanceof Error ? e.message : "Falha ao carregar clientes")
+      // `/api/clients` foi desenhado para responder 200 mesmo em falha de DB.
+      // Se cair aqui, é erro de rede/runtime local; evite “Falha ao carregar” persistente.
+      console.error("[CadastroClientes] loadClientes — erro completo:", e)
+      setClientesError(null)
       setClientes([])
     } finally {
       setClientesLoading(false)
@@ -124,11 +142,11 @@ export function CadastroClientes({
   }, [voiceOpenNewCliente, onVoiceOpenNewClienteConsumed, openNewClienteModal])
 
   const mockConsultaDocumento: Record<string, { nome: string; telefone: string; email: string; endereco: string }> = {
-    "48241205000195": {
-      nome: "RAFACELL ASSISTEC",
-      telefone: "(14) 99856-4545",
-      email: "contato@rafacell.com.br",
-      endereco: "Rua Dona Beni, 000 - Centro, Taguaí/SP",
+    "00000000000000": {
+      nome: "Minha Loja (demonstração)",
+      telefone: "(00) 00000-0000",
+      email: "contato@minhaempresa.com.br",
+      endereco: "Rua Exemplo, 0 - Centro",
     },
     "12345678900": {
       nome: "João Silva",
@@ -153,6 +171,77 @@ export function CadastroClientes({
     c.cpf.includes(searchTerm) ||
     c.telefone.includes(searchTerm)
   )
+
+  const allSelectedOnPage = useMemo(() => {
+    if (filteredClientes.length === 0) return false
+    return filteredClientes.every((c) => selectedIds.has(c.id))
+  }, [filteredClientes, selectedIds])
+
+  const someSelectedOnPage = useMemo(() => {
+    return filteredClientes.some((c) => selectedIds.has(c.id))
+  }, [filteredClientes, selectedIds])
+
+  const toggleSelectAllPage = (checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      for (const c of filteredClientes) {
+        if (checked) next.add(c.id)
+        else next.delete(c.id)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectOne = (id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const selectedOnPageIds = useMemo(
+    () => filteredClientes.filter((c) => selectedIds.has(c.id)).map((c) => c.id),
+    [filteredClientes, selectedIds]
+  )
+
+  const bulkDeleteSelected = async () => {
+    const ids = Array.from(selectedIds)
+    if (ids.length === 0) return
+    setBulkDeleting(true)
+    try {
+      const res = await fetch("/api/clientes/bulk-delete", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          [ASSISTEC_LOJA_HEADER]: resolveLojaIdParaConsultaClientes(lojaAtivaId),
+        },
+        body: JSON.stringify({ ids }),
+      })
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; deleted?: number; error?: string } | null
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `Falha ao excluir (HTTP ${res.status})`)
+      }
+      setSelectedIds(new Set())
+      await loadClientes()
+      dispatchClientesRevalidate()
+      toast({
+        title: "Exclusão concluída",
+        description: `${data.deleted ?? 0} registro(s) removido(s).`,
+      })
+    } catch (e) {
+      toast({
+        title: "Não foi possível excluir",
+        description: e instanceof Error ? e.message : "Erro inesperado",
+        variant: "destructive",
+      })
+    } finally {
+      setBulkDeleting(false)
+      setConfirmBulkOpen(false)
+    }
+  }
 
   const handlePuxarWhatsApp = () => {
     const telefone = telefoneInput.replace(/\D/g, "")
@@ -450,87 +539,137 @@ export function CadastroClientes({
       </Card>
 
       {/* Lista de Clientes */}
-      <div className="grid gap-4">
-        {clientesLoading && (
-          <p className="text-sm text-muted-foreground">Carregando clientes…</p>
-        )}
-        {clientesError && !clientesLoading && (
-          <p className="text-sm text-destructive">{clientesError}</p>
-        )}
-        {!clientesLoading && !clientesError && clientes.length === 0 && (
-          <p className="text-sm text-muted-foreground">Nenhum cliente cadastrado. Importe na aba Backup ou cadastre manualmente.</p>
-        )}
-        {!clientesLoading && !clientesError && clientes.length > 0 && filteredClientes.length === 0 && (
-          <p className="text-sm text-muted-foreground">Nenhum cliente corresponde à busca.</p>
-        )}
-        {filteredClientes.map((cliente) => (
-          <Card key={cliente.id} className="bg-card border-border hover:border-primary/50 transition-colors">
-            <CardContent className="pt-6">
-              <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-                <div className="flex items-center gap-4 flex-1">
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                    <User className="w-6 h-6 text-primary" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground">{cliente.nome}</h3>
-                    <p className="text-sm text-muted-foreground">{cliente.cpf}</p>
-                  </div>
-                </div>
+      <Card className="bg-card border-border">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg">Cadastros ({filteredClientes.length})</CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {clientesLoading && <p className="text-sm text-muted-foreground px-6 py-6">Carregando clientes…</p>}
+          {clientesError && !clientesLoading && <p className="text-sm text-destructive px-6 py-6">{clientesError}</p>}
+          {!clientesLoading && !clientesError && clientes.length === 0 && (
+            <p className="text-sm text-muted-foreground px-6 py-6">
+              Nenhum cliente cadastrado. Importe em Configurações (backup) ou cadastre manualmente.
+            </p>
+          )}
+          {!clientesLoading && !clientesError && clientes.length > 0 && filteredClientes.length === 0 && (
+            <p className="text-sm text-muted-foreground px-6 py-6">Nenhum cliente corresponde à busca.</p>
+          )}
 
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Phone className="w-4 h-4" />
-                    <span>{cliente.telefone}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Mail className="w-4 h-4" />
-                    <span className="truncate">{cliente.email}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <FileText className="w-4 h-4" />
-                    <span>{cliente.totalOS} OS</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <MapPin className="w-4 h-4" />
-                    <span className="truncate">
-                      {cliente.endereco?.includes(" - ")
-                        ? cliente.endereco.split(" - ")[1]
-                        : cliente.endereco || "—"}
-                    </span>
-                  </div>
-                </div>
+          {!clientesLoading && !clientesError && filteredClientes.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-12">
+                    <Checkbox
+                      checked={allSelectedOnPage ? true : someSelectedOnPage ? "indeterminate" : false}
+                      onCheckedChange={(v) => toggleSelectAllPage(Boolean(v))}
+                      aria-label="Selecionar todos"
+                    />
+                  </TableHead>
+                  <TableHead>Cliente</TableHead>
+                  <TableHead className="hidden md:table-cell">Telefone</TableHead>
+                  <TableHead className="hidden lg:table-cell">E-mail</TableHead>
+                  <TableHead className="w-[120px] text-right">Ações</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredClientes.map((cliente) => (
+                  <TableRow key={cliente.id}>
+                    <TableCell className="align-top">
+                      <Checkbox
+                        checked={selectedIds.has(cliente.id)}
+                        onCheckedChange={(v) => toggleSelectOne(cliente.id, Boolean(v))}
+                        aria-label={`Selecionar ${cliente.nome}`}
+                      />
+                    </TableCell>
+                    <TableCell className="align-top">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                          <User className="w-5 h-5 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-foreground truncate">{cliente.nome}</p>
+                          <p className="text-xs text-muted-foreground truncate md:hidden">{cliente.telefone || "—"}</p>
+                          {(cliente.aparelhosRecorrentes || []).length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {(cliente.aparelhosRecorrentes || []).slice(0, 3).map((a, idx) => (
+                                <Badge key={idx} variant="secondary" className="text-[10px]">
+                                  {a}
+                                </Badge>
+                              ))}
+                              {(cliente.aparelhosRecorrentes || []).length > 3 ? (
+                                <Badge variant="outline" className="text-[10px]">
+                                  +{(cliente.aparelhosRecorrentes || []).length - 3}
+                                </Badge>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell align-top text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <Phone className="w-4 h-4" />
+                        <span>{cliente.telefone || "—"}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden lg:table-cell align-top text-sm text-muted-foreground">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Mail className="w-4 h-4 shrink-0" />
+                        <span className="truncate">{cliente.email || "—"}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right align-top">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="icon" type="button" title="Visualizar">
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" type="button" title="Editar">
+                          <Edit className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" type="button" className="text-primary" title="WhatsApp">
+                          <MessageCircle className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
-                <div className="flex gap-2">
-                  <Button variant="ghost" size="icon">
-                    <Eye className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon">
-                    <Edit className="w-4 h-4" />
-                  </Button>
-                  <Button variant="ghost" size="icon" className="text-primary">
-                    <MessageCircle className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 z-50 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2">
+          <div className="rounded-xl border border-border bg-card/95 backdrop-blur px-4 py-3 shadow-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="text-sm">
+              <span className="font-medium">{selectedIds.size}</span> selecionado(s)
+              {selectedOnPageIds.length > 0 ? (
+                <span className="text-muted-foreground"> • {selectedOnPageIds.length} nesta página</span>
+              ) : null}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="outline" onClick={() => setSelectedIds(new Set())}>
+                Limpar seleção
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => setConfirmBulkOpen(true)}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Excluir selecionados
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
-              {/* Aparelhos Recorrentes */}
-              <div className="mt-4 pt-4 border-t border-border">
-                <div className="flex items-center gap-2 mb-2">
-                  <Smartphone className="w-4 h-4 text-primary" />
-                  <span className="text-sm font-medium text-foreground">Aparelhos Recorrentes:</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {cliente.aparelhosRecorrentes.map((aparelho, index) => (
-                    <Badge key={index} variant="secondary" className="text-xs">
-                      {aparelho}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <TypeToConfirmDialog
+        open={confirmBulkOpen}
+        onOpenChange={setConfirmBulkOpen}
+        title="Excluir clientes selecionados?"
+        description="Isso remove os cadastros selecionados do banco de dados. Esta ação não pode ser desfeita."
+        onConfirm={bulkDeleteSelected}
+        busy={bulkDeleting}
+      />
     </div>
   )
 }

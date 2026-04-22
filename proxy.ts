@@ -20,6 +20,7 @@ const CRITICAL_PAGE_PARAMS = new Set([
   "contas-pagar",
   "contas-receber",
   "relatorios-financeiros",
+  "dashboard-360",
 ])
 
 function isPublicPath(pathname: string): boolean {

@@ -16,16 +16,20 @@ import { Badge } from "@/components/ui/badge"
 import { useCaixa } from "./caixa-provider"
 import { AberturaCaixaModal } from "./abertura-caixa-modal"
 import { FechamentoCaixaModal } from "./fechamento-caixa-modal"
+import { cn } from "@/lib/utils"
 
 interface CaixaStatusBarProps {
   /** Incrementado por comando de voz para abrir o fluxo de abertura de caixa. */
   openAberturaSignal?: number
   onOpenAberturaSignalConsumed?: () => void
+  /** PDV: encosta na largura útil, sem margem inferior nem cantos que “encolhem” a mesa. */
+  variant?: "default" | "pdv"
 }
 
 export function CaixaStatusBar({
   openAberturaSignal = 0,
   onOpenAberturaSignalConsumed,
+  variant = "default",
 }: CaixaStatusBarProps) {
   const { caixa, getSaldoAtual } = useCaixa()
   const [showAbertura, setShowAbertura] = useState(false)
@@ -55,7 +59,13 @@ export function CaixaStatusBar({
   if (!caixa.isOpen) {
     return (
       <>
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-4">
+        <div
+          className={cn(
+            "bg-amber-500/10 border border-amber-500/30 rounded-lg p-4 mb-4",
+            variant === "pdv" &&
+              "rounded-none border-x-0 border-t-0 mb-0 px-2 py-2.5 sm:px-3"
+          )}
+        >
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-amber-500/20 flex items-center justify-center">
@@ -89,7 +99,13 @@ export function CaixaStatusBar({
 
   return (
     <>
-      <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-4 mb-4">
+      <div
+        className={cn(
+          "bg-green-500/10 border border-green-500/30 rounded-lg p-4 mb-4",
+          variant === "pdv" &&
+            "rounded-none border-x-0 border-t-0 mb-0 px-2 py-2.5 sm:px-3"
+        )}
+      >
         <div className="flex flex-col lg:flex-row items-center justify-between gap-4">
           {/* Status Principal */}
           <div className="flex items-center gap-3">

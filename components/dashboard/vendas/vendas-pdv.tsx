@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { 
   Search, 
@@ -27,17 +27,31 @@ import {
   ClipboardList,
   ScanLine,
   LayoutGrid,
+  CalendarClock,
+  Layers,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { PaymentModal } from "./payment-modal"
+import { PaymentModal, type PaymentMethodType } from "./payment-modal"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
 import { useCaixa } from "../caixa/caixa-provider"
 import { configPadrao, useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
+import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
+import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
+import { cn } from "@/lib/utils"
+import { normalizeDocDigits } from "@/lib/cpf"
+
+function formatBrDocDisplay(digitsRaw: string): string {
+  const d = normalizeDocDigits(digitsRaw)
+  if (d.length === 11) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`
+  if (d.length === 14)
+    return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`
+  return digitsRaw.trim()
+}
 import { buildPdvReceiptEscPos } from "@/lib/escpos"
 import {
   sendEscPosViaProxy,
@@ -56,6 +70,7 @@ import {
 } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { useOperationsStore } from "@/lib/operations-store"
+import { useStoreSettings } from "@/lib/store-settings-provider"
 import {
   PDV_PRODUCTS_BASE,
   mergePdvCatalogWithInventory,
@@ -107,7 +122,7 @@ type PdvUiMode = "default" | "touch" | "scanner"
 
 const PDV_UI_STORAGE_KEY = "assistec-pdv-ui-mode"
 
-const mockCustomers: Customer[] = [
+const MOCK_CUSTOMERS_INITIAL: Customer[] = [
   { id: "1", name: "Joao Silva", cpf: "123.456.789-00", phone: "(11) 99999-1234", saldoDevedor: 150.00 },
   { id: "2", name: "Maria Santos", cpf: "987.654.321-00", phone: "(11) 98888-5678", saldoDevedor: 0 },
   { id: "3", name: "Pedro Oliveira", cpf: "456.789.123-00", phone: "(11) 97777-9012", saldoDevedor: 280.00 },
@@ -133,13 +148,17 @@ export function VendasPDV({
 }: VendasPDVProps) {
   const router = useRouter()
   const { config } = useConfigEmpresa()
-  const { empresaDocumentos, getEnderecoDocumentos } = useLojaAtiva()
+  const { empresaDocumentos, getEnderecoDocumentos, lojaAtivaId, opsStorageKey, storesRefreshNonce } =
+    useLojaAtiva()
+  const { pdvParams } = useStoreSettings()
+  const lojaKey = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
   const { adicionarEntrada, adicionarSaida } = useCaixa()
   const { inventory, finalizeSaleTransaction, getSaldoCreditoCliente } = useOperationsStore()
   const { toast } = useToast()
   const [saleMode, setSaleMode] = useState<SaleMode>("balcao")
   const [searchTerm, setSearchTerm] = useState("")
   const [customerSearch, setCustomerSearch] = useState("")
+  const [customers, setCustomers] = useState<Customer[]>(() => [...MOCK_CUSTOMERS_INITIAL])
   const [cart, setCart] = useState<CartItem[]>([])
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
@@ -150,7 +169,7 @@ export function VendasPDV({
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false)
   const [discountReais, setDiscountReais] = useState<number>(0)
   const [discountPercent, setDiscountPercent] = useState<number>(0)
-  const [selectedPayment, setSelectedPayment] = useState<"dinheiro" | "cartao" | "pix" | null>(null)
+  const [instantPayIntent, setInstantPayIntent] = useState<PaymentMethodType | null>(null)
   const [showOperationsMenu, setShowOperationsMenu] = useState(false)
   const [pdvUiMode, setPdvUiMode] = useState<PdvUiMode>("default")
   const [weightDialogOpen, setWeightDialogOpen] = useState(false)
@@ -169,8 +188,46 @@ export function VendasPDV({
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const comandaImportDone = useRef(false)
 
-  const auditUser = () =>
-    `${(config.empresa.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`
+  /** Bloqueio do PDV até cadastrar Nome Fantasia (Store.name) da unidade no banco. */
+  const [storePdvGate, setStorePdvGate] = useState<{ ready: boolean; block: boolean }>({ ready: false, block: false })
+  /** Rodapé do cupom por unidade (StoreSettings). */
+  const [pdvReceiptFooter, setPdvReceiptFooter] = useState("")
+
+  useEffect(() => {
+    const id = (lojaAtivaId || "").trim()
+    if (!id) {
+      setStorePdvGate({ ready: true, block: false })
+      setPdvReceiptFooter("")
+      return
+    }
+    let cancelled = false
+    setStorePdvGate({ ready: false, block: false })
+    void (async () => {
+      try {
+        const [rs, rset] = await Promise.all([
+          fetch(`/api/stores/${encodeURIComponent(id)}`, { credentials: "include", cache: "no-store" }),
+          fetch(`/api/stores/${encodeURIComponent(id)}/settings`, { credentials: "include", cache: "no-store" }),
+        ])
+        const jStore = (await rs.json().catch(() => null)) as { store?: { name?: string | null } | null } | null
+        const jSet = (await rset.json().catch(() => null)) as { settings?: { receiptFooter?: string | null } | null } | null
+        if (cancelled) return
+        const name = String(jStore?.store?.name ?? "").trim()
+        setPdvReceiptFooter(String(jSet?.settings?.receiptFooter ?? "").trim())
+        const block = !jStore?.store || name.length === 0
+        setStorePdvGate({ ready: true, block })
+      } catch {
+        if (!cancelled) setStorePdvGate({ ready: true, block: false })
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [lojaAtivaId, storesRefreshNonce])
+
+  const auditUser = () => {
+    const nome = (empresaDocumentos.nomeFantasia || "").trim() || "Loja"
+    return `${nome || "Administrador"} (sessão local)`
+  }
   const formatBrlAudit = (n: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(n)
 
@@ -232,7 +289,7 @@ export function VendasPDV({
     }
   }, [toast])
 
-  const quickItems = (config.pdv.atalhosRapidos || []).map((a) => ({
+  const quickItems = (pdvParams.atalhosRapidos || []).map((a) => ({
     id: a.id,
     name: a.nome,
     price: a.preco,
@@ -243,9 +300,9 @@ export function VendasPDV({
   const products = mergePdvCatalogWithInventory(PDV_PRODUCTS_BASE, inventory)
 
   const searchTrim = searchTerm.trim()
-  const hideCategoriesPdv = config.pdv.ocultarCategoriasNoPdv === true
+  const hideCategoriesPdv = pdvParams.ocultarCategoriasNoPdv === true
   const hiddenCategoriesSet = new Set(
-    (config.pdv.categoriasOcultasNoPdv ?? []).map((c) => c.toLowerCase())
+    (pdvParams.categoriasOcultasNoPdv ?? []).map((c) => c.toLowerCase())
   )
   const filteredProducts = products.filter((p) => {
     const catLower = p.category.toLowerCase()
@@ -258,11 +315,18 @@ export function VendasPDV({
     return true
   })
 
-  const filteredCustomers = mockCustomers.filter(c =>
-    c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
-    c.cpf.includes(customerSearch) ||
-    c.phone.includes(customerSearch)
+  const filteredCustomers = customers.filter(
+    (c) =>
+      c.name.toLowerCase().includes(customerSearch.toLowerCase()) ||
+      c.cpf.includes(customerSearch) ||
+      c.phone.includes(customerSearch)
   )
+
+  const updateCustomerCpf = useCallback((customerId: string, cpfDigits: string) => {
+    const display = formatBrDocDisplay(cpfDigits)
+    setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, cpf: display } : c)))
+    setSelectedCustomer((prev) => (prev?.id === customerId ? { ...prev, cpf: display } : prev))
+  }, [])
 
   const pushCartLine = (params: {
     inventoryId: string
@@ -463,6 +527,7 @@ export function VendasPDV({
       nomeFantasia: nome,
       cnpj,
       enderecoLinha: getEnderecoDocumentos(),
+      receiptFooter: pdvReceiptFooter,
       itens,
       subtotal,
       taxes: 0,
@@ -505,6 +570,11 @@ export function VendasPDV({
       <p>Subtotal: ${br.format(subtotal)}</p>
       ${discountTotal > 0 ? `<p>Desconto: ${br.format(discountTotal)}</p>` : ""}
       <p style="font-weight:700">Valor final pago: ${br.format(total)}</p>
+      ${
+        pdvReceiptFooter.trim()
+          ? `<div style="font-size:10px;margin-top:8px;white-space:pre-wrap">${escapeHtml(pdvReceiptFooter.trim())}</div>`
+          : ""
+      }
       <p style="font-size:10px;margin-top:8px">${escapeHtml(new Date().toLocaleString("pt-BR"))}</p>
     `,
       "Recibo PDV"
@@ -585,7 +655,10 @@ export function VendasPDV({
         if (cart.length > 0) setIsPaymentModalOpen(true)
       } else if (e.altKey && (e.key === "p" || e.key === "P")) {
         e.preventDefault()
-        setSelectedPayment("dinheiro")
+        if (cart.length > 0) {
+          setInstantPayIntent(null)
+          setIsPaymentModalOpen(true)
+        }
       } else if (e.key === "F10") {
         e.preventDefault()
         if (cart.length > 0) setIsPaymentModalOpen(true)
@@ -640,18 +713,62 @@ export function VendasPDV({
     onVoiceCartSeedConsumed?.()
   }, [voiceCartSeed, onVoiceCartSeedConsumed, toast])
 
+  const openPaymentModal = (intent: PaymentMethodType | null) => {
+    if ((intent === "carne" || intent === "a_prazo") && !selectedCustomer) {
+      toast({
+        variant: "destructive",
+        title: "Cliente obrigatório",
+        description: "Selecione o cliente para carnê parcelado ou faturamento à prazo.",
+      })
+      return
+    }
+    setInstantPayIntent(intent)
+    setIsPaymentModalOpen(true)
+  }
+
+  if (lojaAtivaId && !storePdvGate.ready) {
+    return (
+      <div className="flex min-h-[280px] w-full flex-1 items-center justify-center text-base font-medium text-black/70">
+        Carregando dados da unidade…
+      </div>
+    )
+  }
+
+  if (storePdvGate.block) {
+    return (
+      <div className="flex min-h-[360px] w-full flex-1 flex-col items-center justify-center gap-4 border border-amber-300/80 bg-amber-50/90 px-6 py-10 text-center">
+        <h2 className="text-xl font-black text-black">Cadastre o nome da empresa desta unidade</h2>
+        <p className="max-w-lg text-base text-black/80">
+          O PDV fica bloqueado até a unidade <strong>{lojaAtivaId}</strong> ter um <strong>Nome fantasia</strong> salvo no
+          banco. Acesse <strong>Configurações → Dados da Empresa</strong>, preencha e salve.
+        </p>
+        <Button
+          type="button"
+          className="h-12 px-8 text-base font-bold"
+          onClick={() => router.replace("/?page=config-empresa")}
+        >
+          Ir para Dados da Empresa
+        </Button>
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-4">
-      {/* Barra de Status do Caixa */}
-      <CaixaStatusBar
-        openAberturaSignal={voiceOpenCaixaSignal}
-        onOpenAberturaSignalConsumed={onVoiceOpenCaixaConsumed}
-      />
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden text-[17px] text-black antialiased sm:text-[18px]">
+      {/* Mesa PDV: borda a borda (sem padding lateral) — esquerda produtos | direita carrinho ~450px */}
+      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-0 overflow-hidden border-t border-neutral-200/70 bg-background px-0 py-0 lg:flex-row">
+        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r-0 lg:border-r lg:border-neutral-200/70">
+          {/* Barra de Status do Caixa */}
+          <CaixaStatusBar
+            variant="pdv"
+            openAberturaSignal={voiceOpenCaixaSignal}
+            onOpenAberturaSignalConsumed={onVoiceOpenCaixaConsumed}
+          />
 
       {/* Header do PDV - Toggle de Modo */}
-      <Card className="bg-card border-border">
-        <CardContent className="py-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="shrink-0 border-b border-neutral-200/80 bg-background py-2.5">
+        <div className="px-1 sm:px-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             {/* Toggle de Modo */}
             <div className="flex bg-secondary rounded-lg p-1 w-full sm:w-auto">
               <button
@@ -659,24 +776,24 @@ export function VendasPDV({
                   setSaleMode("balcao")
                   setEmitirNota(false)
                 }}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-md font-medium transition-all ${
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-base font-semibold transition-all ${
                   saleMode === "balcao"
                     ? "bg-primary text-primary-foreground shadow-lg"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-black/70 hover:text-black"
                 }`}
               >
-                <Zap className="w-4 h-4" />
+                <Zap className="w-5 h-5" />
                 <span>Venda Balcao (Rapida)</span>
               </button>
               <button
                 onClick={() => setSaleMode("completa")}
-                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-6 py-3 rounded-md font-medium transition-all ${
+                className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-base font-semibold transition-all ${
                   saleMode === "completa"
                     ? "bg-primary text-primary-foreground shadow-lg"
-                    : "text-muted-foreground hover:text-foreground"
+                    : "text-black/70 hover:text-black"
                 }`}
               >
-                <FileText className="w-4 h-4" />
+                <FileText className="w-5 h-5" />
                 <span>Venda Completa (Nota)</span>
               </button>
             </div>
@@ -689,12 +806,12 @@ export function VendasPDV({
               {saleMode === "balcao" ? "Modo Rapido" : "Modo Completo - Com NF-e"}
             </Badge>
             <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-center sm:justify-end">
-              <span className="text-xs text-muted-foreground mr-1">Interface:</span>
+              <span className="text-sm font-medium text-black mr-1">Interface:</span>
               <Button
                 type="button"
                 size="sm"
                 variant={pdvUiMode === "default" ? "default" : "outline"}
-                className="h-9"
+                className="h-10 text-sm"
                 onClick={() => setPdvUiMode("default")}
               >
                 Padrão
@@ -703,7 +820,7 @@ export function VendasPDV({
                 type="button"
                 size="sm"
                 variant={pdvUiMode === "touch" ? "default" : "outline"}
-                className="h-9 gap-1"
+                className="h-10 gap-1 text-sm"
                 onClick={() => setPdvUiMode("touch")}
               >
                 <LayoutGrid className="w-4 h-4" />
@@ -713,7 +830,7 @@ export function VendasPDV({
                 type="button"
                 size="sm"
                 variant={pdvUiMode === "scanner" ? "default" : "outline"}
-                className="h-9 gap-1"
+                className="h-10 gap-1 text-sm"
                 onClick={() => setPdvUiMode("scanner")}
               >
                 <ScanLine className="w-4 h-4" />
@@ -721,18 +838,18 @@ export function VendasPDV({
               </Button>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Cliente Opcional no Modo Balcao */}
       {saleMode === "balcao" && (
-        <Card className="bg-card border-border border-dashed">
-          <CardContent className="py-3 space-y-3">
+        <div className="shrink-0 border-b border-dashed border-neutral-200/80 bg-background py-2">
+          <div className="space-y-2 px-1 sm:px-2">
             <div className="flex flex-col sm:flex-row items-center gap-4">
               <div className="flex-1 relative w-full">
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 dark:text-zinc-300" />
                     <Input
                       placeholder="Selecionar cliente (opcional)..."
                       value={customerSearch}
@@ -742,7 +859,7 @@ export function VendasPDV({
                       }}
                       onFocus={() => setShowCustomerDropdown(true)}
                       ref={customerInputRef}
-                      className="pl-10 h-10 bg-secondary border-border text-sm"
+                      className="pl-10 h-11 bg-secondary border-border text-base font-medium text-foreground"
                     />
                   </div>
                   {selectedCustomer && (
@@ -753,7 +870,7 @@ export function VendasPDV({
                         setSelectedCustomer(null)
                         setCustomerSearch("")
                       }}
-                      className="text-muted-foreground hover:text-destructive"
+                      className="text-black/70 hover:text-destructive"
                     >
                       <X className="w-4 h-4" />
                     </Button>
@@ -776,8 +893,8 @@ export function VendasPDV({
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="font-medium text-foreground text-sm">{customer.name}</p>
-                              <p className="text-xs text-muted-foreground">{customer.phone}</p>
+                              <p className="font-medium text-black text-sm">{customer.name}</p>
+                              <p className="text-xs text-black/70">{customer.phone}</p>
                             </div>
                             {customer.saldoDevedor && customer.saldoDevedor > 0 && (
                               <Badge variant="destructive" className="text-xs">
@@ -788,7 +905,7 @@ export function VendasPDV({
                         </button>
                       ))
                     ) : (
-                      <div className="px-4 py-2 text-muted-foreground text-center text-sm">
+                      <div className="px-4 py-2 text-black/70 text-center text-sm">
                         Nenhum cliente encontrado
                       </div>
                     )}
@@ -800,7 +917,7 @@ export function VendasPDV({
               {selectedCustomer && (
                 <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 border border-primary/30 rounded-lg">
                   <User className="w-4 h-4 text-primary" />
-                  <span className="font-medium text-sm text-foreground">{selectedCustomer.name}</span>
+                  <span className="font-medium text-sm text-black">{selectedCustomer.name}</span>
                   {selectedCustomer.saldoDevedor && selectedCustomer.saldoDevedor > 0 && (
                     <Badge variant="outline" className="text-xs border-amber-500/50 text-amber-500">
                       Deve R$ {selectedCustomer.saldoDevedor.toFixed(2)}
@@ -809,20 +926,20 @@ export function VendasPDV({
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
       {/* Cliente Selecionado - Apenas no Modo Completa */}
       {saleMode === "completa" && (
-        <Card className="bg-card border-border">
-          <CardContent className="py-4">
+        <div className="shrink-0 border-b border-neutral-200/80 bg-background py-2">
+          <div className="px-1 sm:px-2">
             <div className="flex flex-col lg:flex-row gap-4">
               {/* Busca de Cliente */}
               <div className="flex-1 relative">
                 <div className="flex gap-2">
                   <div className="relative flex-1">
-                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 dark:text-zinc-300" />
                     <Input
                       placeholder="Buscar cliente por nome, CPF ou telefone..."
                       value={customerSearch}
@@ -912,36 +1029,58 @@ export function VendasPDV({
                 </Button>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
 
-      {/* Grid Principal */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Produtos */}
-        <div className="lg:col-span-2 space-y-4">
+          {/* Busca + atalhos; grade de produtos (scroll) */}
+          <div className="shrink-0 border-b border-neutral-200/70 py-2.5 dark:border-zinc-800">
+            <div className="px-1 sm:px-2">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-zinc-500 dark:text-zinc-300" />
+                  <Input
+                    placeholder="Buscar produto ou código..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    ref={productInputRef}
+                    className={cn(
+                      "h-12 border-border bg-secondary pl-11 text-base text-foreground placeholder:text-muted-foreground",
+                      pdvUiMode === "scanner" && "h-14 text-lg ring-2 ring-primary/30"
+                    )}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 shrink-0 border-2 border-black/20 px-4 text-base font-semibold text-foreground hover:bg-neutral-100 dark:border-zinc-600 dark:hover:bg-zinc-800/80"
+                >
+                  <Barcode className="mr-2 h-5 w-5 text-zinc-600 dark:text-zinc-300" />
+                  Leitor
+                </Button>
+              </div>
+            </div>
+          </div>
+
           {pdvUiMode !== "scanner" && (
-            <Card className="bg-card border-border">
-              <CardContent className="py-4">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Serviços rápidos — edite em Configurações → Personalização do PDV
-                  </p>
+            <div className="shrink-0 border-b border-neutral-200/70 py-2">
+              <div className="px-1 sm:px-2">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-base font-extrabold text-black sm:text-lg">Serviços rápidos</p>
                   <Button
-                    variant="ghost"
+                    type="button"
+                    variant="outline"
                     size="sm"
-                    className="text-primary"
+                    className="h-11 border-2 border-black/20 px-3 text-sm font-bold text-black"
                     onClick={() => setShowKeyboardHelp(true)}
                   >
-                    <Keyboard className="w-4 h-4 mr-1" /> Atalhos de teclado
+                    <Keyboard className="mr-1.5 h-4 w-4" /> Atalhos
                   </Button>
                 </div>
-                <div
-                  className={`grid grid-cols-1 sm:grid-cols-2 mt-3 ${pdvUiMode === "touch" ? "gap-4" : "gap-3"}`}
-                >
+                <div className="mt-2 flex flex-wrap items-stretch gap-2">
                   {quickItems.length === 0 ? (
-                    <p className="text-sm text-muted-foreground sm:col-span-2">
-                      Configure os três cards de serviço em Configurações → Personalização do PDV.
+                    <p className="w-full text-sm text-black/70">
+                      Configure em Configurações → Personalização do PDV.
                     </p>
                   ) : (
                     quickItems.map((item) => (
@@ -949,21 +1088,10 @@ export function VendasPDV({
                         key={item.id}
                         type="button"
                         onClick={() => addQuickItem(item)}
-                        className={`flex flex-col rounded-xl border-2 border-border bg-secondary/80 hover:bg-secondary hover:border-primary transition-colors text-left justify-between ${
-                          pdvUiMode === "touch"
-                            ? "p-8 min-h-[160px] text-lg"
-                            : "p-5 min-h-[128px]"
-                        }`}
+                        className="inline-flex min-h-[56px] max-w-full min-w-0 flex-1 basis-[calc(50%-4px)] items-center justify-between gap-2 rounded-xl border-2 border-black/20 bg-neutral-100 px-3 py-2.5 text-left text-base font-bold shadow-sm transition-colors hover:bg-neutral-200 dark:border-white/10 dark:bg-zinc-900/50 dark:hover:border-primary/50 dark:hover:bg-zinc-900/70 sm:basis-auto sm:text-lg"
                       >
-                        <Sparkles className="w-5 h-5 text-primary shrink-0" />
-                        <span
-                          className={`font-semibold text-foreground leading-snug ${pdvUiMode === "touch" ? "text-xl" : "text-base"}`}
-                        >
-                          {item.name}
-                        </span>
-                        <span
-                          className={`font-bold text-primary ${pdvUiMode === "touch" ? "text-3xl" : "text-2xl"}`}
-                        >
+                        <span className="truncate text-foreground dark:text-zinc-100">{item.name}</span>
+                        <span className="shrink-0 font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
                           R$ {item.price.toFixed(2).replace(".", ",")}
                         </span>
                       </button>
@@ -973,333 +1101,409 @@ export function VendasPDV({
                 <button
                   type="button"
                   onClick={() => router.replace("/?page=os")}
-                  className={`mt-3 w-full flex flex-col rounded-xl border-2 border-primary bg-primary text-primary-foreground hover:bg-primary/90 shadow-lg text-left justify-center gap-2 ${
-                    pdvUiMode === "touch" ? "p-8 min-h-[120px]" : "p-5 min-h-[100px]"
-                  }`}
+                  className="mt-3 flex h-16 w-full items-center justify-between gap-3 rounded-xl border-2 border-black bg-black px-4 text-left text-white shadow-lg transition-colors hover:bg-zinc-900"
                 >
-                  <div className="flex items-center gap-3">
-                    <ClipboardList className={`shrink-0 opacity-95 ${pdvUiMode === "touch" ? "w-9 h-9" : "w-7 h-7"}`} />
-                    <span
-                      className={`font-bold tracking-tight leading-tight ${pdvUiMode === "touch" ? "text-2xl" : "text-lg sm:text-xl"}`}
-                    >
-                      NOVA ORDEM DE SERVIÇO
-                    </span>
-                  </div>
-                  <span className="text-xs font-medium opacity-90 pl-10 sm:pl-0">Abrir cadastro de O.S.</span>
+                  <span className="flex min-w-0 items-center gap-2 text-lg font-extrabold tracking-wide">
+                    <ClipboardList className="h-6 w-6 shrink-0" />
+                    <span className="truncate uppercase">Nova O.S.</span>
+                  </span>
+                  <span className="shrink-0 text-xl font-light opacity-90">→</span>
                 </button>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           )}
 
-          <Card className="bg-card border-border">
-            <CardHeader className="pb-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar produto ou codigo de barras..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    ref={productInputRef}
-                    className={`pl-10 bg-secondary border-border ${pdvUiMode === "scanner" ? "h-14 text-lg ring-2 ring-primary/40" : ""}`}
-                  />
-                </div>
-                <Button variant="outline" className="border-border">
-                  <Barcode className="w-4 h-4 mr-2" />
-                  Leitor
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {filteredProducts.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-6 text-center">
-                  {!searchTrim
-                    ? "Telas, Baterias e Conectores ficam ocultos até você buscar. Digite o nome ou categoria."
-                    : "Nenhum produto encontrado."}
-                </p>
-              ) : null}
-              <div
-                className={`grid gap-3 ${pdvUiMode === "touch" ? "grid-cols-2 sm:grid-cols-2 gap-4" : "grid-cols-2 sm:grid-cols-3"}`}
-              >
-                {filteredProducts.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    onClick={() => addToCart(product)}
-                    className={`flex flex-col rounded-lg bg-secondary hover:bg-secondary/80 border border-border hover:border-primary transition-colors text-left ${
-                      pdvUiMode === "touch" ? "p-6 min-h-[120px] justify-between" : "p-4"
-                    }`}
-                  >
-                    <span
-                      className={`font-medium text-foreground line-clamp-2 ${pdvUiMode === "touch" ? "text-lg" : "text-sm"}`}
-                    >
-                      {product.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground mt-1">{product.category}</span>
-                    <div className="flex items-center justify-between mt-2 gap-2">
-                      <span
-                        className={`font-bold text-primary shrink-0 ${pdvUiMode === "touch" ? "text-2xl" : "text-lg"}`}
-                      >
-                        {product.vendaPorPeso
-                          ? `R$ ${product.price.toFixed(2)}/kg`
-                          : `R$ ${product.price.toFixed(2)}`}
-                      </span>
-                      <Badge variant={product.stock <= 5 ? "destructive" : "secondary"} className="text-xs shrink-0">
-                        {product.vendaPorPeso ? `${product.stock} kg` : `${product.stock} un`}
-                      </Badge>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Sugestoes de Complementos */}
-          {selectedProduct?.complementos && selectedProduct.complementos.length > 0 && (
-            <Card className="bg-card border-primary/50">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-primary" />
-                  Sugestoes de Complementos
-                </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Clientes que compraram {selectedProduct.name} tambem levaram:
-                </p>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {selectedProduct.complementos.map((comp) => (
-                    <Button
-                      key={comp.id}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => addComplemento(selectedProduct.id, comp.name, comp.price)}
-                      className="border-primary/50 hover:bg-primary hover:text-primary-foreground"
-                    >
-                      <Plus className="w-3 h-3 mr-1" />
-                      {comp.name} - R$ {comp.price.toFixed(2)}
-                    </Button>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        {/* Carrinho */}
-        <div className="lg:col-span-1">
-          <Card className="bg-card border-border sticky top-4">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2">
-                <ShoppingBag className="w-5 h-5" />
-                Carrinho
-                {selectedCustomer && (
-                  <Badge variant="outline" className="ml-auto text-xs">
-                    {selectedCustomer.name.split(" ")[0]}
-                  </Badge>
-                )}
-                {linkedOsId && (
-                  <Badge variant="outline" className="text-primary border-primary/40">
-                    Venda vinculada à O.S.
-                  </Badge>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto text-primary"
-                  onClick={() => setShowOperationsMenu((p) => !p)}
-                >
-                  <Settings className="w-4 h-4" />
-                </Button>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {cart.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <ShoppingBag className="w-12 h-12 mx-auto mb-2 opacity-50" />
-                  <p>Carrinho vazio</p>
-                  <p className="text-sm">Adicione produtos para iniciar a venda</p>
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-3 max-h-64 overflow-y-auto">
-                    {cart.map((item) => (
-                      <div key={item.lineId} className="flex items-center gap-2 p-2 rounded-lg bg-secondary">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            R$ {item.price.toFixed(2)}
-                            {item.vendaPorPeso ? "/kg" : ""} ×{" "}
-                            {item.vendaPorPeso ? `${item.quantity.toFixed(3)} kg` : item.quantity}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => updateQuantity(item.lineId, -1)}
-                          >
-                            <Minus className="w-3 h-3" />
-                          </Button>
-                          <span className="w-10 text-center text-sm font-medium">
-                            {item.vendaPorPeso ? item.quantity.toFixed(2) : item.quantity}
+          <div className="h-full min-h-0 flex-1 overflow-y-auto overscroll-contain py-3 pl-1 pr-0 sm:pl-2 [scrollbar-gutter:stable]">
+                {selectedProduct?.complementos && selectedProduct.complementos.length > 0 ? (
+                  <div className="mb-1.5 rounded border border-primary/35 bg-primary/5 px-1.5 py-1 dark:border-primary/30 dark:bg-zinc-900/40">
+                    <p className="text-[10px] font-semibold text-muted-foreground dark:text-zinc-400">
+                      <Sparkles className="mr-0.5 inline h-3 w-3 text-primary" />
+                      {selectedProduct.name}
+                    </p>
+                    <div className="mt-1 flex gap-1 overflow-x-auto pb-0.5">
+                      {selectedProduct.complementos.map((comp) => (
+                        <button
+                          key={comp.id}
+                          type="button"
+                          onClick={() => addComplemento(selectedProduct.id, comp.name, comp.price)}
+                          className="inline-flex shrink-0 items-center gap-1 rounded border border-primary/40 bg-white px-2 py-0.5 text-[10px] text-foreground hover:bg-primary/10 dark:border-white/10 dark:bg-zinc-900/50 dark:hover:border-primary/50"
+                        >
+                          <Plus className="h-3 w-3 text-zinc-600 dark:text-zinc-300" />
+                          <span className="max-w-[120px] truncate dark:text-zinc-100">{comp.name}</span>
+                          <span className="font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
+                            R$ {comp.price.toFixed(2)}
                           </span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => updateQuantity(item.lineId, 1)}
-                          >
-                            <Plus className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-destructive"
-                            onClick={() => removeFromCart(item.lineId)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {filteredProducts.length === 0 ? (
+                  <p className="py-8 text-center text-base font-medium text-black/75">
+                    {!searchTrim
+                      ? "Telas, baterias e conectores ficam ocultos até você buscar. Digite o nome ou a categoria."
+                      : "Nenhum produto encontrado."}
+                  </p>
+                ) : (
+                  <div className="grid w-full grid-cols-2 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                    {filteredProducts.map((product) => (
+                      <button
+                        key={product.id}
+                        type="button"
+                        onClick={() => addToCart(product)}
+                        className="min-h-[118px] w-full rounded-xl border-2 border-black/12 bg-white px-3 py-3 text-left shadow-sm transition-colors hover:border-black/30 hover:bg-neutral-50 dark:border-white/10 dark:bg-zinc-900/50 dark:hover:border-primary/50 dark:hover:bg-zinc-900/70 sm:px-4 sm:py-3.5"
+                      >
+                        <div className="flex flex-col gap-1.5">
+                          <span className="line-clamp-2 min-h-0 break-words text-left text-base font-bold leading-snug text-foreground dark:text-zinc-100 sm:text-[1.05rem]">
+                            {product.name}
+                          </span>
+                          <div className="flex items-baseline justify-between gap-2 border-t border-black/5 pt-1.5 dark:border-white/5">
+                            <span className="shrink-0 text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-lg">
+                              {product.vendaPorPeso
+                                ? `R$ ${product.price.toFixed(2)}/kg`
+                                : `R$ ${product.price.toFixed(2)}`}
+                            </span>
+                            <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+                              <span className="truncate text-xs font-medium text-muted-foreground dark:text-zinc-400 sm:text-sm">
+                                {product.category}
+                              </span>
+                              <Badge
+                                variant={product.stock <= 5 ? "destructive" : "secondary"}
+                                className="shrink-0 border-black/10 text-xs font-semibold sm:text-sm dark:border-white/10"
+                              >
+                                {product.vendaPorPeso ? `${product.stock} kg` : `${product.stock} un`}
+                              </Badge>
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
+                )}
+              </div>
+        </div>
 
-                  <Separator />
-
-                  <div className="space-y-2">
-                    <Label className="text-xs text-muted-foreground">Quantidade do último item (F4)</Label>
-                    <Input
-                      ref={quantityInputRef}
-                      type="number"
-                      min={1}
-                      value={
-                        cart.length
-                          ? cart[cart.length - 1].vendaPorPeso
-                            ? cart[cart.length - 1].quantity
-                            : cart[cart.length - 1].quantity
-                          : ""
-                      }
-                      onChange={(e) => {
-                        if (!cart.length) return
-                        const last = cart[cart.length - 1]
-                        const lastId = last.lineId
-                        const raw = e.target.value.replace(",", ".")
-                        const next = last.vendaPorPeso
-                          ? Math.max(0.001, parseFloat(raw) || 0.001)
-                          : Math.max(1, parseInt(raw, 10) || 1)
-                        setCart((prev) =>
-                          prev.map((i) => (i.lineId === lastId ? { ...i, quantity: next } : i))
-                        )
-                      }}
-                      step={cart.length && cart[cart.length - 1].vendaPorPeso ? "0.001" : "1"}
-                      className="h-10 bg-secondary border-border"
-                    />
+        {/* Direita ~450px: metade superior = lista (scroll) | metade inferior = pagamento (fixo na metade) */}
+        <div className="flex min-h-0 w-full min-w-0 flex-col overflow-hidden border-l-2 border-black/10 bg-neutral-50/80 dark:border-zinc-800 dark:bg-zinc-950/90 lg:h-full lg:w-[450px] lg:min-w-[450px] lg:max-w-[450px] lg:shrink-0 lg:grow-0">
+          {cart.length === 0 ? (
+            <div className="flex min-h-0 flex-1 flex-col justify-center px-2 py-8 text-center sm:px-3">
+              <div className="shrink-0 border-b-2 border-black/10 px-2 pb-2 pt-2.5 text-left sm:px-3">
+                <div className="flex flex-wrap items-center gap-2 text-lg font-extrabold text-black">
+                  <ShoppingBag className="h-6 w-6 shrink-0" />
+                  <span>Carrinho</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="relative z-[100] ml-auto h-9 w-9 shrink-0 text-black"
+                    onClick={() => setShowOperationsMenu((p) => !p)}
+                  >
+                    <Settings className="h-5 w-5" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex flex-1 flex-col justify-center">
+                <ShoppingBag className="mx-auto mb-3 h-12 w-12 text-black/30" />
+                <p className="text-lg font-bold text-black">Carrinho vazio</p>
+                <p className="mt-1 text-base text-black/70">Adicione produtos para iniciar a venda</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {/* 50% — lista de itens + scroll */}
+              <div className="flex min-h-0 min-w-0 flex-[1_1_0] basis-0 flex-col overflow-hidden border-b-2 border-black/10">
+                <div className="shrink-0 border-b border-black/10 px-2 pb-2 pt-2 sm:px-3">
+                  <div className="flex flex-wrap items-center gap-1.5 text-lg font-extrabold text-black">
+                    <ShoppingBag className="h-6 w-6 shrink-0" />
+                    <span>Carrinho</span>
+                    {selectedCustomer ? (
+                      <Badge variant="outline" className="border-black/20 text-xs font-semibold text-black">
+                        {selectedCustomer.name.split(" ")[0]}
+                      </Badge>
+                    ) : null}
+                    {linkedOsId ? (
+                      <Badge variant="outline" className="border-primary/40 text-[10px] text-primary">
+                        Venda vinculada à O.S.
+                      </Badge>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="relative z-[100] ml-auto h-9 w-9 shrink-0 text-black"
+                      onClick={() => setShowOperationsMenu((p) => !p)}
+                    >
+                      <Settings className="h-5 w-5" />
+                    </Button>
                   </div>
+                </div>
+                <div className="relative z-0 min-h-0 flex-1 divide-y divide-neutral-200 overflow-y-auto overflow-x-hidden px-2 py-1 [scrollbar-gutter:stable] dark:divide-white/5 sm:px-3">
+                  {cart.map((item) => (
+                    <div
+                      key={item.lineId}
+                      className="relative z-0 flex items-start gap-2 py-3 first:pt-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-2 break-words text-base font-bold leading-tight text-foreground dark:text-zinc-100">
+                          {item.name}
+                        </p>
+                        <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
+                          R$ {item.price.toFixed(2)}
+                          {item.vendaPorPeso ? "/kg" : ""}
+                        </p>
+                        <p className="mt-1 text-xs leading-tight text-muted-foreground dark:text-zinc-400">
+                          <span className="tabular-nums">
+                            {item.vendaPorPeso ? `${item.quantity.toFixed(3)} kg` : `${item.quantity} un.`}
+                          </span>
+                          <span className="text-zinc-400 dark:text-zinc-500"> · </span>
+                          <span className="tabular-nums font-medium text-foreground/80 dark:text-zinc-300">
+                            linha R$ {(item.price * item.quantity).toFixed(2)}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="relative z-[100] flex shrink-0 items-center gap-0">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-foreground dark:text-zinc-300"
+                          onClick={() => updateQuantity(item.lineId, -1)}
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </Button>
+                        <span className="min-w-[1.75rem] text-center text-xs font-bold tabular-nums text-foreground dark:text-zinc-200">
+                          {item.vendaPorPeso ? item.quantity.toFixed(2) : item.quantity}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => updateQuantity(item.lineId, 1)}
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          title="Remover item"
+                          className="h-8 w-8 shrink-0 rounded-md bg-red-600 text-white shadow-sm hover:bg-red-700 active:bg-red-800"
+                          onClick={() => removeFromCart(item.lineId)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-                  {/* Saldo Devedor do Cliente */}
-                  {selectedCustomer && selectedCustomer.saldoDevedor && selectedCustomer.saldoDevedor > 0 && (
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-amber-500">Saldo Devedor</span>
-                        <span className="font-bold text-amber-500">
-                          R$ {selectedCustomer.saldoDevedor.toFixed(2)}
+              {/* 50% — painel de pagamento (área fixa; scroll só se não couber) */}
+              <div className="relative z-0 flex min-h-0 min-w-0 flex-[1_1_0] basis-0 flex-col gap-1.5 overflow-y-auto overflow-x-hidden border-t border-neutral-200/80 bg-white px-2 pb-2 pt-2 shadow-[inset_0_1px_0_rgba(0,0,0,0.06)] dark:border-zinc-800 dark:bg-zinc-950 sm:px-3">
+                    <div className="shrink-0">
+                      <Label className="text-xs font-bold text-foreground dark:text-zinc-300">
+                        Qtd. último item (F4)
+                      </Label>
+                      <Input
+                        ref={quantityInputRef}
+                        type="number"
+                        min={1}
+                        value={
+                          cart.length
+                            ? cart[cart.length - 1].vendaPorPeso
+                              ? cart[cart.length - 1].quantity
+                              : cart[cart.length - 1].quantity
+                            : ""
+                        }
+                        onChange={(e) => {
+                          if (!cart.length) return
+                          const last = cart[cart.length - 1]
+                          const lastId = last.lineId
+                          const raw = e.target.value.replace(",", ".")
+                          const next = last.vendaPorPeso
+                            ? Math.max(0.001, parseFloat(raw) || 0.001)
+                            : Math.max(1, parseInt(raw, 10) || 1)
+                          setCart((prev) =>
+                            prev.map((i) => (i.lineId === lastId ? { ...i, quantity: next } : i))
+                          )
+                        }}
+                        step={cart.length && cart[cart.length - 1].vendaPorPeso ? "0.001" : "1"}
+                        className="mt-1 h-9 border-2 border-black/15 bg-neutral-50 text-sm font-semibold text-foreground dark:border-zinc-700 dark:bg-zinc-900/50"
+                      />
+                    </div>
+
+                    {selectedCustomer && selectedCustomer.saldoDevedor && selectedCustomer.saldoDevedor > 0 ? (
+                      <div className="rounded-lg border-2 border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                        <div className="flex items-center justify-between text-sm font-semibold">
+                          <span className="text-amber-800 dark:text-amber-200">Saldo devedor</span>
+                          <span className="font-bold tabular-nums text-amber-800 dark:text-amber-200">
+                            R$ {selectedCustomer.saldoDevedor.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="shrink-0 space-y-1">
+                      <p className="text-xs font-bold text-foreground dark:text-zinc-300">Forma de pagamento</p>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex h-11 flex-col gap-0 border-2 border-emerald-500/40 bg-background py-1 text-[10px] font-extrabold leading-none text-foreground shadow-sm hover:bg-emerald-500/10 dark:border-emerald-400/50 dark:bg-zinc-900/40 dark:hover:bg-emerald-500/15 sm:text-xs"
+                          onClick={() => openPaymentModal("dinheiro")}
+                        >
+                          <Banknote className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                          <span>Dinheiro</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex h-11 flex-col gap-0 border-2 border-teal-500/40 bg-background py-1 text-[10px] font-extrabold leading-none text-foreground shadow-sm hover:bg-teal-500/10 dark:border-teal-400/50 dark:bg-zinc-900/40 dark:hover:bg-teal-500/15 sm:text-xs"
+                          onClick={() => openPaymentModal("pix")}
+                        >
+                          <QrCode className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />
+                          <span>PIX</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex h-11 flex-col gap-0 border-2 border-slate-500/40 bg-background py-1 text-[10px] font-extrabold leading-none text-foreground shadow-sm hover:bg-slate-500/10 dark:border-slate-400/50 dark:bg-zinc-900/40 dark:hover:bg-slate-500/15 sm:text-xs"
+                          onClick={() => openPaymentModal("cartao_debito")}
+                        >
+                          <CreditCard className="h-4 w-4 shrink-0 text-slate-600 dark:text-slate-300" />
+                          <span>Débito</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex h-11 flex-col gap-0 border-2 border-blue-500/40 bg-background py-1 text-[10px] font-extrabold leading-none text-foreground shadow-sm hover:bg-blue-500/10 dark:border-blue-400/50 dark:bg-zinc-900/40 dark:hover:bg-blue-500/15 sm:text-xs"
+                          onClick={() => openPaymentModal("cartao_credito")}
+                        >
+                          <CreditCard className="h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" />
+                          <span>Crédito</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!selectedCustomer}
+                          title={
+                            !selectedCustomer
+                              ? "Selecione o cliente para faturar à prazo em Contas a Receber"
+                              : undefined
+                          }
+                          className="flex h-11 flex-col gap-0 border-2 border-violet-500/40 bg-background py-1 text-[10px] font-extrabold leading-none text-foreground shadow-sm hover:bg-violet-500/10 disabled:opacity-40 dark:border-violet-400/50 dark:bg-zinc-900/40 dark:hover:bg-violet-500/15 sm:text-xs"
+                          onClick={() => openPaymentModal("a_prazo")}
+                        >
+                          <CalendarClock className="h-4 w-4 shrink-0 text-violet-600 dark:text-violet-400" />
+                          <span>À prazo</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="flex h-11 flex-col gap-0 border-2 border-border bg-background py-1 text-[10px] font-extrabold leading-none text-foreground hover:bg-muted/50 dark:border-zinc-600 dark:bg-zinc-900/40 sm:text-xs"
+                          onClick={() => openPaymentModal(null)}
+                        >
+                          <Layers className="h-4 w-4 shrink-0 text-zinc-600 dark:text-zinc-300" />
+                          <span>Misto</span>
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex h-10 w-full flex-col justify-center gap-0 border-2 border-orange-500/45 bg-background py-0.5 text-xs font-extrabold tracking-tight text-foreground shadow-sm hover:bg-orange-500/10 dark:border-orange-400/50 dark:bg-zinc-900/40 dark:hover:bg-orange-500/15"
+                        onClick={() => openPaymentModal("carne")}
+                      >
+                        <FileText className="h-4 w-4 shrink-0 text-orange-600 dark:text-orange-400" />
+                        Carnê / Parcelado
+                      </Button>
+                    </div>
+
+                    {selectedCustomer ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 w-full border-amber-500/55 text-[11px] text-amber-900 hover:bg-amber-500 hover:text-white"
+                        onClick={handlePendOnAccount}
+                      >
+                        <BookUser className="mr-2 h-3.5 w-3.5" />
+                        Pendurar na conta
+                      </Button>
+                    ) : null}
+
+                    <div className="shrink-0 space-y-1.5 rounded-lg border-2 border-black/10 bg-neutral-100/95 px-2 py-2.5 sm:px-2.5 dark:border-white/10 dark:bg-zinc-900/80">
+                      {discountTotal > 0 ? (
+                        <>
+                          <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground dark:text-zinc-400">
+                            Totais
+                          </p>
+                          <div className="flex justify-between text-sm font-semibold">
+                            <span className="text-muted-foreground dark:text-zinc-400">Subtotal</span>
+                            <span className="font-extrabold tabular-nums text-foreground dark:text-zinc-100">
+                              R$ {subtotal.toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-sm font-semibold">
+                            <span className="text-muted-foreground dark:text-zinc-400">Desconto</span>
+                            <span className="font-extrabold tabular-nums text-foreground dark:text-zinc-100">
+                              − R$ {discountTotal.toFixed(2)}
+                            </span>
+                          </div>
+                        </>
+                      ) : null}
+                      {saleMode === "completa" && emitirNota ? (
+                        <div className="flex justify-between text-xs font-medium">
+                          <span className="text-muted-foreground dark:text-zinc-400">NF-e</span>
+                          <span className="font-semibold text-foreground dark:text-zinc-200">Será emitida</span>
+                        </div>
+                      ) : null}
+                      <div
+                        className={cn(
+                          "flex items-baseline justify-between",
+                          discountTotal > 0 || (saleMode === "completa" && emitirNota)
+                            ? "border-t border-black/15 pt-1.5 dark:border-white/10"
+                            : "pt-0"
+                        )}
+                      >
+                        <span className="text-lg font-black text-foreground dark:text-zinc-100 sm:text-xl">
+                          Total
+                        </span>
+                        <span className="text-2xl font-black tabular-nums tracking-tight text-emerald-600 dark:text-emerald-400 sm:text-3xl">
+                          R$ {total.toFixed(2)}
                         </span>
                       </div>
                     </div>
-                  )}
 
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Subtotal</span>
-                      <span>R$ {subtotal.toFixed(2)}</span>
-                    </div>
-                    {discountTotal > 0 && (
-                      <div className="flex justify-between text-sm text-primary">
-                        <span>Desconto</span>
-                        <span>− R$ {discountTotal.toFixed(2)}</span>
-                      </div>
-                    )}
-                    <p className="text-[11px] text-muted-foreground">
-                      Desconto (R$ e %) no passo &quot;Finalizar venda&quot;.
-                    </p>
-                    {saleMode === "completa" && emitirNota && (
-                      <div className="flex justify-between text-sm text-primary">
-                        <span>NF-e</span>
-                        <span>Sera emitida</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between text-lg font-bold">
-                      <span>Total (líquido)</span>
-                      <span className="text-primary">R$ {total.toFixed(2)}</span>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  {/* Formas de Pagamento */}
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium text-muted-foreground">Forma de Pagamento</p>
-                    <div className="grid grid-cols-3 gap-2">
-                      <Button variant="outline" onClick={() => setSelectedPayment("dinheiro")} className={`flex-col h-auto py-3 border-border hover:border-primary ${selectedPayment === "dinheiro" ? "border-primary text-primary" : ""}`}>
-                        <Banknote className="w-5 h-5 mb-1" />
-                        <span className="text-xs">Dinheiro</span>
-                      </Button>
-                      <Button variant="outline" onClick={() => setSelectedPayment("cartao")} className={`flex-col h-auto py-3 border-border hover:border-primary ${selectedPayment === "cartao" ? "border-primary text-primary" : ""}`}>
-                        <CreditCard className="w-5 h-5 mb-1" />
-                        <span className="text-xs">Cartao</span>
-                      </Button>
-                      <Button variant="outline" onClick={() => setSelectedPayment("pix")} className={`flex-col h-auto py-3 border-border hover:border-primary ${selectedPayment === "pix" ? "border-primary text-primary" : ""}`}>
-                        <QrCode className="w-5 h-5 mb-1" />
-                        <span className="text-xs">Pix</span>
-                      </Button>
-                    </div>
-                    
-                    {/* Opcao Pendurar na Conta - So aparece com cliente selecionado */}
-                    {selectedCustomer && (
-                      <Button 
-                        variant="outline" 
-                        className="w-full h-12 border-amber-500/50 text-amber-500 hover:bg-amber-500 hover:text-white"
-                        onClick={handlePendOnAccount}
-                      >
-                        <BookUser className="w-5 h-5 mr-2" />
-                        Pendurar / Conta do Cliente
-                      </Button>
-                    )}
-                  </div>
-
-                  {/* Botoes de Acao */}
-                  <div className="space-y-2">
-                    <Button 
-                      className="w-full h-12 text-base font-semibold bg-primary hover:bg-primary/90"
-                      onClick={() => setIsPaymentModalOpen(true)}
+                    <Button
+                      type="button"
+                      className="min-h-[52px] w-full shrink-0 rounded-xl bg-black py-3 text-lg font-bold text-white shadow-lg hover:bg-zinc-900 sm:text-xl"
+                      onClick={() => openPaymentModal(null)}
                       disabled={saleMode === "completa" && !selectedCustomer}
                     >
-                      Finalizar Venda
+                      Finalizar venda
                     </Button>
-                    
-                    {/* Botao Recibo Simples */}
-                    <Button 
+                    <Button
+                      type="button"
                       variant="outline"
-                      className="w-full h-10 border-border hover:bg-secondary"
+                      className="h-8 w-full shrink-0 border-border text-xs text-[#000000] hover:bg-secondary sm:h-9 sm:text-sm"
                       onClick={handlePrintReceipt}
                     >
-                      <Receipt className="w-4 h-4 mr-2" />
-                      Recibo Simples (Termica 80mm)
+                      <Receipt className="mr-2 h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      Recibo térmico (80mm)
                     </Button>
-                  </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Modal de Pagamento */}
       <PaymentModal
         isOpen={isPaymentModalOpen}
-        onClose={() => setIsPaymentModalOpen(false)}
+        onClose={() => {
+          setIsPaymentModalOpen(false)
+          setInstantPayIntent(null)
+        }}
         cartSubtotal={subtotal}
         total={total}
         discountReais={discountReais}
@@ -1309,6 +1513,9 @@ export function VendasPDV({
         custoPeca={total * 0.35}
         selectedCustomer={selectedCustomer}
         customerStoreCredit={selectedCustomer ? getSaldoCreditoCliente(selectedCustomer.cpf) : 0}
+        instantPayIntent={instantPayIntent}
+        onInstantPayIntentConsumed={() => setInstantPayIntent(null)}
+        onCustomerCpfUpdate={updateCustomerCpf}
         onConfirm={(payments) => {
           const saleLines = cart
             .filter((item) => inventory.some((i) => i.id === item.inventoryId))
@@ -1323,6 +1530,7 @@ export function VendasPDV({
           let cartaoDebito = 0
           let cartaoCredito = 0
           let carne = 0
+          let aPrazo = 0
           let creditoVale = 0
           for (const p of payments) {
             if (p.type === "dinheiro") dinheiro += p.value
@@ -1330,6 +1538,7 @@ export function VendasPDV({
             else if (p.type === "cartao_debito") cartaoDebito += p.value
             else if (p.type === "cartao_credito") cartaoCredito += p.value
             else if (p.type === "carne") carne += p.value
+            else if (p.type === "a_prazo") aPrazo += p.value
             else if (p.type === "credito_vale") creditoVale += p.value
           }
           const result = finalizeSaleTransaction({
@@ -1342,6 +1551,7 @@ export function VendasPDV({
               cartaoDebito,
               cartaoCredito,
               carne,
+              aPrazo,
               creditoVale,
             },
             customerCpf: selectedCustomer?.cpf,
@@ -1351,10 +1561,18 @@ export function VendasPDV({
             toast({ title: "Falha transacional", description: result.reason })
             return
           }
+          if (aPrazo > 0.02 && selectedCustomer) {
+            appendContaReceberTituloPdvAprazo({
+              lojaId: lojaKey,
+              saleId: result.saleId,
+              clienteNome: selectedCustomer.name,
+              valor: aPrazo,
+            })
+          }
           appendAuditLog({
             action: "sale_finalized",
             userLabel: auditUser(),
-            detail: `Venda ${result.saleId} Total ${formatBrlAudit(total)} | Din ${formatBrlAudit(dinheiro)} Pix ${formatBrlAudit(pix)} Déb ${formatBrlAudit(cartaoDebito)} Créd ${formatBrlAudit(cartaoCredito)} Carnê ${formatBrlAudit(carne)} Vale ${formatBrlAudit(creditoVale)}`,
+            detail: `Venda ${result.saleId} Total ${formatBrlAudit(total)} | Din ${formatBrlAudit(dinheiro)} Pix ${formatBrlAudit(pix)} Déb ${formatBrlAudit(cartaoDebito)} Créd ${formatBrlAudit(cartaoCredito)} Carnê ${formatBrlAudit(carne)} Prazo ${formatBrlAudit(aPrazo)} Vale ${formatBrlAudit(creditoVale)}`,
           })
           if (subtotal > 0 && discountTotal > 0) {
             const pct = (discountTotal / subtotal) * 100
@@ -1384,7 +1602,7 @@ export function VendasPDV({
           onClick={() => setShowOperationsMenu(false)}
         >
           <Card
-            className="fixed right-4 top-1/2 -translate-y-1/2 w-64 bg-card border-border shadow-xl z-[80]"
+            className="fixed left-4 top-1/2 z-[90] max-h-[min(32rem,85vh)] w-[min(20rem,calc(100vw-2rem))] -translate-y-1/2 overflow-y-auto border-border bg-card shadow-xl sm:left-6 lg:left-8"
             onClick={(e) => e.stopPropagation()}
           >
             <CardHeader className="pb-2">
@@ -1470,19 +1688,22 @@ export function VendasPDV({
       </Dialog>
 
       {cashHistory.length > 0 && (
-        <Card className="bg-card border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Histórico Financeiro do Caixa</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
+        <div className="max-h-36 shrink-0 overflow-y-auto overflow-x-hidden border-t border-neutral-200/80 bg-background px-1 py-2">
+          <p className="mb-2 text-sm font-semibold text-black">Histórico financeiro do caixa</p>
+          <div className="space-y-1.5">
             {cashHistory.slice(0, 6).map((h) => (
-              <div key={h.id} className="p-2 rounded border border-border bg-secondary/30 text-sm flex justify-between gap-2">
-                <span>{h.type} - {h.reason}</span>
-                <span className="font-medium">R$ {h.value.toFixed(2)}</span>
+              <div
+                key={h.id}
+                className="flex justify-between gap-2 rounded-md border border-neutral-200/80 bg-background px-2 py-1.5 text-sm"
+              >
+                <span>
+                  {h.type} — {h.reason}
+                </span>
+                <span className="font-medium tabular-nums">R$ {h.value.toFixed(2)}</span>
               </div>
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       )}
     </div>
   )

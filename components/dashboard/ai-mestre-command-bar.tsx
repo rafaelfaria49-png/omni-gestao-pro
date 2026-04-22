@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { Mic, Sparkles, Loader2 } from "lucide-react"
+import { Mic, Sparkles, Loader2, Settings2, Lock } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
@@ -10,6 +10,12 @@ import { useLojaAtiva } from "@/lib/loja-ativa"
 import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import type { PlanoAssinatura } from "@/services/ai-orchestrator"
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
+import { useStoreSettings } from "@/lib/store-settings-provider"
+import { mestreModelPolicy } from "@/lib/ai-model-policy"
+import { AI_MODELS_MOSAIC } from "@/lib/ai-models-list"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   disposeSpeechRecognition,
   getSpeechRecognitionConstructor,
@@ -25,6 +31,7 @@ export function AiMestreCommandBar() {
   const [text, setText] = useState("")
   const [loading, setLoading] = useState(false)
   const [listening, setListening] = useState(false)
+  const [modelOpen, setModelOpen] = useState(false)
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
   /** Incrementado a cada nova sessão de voz — evita que onerror/onend de sessões antigas alterem o estado após re-render ou novo start(). */
   const voiceSessionGenRef = useRef(0)
@@ -32,9 +39,14 @@ export function AiMestreCommandBar() {
   const voiceLastHeardRef = useRef("")
   const { toast } = useToast()
   const { config } = useConfigEmpresa()
-  const plano = config.assinatura.plano as PlanoAssinatura
+  const planoRaw = config.assinatura.plano as PlanoAssinatura
   const { lojaAtivaId, opsStorageKey } = useLojaAtiva()
-  const lojaId = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
+  const lojaId = (lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey) ?? LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID
+  const { settings, blob, save } = useStoreSettings()
+  const plano = (blob.planoAssinaturaOverride || planoRaw) as PlanoAssinatura
+  const policy = mestreModelPolicy(plano)
+  const selectedModel = (blob.aiMestreModel || "").trim() || policy.model
+  const modelLabel = (id: string) => AI_MODELS_MOSAIC.find((m) => m.id === id)?.label || id
 
   const runOrchestrator = async (cmd: string) => {
     const trimmed = cmd.trim()
@@ -47,14 +59,20 @@ export function AiMestreCommandBar() {
       const res = await fetch("/api/ai/orchestrate", {
         method: "POST",
         headers: { "Content-Type": "application/json", [ASSISTEC_LOJA_HEADER]: lojaId },
-        body: JSON.stringify({ command: trimmed, plano, lojaId }),
+        body: JSON.stringify({
+          command: trimmed,
+          plano,
+          lojaId,
+          // Básico: servidor trava o modelo. Ouro: respeita o modelo escolhido (lista permitida).
+          model: plano === "ouro" ? selectedModel : undefined,
+        }),
       })
       const data = (await res.json()) as {
         ok?: boolean
         message?: string
         decision?: { label: string; provider: string }
         blockedReason?: string
-        integration?: { llmConfigured?: boolean; backend?: string | null; stockRowsLoaded?: boolean }
+        integration?: { llmConfigured?: boolean; backend?: string | null; stockRowsLoaded?: boolean; fallbackUsed?: boolean }
       }
       if (!res.ok) {
         throw new Error((data as { error?: string }).error || "Falha na requisição")
@@ -190,6 +208,68 @@ export function AiMestreCommandBar() {
     >
       <div className="pointer-events-auto flex w-full max-w-2xl items-center gap-2 rounded-full border border-primary/25 bg-background/95 px-3 py-2 shadow-lg shadow-primary/10 backdrop-blur-md">
         <Sparkles className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+        <div>
+          <Popover open={modelOpen} onOpenChange={setModelOpen}>
+            <PopoverTrigger asChild>
+              <Button type="button" size="icon" variant="ghost" className="rounded-full" title="Modelo da IA Mestre">
+                <Settings2 className="h-5 w-5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
+              {plano === "ouro" ? (
+                <div className="space-y-3">
+                  <div className="text-sm font-medium">Modelo da IA Mestre</div>
+                  <Select
+                    value={selectedModel}
+                    onValueChange={(v) => {
+                      const next = String(v || "").trim()
+                      void save({
+                        printerConfig: {
+                          ...(settings?.printerConfig && typeof settings.printerConfig === "object"
+                            ? (settings.printerConfig as any)
+                            : {}),
+                          aiMestreModel: next,
+                        },
+                      })
+                    }}
+                  >
+                    <SelectTrigger className="h-10">
+                      <SelectValue placeholder="Selecione um modelo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {policy.options.map((m) => (
+                        <SelectItem key={m} value={m}>
+                          {modelLabel(m)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <div className="text-xs text-muted-foreground">Selecionado: {modelLabel(selectedModel)}</div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Lock className="h-4 w-4" aria-hidden />
+                    Seleção de modelos é Premium (Ouro)
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    No Bronze/Prata o backend força modelos rápidos e baratos para manter o custo baixo.
+                  </div>
+                  <div className="max-h-48 overflow-auto rounded-md border p-2">
+                    <ul className="space-y-1 text-xs">
+                      {AI_MODELS_MOSAIC.map((m) => (
+                        <li key={m.id} className="flex items-center justify-between gap-2">
+                          <span className="truncate">{m.label}</span>
+                          <Lock className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
         <Input
           value={text}
           onChange={(e) => setText(e.target.value)}

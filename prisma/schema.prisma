@@ -6,106 +6,317 @@ generator client {
 datasource db {
   provider  = "postgresql"
   url       = env("DATABASE_URL")
-  /// Conexão direta (5432) para `prisma migrate dev` — o pooler 6543 retorna "bouncer config error".
   directUrl = env("DIRECT_URL")
 }
 
-/// Trilha de auditoria persistida no servidor.
+enum StoreProfile {
+  ASSISTENCIA
+  VARIEDADES
+  SUPERMERCADO
+}
+
+model Store {
+  /** Use ids estáveis: loja-1, loja-2, ... */
+  id       String       @id
+  name     String       @default("") @map("name")
+  cnpj     String       @default("") @map("cnpj")
+  phone    String       @default("") @map("phone")
+  logoUrl  String       @default("") @map("logoUrl")
+  /** Endereço completo (rua/numero/bairro/cidade/uf/cep) como JSON. */
+  address  Json?        @map("address") @db.JsonB
+  profile  StoreProfile @default(ASSISTENCIA) @map("profile")
+  createdAt DateTime    @default(now()) @map("createdAt")
+  updatedAt DateTime    @updatedAt @map("updatedAt")
+
+  clientes Cliente[]
+  produtos Produto[]
+  ordensServico OrdemServico[]
+  contasReceber ContaReceberTitulo[]
+  contasPagar ContaPagarTitulo[]
+  fornecedores Fornecedor[]
+  vendas Venda[]
+  categorias CategoriaProduto[]
+  settings StoreSettings?
+
+  @@index([profile])
+  @@map("stores")
+}
+
+model StoreSettings {
+  id        String   @id @default(cuid())
+  storeId   String   @unique @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /** Contatos por unidade (não herdar da RafaCell). */
+  contactEmail String @default("") @map("contactEmail")
+  contactWhatsapp String @default("") @map("contactWhatsapp")
+  contactWhatsappDono String @default("") @map("contactWhatsappDono")
+  /** Rodapé do cupom (mensagem por CNPJ/unidade). */
+  receiptFooter String @default("") @map("receiptFooter") @db.Text
+  /** Config de impressão (host/porta/modelo) por unidade. */
+  printerConfig Json?  @map("printerConfig") @db.JsonB
+  /** Taxas de cartão e regras financeiras por unidade. */
+  cardFees      Json?  @map("cardFees") @db.JsonB
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+
+  @@map("store_settings")
+}
+
+model Cliente {
+  id        String   @id @default(cuid())
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name      String   @map("name")
+  phone     String?  @map("phone")
+  email     String?  @map("email")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @default(now()) @updatedAt @map("updatedAt")
+
+  ordensServico OrdemServico[]
+
+  @@index([storeId])
+  @@map("clientes_importados")
+}
+
+enum StatusOrdemServico {
+  Aberto
+  EmAnalise
+  Pronto
+  Entregue
+}
+
+model OrdemServico {
+  id           String             @id @default(cuid())
+  storeId      String             @default("loja-1") @map("storeId")
+  store        Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Número exibido / chave de deduplicação na importação de planilhas. */
+  numero       String?            @map("numero")
+  /** Snapshot JSON legado (importador universal / backups). */
+  payload      Json?              @map("payload") @db.JsonB
+  clienteId    String?            @map("clienteId")
+  cliente      Cliente?           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  equipamento  String             @default("") @map("equipamento")
+  defeito      String             @default("") @map("defeito") @db.Text
+  laudoTecnico String?            @map("laudoTecnico") @db.Text
+  /** Valor de mão de obra / serviço sem peças do estoque. */
+  valorBase    Float              @default(0) @map("valorBase")
+  valorTotal   Float              @default(0) @map("valorTotal")
+  status       StatusOrdemServico @default(Aberto) @map("status")
+  createdAt    DateTime           @default(now()) @map("createdAt")
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updatedAt")
+
+  itens OrdemServicoItem[]
+
+  @@index([storeId])
+  @@index([clienteId])
+  @@index([numero])
+  @@index([status])
+  @@map("ordens_servico")
+}
+
+model OrdemServicoItem {
+  id             String       @id @default(cuid())
+  ordemServicoId String       @map("ordemServicoId")
+  ordemServico   OrdemServico @relation(fields: [ordemServicoId], references: [id], onDelete: Cascade)
+  produtoId      String       @map("produtoId")
+  produto        Produto      @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+  quantidade     Int          @map("quantidade")
+  /** Preço unitário no momento da baixa (snapshot). */
+  precoUnitario  Float        @map("precoUnitario")
+
+  @@index([ordemServicoId])
+  @@index([produtoId])
+  @@map("ordem_servico_item")
+}
+
+model Produto {
+  id        String   @id @default(cuid())
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Código de barras / SKU (pode se repetir em lojas diferentes). */
+  sku       String?  @map("sku")
+  name      String   @map("name")
+  stock     Int      @default(0) @map("stock")
+  /** Custo unitário (planilhas/backup): coluna `price_cost` no Supabase. */
+  precoCusto Float   @default(0) @map("price_cost")
+  price     Float    @default(0) @map("price")
+  category  String?  @map("category")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @default(now()) @updatedAt @map("updatedAt")
+
+  ordemServicoItens OrdemServicoItem[]
+
+  @@index([storeId])
+  @@unique([storeId, sku], name: "storeId_sku")
+  @@map("estoque_produtos")
+}
+
+// --- Tabelas auxiliares (API ops / WhatsApp / auditoria) — ver prisma/supabase_manual_full_schema.sql
+
+model LedgerSnapshot {
+  /** Default para `db push`/linhas legadas sem loja; novas linhas devem usar a loja ativa. */
+  storeId   String   @default("loja-1") @map("storeId")
+  date      String   @map("date")
+  payload   String   @map("payload") @db.Text
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@id([storeId, date])
+  @@map("ledger_snapshots")
+}
+
+model AppLojaSettings {
+  id         String   @id
+  perfilLoja String   @default("assistencia") @map("perfilLoja")
+  updatedAt  DateTime @updatedAt @map("updatedAt")
+
+  @@map("app_loja_settings")
+}
+
 model LogsAuditoria {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  action    String
-  userLabel String
-  detail    String
-  metadata  String?
-  source    String   @default("dashboard")
+  createdAt DateTime @default(now()) @map("createdAt")
+  action    String   @map("action")
+  userLabel String   @map("userLabel")
+  detail    String   @map("detail") @db.Text
+  metadata  String?  @map("metadata") @db.Text
+  source    String   @default("dashboard") @map("source")
 
   @@index([createdAt])
   @@index([action])
   @@map("logs_auditoria")
 }
 
-/// Último resumo do dia enviado pelo cliente para o webhook/server usar no fechamento.
-model LedgerSnapshot {
-  date      String   @id
-  payload   String
-  updatedAt DateTime @updatedAt
-
-  @@map("ledger_snapshots")
-}
-
-/// Confirmações pendentes (botões WhatsApp) — uma por número normalizado.
 model WhatsAppPendingAction {
   id        String   @id @default(cuid())
-  phoneKey  String   @unique
-  kind      String
-  payload   String
-  createdAt DateTime @default(now())
+  phoneKey  String   @unique @map("phoneKey")
+  kind      String   @map("kind")
+  payload   String   @map("payload") @db.Text
+  createdAt DateTime @default(now()) @map("createdAt")
 
   @@map("whatsapp_pending_actions")
 }
 
-/// Produtos em estoque (PDV / gestão) — alinhado a `InventoryItem` no cliente.
-model EstoqueProduto {
-  id           String   @id
-  lojaId       String   @default("loja-1")
-  name         String
-  stock        Int      @default(0)
-  cost         Float    @default(0)
-  price        Float    @default(0)
-  category     String   @default("")
-  vendaPorPeso Boolean  @default(false)
-  precoPorKg   Float?
-  atributos    Json?
-  /// Nome normalizado (lowercase, sem acento) para deduplicar na importação.
-  nameNorm     String   @default("")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+model CategoriaProduto {
+  id     String @id @default(cuid())
+  storeId String @map("lojaId")
+  store  Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  slug   String @map("slug")
+  nome   String @map("nome")
 
-  @@index([lojaId])
-  @@index([lojaId, nameNorm])
-  @@map("estoque_produtos")
+  @@unique([storeId, slug], name: "lojaId_slug")
+  @@index([storeId])
+  @@map("categorias_produto")
 }
 
-/// Clientes importados pelo painel (dedupe por CPF/CNPJ ou nome na mesma loja).
-model ClienteImportado {
+// --- Fornecedores + contas a pagar (multi-loja; `storeId` obrigatório em todas as linhas)
+
+/** Fornecedor cadastrado por unidade (não compartilhar entre lojas). */
+model Fornecedor {
   id        String   @id @default(cuid())
-  lojaId    String
-  nome      String
-  nomeNorm  String
-  /// Somente dígitos; null = sem documento (dedupe só por nome).
-  docDigits String?
-  telefone  String   @default("")
-  email     String   @default("")
-  endereco  String   @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name      String   @map("name")
+  /** CPF/CNPJ ou identificador fiscal livre. */
+  document  String   @default("") @map("document")
+  email     String   @default("") @map("email")
+  phone     String   @default("") @map("phone")
+  notes     String?  @map("notes") @db.Text
+  active    Boolean  @default(true) @map("active")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
 
-  @@unique([lojaId, nomeNorm])
-  @@unique([lojaId, docDigits])
-  @@index([lojaId])
-  @@map("clientes_importados")
+  contasPagar ContaPagarTitulo[]
+
+  @@index([storeId])
+  @@index([name])
+  @@map("fornecedores")
 }
 
-/// Ordens de serviço — payload JSON espelha `OrdemServico` do app até sync granular.
-model OrdemServicoDb {
-  id        String   @id
-  lojaId    String   @default("loja-1")
-  numero    String
-  payload   Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+/** Título a pagar (fornecedor, boleto, aluguel, etc.) — escopo exclusivo da loja. */
+model ContaPagarTitulo {
+  id        String   @id @default(cuid())
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Opcional: vínculo com cadastro de fornecedor da mesma loja. */
+  fornecedorId String?    @map("fornecedorId")
+  fornecedor   Fornecedor? @relation(fields: [fornecedorId], references: [id], onDelete: SetNull)
+  /** Id estável no cliente (localStorage / sync), por unidade. */
+  localKey  String?  @map("localKey")
+  /** Snapshot JSON (parcelas, anexos, histórico de pagamento, etc.). */
+  payload   Json?    @map("payload") @db.JsonB
+  descricao String   @default("") @map("descricao")
+  valor     Float    @default(0) @map("valor")
+  vencimento String  @default("") @map("vencimento")
+  status    String   @default("pendente") @map("status")
+  /** NF, número de boleto ou referência externa. */
+  numeroDocumento String @default("") @map("numeroDocumento")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
 
-  @@unique([lojaId, numero])
-  @@index([lojaId])
-  @@map("ordens_servico")
+  @@unique([storeId, localKey])
+  @@index([storeId])
+  @@index([fornecedorId])
+  @@index([status])
+  @@map("contas_pagar_titulos")
 }
 
-/// Preferências globais da loja (uma linha — id fixo `default`).
-model AppLojaSettings {
-  id         String @id @default("default")
-  perfilLoja String @default("assistencia")
-  updatedAt  DateTime @updatedAt
+// --- Contas a receber + vendas (servidor; opcional — o painel ainda usa localStorage por padrão)
 
-  @@map("app_loja_settings")
+/** Título a receber no Postgres; relação 1:N com vendas vinculadas. */
+model ContaReceberTitulo {
+  id        String   @id @default(cuid())
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Id estável do título no navegador (localStorage) — upsert idempotente por unidade. */
+  localKey  String?  @map("localKey")
+  /** Snapshot JSON do registro completo (parcelas, histórico, etc.). */
+  payload   Json?    @map("payload") @db.JsonB
+  descricao String   @default("") @map("descricao")
+  cliente   String   @default("") @map("cliente")
+  valor     Float    @default(0) @map("valor")
+  vencimento String  @default("") @map("vencimento")
+  status    String   @default("pendente") @map("status")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  vendas Venda[]
+
+  @@unique([storeId, localKey])
+  @@index([storeId])
+  @@index([cliente])
+  @@map("contas_receber_titulos")
+}
+
+/** Venda (PDV ou importada) opcionalmente ligada a um título em aberto. */
+model Venda {
+  id                   String   @id @default(cuid())
+  storeId              String   @default("loja-1") @map("storeId")
+  store                Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Ex.: VDA-2026-0001 — chave de negócio */
+  pedidoId             String   @unique @map("pedidoId")
+  /** Snapshot JSON da venda (formas de pagamento, linhas, etc.) para recuperação fiel. */
+  payload              Json?    @map("payload") @db.JsonB
+  total                Float    @default(0) @map("total")
+  at                   DateTime @default(now()) @map("at")
+  clienteNome          String?  @map("clienteNome")
+  contaReceberTituloId String?  @map("contaReceberTituloId")
+  contaReceberTitulo   ContaReceberTitulo? @relation(fields: [contaReceberTituloId], references: [id], onDelete: SetNull)
+  itens                ItemVenda[]
+
+  @@index([storeId])
+  @@index([contaReceberTituloId])
+  @@map("vendas")
+}
+
+model ItemVenda {
+  id            String @id @default(cuid())
+  vendaId       String @map("vendaId")
+  venda         Venda  @relation(fields: [vendaId], references: [id], onDelete: Cascade)
+  inventoryId   String? @map("inventoryId")
+  nome          String  @default("") @map("nome")
+  quantidade    Int     @default(1) @map("quantidade")
+  precoUnitario Float   @default(0) @map("precoUnitario")
+  lineTotal     Float   @default(0) @map("lineTotal")
+
+  @@index([vendaId])
+  @@map("venda_itens")
 }

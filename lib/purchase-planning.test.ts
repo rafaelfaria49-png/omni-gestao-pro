@@ -17,7 +17,7 @@ function sale(at: string, lines: SaleRecord["lines"]): SaleRecord {
     at,
     lines,
     total: 100,
-    paymentBreakdown: { dinheiro: 100, pix: 0, cartaoDebito: 0, cartaoCredito: 0, carne: 0, creditoVale: 0 },
+    paymentBreakdown: { dinheiro: 100, pix: 0, cartaoDebito: 0, cartaoCredito: 0, carne: 0, aPrazo: 0, creditoVale: 0 },
   }
 }
 

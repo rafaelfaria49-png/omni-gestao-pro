@@ -253,7 +253,7 @@ export function RelatoriosFinanceiros() {
           <CardContent>
             {dadosBarrasLojas.length === 0 ? (
               <p className="text-sm text-muted-foreground py-8 text-center">
-                Cadastre carteiras empresa (ex.: RAFACELL e Rafa Brinquedos) e lance entradas.
+                Cadastre carteiras do tipo Empresa (ex.: loja principal e filial) e lance entradas.
               </p>
             ) : (
               <div className="h-[280px] w-full">

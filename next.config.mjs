@@ -40,6 +40,8 @@ if (isVercel) {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  /** Next.js 16 usa Turbopack por padrão; o plugin PWA injeta webpack — config vazia evita erro de build. */
+  turbopack: {},
   env,
   typescript: {
     ignoreBuildErrors: true,

@@ -53,6 +53,7 @@ import {
 } from "@/components/dashboard/os/ordens-servico"
 import { buildOrcamentoWhatsAppMessage } from "@/lib/whatsapp-orcamento-message"
 import { useOperationsStore } from "@/lib/operations-store"
+import { useStoreSettings } from "@/lib/store-settings-provider"
 import type { Orcamento } from "@/lib/orcamento-types"
 
 export type { Orcamento }
@@ -116,13 +117,14 @@ export function Orcamentos({ ordens, setOrdens }: OrcamentosProps) {
   const { config } = useConfigEmpresa()
   const { toast } = useToast()
   const { orcamentos, setOrcamentos } = useOperationsStore()
+  const { pdvParams, getGarantiaById } = useStoreSettings()
 
   const criarOrcamentoVazio = useCallback((): Omit<Orcamento, "id" | "numero" | "status"> => {
     const d = new Date()
     const validade = new Date(d)
     const dias =
-      typeof config.pdv.validadeOrcamentoDias === "number"
-        ? config.pdv.validadeOrcamentoDias
+      typeof pdvParams.validadeOrcamentoDias === "number"
+        ? pdvParams.validadeOrcamentoDias
         : configPadrao.pdv.validadeOrcamentoDias
     const clamped = Math.max(1, Math.min(365, dias))
     validade.setDate(validade.getDate() + clamped)
@@ -135,7 +137,7 @@ export function Orcamentos({ ordens, setOrdens }: OrcamentosProps) {
       valorFinalCliente: 0,
       termoGarantia: "garantia_troca_tela",
     }
-  }, [config.pdv.validadeOrcamentoDias])
+  }, [pdvParams.validadeOrcamentoDias])
 
   const [searchTerm, setSearchTerm] = useState("")
   const [modalOpen, setModalOpen] = useState(false)
@@ -160,12 +162,12 @@ export function Orcamentos({ ordens, setOrdens }: OrcamentosProps) {
     return (IDS_GARANTIA_OS as readonly string[])
       .map((id) => {
         return (
-          config.termosGarantia.categorias.find((c) => c.id === id) ??
+          getGarantiaById(id) ??
           configPadrao.termosGarantia.categorias.find((c) => c.id === id)
         )
       })
       .filter((c): c is CategoriaGarantia => c != null)
-  }, [config.termosGarantia.categorias])
+  }, [getGarantiaById])
 
   const filtered = orcamentos.filter(
     (o) =>
@@ -350,8 +352,8 @@ export function Orcamentos({ ordens, setOrdens }: OrcamentosProps) {
       valorTotal: n.valorFinalCliente,
       validadeAte: n.validadeAte,
       garantiaPadraoDias:
-        typeof config.pdv.garantiaPadraoDias === "number"
-          ? config.pdv.garantiaPadraoDias
+        typeof pdvParams.garantiaPadraoDias === "number"
+          ? pdvParams.garantiaPadraoDias
           : configPadrao.pdv.garantiaPadraoDias,
     })
     const msg = encodeURIComponent(texto)

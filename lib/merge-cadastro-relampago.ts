@@ -3,7 +3,7 @@ import type { ProductVoiceMetadata } from "@/lib/product-voice-metadata-openai"
 
 export type ProductFormSlice = {
   nome: string
-  categoria: "peca" | "acessorio" | "servico"
+  categoria: string
   ncm: string
   descricaoVenda: string
   precoCusto: number

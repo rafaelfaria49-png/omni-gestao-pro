@@ -21,53 +21,15 @@ import {
 } from "@/lib/financeiro-types"
 
 export function financeiroStorageKey(lojaId: string): string {
+  return `assistec-pro-financeiro-v2-${lojaId}`
+}
+
+function financeiroLegacyStorageKey(lojaId: string): string {
   return `assistec-pro-financeiro-v1-${lojaId}`
 }
 
 function todayISO(): string {
   return new Date().toISOString().split("T")[0]
-}
-
-function defaultContasPagar(): ContaPagarItem[] {
-  const y = new Date().getFullYear()
-  return [
-    {
-      id: "cp-1",
-      descricao: "Aluguel da Loja",
-      fornecedor: "Imobiliária Central",
-      valor: 2500,
-      dataVencimento: `${y}-05-05`,
-      status: "pendente",
-      categoria: "Despesas Fixas",
-    },
-    {
-      id: "cp-2",
-      descricao: "Conta de Energia",
-      fornecedor: "CEMIG",
-      valor: 450,
-      dataVencimento: `${y}-04-15`,
-      status: "pendente",
-      categoria: "Despesas Fixas",
-    },
-    {
-      id: "cp-3",
-      descricao: "Peças Samsung",
-      fornecedor: "Distribuidora Tech",
-      valor: 3200,
-      dataVencimento: `${y}-04-10`,
-      status: "pendente",
-      categoria: "Fornecedores",
-    },
-    {
-      id: "cp-4",
-      descricao: "Internet Fibra",
-      fornecedor: "Vivo",
-      valor: 199.9,
-      dataVencimento: `${y}-04-20`,
-      status: "pendente",
-      categoria: "Despesas Fixas",
-    },
-  ]
 }
 
 export interface FinanceiroState {
@@ -110,17 +72,32 @@ export function FinanceiroProvider({ children }: { children: ReactNode }) {
   const [carteiras, setCarteiras] = useState<Carteira[]>(CARTEIRAS_INICIAIS)
   const [movimentos, setMovimentos] = useState<MovimentoFinanceiro[]>([])
   const [transferencias, setTransferencias] = useState<TransferenciaCarteira[]>([])
-  const [contasPagar, setContasPagar] = useState<ContaPagarItem[]>(defaultContasPagar)
+  const [contasPagar, setContasPagar] = useState<ContaPagarItem[]>([])
 
   useEffect(() => {
     if (typeof window === "undefined") return
     try {
-      const raw = localStorage.getItem(financeiroStorageKey(key))
+      const k = financeiroStorageKey(key)
+      let raw = localStorage.getItem(k)
       if (!raw) {
+        const legacy = localStorage.getItem(financeiroLegacyStorageKey(key))
+        if (legacy) {
+          try {
+            const parsedLegacy = parseFinanceiroState(JSON.parse(legacy))
+            if (parsedLegacy?.carteiras?.length) setCarteiras(parsedLegacy.carteiras)
+            else setCarteiras(CARTEIRAS_INICIAIS)
+            setMovimentos([])
+            setTransferencias([])
+            setContasPagar([])
+            return
+          } catch {
+            /* fall through */
+          }
+        }
         setCarteiras(CARTEIRAS_INICIAIS)
         setMovimentos([])
         setTransferencias([])
-        setContasPagar(defaultContasPagar())
+        setContasPagar([])
         return
       }
       const parsed = parseFinanceiroState(JSON.parse(raw))
@@ -128,7 +105,7 @@ export function FinanceiroProvider({ children }: { children: ReactNode }) {
       else setCarteiras(CARTEIRAS_INICIAIS)
       setMovimentos(parsed?.movimentos ?? [])
       setTransferencias(parsed?.transferencias ?? [])
-      setContasPagar(parsed?.contasPagar?.length ? parsed.contasPagar : defaultContasPagar())
+      setContasPagar(Array.isArray(parsed?.contasPagar) ? parsed.contasPagar : [])
     } catch {
       setCarteiras(CARTEIRAS_INICIAIS)
     }

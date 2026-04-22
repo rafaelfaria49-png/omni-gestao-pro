@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { 
   Plus, 
   Search, 
@@ -76,22 +76,16 @@ import { useConfigEmpresa } from "@/lib/config-empresa"
 import { appendAuditLog } from "@/lib/audit-log"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog"
+import { resolveLojaIdParaConsultaClientes } from "@/lib/clientes-loja-resolve"
+import { pickCostPrice, pickSalePrice } from "@/lib/inventory-item-from-api"
+import { TypeToConfirmDialog } from "@/components/dashboard/safety/type-to-confirm-dialog"
 
 interface Product {
   id: string
   nome: string
   codigo: string
-  categoria: "peca" | "acessorio" | "servico"
+  /** Slug da categoria (`peca`, `servico`, ou slug criado na importação). */
+  categoria: string
   precoCusto: number
   precoVenda: number
   estoqueAtual: number
@@ -142,6 +136,27 @@ const emptyProduct: Omit<Product, "id"> = {
   descricaoVenda: "",
 }
 
+const CATEGORIAS_SUGERIDAS_ESTOQUE = [
+  "Eletrônicos",
+  "Cabos de celular",
+  "Suportes",
+  "Caixa de som/ radio",
+  "Carregador de celular",
+  "Case iphone",
+  "Capinha silicone",
+  "Capinha transparente",
+  "Fontes",
+  "Video game",
+  "Controles",
+  "Copos e garrafa termicos",
+  "Fones ouvido",
+  "Lampadas luzes led",
+  "Maquina cabelo",
+  "Teclado mouse",
+  "Peliculas",
+  "Tv box",
+] as const
+
 const origensOptions = [
   { value: "0", label: "0 - Nacional" },
   { value: "1", label: "1 - Estrangeira (Importação Direta)" },
@@ -173,9 +188,12 @@ export function GestaoProdutos({
   const { toast } = useToast()
   const { config } = useConfigEmpresa()
   const { lojaAtivaId } = useLojaAtiva()
+  const lojaHeader = useMemo(() => resolveLojaIdParaConsultaClientes(lojaAtivaId), [lojaAtivaId])
   const auditUser = () =>
     `${(config.empresa.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`
   const [products, setProducts] = useState<Product[]>([])
+  /** Slug → rótulo (API `categorias_produto` + padrões locais). */
+  const [categoriaNomePorSlug, setCategoriaNomePorSlug] = useState<Map<string, string>>(() => new Map())
   const [searchTerm, setSearchTerm] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<string>("all")
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -189,6 +207,10 @@ export function GestaoProdutos({
   const [dePara, setDePara] = useState<Record<string, { modo: "existente" | "novo"; existingId?: string }>>({})
   const [activeTab, setActiveTab] = useState("geral")
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [selectedProductIds, setSelectedProductIds] = useState<Set<string>>(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [confirmBulkOpen, setConfirmBulkOpen] = useState(false)
+  const [singleDeleting, setSingleDeleting] = useState(false)
   const [iaSyncLoading, setIaSyncLoading] = useState(false)
   const [visionQuickScanLoading, setVisionQuickScanLoading] = useState(false)
   const [ncmSuggestLoading, setNcmSuggestLoading] = useState(false)
@@ -209,39 +231,71 @@ export function GestaoProdutos({
   const audioChunksRef = useRef<BlobPart[]>([])
   const importInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/ops/inventory${lojaAtivaId ? `?lojaId=${encodeURIComponent(lojaAtivaId)}` : ""}`, {
+  const reloadInventory = useCallback(async () => {
+    try {
+      const headers = { [ASSISTEC_LOJA_HEADER]: lojaHeader }
+      const q = `?lojaId=${encodeURIComponent(lojaHeader)}`
+      const [invRes, catRes] = await Promise.all([
+        fetch(`/api/ops/inventory${q}`, {
           credentials: "include",
-          headers: lojaAtivaId ? { [ASSISTEC_LOJA_HEADER]: lojaAtivaId } : undefined,
+          headers,
+          cache: "no-store",
+        }),
+        fetch(`/api/ops/categorias-produto${q}`, {
+          credentials: "include",
+          headers,
+          cache: "no-store",
+        }),
+      ])
+      if (catRes.ok) {
+        const catData = (await catRes.json().catch(() => null)) as { items?: Array<{ slug: string; nome: string }> } | null
+        const m = new Map<string, string>()
+        for (const row of catData?.items ?? []) {
+          if (row.slug) m.set(row.slug, row.nome || row.slug)
+        }
+        setCategoriaNomePorSlug(m)
+      }
+      if (!invRes.ok) {
+        const err = (await invRes.json().catch(() => null)) as { error?: string; detail?: string } | null
+        toast({
+          title: "Falha ao carregar produtos",
+          description: err?.detail || err?.error || `HTTP ${invRes.status}`,
+          variant: "destructive",
         })
-        if (!res.ok) return
-        const data = (await res.json().catch(() => null)) as { items?: Array<{ id: string; name: string; stock: number; cost: number; price: number; category: string }> } | null
-        const items = data?.items ?? []
-        if (cancelled) return
-        setProducts(
-          items.map((it) => ({
-            id: it.id,
-            nome: it.name,
-            codigo: it.id,
-            categoria: it.category === "acessorio" || it.category === "servico" || it.category === "peca" ? (it.category as Product["categoria"]) : "peca",
-            precoCusto: typeof it.cost === "number" ? it.cost : 0,
-            precoVenda: typeof it.price === "number" ? it.price : 0,
+        setProducts([])
+        return
+      }
+      const data = (await invRes.json().catch(() => null)) as {
+        items?: Array<Record<string, unknown> & { id?: string; name?: string; stock?: number }>
+      } | null
+      const items = data?.items ?? []
+      setProducts(
+        items.map((it) => {
+          const row = it as Record<string, unknown>
+          const precoCusto = pickCostPrice(row)
+          const precoVenda = pickSalePrice(row)
+          const rawCategory =
+            typeof it.category === "string" && it.category.trim() ? it.category.trim() : "peca"
+          return {
+            id: String(it.id ?? ""),
+            nome: String(it.name ?? ""),
+            codigo: String(it.id ?? ""),
+            categoria: rawCategory,
+            precoCusto: Number.isFinite(precoCusto) ? precoCusto : 0,
+            precoVenda: Number.isFinite(precoVenda) ? precoVenda : 0,
             estoqueAtual: typeof it.stock === "number" ? it.stock : 0,
             estoqueMinimo: 0,
-          }))
-        )
-      } catch {
-        /* ignore */
-      }
+          }
+        })
+      )
+    } catch {
+      /* ignore */
     }
-    void load()
-    return () => {
-      cancelled = true
-    }
-  }, [lojaAtivaId])
+  }, [lojaHeader, toast])
+
+  useEffect(() => {
+    void reloadInventory()
+  }, [reloadInventory])
 
   useEffect(() => {
     if (!iaSyncLoading) {
@@ -254,6 +308,33 @@ export function GestaoProdutos({
     return () => window.clearInterval(id)
   }, [iaSyncLoading])
 
+  // Mantida apenas para filtros e selects; tabela passa a mostrar o texto cru.
+  const getCategoryLabel = useCallback(
+    (slug: string) => (slug || "").trim() || "Sem Categoria",
+    []
+  )
+
+  const categoryFilterSlugs = useMemo(() => {
+    const u = new Set<string>(["peca", "acessorio", "servico"])
+    for (const p of products) {
+      if (p.categoria) u.add(p.categoria)
+    }
+    return Array.from(u).sort((a, b) => getCategoryLabel(a).localeCompare(getCategoryLabel(b), "pt-BR"))
+  }, [products, getCategoryLabel])
+
+  const formCategoryRows = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const s of ["peca", "acessorio", "servico"]) {
+      m.set(s, getCategoryLabel(s))
+    }
+    for (const [slug, nome] of categoriaNomePorSlug) {
+      m.set(slug, nome || slug)
+    }
+    const cur = formData.categoria?.trim()
+    if (cur && !m.has(cur)) m.set(cur, getCategoryLabel(cur))
+    return Array.from(m.entries()).sort((a, b) => a[1].localeCompare(b[1], "pt-BR"))
+  }, [categoriaNomePorSlug, formData.categoria, getCategoryLabel])
+
   const filteredProducts = products.filter(product => {
     const matchesSearch = product.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          product.codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -261,6 +342,76 @@ export function GestaoProdutos({
     const matchesCategory = categoryFilter === "all" || product.categoria === categoryFilter
     return matchesSearch && matchesCategory
   })
+
+  const allSelectedOnPage = useMemo(() => {
+    if (filteredProducts.length === 0) return false
+    return filteredProducts.every((p) => selectedProductIds.has(p.id))
+  }, [filteredProducts, selectedProductIds])
+
+  const someSelectedOnPage = useMemo(() => {
+    return filteredProducts.some((p) => selectedProductIds.has(p.id))
+  }, [filteredProducts, selectedProductIds])
+
+  const toggleSelectAllPage = (checked: boolean) => {
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev)
+      for (const p of filteredProducts) {
+        if (checked) next.add(p.id)
+        else next.delete(p.id)
+      }
+      return next
+    })
+  }
+
+  const toggleSelectOneProduct = (id: string, checked: boolean) => {
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const selectedOnPageIds = useMemo(
+    () => filteredProducts.filter((p) => selectedProductIds.has(p.id)).map((p) => p.id),
+    [filteredProducts, selectedProductIds]
+  )
+
+  const bulkDeleteSelectedProducts = async () => {
+    const ids = Array.from(selectedProductIds)
+    if (ids.length === 0) return
+    setBulkDeleting(true)
+    try {
+      const res = await fetch("/api/produtos/bulk-delete", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          [ASSISTEC_LOJA_HEADER]: lojaHeader,
+        },
+        body: JSON.stringify({ ids }),
+      })
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; deleted?: number; error?: string } | null
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `Falha ao excluir (HTTP ${res.status})`)
+      }
+      setSelectedProductIds(new Set())
+      await reloadInventory()
+      toast({
+        title: "Exclusão concluída",
+        description: `${data.deleted ?? 0} item(ns) removido(s) do estoque.`,
+      })
+    } catch (e) {
+      toast({
+        title: "Não foi possível excluir",
+        description: e instanceof Error ? e.message : "Erro inesperado",
+        variant: "destructive",
+      })
+    } finally {
+      setBulkDeleting(false)
+      setConfirmBulkOpen(false)
+    }
+  }
 
   const lowStockCount = products.filter(p => p.categoria !== "servico" && p.estoqueAtual <= p.estoqueMinimo).length
 
@@ -320,15 +471,15 @@ export function GestaoProdutos({
       setSearchTerm(voiceStockHint.searchQuery)
     }
     if (voiceStockHint.openNovo) {
-      setEditingProduct(null)
-      setFormData(emptyProduct)
-      setPreviewImage(null)
+    setEditingProduct(null)
+    setFormData(emptyProduct)
+    setPreviewImage(null)
       setRelampagoImageDataUrl(null)
       setRelampagoAudioBlob(null)
       setIaSyncLoading(false)
       setActiveTab("geral")
       setIsModalOpen(true)
-    }
+  }
     if (voiceStockHint.openImport) {
       setIsImportModalOpen(true)
     }
@@ -367,19 +518,46 @@ export function GestaoProdutos({
     handleCloseModal()
   }
 
-  const confirmDeleteProduct = () => {
+  const confirmDeleteProduct = async () => {
     if (!pendingDeleteId) return
     const product = products.find((p) => p.id === pendingDeleteId)
-    if (product) {
-      appendAuditLog({
-        action: "registro_excluido",
-        userLabel: auditUser(),
-        detail: `Estoque: exclusão do item "${product.nome}" (estoque era ${product.estoqueAtual})`,
+    setSingleDeleting(true)
+    try {
+      const res = await fetch(`/api/produtos/${encodeURIComponent(pendingDeleteId)}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: {
+          [ASSISTEC_LOJA_HEADER]: lojaHeader,
+        },
       })
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error || `Falha ao excluir (HTTP ${res.status})`)
+      }
+      if (product) {
+        appendAuditLog({
+          action: "registro_excluido",
+          userLabel: auditUser(),
+          detail: `Estoque: exclusão do item "${product.nome}" (estoque era ${product.estoqueAtual})`,
+        })
+      }
+      setSelectedProductIds((prev) => {
+        const next = new Set(prev)
+        next.delete(pendingDeleteId)
+        return next
+      })
+      await reloadInventory()
+      toast({ title: "Item removido do estoque" })
+    } catch (e) {
+      toast({
+        title: "Não foi possível excluir",
+        description: e instanceof Error ? e.message : "Erro inesperado",
+        variant: "destructive",
+      })
+    } finally {
+      setSingleDeleting(false)
+      setPendingDeleteId(null)
     }
-    setProducts((prev) => prev.filter((p) => p.id !== pendingDeleteId))
-    toast({ title: "Item removido do estoque" })
-    setPendingDeleteId(null)
   }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -680,7 +858,7 @@ export function GestaoProdutos({
       const visionRaw = (await res.json()) as VisionProductResult & { error?: string }
       if (!res.ok) throw new Error(visionRaw.error || `Erro ${res.status}`)
 
-      const cat = visionRaw.categoria as Product["categoria"] | undefined
+      const cat = visionRaw.categoria as "peca" | "acessorio" | "servico" | undefined
       const categoriaOk =
         cat === "peca" || cat === "acessorio" || cat === "servico" ? cat : "peca"
 
@@ -828,7 +1006,7 @@ export function GestaoProdutos({
 
       const [visionRaw, voiceMeta] = await Promise.all([visionP, voiceP])
 
-      const cat = visionRaw.categoria as Product["categoria"] | undefined
+      const cat = visionRaw.categoria as "peca" | "acessorio" | "servico" | undefined
       const categoriaOk =
         cat === "peca" || cat === "acessorio" || cat === "servico" ? cat : "peca"
 
@@ -1003,15 +1181,6 @@ export function GestaoProdutos({
     }
   }
 
-  const getCategoryLabel = (categoria: string) => {
-    switch (categoria) {
-      case "peca": return "Peça"
-      case "acessorio": return "Acessório"
-      case "servico": return "Serviço"
-      default: return categoria
-    }
-  }
-
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
       style: "currency",
@@ -1130,9 +1299,11 @@ export function GestaoProdutos({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas Categorias</SelectItem>
-                <SelectItem value="peca">Peças</SelectItem>
-                <SelectItem value="acessorio">Acessórios</SelectItem>
-                <SelectItem value="servico">Serviços</SelectItem>
+                {categoryFilterSlugs.map((slug) => (
+                  <SelectItem key={slug} value={slug}>
+                    {getCategoryLabel(slug)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -1144,27 +1315,43 @@ export function GestaoProdutos({
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">Itens Cadastrados ({filteredProducts.length})</CardTitle>
         </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
+        <CardContent className="w-full min-w-0 p-0">
+          <Table className="w-full min-w-0 table-fixed">
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead>Nome</TableHead>
-                  <TableHead className="hidden sm:table-cell">Código</TableHead>
-                  <TableHead className="hidden md:table-cell">Categoria</TableHead>
-                  <TableHead className="text-right">P. Custo</TableHead>
-                  <TableHead className="text-right">P. Venda</TableHead>
-                  <TableHead className="text-center">Estoque</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
+                  <TableHead className="w-12 shrink-0">
+                    <Checkbox
+                      checked={allSelectedOnPage ? true : someSelectedOnPage ? "indeterminate" : false}
+                      onCheckedChange={(v) => toggleSelectAllPage(Boolean(v))}
+                      aria-label="Selecionar todos"
+                    />
+                  </TableHead>
+                  <TableHead className="min-w-0 w-[26%] sm:w-[28%] lg:w-[30%] whitespace-normal">Nome</TableHead>
+                  <TableHead className="hidden min-w-0 max-w-[140px] sm:table-cell">Código</TableHead>
+                  <TableHead className="hidden md:table-cell md:w-[120px]">Categoria</TableHead>
+                  <TableHead className="w-[88px] text-right whitespace-nowrap">P. Custo</TableHead>
+                  <TableHead className="w-[88px] text-right whitespace-nowrap">P. Venda</TableHead>
+                  <TableHead className="w-[72px] text-center whitespace-nowrap">Estoque</TableHead>
+                  <TableHead className="sticky right-0 z-20 w-[96px] border-l border-border bg-card text-right shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.12)] dark:shadow-[-6px_0_12px_-6px_rgba(0,0,0,0.35)]">
+                    Ações
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredProducts.map((product) => (
-                  <TableRow key={product.id} className="border-border">
-                    <TableCell>
-                      <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center">
+                  <TableRow key={product.id} className="group/row border-border">
+                    <TableCell className="shrink-0 align-top">
+                      <Checkbox
+                        checked={selectedProductIds.has(product.id)}
+                        onCheckedChange={(v) => toggleSelectOneProduct(product.id, Boolean(v))}
+                        aria-label={`Selecionar ${product.nome}`}
+                      />
+                    </TableCell>
+                    <TableCell className="min-w-0 w-[26%] sm:w-[28%] lg:w-[30%] whitespace-normal align-top">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-lg bg-secondary flex items-center justify-center shrink-0">
                         {product.imagem ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                           <img 
                             src={product.imagem} 
                             alt={product.nome}
@@ -1174,43 +1361,60 @@ export function GestaoProdutos({
                           getCategoryIcon(product.categoria)
                         )}
                       </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium text-foreground">{product.nome}</p>
-                        <div className="flex items-center gap-2">
-                          <p className="text-xs text-muted-foreground sm:hidden">{product.codigo}</p>
+                        <div className="min-w-0">
+                        <p
+                          className="line-clamp-2 break-words font-medium text-foreground"
+                          title={product.nome}
+                        >
+                          {product.nome}
+                        </p>
+                          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
+                            <p
+                              className="truncate text-xs text-muted-foreground sm:hidden"
+                              title={product.codigo}
+                            >
+                              {product.codigo}
+                            </p>
                           {product.imei && (
-                            <Badge variant="outline" className="text-xs gap-1">
+                              <Badge variant="outline" className="shrink-0 text-xs gap-1">
                               <Smartphone className="w-3 h-3" />
                               IMEI
                             </Badge>
                           )}
                           {product.possuiGarantia && (
-                            <Badge variant="outline" className="text-xs gap-1 text-primary border-primary/30">
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 text-xs gap-1 text-primary border-primary/30"
+                              >
                               <Shield className="w-3 h-3" />
                               {product.diasGarantia}d
                             </Badge>
                           )}
+                          </div>
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell">
-                      <code className="text-xs bg-secondary px-2 py-1 rounded">{product.codigo}</code>
+                    <TableCell className="hidden min-w-0 max-w-[140px] sm:table-cell align-top">
+                      <code
+                        className="block max-w-full truncate rounded bg-secondary px-2 py-1 text-xs"
+                        title={product.codigo}
+                      >
+                        {product.codigo}
+                      </code>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell className="hidden md:table-cell align-top">
                       <Badge variant="outline" className="gap-1">
                         {getCategoryIcon(product.categoria)}
-                        {getCategoryLabel(product.categoria)}
+                        {(product.categoria || "Sem Categoria").trim() || "Sem Categoria"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
+                    <TableCell className="text-right text-muted-foreground whitespace-nowrap align-top">
                       {product.categoria === "servico" ? "-" : formatCurrency(product.precoCusto)}
                     </TableCell>
-                    <TableCell className="text-right font-medium text-foreground">
+                    <TableCell className="text-right font-medium text-foreground whitespace-nowrap align-top">
                       {formatCurrency(product.precoVenda)}
                     </TableCell>
-                    <TableCell className="text-center">
+                    <TableCell className="text-center align-top">
                       {product.categoria === "servico" ? (
                         <span className="text-muted-foreground">-</span>
                       ) : (
@@ -1222,7 +1426,9 @@ export function GestaoProdutos({
                         </span>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell
+                      className="sticky right-0 z-10 w-[96px] border-l border-border bg-card text-right align-top shadow-[-6px_0_10px_-6px_rgba(0,0,0,0.12)] transition-colors group-hover/row:bg-muted/50 dark:bg-card dark:shadow-[-6px_0_12px_-6px_rgba(0,0,0,0.35)]"
+                    >
                       <div className="flex items-center justify-end gap-1">
                         <Button 
                           variant="ghost" 
@@ -1245,7 +1451,6 @@ export function GestaoProdutos({
                 ))}
               </TableBody>
             </Table>
-          </div>
         </CardContent>
       </Card>
 
@@ -1295,6 +1500,7 @@ export function GestaoProdutos({
                   onClick={() => fileInputRef.current?.click()}
                 >
                   {previewImage ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img src={previewImage} alt="Preview" className="w-full h-full object-cover" />
                   ) : (
                     <>
@@ -1433,11 +1639,11 @@ export function GestaoProdutos({
                 <div className="sm:col-span-2 space-y-2">
                   <Label htmlFor="nome">Nome do Item *</Label>
                   <div className="flex gap-2 items-stretch">
-                    <Input
-                      id="nome"
-                      value={formData.nome}
-                      onChange={(e) => setFormData(prev => ({ ...prev, nome: e.target.value }))}
-                      placeholder="Ex: Tela iPhone 13 ou iPhone 12 Pro Max 128GB"
+                  <Input
+                    id="nome"
+                    value={formData.nome}
+                    onChange={(e) => setFormData(prev => ({ ...prev, nome: e.target.value }))}
+                    placeholder="Ex: Tela iPhone 13 ou iPhone 12 Pro Max 128GB"
                       className="h-12 flex-1 min-w-0 bg-secondary border-border"
                       disabled={iaSyncLoading}
                     />
@@ -1543,33 +1749,26 @@ export function GestaoProdutos({
 
                 <div className="space-y-2">
                   <Label>Categoria *</Label>
-                  <Select 
+                  <div className="space-y-2">
+                    <Input
                     value={formData.categoria} 
-                    onValueChange={(value: "peca" | "acessorio" | "servico") => 
-                      setFormData(prev => ({ ...prev, categoria: value }))
-                    }
-                  >
-                    <SelectTrigger className="h-12 bg-secondary border-border">
-                      <SelectValue placeholder="Selecione" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="peca">
-                        <div className="flex items-center gap-2">
-                          <Package className="w-4 h-4" /> Peça
+                      onChange={(e) => setFormData((prev) => ({ ...prev, categoria: e.target.value }))}
+                      placeholder="Ex.: Eletrônicos"
+                      className="h-12 bg-secondary border-border"
+                      list="estoque-categorias-sugestoes"
+                    />
+                    <datalist id="estoque-categorias-sugestoes">
+                      {CATEGORIAS_SUGERIDAS_ESTOQUE.map((c) => (
+                        <option key={`cat-sug-${c}`} value={c} />
+                      ))}
+                      {formCategoryRows.map(([slug]) => (
+                        <option key={slug} value={slug} />
+                      ))}
+                    </datalist>
+                    <p className="text-xs text-muted-foreground">
+                      Você pode escolher uma sugestão ou digitar uma categoria nova (ex.: &quot;Eletrônicos&quot;).
+                    </p>
                         </div>
-                      </SelectItem>
-                      <SelectItem value="acessorio">
-                        <div className="flex items-center gap-2">
-                          <Headphones className="w-4 h-4" /> Acessório
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="servico">
-                        <div className="flex items-center gap-2">
-                          <Wrench className="w-4 h-4" /> Serviço
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
 
                 <div className="space-y-2">
@@ -1644,13 +1843,13 @@ export function GestaoProdutos({
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="ncm">NCM</Label>
                   <div className="flex gap-2 flex-wrap items-stretch">
-                    <Input
-                      id="ncm"
-                      value={formData.ncm || ""}
+                  <Input
+                    id="ncm"
+                    value={formData.ncm || ""}
                       onChange={(e) => setFormData(prev => ({ ...prev, ncm: e.target.value.replace(/\D/g, "").slice(0, 8) }))}
-                      placeholder="Ex: 85177090"
+                    placeholder="Ex: 85177090"
                       className="h-12 flex-1 min-w-[10rem] bg-secondary border-border"
-                      maxLength={8}
+                    maxLength={8}
                       inputMode="numeric"
                     />
                     <Button
@@ -1979,22 +2178,47 @@ export function GestaoProdutos({
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={pendingDeleteId !== null} onOpenChange={(open) => !open && setPendingDeleteId(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir item do estoque?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação remove o cadastro do produto. Não é possível desfazer.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={confirmDeleteProduct}>
-              Excluir
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {selectedProductIds.size > 0 && (
+        <div className="fixed bottom-4 left-1/2 z-50 w-[min(720px,calc(100vw-2rem))] -translate-x-1/2">
+          <div className="rounded-xl border border-border bg-card/95 backdrop-blur px-4 py-3 shadow-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="text-sm">
+              <span className="font-medium">{selectedProductIds.size}</span> selecionado(s)
+              {selectedOnPageIds.length > 0 ? (
+                <span className="text-muted-foreground"> • {selectedOnPageIds.length} nesta lista</span>
+              ) : null}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="outline" onClick={() => setSelectedProductIds(new Set())}>
+                Limpar seleção
+              </Button>
+              <Button type="button" variant="destructive" onClick={() => setConfirmBulkOpen(true)}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Excluir selecionados
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <TypeToConfirmDialog
+        open={pendingDeleteId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteId(null)
+        }}
+        title="Excluir item do estoque?"
+        description="Isso remove o cadastro do produto no banco de dados. Esta ação não pode ser desfeita."
+        onConfirm={confirmDeleteProduct}
+        busy={singleDeleting}
+      />
+
+      <TypeToConfirmDialog
+        open={confirmBulkOpen}
+        onOpenChange={setConfirmBulkOpen}
+        title="Excluir itens selecionados?"
+        description="Isso remove os itens selecionados do estoque no banco de dados. Esta ação não pode ser desfeita."
+        onConfirm={bulkDeleteSelectedProducts}
+        busy={bulkDeleting}
+      />
     </div>
   )
 }

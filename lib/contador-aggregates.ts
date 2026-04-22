@@ -41,6 +41,8 @@ export function formatPaymentBreakdown(pb: PaymentBreakdownFull): string {
   if (pb.cartaoDebito > 0) parts.push(`Cartão débito ${brl.format(pb.cartaoDebito)}`)
   if (pb.cartaoCredito > 0) parts.push(`Cartão crédito ${brl.format(pb.cartaoCredito)}`)
   if (pb.carne > 0) parts.push(`Carnê ${brl.format(pb.carne)}`)
+  const ap = (pb as Partial<PaymentBreakdownFull>).aPrazo ?? 0
+  if (ap > 0) parts.push(`À prazo ${brl.format(ap)}`)
   if (pb.creditoVale > 0) parts.push(`Crédito/vale ${brl.format(pb.creditoVale)}`)
   return parts.length ? parts.join("; ") : "—"
 }

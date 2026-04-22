@@ -26,6 +26,7 @@ import {
   LayoutGrid,
   UtensilsCrossed,
   Wallet,
+  Receipt,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -37,12 +38,19 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   useConfigEmpresa,
   configPadrao,
+  WHITELABEL_CNPJ_PADRAO,
+  WHITELABEL_EMAIL_PADRAO,
+  WHITELABEL_NOME_FANTASIA_PADRAO,
+  WHITELABEL_TELEFONE_PADRAO,
   type ConfigSistema,
   type EnderecoEmpresa,
   type PerfilLojaUnidade,
 } from "@/lib/config-empresa"
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
+import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
+import { useToast } from "@/hooks/use-toast"
 import { usePerfilLoja } from "@/lib/perfil-loja-provider"
-import { PERFIL_LOJA_LABELS, type PerfilLojaId } from "@/lib/perfil-loja-types"
+import { ASSISTEC_STORES_SYNC_STORAGE_KEY, useLojaAtiva } from "@/lib/loja-ativa"
 import { maxLojasPermitidas } from "@/lib/plano-lojas"
 import {
   Select,
@@ -64,6 +72,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { CentroPersonalizacaoFinanceiraRafacell } from "@/components/dashboard/configuracoes/centro-personalizacao-financeira-rafacell"
 import { ImportadorDadosExternos } from "@/components/dashboard/configuracoes/backup-importador/importador-dados-externos"
+import type { StoreSettingsBlob, StorePdvParams } from "@/lib/store-settings-types"
 
 const ATALHOS_PDV_MAX = 24
 
@@ -132,7 +141,7 @@ function buildPerfisFromConfig(c: ConfigSistema): PerfilLojaUnidade[] {
   return padPerfisLojas(
     [
       {
-        id: "loja-1",
+        id: LEGACY_PRIMARY_STORE_ID,
         nomeFantasia: c.empresa.nomeFantasia,
         razaoSocial: c.empresa.razaoSocial,
         cnpj: c.empresa.cnpj,
@@ -161,6 +170,12 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
     updateMinhasLojas,
   } = useConfigEmpresa()
   const isBronze = config.assinatura.plano === "bronze"
+  const { lojaAtivaId, refreshStoresList } = useLojaAtiva()
+  const { toast } = useToast()
+  const [remotePrinterConfig, setRemotePrinterConfig] = useState<Record<string, unknown>>({})
+  const [remoteReceiptFooter, setRemoteReceiptFooter] = useState("")
+  const [termosTitulo, setTermosTitulo] = useState(configPadrao.termosGarantia.tituloGeral)
+  const [termosCategorias, setTermosCategorias] = useState(() => [...configPadrao.termosGarantia.categorias])
   
   const [activeTab, setActiveTab] = useState(initialTab)
   const [isSaving, setIsSaving] = useState(false)
@@ -192,8 +207,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
   /** Texto da garantia legal + rascunho por id de categoria (sincronizado com o contexto). */
   const [textosTermos, setTextosTermos] = useState<Record<string, string>>(() => ({
-    garantiaLegal: config.termosGarantia.garantiaLegal,
-    ...Object.fromEntries(config.termosGarantia.categorias.map((c) => [c.id, c.detalhes])),
+    garantiaLegal: configPadrao.termosGarantia.garantiaLegal,
+    ...Object.fromEntries(configPadrao.termosGarantia.categorias.map((c) => [c.id, c.detalhes])),
   }))
 
   // Estado para novo termo
@@ -226,7 +241,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   const [isGeneratingBackup, setIsGeneratingBackup] = useState(false)
   const [deleteTermoId, setDeleteTermoId] = useState<string | null>(null)
   const [perfisLojas, setPerfisLojas] = useState<PerfilLojaUnidade[]>(() => buildPerfisFromConfig(configPadrao))
-  const { perfilLoja, setPerfilLoja, perfilHydrated } = usePerfilLoja()
+  const { perfilLoja } = usePerfilLoja()
   const maxLojas = maxLojasPermitidas(config.assinatura.plano)
 
   // Atualizar aba quando prop mudar
@@ -236,6 +251,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
   // Sincronizar com o contexto quando ele mudar
   useEffect(() => {
+    // Multi-tenant: para dados por unidade, carregamos do banco abaixo (não do config global).
+    if (lojaAtivaId) return
     setNomeFantasia(config.empresa.nomeFantasia)
     setRazaoSocial(config.empresa.razaoSocial)
     setCnpj(config.empresa.cnpj)
@@ -274,7 +291,123 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
     )
     setModuloControleConsumo(config.pdv.moduloControleConsumo ?? configPadrao.pdv.moduloControleConsumo)
     setPerfisLojas(buildPerfisFromConfig(config))
+    setTermosTitulo(config.termosGarantia.tituloGeral)
+    setTermosCategorias([...config.termosGarantia.categorias])
   }, [config])
+
+  // Multi-tenant: carregar dados da unidade ativa (Store + StoreSettings).
+  useEffect(() => {
+    if (!lojaAtivaId) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const [rStore, rSettings] = await Promise.all([
+          fetch(`/api/stores/${encodeURIComponent(lojaAtivaId)}`, { credentials: "include", cache: "no-store" }),
+          fetch(`/api/stores/${encodeURIComponent(lojaAtivaId)}/settings`, { credentials: "include", cache: "no-store" }),
+        ])
+        const jStore = (await rStore.json().catch(() => ({}))) as { store?: any }
+        const jSettings = (await rSettings.json().catch(() => ({}))) as { settings?: any }
+        if (cancelled) return
+        const s = jStore.store ?? {}
+        const addr = s.address && typeof s.address === "object" ? s.address : {}
+        const st = jSettings.settings ?? {}
+        const printerCfg = st.printerConfig && typeof st.printerConfig === "object" ? (st.printerConfig as Record<string, unknown>) : {}
+        const blob: StoreSettingsBlob = {
+          pdvParams: (printerCfg.pdvParams as any) || undefined,
+          termosGarantia: (printerCfg.termosGarantia as any) || undefined,
+          certificadoA1: (printerCfg.certificadoA1 as any) || undefined,
+        }
+        setRemotePrinterConfig(printerCfg)
+        setRemoteReceiptFooter(String(st.receiptFooter || ""))
+
+        // Loja nova: campos vêm vazios para preencher.
+        setNomeFantasia(String(s.name || ""))
+        setRazaoSocial(String(s.name || ""))
+        setCnpj(String(s.cnpj || ""))
+        setTelefone(String(s.phone || ""))
+        setLogo(String(s.logoUrl || "") || null)
+        setRua(String((addr as any).rua || ""))
+        setNumero(String((addr as any).numero || ""))
+        setBairro(String((addr as any).bairro || ""))
+        setCidade(String((addr as any).cidade || ""))
+        setEstado(String((addr as any).estado || ""))
+        setCep(String((addr as any).cep || ""))
+
+        setEmail(String(st.contactEmail || ""))
+        setWhatsapp(String(st.contactWhatsapp || ""))
+        setWhatsappDono(String(st.contactWhatsappDono || ""))
+        setCertificado(null)
+        setSenhaCertificado("")
+
+        // PDV params por unidade
+        const pdv: Partial<StorePdvParams> = (blob.pdvParams as any) || {}
+        setAtalhosPDV(atalhosParaEdicao(Array.isArray(pdv.atalhosRapidos) ? (pdv.atalhosRapidos as any) : configPadrao.pdv.atalhosRapidos))
+        setOcultarCategoriasNoPdv(Boolean(pdv.ocultarCategoriasNoPdv ?? configPadrao.pdv.ocultarCategoriasNoPdv))
+        setCategoriasOcultasText(
+          (Array.isArray(pdv.categoriasOcultasNoPdv) ? (pdv.categoriasOcultasNoPdv as string[]) : configPadrao.pdv.categoriasOcultasNoPdv).join("\n")
+        )
+        setGarantiaPadraoDias(Number(pdv.garantiaPadraoDias ?? configPadrao.pdv.garantiaPadraoDias) || configPadrao.pdv.garantiaPadraoDias)
+        setValidadeOrcamentoDias(Number(pdv.validadeOrcamentoDias ?? configPadrao.pdv.validadeOrcamentoDias) || configPadrao.pdv.validadeOrcamentoDias)
+        setIncluirImpostoEstimadoNoPdv(Boolean(pdv.incluirImpostoEstimadoNoPdv ?? configPadrao.pdv.incluirImpostoEstimadoNoPdv))
+        setAliquotaImpostoEstimadoPdv(Number(pdv.aliquotaImpostoEstimadoPdv ?? configPadrao.pdv.aliquotaImpostoEstimadoPdv) || 0)
+        setModuloControleConsumo(Boolean(pdv.moduloControleConsumo ?? configPadrao.pdv.moduloControleConsumo))
+
+        // Termos de garantia por unidade
+        if (blob.termosGarantia && typeof blob.termosGarantia === "object") {
+          const tg = blob.termosGarantia as any
+          const legal = String(tg.garantiaLegal ?? configPadrao.termosGarantia.garantiaLegal)
+          const categorias = Array.isArray(tg.categorias) ? tg.categorias : configPadrao.termosGarantia.categorias
+          setTermosTitulo(String(tg.tituloGeral ?? configPadrao.termosGarantia.tituloGeral))
+          setTermosCategorias((categorias as any[]).map((c) => ({
+            id: String(c.id),
+            servico: String(c.servico ?? ""),
+            detalhes: String(c.detalhes ?? ""),
+          })))
+          setTextosTermos((prev) => ({
+            ...prev,
+            garantiaLegal: legal,
+            ...Object.fromEntries((categorias as any[]).map((c) => [String(c.id), String(c.detalhes ?? "")])),
+          }))
+        }
+
+        // Certificado por unidade (metadata)
+        const cert = (blob.certificadoA1 as any) || {}
+        if (cert && typeof cert === "object" && cert.status) {
+          setStatusCertificado(String(cert.status))
+        } else {
+          setStatusCertificado("Inativo")
+        }
+      } catch {
+        if (!cancelled) {
+          // se falhar, não herda da RafaCell (mantém vazio)
+          setNomeFantasia("")
+          setRazaoSocial("")
+          setCnpj("")
+          setTelefone("")
+          setLogo(null)
+          setRua("")
+          setNumero("")
+          setBairro("")
+          setCidade("")
+          setEstado("")
+          setCep("")
+          setEmail("")
+          setWhatsapp("")
+          setWhatsappDono("")
+          setRemotePrinterConfig({})
+          setRemoteReceiptFooter("")
+          setStatusCertificado("Inativo")
+          setTermosTitulo(configPadrao.termosGarantia.tituloGeral)
+          setTermosCategorias([...configPadrao.termosGarantia.categorias])
+          setCertificado(null)
+          setSenhaCertificado("")
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [lojaAtivaId])
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -296,58 +429,151 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   }
 
   const handleSave = async () => {
+    const nomeTrim = nomeFantasia.trim()
+    if (!nomeTrim) {
+      toast({
+        title: "Nome fantasia obrigatório",
+        description: "Preencha o nome da empresa para identificar a unidade no sistema e no cabeçalho.",
+        variant: "destructive",
+      })
+      return
+    }
+
     setIsSaving(true)
-    
-    // Atualizar contexto com os dados do formulário
-    updateEmpresa({
-      nomeFantasia,
-      razaoSocial,
-      cnpj,
-      endereco: { rua, numero, bairro, cidade, estado, cep },
-      contato: { telefone, whatsapp, whatsappDono, email },
-      identidadeVisual: { logoUrl: logo || "", coresTema: [corFundo, corPrimaria, corTexto] },
-      fiscal: { 
-        certificadoDigitalStatus: statusCertificado, 
-        tipoCertificado: "A1",
-        senhaCertificado 
+    try {
+      // Multi-tenant: empresa/contato por unidade (storeId).
+      if (lojaAtivaId) {
+        const lojaHeader = lojaAtivaId.trim()
+        const storeRes = await fetch(`/api/stores/${encodeURIComponent(lojaHeader)}`, {
+          method: "PUT",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            [ASSISTEC_LOJA_HEADER]: lojaHeader,
+          },
+          body: JSON.stringify({
+            name: nomeTrim,
+            cnpj,
+            phone: telefone,
+            logoUrl: logo || "",
+            address: { rua, numero, bairro, cidade, estado, cep },
+          }),
+        })
+        if (!storeRes.ok) {
+          const err = (await storeRes.json().catch(() => ({}))) as { error?: string }
+          throw new Error(err.error || `Falha ao salvar unidade (HTTP ${storeRes.status})`)
+        }
+        await fetch(`/api/stores/${encodeURIComponent(lojaHeader)}/settings`, {
+          method: "PUT",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            [ASSISTEC_LOJA_HEADER]: lojaHeader,
+          },
+          body: JSON.stringify({
+            contactEmail: email,
+            contactWhatsapp: whatsapp,
+            contactWhatsappDono: whatsappDono,
+            receiptFooter: remoteReceiptFooter,
+            printerConfig: {
+              ...(remotePrinterConfig || {}),
+              pdvParams: {
+                atalhosRapidos: atalhosPDV
+                  .filter((a) => a.nome.trim() && a.preco > 0)
+                  .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
+                garantiaPadraoDias: Math.max(1, Math.min(365, Math.round(Number(garantiaPadraoDias)) || configPadrao.pdv.garantiaPadraoDias)),
+                validadeOrcamentoDias: Math.max(1, Math.min(365, Math.round(Number(validadeOrcamentoDias)) || configPadrao.pdv.validadeOrcamentoDias)),
+                incluirImpostoEstimadoNoPdv,
+                aliquotaImpostoEstimadoPdv: Math.max(0, Math.min(100, Number(aliquotaImpostoEstimadoPdv) || 0)),
+                ocultarCategoriasNoPdv,
+                categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
+                moduloControleConsumo,
+              },
+              termosGarantia: {
+                ...configPadrao.termosGarantia,
+                tituloGeral: termosTitulo,
+                garantiaLegal: textosTermos.garantiaLegal ?? "",
+                categorias: termosCategorias.map((c) => ({
+                  ...c,
+                  detalhes: textosTermos[c.id] ?? c.detalhes,
+                })),
+              },
+              certificadoA1: {
+                status: statusCertificado,
+                fileName: certificado?.name || undefined,
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          }),
+        })
+        await refreshStoresList()
+        try {
+          localStorage.setItem(ASSISTEC_STORES_SYNC_STORAGE_KEY, String(Date.now()))
+        } catch {
+          /* ignore */
+        }
+      } else {
+        // Modo legado (sem multiloja): mantém config global.
+        updateEmpresa({
+          nomeFantasia: nomeTrim,
+          razaoSocial,
+          cnpj,
+          endereco: { rua, numero, bairro, cidade, estado, cep },
+          contato: { telefone, whatsapp, whatsappDono, email },
+          identidadeVisual: { logoUrl: logo || "", coresTema: [corFundo, corPrimaria, corTexto] },
+          fiscal: {
+            certificadoDigitalStatus: statusCertificado,
+            tipoCertificado: "A1",
+            senhaCertificado,
+          },
+        })
       }
-    })
 
-    updateTermosGarantia({ garantiaLegal: textosTermos.garantiaLegal ?? "" })
-    config.termosGarantia.categorias.forEach((c) => {
-      const detalhes = textosTermos[c.id]
-      if (detalhes !== undefined) updateCategoriaGarantia(c.id, detalhes)
-    })
-    const rawG = Math.round(Number(garantiaPadraoDias)) || configPadrao.pdv.garantiaPadraoDias
-    const rawV = Math.round(Number(validadeOrcamentoDias)) || configPadrao.pdv.validadeOrcamentoDias
-    const diasG = Math.max(1, Math.min(365, rawG))
-    const diasV = Math.max(1, Math.min(365, rawV))
-    const ali = Math.max(0, Math.min(100, Number(aliquotaImpostoEstimadoPdv) || 0))
-    updatePdv({
-      atalhosRapidos: atalhosPDV
-        .filter((a) => a.nome.trim() && a.preco > 0)
-        .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
-      garantiaPadraoDias: diasG,
-      validadeOrcamentoDias: diasV,
-      incluirImpostoEstimadoNoPdv,
-      aliquotaImpostoEstimadoPdv: ali,
-      ocultarCategoriasNoPdv,
-      categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
-      moduloControleConsumo,
-    })
+      if (!lojaAtivaId) {
+        updateTermosGarantia({ garantiaLegal: textosTermos.garantiaLegal ?? "" })
+      termosCategorias.forEach((c) => {
+          const detalhes = textosTermos[c.id]
+          if (detalhes !== undefined) updateCategoriaGarantia(c.id, detalhes)
+        })
+        const rawG = Math.round(Number(garantiaPadraoDias)) || configPadrao.pdv.garantiaPadraoDias
+        const rawV = Math.round(Number(validadeOrcamentoDias)) || configPadrao.pdv.validadeOrcamentoDias
+        const diasG = Math.max(1, Math.min(365, rawG))
+        const diasV = Math.max(1, Math.min(365, rawV))
+        const ali = Math.max(0, Math.min(100, Number(aliquotaImpostoEstimadoPdv) || 0))
+        updatePdv({
+          atalhosRapidos: atalhosPDV
+            .filter((a) => a.nome.trim() && a.preco > 0)
+            .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
+          garantiaPadraoDias: diasG,
+          validadeOrcamentoDias: diasV,
+          incluirImpostoEstimadoNoPdv,
+          aliquotaImpostoEstimadoPdv: ali,
+          ocultarCategoriasNoPdv,
+          categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
+          moduloControleConsumo,
+        })
 
-    updateMinhasLojas({
-      lojas: padPerfisLojas(perfisLojas, maxLojas).map((p, idx) => ({
-        ...p,
-        id: p.id?.trim() || `loja-${idx + 1}`,
-      })),
-    })
-    
-    // Simular salvamento no banco
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    setIsSaving(false)
-    setSavedMessage("Alterações salvas com sucesso!")
-    setTimeout(() => setSavedMessage(""), 3000)
+        updateMinhasLojas({
+          lojas: padPerfisLojas(perfisLojas, maxLojas).map((p, idx) => ({
+            ...p,
+            id: p.id?.trim() || `loja-${idx + 1}`,
+          })),
+        })
+      }
+
+      // Perfil da Loja não é global: é coluna do Store (editar em Minhas Lojas / Gestão de Unidades).
+
+      setSavedMessage("Alterações salvas com sucesso!")
+      setTimeout(() => setSavedMessage(""), 3000)
+    } catch (e) {
+      toast({
+        title: "Não foi possível salvar",
+        description: e instanceof Error ? e.message : String(e),
+        variant: "destructive",
+      })
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const handleRestaurarTermos = (tipo: string) => {
@@ -367,6 +593,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
       garantiaLegal: configPadrao.termosGarantia.garantiaLegal,
       ...Object.fromEntries(configPadrao.termosGarantia.categorias.map((c) => [c.id, c.detalhes])),
     })
+    setTermosTitulo(configPadrao.termosGarantia.tituloGeral)
+    setTermosCategorias([...configPadrao.termosGarantia.categorias])
   }
 
   const handleAddTermo = () => {
@@ -385,7 +613,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   }
 
   const handleEditTermo = (id: string) => {
-    const termo = config.termosGarantia.categorias.find(c => c.id === id)
+    const termo = termosCategorias.find((c) => c.id === id)
     if (termo) {
       setEditingTermoId(id)
       setEditingTermo({ titulo: termo.servico, texto: termo.detalhes })
@@ -404,7 +632,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
   const confirmDeleteTermo = () => {
     if (!deleteTermoId) return
-    const cat = config.termosGarantia.categorias.find((c) => c.id === deleteTermoId)
+    const cat = termosCategorias.find((c) => c.id === deleteTermoId)
     appendAuditLog({
       action: "registro_excluido",
       userLabel: `${(config.empresa.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`,
@@ -431,8 +659,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
       generatedAt: new Date().toISOString(),
       empresa: {
         ...config.empresa,
-        nomeFantasia: config.empresa.nomeFantasia || "RAFACELL ASSISTEC",
-        cnpj: config.empresa.cnpj || "48.241.205/0001-95",
+        nomeFantasia: config.empresa.nomeFantasia || WHITELABEL_NOME_FANTASIA_PADRAO,
+        cnpj: config.empresa.cnpj || WHITELABEL_CNPJ_PADRAO,
       },
       termosGarantia: config.termosGarantia,
       minhasLojas: config.minhasLojas,
@@ -443,7 +671,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `backup-rafacell-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `backup-erp-${new Date().toISOString().slice(0, 10)}.json`
     a.click()
     URL.revokeObjectURL(url)
     await new Promise((r) => setTimeout(r, 400))
@@ -495,70 +723,23 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 h-auto gap-1 bg-secondary p-1">
-          <TabsTrigger 
-            value="dados-empresa" 
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
+        <TabsList className="grid w-full grid-cols-3 h-auto gap-1 bg-secondary p-1">
+          <TabsTrigger value="unidade" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Building2 className="w-4 h-4 mr-2 hidden sm:inline" />
-            Dados
+            Unidade Atual
           </TabsTrigger>
-          <TabsTrigger
-            value="ajustes"
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <Settings className="w-4 h-4 mr-2 hidden sm:inline" />
-            Ajustes
+          <TabsTrigger value="pdv" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+            <LayoutGrid className="w-4 h-4 mr-2 hidden sm:inline" />
+            Parâmetros do PDV
           </TabsTrigger>
-          <TabsTrigger
-            value="pdv-personalizacao"
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <Wallet className="w-4 h-4 mr-2 hidden sm:inline" />
-            <span className="hidden xl:inline">Financeiro RAFACELL</span>
-            <span className="xl:hidden">Financeiro</span>
-          </TabsTrigger>
-          <TabsTrigger 
-            value="marca-logo"
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <Palette className="w-4 h-4 mr-2 hidden sm:inline" />
-            Marca/Logo
-          </TabsTrigger>
-          <TabsTrigger 
-            value="certificado"
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <FileKey className="w-4 h-4 mr-2 hidden sm:inline" />
-            Certificado
-          </TabsTrigger>
-          <TabsTrigger 
-            value="termos-garantia"
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
-            <Shield className="w-4 h-4 mr-2 hidden sm:inline" />
-            Garantia
-          </TabsTrigger>
-          <TabsTrigger
-            value="backup"
-            className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-          >
+          <TabsTrigger value="sistema" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Database className="w-4 h-4 mr-2 hidden sm:inline" />
-            Backup
+            Sistema
           </TabsTrigger>
-          {!isBronze && (
-            <TabsTrigger
-              value="multilojas"
-              className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
-            >
-              <Store className="w-4 h-4 mr-2 hidden sm:inline" />
-              Minhas Lojas
-            </TabsTrigger>
-          )}
         </TabsList>
 
         {/* ABA 1: DADOS DA EMPRESA */}
-        <TabsContent value="dados-empresa" className="mt-6">
+        <TabsContent value="unidade" className="mt-6">
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -572,14 +753,17 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             <CardContent className="space-y-6">
               <div className="grid gap-6 md:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="nome">Nome</Label>
+                  <Label htmlFor="nome">Nome fantasia</Label>
                   <Input
                     id="nome"
                     value={nomeFantasia}
                     onChange={(e) => setNomeFantasia(e.target.value)}
-                    placeholder="RAFACELL ASSISTEC"
+                    placeholder={WHITELABEL_NOME_FANTASIA_PADRAO}
                     className="h-12 text-base"
+                    required
+                    aria-invalid={!nomeFantasia.trim()}
                   />
+                  <p className="text-xs text-muted-foreground">Obrigatório — aparece no cabeçalho e no seletor de unidades.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -588,7 +772,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     id="cnpj"
                     value={cnpj}
                     onChange={(e) => setCnpj(formatCnpj(e.target.value))}
-                    placeholder="48.241.205/0001-95"
+                    placeholder={WHITELABEL_CNPJ_PADRAO}
                     className="h-12 text-base"
                   />
                 </div>
@@ -646,38 +830,21 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
         </TabsContent>
 
         {/* Ajustes: contatos, mensagens WhatsApp (orçamento), atalhos PDV */}
-        <TabsContent value="ajustes" className="mt-6 space-y-6">
+        <TabsContent value="pdv" className="mt-6 space-y-6">
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Store className="w-5 h-5 text-primary" />
-                Perfil da Loja
+                Tipo da unidade (por loja)
               </CardTitle>
               <CardDescription>
-                Padrão: Assistência Técnica. Em Supermercado ou Variedades, os campos de técnico e laudo de OS ficam
-                ocultos; estoque e vendas seguem iguais. A preferência é salva no servidor.
+                O perfil não é global. Cada unidade (storeId) tem seu próprio tipo: Assistência/Variedades/Supermercado.
+                Altere em <strong>Gestão da Rede → Gestão de Unidades</strong>.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3 max-w-lg">
-              <Label htmlFor="perfil-loja-select">Perfil</Label>
-              <Select
-                value={perfilLoja}
-                onValueChange={(v) => void setPerfilLoja(v as PerfilLojaId)}
-                disabled={!perfilHydrated}
-              >
-                <SelectTrigger id="perfil-loja-select" className="h-12 bg-secondary border-border">
-                  <SelectValue placeholder="Carregando…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(PERFIL_LOJA_LABELS) as PerfilLojaId[]).map((id) => (
-                    <SelectItem key={id} value={id}>
-                      {PERFIL_LOJA_LABELS[id]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Ao trocar o perfil, a aba Laudo na ordem de serviço e o laudo em Serviços somem automaticamente.
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Unidade atual: <strong>{lojaAtivaId || LEGACY_PRIMARY_STORE_ID}</strong> · Perfil: <strong>{perfilLoja}</strong>
               </p>
             </CardContent>
           </Card>
@@ -701,7 +868,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     id="telefone-aj"
                     value={telefone}
                     onChange={(e) => setTelefone(e.target.value)}
-                    placeholder="(14) 99856-4545"
+                    placeholder={WHITELABEL_TELEFONE_PADRAO}
                     className="h-12 text-base"
                   />
                 </div>
@@ -714,7 +881,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     id="whatsapp-aj"
                     value={whatsapp}
                     onChange={(e) => setWhatsapp(e.target.value)}
-                    placeholder="(14) 99856-4545"
+                    placeholder={WHITELABEL_TELEFONE_PADRAO}
                     className="h-12 text-base"
                   />
                 </div>
@@ -728,7 +895,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="contato@rafacell.com.br"
+                    placeholder={WHITELABEL_EMAIL_PADRAO}
                     className="h-12 text-base"
                   />
                 </div>
@@ -746,6 +913,27 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                   Recebe o resumo diário via API Evolution e o comando &quot;fechar dia&quot; pelo webhook.
                 </p>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-primary" />
+                Rodapé do cupom (por unidade)
+              </CardTitle>
+              <CardDescription>Texto impresso no final do cupom/recibo do PDV desta loja</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 max-w-2xl">
+              <Textarea
+                value={remoteReceiptFooter}
+                onChange={(e) => setRemoteReceiptFooter(e.target.value)}
+                placeholder="Ex.: Obrigado pela preferência. Trocas em até 7 dias com apresentação do cupom."
+                className="min-h-[110px] resize-y"
+              />
+              <p className="text-xs text-muted-foreground">
+                Gravado no <strong>StoreSettings</strong> da unidade ativa. Ao trocar de loja no cabeçalho, este texto muda.
+              </p>
             </CardContent>
           </Card>
 
@@ -998,12 +1186,12 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
         </TabsContent>
 
-        <TabsContent value="pdv-personalizacao" className="mt-6 space-y-6">
+        <TabsContent value="pdv" className="mt-6 space-y-6">
           <CentroPersonalizacaoFinanceiraRafacell />
         </TabsContent>
 
         {/* ABA 2: MARCA E LOGO */}
-        <TabsContent value="marca-logo" className="mt-6">
+        <TabsContent value="unidade" className="mt-6">
           <div className="grid gap-6 lg:grid-cols-2">
             {/* Upload de Logo */}
             <Card className="bg-card border-border">
@@ -1139,7 +1327,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
         </TabsContent>
 
         {/* ABA 3: CERTIFICADO DIGITAL */}
-        <TabsContent value="certificado" className="mt-6">
+        <TabsContent value="unidade" className="mt-6">
           <Card className="bg-card border-border max-w-2xl">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1227,12 +1415,12 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
         </TabsContent>
 
         {/* ABA 4: TERMOS DE GARANTIA */}
-        <TabsContent value="termos-garantia" className="mt-6">
+        <TabsContent value="pdv" className="mt-6">
           <div className="space-y-6">
             {/* Header com Botões */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
-                <h3 className="text-lg font-semibold">{config.termosGarantia.tituloGeral}</h3>
+                <h3 className="text-lg font-semibold">{termosTitulo}</h3>
                 <p className="text-sm text-muted-foreground">
                   Cadastre, edite ou exclua os termos que aparecerão nas OS
                 </p>
@@ -1340,7 +1528,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             </Card>
 
             {/* Lista de Termos Cadastrados */}
-            {config.termosGarantia.categorias.map((categoria) => (
+            {termosCategorias.map((categoria) => (
               <Card key={categoria.id} className="bg-card border-border">
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between">
@@ -1424,8 +1612,23 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
           </div>
         </TabsContent>
 
-        <TabsContent value="backup" className="mt-6">
+        <TabsContent value="sistema" className="mt-6">
           <div className="space-y-6">
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-primary" />
+                  Central de Importação de Dados
+                </CardTitle>
+                <CardDescription>
+                  Importação universal (um arquivo por vez) com mapeamento inteligente e validação antes de gravar.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <ImportadorDadosExternos />
+              </CardContent>
+            </Card>
+
             <Card className="bg-card border-border">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1433,7 +1636,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                   Backup do Sistema
                 </CardTitle>
                 <CardDescription>
-                  Gere um arquivo JSON com dados da RAFACELL ASSISTEC (CNPJ 48.241.205/0001-95), termos e lojas.
+                  Gere um arquivo JSON com dados da empresa (cadastro, termos e lojas) para arquivo externo ou migração.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1452,141 +1655,13 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                 </div>
               </CardContent>
             </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Upload className="w-5 h-5 text-primary" />
-                  Importar Dados Externos
-                </CardTitle>
-                <CardDescription>
-                  Importe dados do GestãoClick. Produtos são enviados ao banco em lotes de 500, com progresso em tempo real.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ImportadorDadosExternos />
-              </CardContent>
-            </Card>
           </div>
         </TabsContent>
 
-        <TabsContent value="multilojas" className="mt-6 space-y-6">
-          <p className="text-sm text-muted-foreground">
-            Limite por plano: 1 unidade (Bronze), 2 (Prata), até 5 (Ouro). CNPJ e logotipo por unidade. Use o seletor
-            &quot;Unidade ativa&quot; no menu lateral para alternar estoque e vendas. Salve com o botão no rodapé.
-          </p>
-          {Array.from({ length: maxLojas }, (_, idx) => idx).map((idx) => {
-            const p =
-              perfisLojas[idx] ?? emptyPerfilLoja(`loja-${idx + 1}`)
-            const titulo = `Loja ${idx + 1}`
-            return (
-              <Card key={idx} className="bg-card border-border">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Store className="w-5 h-5 text-primary" />
-                    {titulo}
-                  </CardTitle>
-                  <CardDescription>Nome fantasia, razão social, CNPJ, endereço e logotipo desta unidade.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-col sm:flex-row gap-4 items-start">
-                    <div className="flex flex-col items-center gap-2">
-                      <div className="w-24 h-24 rounded-lg border border-border bg-secondary flex items-center justify-center overflow-hidden">
-                        {p.logoUrl ? (
-                          <img src={p.logoUrl} alt="" className="max-w-full max-h-full object-contain" />
-                        ) : (
-                          <ImageIcon className="w-10 h-10 text-muted-foreground" />
-                        )}
-                      </div>
-                      <Label className="cursor-pointer">
-                        <span className="text-xs text-primary">Enviar logo</span>
-                        <input type="file" accept="image/*" className="hidden" onChange={(e) => handleLogoLojaUpload(idx, e)} />
-                      </Label>
-                    </div>
-                    <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3 w-full">
-                      <div className="space-y-1 md:col-span-2">
-                        <Label>Nome fantasia</Label>
-                        <Input
-                          value={p.nomeFantasia}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setPerfisLojas((prev) => {
-                              const next = [...padPerfisLojas(prev, maxLojas)]
-                              next[idx] = { ...next[idx], nomeFantasia: v }
-                              return next
-                            })
-                          }}
-                          className="bg-secondary border-border"
-                        />
-                      </div>
-                      <div className="space-y-1 md:col-span-2">
-                        <Label>Razão social</Label>
-                        <Input
-                          value={p.razaoSocial}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setPerfisLojas((prev) => {
-                              const next = [...padPerfisLojas(prev, maxLojas)]
-                              next[idx] = { ...next[idx], razaoSocial: v }
-                              return next
-                            })
-                          }}
-                          className="bg-secondary border-border"
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label>CNPJ</Label>
-                        <Input
-                          value={p.cnpj}
-                          onChange={(e) => {
-                            const v = formatCnpj(e.target.value)
-                            setPerfisLojas((prev) => {
-                              const next = [...padPerfisLojas(prev, maxLojas)]
-                              next[idx] = { ...next[idx], cnpj: v }
-                              return next
-                            })
-                          }}
-                          className="bg-secondary border-border"
-                          placeholder="00.000.000/0000-00"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {(
-                      [
-                        ["rua", "Rua", p.endereco.rua],
-                        ["numero", "Número", p.endereco.numero],
-                        ["bairro", "Bairro", p.endereco.bairro],
-                        ["cidade", "Cidade", p.endereco.cidade],
-                        ["estado", "UF", p.endereco.estado],
-                        ["cep", "CEP", p.endereco.cep],
-                      ] as const
-                    ).map(([key, label, val]) => (
-                      <div key={key} className="space-y-1">
-                        <Label>{label}</Label>
-                        <Input
-                          value={val}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setPerfisLojas((prev) => {
-                              const next = [...padPerfisLojas(prev, maxLojas)]
-                              next[idx] = {
-                                ...next[idx],
-                                endereco: { ...next[idx].endereco, [key]: v },
-                              }
-                              return next
-                            })
-                          }}
-                          className="bg-secondary border-border"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
+        <TabsContent value="__rede_hidden" className="mt-6">
+          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+            A gestão de unidades foi movida para o menu <strong>Gestão da Rede</strong>.
+          </div>
         </TabsContent>
       </Tabs>
 

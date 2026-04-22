@@ -223,7 +223,7 @@ export async function fetchMetricasVendas(
     { id: "5", nome: "Cabo USB-C 2m", quantidade: 52, receita: 780 },
   ]
   const vendasPorVendedor: VendaPorVendedor[] = [
-    { vendedorId: "v1", nome: "Rafael", total: 12400 + dias * 100, quantidadeVendas: 42 },
+    { vendedorId: "v1", nome: "Vendedor A", total: 12400 + dias * 100, quantidadeVendas: 42 },
     { vendedorId: "v2", nome: "Atend. Balcão 2", total: 8900 + dias * 80, quantidadeVendas: 31 },
     { vendedorId: "v3", nome: "Loja Online", total: 3200, quantidadeVendas: 12 },
   ]

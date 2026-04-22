@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Search, Package, Wallet, RotateCcw, Printer } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -18,7 +19,8 @@ import { useToast } from "@/hooks/use-toast"
 export function TrocasDevolucao() {
   const { config } = useConfigEmpresa()
   const { toast } = useToast()
-  const { sales, registrarDevolucao } = useOperationsStore()
+  const { sales, registrarDevolucao, inventory } = useOperationsStore()
+  const searchParams = useSearchParams()
 
   const [busca, setBusca] = useState("")
   const [sale, setSale] = useState<SaleRecord | null>(null)
@@ -32,6 +34,23 @@ export function TrocasDevolucao() {
     nome: string
     cpf: string
   } | null>(null)
+  const [candidateSales, setCandidateSales] = useState<SaleRecord[] | null>(null)
+  const [candidateLabel, setCandidateLabel] = useState("")
+
+  // Prefill via URL: /?page=trocas&sale=VDA-...
+  useEffect(() => {
+    const id = (searchParams.get("sale") || "").trim()
+    if (!id) return
+    setBusca(id)
+    const upper = id.toUpperCase()
+    const s = sales.find(
+      (x) => x.id.toUpperCase() === upper || x.id.replace(/\s/g, "").toUpperCase() === upper.replace(/\s/g, "")
+    )
+    if (s) {
+      setSale(s)
+      toast({ title: "Venda localizada", description: s.id })
+    }
+  }, [searchParams, sales, toast])
 
   useEffect(() => {
     if (!sale) return
@@ -43,20 +62,10 @@ export function TrocasDevolucao() {
   const nomeLoja =
     (config.empresa.nomeFantasia || "").trim() || configPadrao.empresa.nomeFantasia
 
-  const encontrarVenda = () => {
-    const id = busca.trim().toUpperCase()
-    if (!id) {
-      toast({ title: "Informe o ID", description: "Ex.: VDA-2026-0001", variant: "destructive" })
-      return
-    }
-    const s = sales.find((x) => x.id.toUpperCase() === id || x.id.replace(/\s/g, "").toUpperCase() === id.replace(/\s/g, ""))
-    if (!s) {
-      setSale(null)
-      setLastDevolucao(null)
-      toast({ title: "Não encontrado", description: "Nenhuma venda com esse cupom/ID.", variant: "destructive" })
-      return
-    }
+  const aplicarVenda = (s: SaleRecord) => {
     setSale(s)
+    setCandidateSales(null)
+    setCandidateLabel("")
     const q: Record<string, string> = {}
     for (const l of s.lines) {
       const max = l.quantity - (l.qtyReturned ?? 0)
@@ -67,6 +76,83 @@ export function TrocasDevolucao() {
     setNomeExtra(s.customerName ?? "")
     setLastDevolucao(null)
     toast({ title: "Venda localizada", description: s.id })
+  }
+
+  const encontrarVenda = () => {
+    const raw = busca.trim()
+    if (!raw) {
+      toast({ title: "Informe a busca", description: "ID da venda, nome do cliente ou código do produto.", variant: "destructive" })
+      return
+    }
+    setCandidateSales(null)
+    setCandidateLabel("")
+
+    const idUpper = raw.toUpperCase()
+    const idNorm = raw.replace(/\s/g, "").toUpperCase()
+    const qLower = raw.toLowerCase()
+    const digitsOnly = raw.replace(/\D/g, "")
+
+    const byId = sales.find(
+      (x) =>
+        x.id.toUpperCase() === idUpper ||
+        x.id.replace(/\s/g, "").toUpperCase() === idNorm
+    )
+    if (byId) {
+      aplicarVenda(byId)
+      return
+    }
+
+    const byName = sales.filter((s) => (s.customerName || "").toLowerCase().includes(qLower))
+    if (byName.length === 1) {
+      aplicarVenda(byName[0]!)
+      return
+    }
+    if (byName.length > 1) {
+      setCandidateSales(byName.slice(0, 8))
+      setCandidateLabel(`Vendas com cliente contendo “${raw}”`)
+      toast({ title: "Várias vendas", description: "Escolha o cupom correto na lista abaixo." })
+      return
+    }
+
+    const invMatch =
+      inventory.find(
+        (i) =>
+          i.id === raw ||
+          (digitsOnly.length >= 8 && i.id.replace(/\D/g, "") === digitsOnly) ||
+          i.name.toLowerCase().includes(qLower)
+      ) ?? null
+
+    if (invMatch) {
+      const last5 = sales
+        .filter((s) => s.lines.some((l) => l.inventoryId === invMatch.id))
+        .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+        .slice(0, 5)
+      if (last5.length === 0) {
+        setSale(null)
+        toast({
+          title: "Nenhuma venda",
+          description: `O produto “${invMatch.name}” ainda não consta em vendas registradas.`,
+          variant: "destructive",
+        })
+        return
+      }
+      if (last5.length === 1) {
+        aplicarVenda(last5[0]!)
+        return
+      }
+      setCandidateSales(last5)
+      setCandidateLabel(`Últimas vendas com “${invMatch.name}” (origem da troca)`)
+      toast({ title: "Selecione a venda", description: "Escolha de qual cupom sairá a devolução." })
+      return
+    }
+
+    setSale(null)
+    setLastDevolucao(null)
+    toast({
+      title: "Não encontrado",
+      description: "Nenhuma venda, cliente ou produto correspondente.",
+      variant: "destructive",
+    })
   }
 
   const linhasComMax = useMemo(() => {
@@ -185,19 +271,23 @@ export function TrocasDevolucao() {
             Troca e devolução
           </CardTitle>
           <CardDescription>
-            Busque pelo ID do cupom (venda). Os itens retornam ao estoque automaticamente. Se não houver troca por outro
-            produto, gere <strong>crédito em haver</strong> vinculado ao CPF.
+            Busque pelo <strong>ID do cupom</strong>, <strong>nome do cliente</strong> ou <strong>código/bip do produto</strong>.
+            Ao bipar um item, listamos as últimas vendas em que ele aparece para você escolher a origem da troca. Os itens
+            retornam ao estoque; use <strong>crédito em haver</strong> vinculado ao CPF quando aplicável.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="flex-1 space-y-2">
-              <Label>ID da venda / cupom</Label>
+              <Label>Venda, cliente ou código de barras do produto</Label>
               <Input
-                placeholder="VDA-2026-0001"
+                placeholder="VDA-2026-0001 · João Silva · código do produto"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                className="h-11 font-mono"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") encontrarVenda()
+                }}
+                className="h-11 font-mono text-sm"
               />
             </div>
             <div className="flex items-end">
@@ -209,6 +299,32 @@ export function TrocasDevolucao() {
           </div>
         </CardContent>
       </Card>
+
+      {candidateSales && candidateSales.length > 0 && (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">{candidateLabel || "Escolha a venda"}</CardTitle>
+            <CardDescription>Selecione o cupom de origem da troca ou devolução.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {candidateSales.map((s) => (
+              <Button
+                key={s.id}
+                type="button"
+                variant="outline"
+                className="h-auto w-full flex-col items-start gap-0.5 py-3 text-left sm:flex-row sm:items-center sm:justify-between"
+                onClick={() => aplicarVenda(s)}
+              >
+                <span className="font-mono text-sm font-semibold">{s.id}</span>
+                <span className="text-sm text-muted-foreground">
+                  {s.customerName || "—"} · {formatBrl(s.total)}
+                </span>
+                <span className="text-xs text-muted-foreground">{new Date(s.at).toLocaleString("pt-BR")}</span>
+              </Button>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {sale && (
         <Card className="bg-card border-border">

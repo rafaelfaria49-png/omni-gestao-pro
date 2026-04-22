@@ -1,7 +1,9 @@
+import type { PrismaClient } from "@/generated/prisma"
 import type { DailyLedger } from "@/lib/operations-store"
 import { buildDailyClosingWhatsAppMessage, digitsOnlyPhone } from "@/lib/daily-report"
-import { prisma } from "@/lib/prisma"
+import { prisma as prismaSingleton } from "@/lib/prisma"
 import { sendWhatsAppText } from "@/lib/whatsapp-send"
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 
 function todayStr(): string {
   return new Date().toISOString().split("T")[0]
@@ -26,9 +28,15 @@ function normalizeLedgerPayload(raw: unknown, date: string): DailyLedger {
 export async function sendDailyClosingToPhone(params: {
   phoneDigits: string
   empresaNome: string
+  /** Unidade do resumo no servidor (ledger por loja). */
+  storeId?: string
+  /** Injete o client em testes ou jobs; padrão: singleton de `@/lib/prisma`. */
+  prisma?: PrismaClient
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const db = params.prisma ?? prismaSingleton
+  const storeId = (params.storeId ?? LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID
   const date = todayStr()
-  const snap = await prisma.ledgerSnapshot.findUnique({ where: { date } })
+  const snap = await db.ledgerSnapshot.findUnique({ where: { storeId_date: { storeId, date } } })
   let ledger: DailyLedger
   if (snap?.payload) {
     try {

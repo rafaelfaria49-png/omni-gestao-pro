@@ -1,0 +1,38 @@
+import { NextResponse } from "next/server"
+import { prisma } from "@/lib/prisma"
+import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
+function json(data: unknown, init?: ResponseInit) {
+  return NextResponse.json(data, init)
+}
+
+function badRequest(message: string) {
+  return json({ error: message }, { status: 400 })
+}
+
+export async function POST(req: Request) {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return badRequest("JSON inválido")
+  }
+
+  const ids = (body as { ids?: unknown }).ids
+  if (!Array.isArray(ids)) return badRequest("ids deve ser um array")
+  const normalized = Array.from(new Set(ids.filter((x) => typeof x === "string").map((s) => s.trim()).filter(Boolean)))
+  if (normalized.length === 0) return badRequest("Nenhum id válido")
+
+  const storeId = storeIdFromAssistecRequestForWrite(req)
+  if (!storeId) {
+    return badRequest("Unidade obrigatória: envie o header x-assistec-loja-id ou query storeId.")
+  }
+
+  const res = await prisma.cliente.deleteMany({ where: { id: { in: normalized }, storeId } })
+  return json({ ok: true, deleted: res.count })
+}
+

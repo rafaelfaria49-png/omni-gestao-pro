@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
+import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
+import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 
 export const runtime = "nodejs"
 
@@ -24,6 +25,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "JSON inválido" }, { status: 400 })
   }
 
+  const storeId = storeIdFromAssistecRequestForWrite(request)
+  if (!storeId) {
+    return NextResponse.json(
+      { error: "Unidade obrigatória: envie o header x-assistec-loja-id ou query storeId / lojaId." },
+      { status: 400 }
+    )
+  }
+
   const ledger = body as {
     date?: string
     vendasDinheiro?: number
@@ -39,9 +48,10 @@ export async function POST(request: Request) {
   }
 
   try {
+    await prismaEnsureConnected()
     await prisma.ledgerSnapshot.upsert({
-      where: { date },
-      create: { date, payload: JSON.stringify(ledger) },
+      where: { storeId_date: { storeId, date } },
+      create: { storeId, date, payload: JSON.stringify(ledger) },
       update: { payload: JSON.stringify(ledger) },
     })
   } catch (e) {

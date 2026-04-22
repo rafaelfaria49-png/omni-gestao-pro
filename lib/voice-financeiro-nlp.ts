@@ -88,8 +88,10 @@ export function parseLancamentoCarteira(text: string): ParsedLancamentoCarteira 
 
   let carteiraMencionada = extractCarteiraMencionada(raw)
   if (!carteiraMencionada) {
-    const mAssistec = raw.match(/\b(assistec|rafacell|rafa\s*brinquedos)\b/i)
-    if (mAssistec) carteiraMencionada = mAssistec[1].replace(/\s+/g, " ").trim()
+    const mEmpresa = raw.match(/\b(empresa|carteira\s*empresa|caixa)\b/i)
+    if (mEmpresa) carteiraMencionada = "empresa"
+    const mLegado = raw.match(/\b(assistec|rafacell|rafa\s*brinquedos)\b/i)
+    if (!carteiraMencionada && mLegado) carteiraMencionada = mLegado[1].replace(/\s+/g, " ").trim()
   }
 
   const { descricao, categoria } = extractDescricaoCategoria(raw, tipo)
@@ -108,9 +110,10 @@ export function parseLancamentoCarteira(text: string): ParsedLancamentoCarteira 
 export function resolverCarteiraPorNome(carteiras: Carteira[], mencao: string): Carteira | null {
   const q = voiceNormalize(mencao).replace(/[^\w\s]/g, "")
   if (!q) return null
-  if (q.includes("assistec") || q.includes("rafacell")) {
+  if (q.includes("assistec") || q.includes("rafacell") || q.includes("empresa") || q === "caixa") {
     const hit =
-      carteiras.find((c) => voiceNormalize(c.nome).includes("rafacell")) ??
+      carteiras.find((c) => c.id === "cart-rafacell") ??
+      carteiras.find((c) => voiceNormalize(c.nome).includes("empresa")) ??
       carteiras.find((c) => c.tipo === "empresa")
     if (hit) return hit
   }

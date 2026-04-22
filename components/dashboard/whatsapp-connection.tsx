@@ -33,7 +33,7 @@ export function WhatsAppConnection() {
   ])
   const operador = useMemo(() => {
     const nome = config.empresa.nomeFantasia.trim()
-    return nome ? nome.split(" ")[0] : "Rafael"
+    return nome ? nome.split(" ")[0] : "Operador"
   }, [config.empresa.nomeFantasia])
 
   useEffect(() => {
@@ -114,7 +114,7 @@ export function WhatsAppConnection() {
         lines: [{ inventoryId: target.id, quantity: 1, name: target.name, unitPrice: value }],
         total: value,
         linkedOsId: null,
-        paymentBreakdown: { dinheiro: 0, pix: value, cartaoDebito: 0, cartaoCredito: 0, carne: 0, creditoVale: 0 },
+        paymentBreakdown: { dinheiro: 0, pix: value, cartaoDebito: 0, cartaoCredito: 0, carne: 0, aPrazo: 0, creditoVale: 0 },
         openCaixaIfClosed: true,
         saldoInicialAoAbrir: 0,
       })

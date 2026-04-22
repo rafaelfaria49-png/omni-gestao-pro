@@ -69,6 +69,7 @@ import {
   type CategoriaGarantia,
 } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
+import { useStoreSettings } from "@/lib/store-settings-provider"
 import { appendAuditLog } from "@/lib/audit-log"
 import { buildOsTicketEscPos } from "@/lib/escpos"
 import {
@@ -146,6 +147,22 @@ export interface OrdemServico {
 export function horaAtualHHMM(): string {
   const d = new Date()
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+}
+
+function asText(v: unknown): string {
+  if (v == null) return ""
+  if (typeof v === "string") return v
+  if (typeof v === "number" || typeof v === "boolean") return String(v)
+  if (v instanceof Date) return v.toISOString()
+  try {
+    return JSON.stringify(v)
+  } catch {
+    return String(v)
+  }
+}
+
+function lowerText(v: unknown): string {
+  return asText(v).toLowerCase()
 }
 
 export const defaultChecklist: ChecklistItem[] = [
@@ -324,9 +341,10 @@ export function OrdensServico({
   onVoiceNewOsConsumed,
   onAbrirCadastroCliente,
 }: OrdensServicoProps) {
-  const { config, getGarantiaParaServico } = useConfigEmpresa()
+  const { config } = useConfigEmpresa()
   const { mostraTecnicoLaudoOs } = usePerfilLoja()
   const { empresaDocumentos, getEnderecoDocumentos } = useLojaAtiva()
+  const { termosGarantia, getGarantiaById } = useStoreSettings()
   const { incrementOsAbertasDia } = useOperationsStore()
   const { toast } = useToast()
   const [searchTerm, setSearchTerm] = useState("")
@@ -362,11 +380,13 @@ export function OrdensServico({
   const [isHoldingVoice, setIsHoldingVoice] = useState(false)
 
   const filteredOrdens = ordens.filter(os => {
+    const q = lowerText(searchTerm)
     const matchesSearch = 
-      os.numero.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      os.cliente.nome.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      os.aparelho.modelo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      os.aparelho.imei.includes(searchTerm)
+      lowerText(os?.numero).includes(q) ||
+      lowerText(os?.cliente?.nome).includes(q) ||
+      lowerText(os?.aparelho?.marca).includes(q) ||
+      lowerText(os?.aparelho?.modelo).includes(q) ||
+      asText(os?.aparelho?.imei).includes(asText(searchTerm))
     const matchesStatus = statusFilter === "all" || os.status === statusFilter
     return matchesSearch && matchesStatus
   })
@@ -384,18 +404,18 @@ export function OrdensServico({
     return (IDS_GARANTIA_OS as readonly string[])
       .map((id) => {
         return (
-          config.termosGarantia.categorias.find((c) => c.id === id) ??
+          getGarantiaById(id) ??
           configPadrao.termosGarantia.categorias.find((c) => c.id === id)
         )
       })
       .filter((c): c is CategoriaGarantia => c != null)
-  }, [config.termosGarantia.categorias])
+  }, [getGarantiaById])
 
   const nomeEmpresaRodape =
     (empresaDocumentos.nomeFantasia || "").trim() || configPadrao.empresa.nomeFantasia
   const cnpjRodape = (empresaDocumentos.cnpj || "").trim() || configPadrao.empresa.cnpj
   const whatsappRodape =
-    (config.empresa.contato.whatsapp || "").trim() || configPadrao.empresa.contato.whatsapp
+    (empresaDocumentos.contato.whatsapp || "").trim() || configPadrao.empresa.contato.whatsapp
   const logoEmpresa = empresaDocumentos.identidadeVisual.logoUrl
   const totalOS = formData.valorServico + formData.valorPecas
 
@@ -548,7 +568,7 @@ export function OrdensServico({
     setIsPrintModalOpen(true)
 
     if (type === "termica") {
-      const g = getGarantiaParaServico(os.termoGarantia)
+      const g = getGarantiaById(os.termoGarantia)
       const bytes = buildOsTicketEscPos({
         os,
         nomeFantasia: nomeEmpresaRodape,
@@ -578,15 +598,15 @@ export function OrdensServico({
         <div style="text-align:center;font-size:10px">CNPJ ${escapeHtml(cnpjRodape)}</div>
         <div style="text-align:center;font-size:9px;margin-bottom:6px">${escapeHtml(getEnderecoDocumentos())}</div>
         <div style="border-top:1px dashed #000;margin:6px 0"></div>
-        <p style="font-weight:700">${escapeHtml(os.numero)}</p>
-        <p>${escapeHtml(os.dataEntrada)} ${escapeHtml(os.horaEntrada)}</p>
-        <p>${escapeHtml(os.cliente.nome)}</p>
-        <p>${escapeHtml(os.aparelho.marca)} ${escapeHtml(os.aparelho.modelo)}</p>
-        <p>${escapeHtml(os.defeito)}</p>
+        <p style="font-weight:700">${escapeHtml(asText(os?.numero))}</p>
+        <p>${escapeHtml(asText(os?.dataEntrada))} ${escapeHtml(asText(os?.horaEntrada))}</p>
+        <p>${escapeHtml(asText(os?.cliente?.nome))}</p>
+        <p>${escapeHtml(asText(os?.aparelho?.marca))} ${escapeHtml(asText(os?.aparelho?.modelo))}</p>
+        <p>${escapeHtml(asText(os?.defeito))}</p>
         <div style="border-top:1px dashed #000;margin:6px 0"></div>
         <p>Total: ${br.format(os.valorServico + os.valorPecas)}</p>
       `,
-        `OS ${os.numero}`
+        `OS ${asText(os?.numero)}`
       )
       return
     }
@@ -595,7 +615,7 @@ export function OrdensServico({
     if (!w) return
     w.document.write(`<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8">
-<title>${escapeHtml(os.numero)}</title>
+<title>${escapeHtml(asText(os?.numero))}</title>
 <style>
   @page { size: A4; margin: 0; }
   html, body { margin: 0; padding: 0; font-family: system-ui, sans-serif; font-size: 12px; }
@@ -603,10 +623,10 @@ export function OrdensServico({
   @media print { @page { margin: 0; } }
 </style></head><body>
 <div class="wrap">
-  <h2 style="margin:0 0 8px">${escapeHtml(nomeEmpresaRodape)} — OS ${escapeHtml(os.numero)}</h2>
-  <p><strong>Cliente:</strong> ${escapeHtml(os.cliente.nome)}</p>
-  <p><strong>Aparelho:</strong> ${escapeHtml(os.aparelho.marca)} ${escapeHtml(os.aparelho.modelo)}</p>
-  <p><strong>Defeito:</strong> ${escapeHtml(os.defeito)}</p>
+  <h2 style="margin:0 0 8px">${escapeHtml(asText(nomeEmpresaRodape))} — OS ${escapeHtml(asText(os?.numero))}</h2>
+  <p><strong>Cliente:</strong> ${escapeHtml(asText(os?.cliente?.nome))}</p>
+  <p><strong>Aparelho:</strong> ${escapeHtml(asText(os?.aparelho?.marca))} ${escapeHtml(asText(os?.aparelho?.modelo))}</p>
+  <p><strong>Defeito:</strong> ${escapeHtml(asText(os?.defeito))}</p>
   <p><strong>Total:</strong> ${escapeHtml(formatCurrency(os.valorServico + os.valorPecas))}</p>
 </div>
 <script>window.onload=function(){setTimeout(function(){window.print()},200)}</script>
@@ -630,7 +650,7 @@ export function OrdensServico({
   }
 
   const handleEnviarOSWhatsApp = (os: OrdemServico) => {
-    const numero = os.cliente.telefone.replace(/\D/g, "")
+    const numero = asText(os?.cliente?.telefone).replace(/\D/g, "")
     if (!numero) {
       toast({
         title: "Telefone ausente",
@@ -642,8 +662,8 @@ export function OrdensServico({
     const linkRastreio = `${base}/rastreio/os/${os.id}`
     const mensagem = encodeURIComponent(
       `${nomeEmpresaRodape}\n` +
-        `OS: ${os.numero}\n` +
-        `Cliente: ${os.cliente.nome}\n` +
+        `OS: ${asText(os?.numero)}\n` +
+        `Cliente: ${asText(os?.cliente?.nome)}\n` +
         `Status: ${os.status.replace("_", " ")}\n` +
         `Total: ${formatCurrency(os.valorServico + os.valorPecas)}\n` +
         `Link de rastreio: ${linkRastreio}\n` +
@@ -661,7 +681,7 @@ export function OrdensServico({
       case "pronto":
         return <Badge className="bg-primary/20 text-primary border-primary/40">Pronto - Avisar Cliente</Badge>
       case "finalizado":
-        return <Badge className="bg-muted text-muted-foreground">Finalizado</Badge>
+        return <Badge className="bg-muted text-black/70">Finalizado</Badge>
       case "pago":
         return <Badge className="bg-emerald-600/90 text-white border-emerald-500/40">Pago</Badge>
       default:
@@ -678,7 +698,7 @@ export function OrdensServico({
       case "pronto":
         return <Bell className="w-4 h-4 text-primary" />
       case "finalizado":
-        return <CheckCircle2 className="w-4 h-4 text-muted-foreground" />
+        return <CheckCircle2 className="w-4 h-4 text-black/70" />
       case "pago":
         return <CheckCircle2 className="w-4 h-4 text-emerald-500" />
       default:
@@ -910,7 +930,7 @@ export function OrdensServico({
 
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
           <div className="relative flex-1 sm:w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-black/70" />
             <Input
               placeholder="Buscar OS, cliente ou IMEI..."
               value={searchTerm}
@@ -943,8 +963,8 @@ export function OrdensServico({
                 <ClipboardList className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.total}</p>
-                <p className="text-sm text-muted-foreground">Total de OS</p>
+                <p className="text-2xl font-bold text-black">{stats.total}</p>
+                <p className="text-sm text-black/70">Total de OS</p>
               </div>
             </div>
           </CardContent>
@@ -956,8 +976,8 @@ export function OrdensServico({
                 <Timer className="w-5 h-5 text-yellow-500" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.aguardandoPeca}</p>
-                <p className="text-sm text-muted-foreground">Aguard. Peça</p>
+                <p className="text-2xl font-bold text-black">{stats.aguardandoPeca}</p>
+                <p className="text-sm text-black/70">Aguard. Peça</p>
               </div>
             </div>
           </CardContent>
@@ -969,8 +989,8 @@ export function OrdensServico({
                 <Wrench className="w-5 h-5 text-primary" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.emReparo}</p>
-                <p className="text-sm text-muted-foreground">Em Reparo</p>
+                <p className="text-2xl font-bold text-black">{stats.emReparo}</p>
+                <p className="text-sm text-black/70">Em Reparo</p>
               </div>
             </div>
           </CardContent>
@@ -979,13 +999,13 @@ export function OrdensServico({
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <div className={`p-2 rounded-lg ${stats.prontas > 0 ? "bg-primary/15" : "bg-muted"}`}>
-                <Bell className={`w-5 h-5 ${stats.prontas > 0 ? "text-primary" : "text-muted-foreground"}`} />
+                <Bell className={`w-5 h-5 ${stats.prontas > 0 ? "text-primary" : "text-black/70"}`} />
               </div>
               <div>
                 <p className={`text-2xl font-bold ${stats.prontas > 0 ? "text-primary" : "text-foreground"}`}>
                   {stats.prontas}
                 </p>
-                <p className="text-sm text-muted-foreground">Prontas</p>
+                <p className="text-sm text-black/70">Prontas</p>
               </div>
             </div>
           </CardContent>
@@ -1017,31 +1037,31 @@ export function OrdensServico({
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {getStatusIcon(os.status)}
-                        <span className="font-mono font-semibold text-foreground">{os.numero}</span>
+                        <span className="font-mono font-semibold text-black">{os.numero}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div>
-                        <p className="font-medium text-foreground">{os.cliente.nome}</p>
-                        <p className="text-xs text-muted-foreground">{os.cliente.telefone}</p>
+                        <p className="font-medium text-black">{asText(os?.cliente?.nome)}</p>
+                        <p className="text-xs text-black/70">{asText(os?.cliente?.telefone)}</p>
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       <div className="flex items-center gap-2">
-                        <Smartphone className="w-4 h-4 text-muted-foreground" />
-                        <span>{os.aparelho.marca} {os.aparelho.modelo}</span>
+                        <Smartphone className="w-4 h-4 text-black/70" />
+                        <span className="text-black">{asText(os?.aparelho?.marca)} {asText(os?.aparelho?.modelo)}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       {getStatusBadge(os.status)}
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-muted-foreground">
+                    <TableCell className="hidden sm:table-cell text-black/70">
                       <span className="block">{formatDate(os.dataEntrada)}</span>
                       {os.horaEntrada && (
                         <span className="text-xs">{os.horaEntrada}</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-right font-semibold text-foreground">
+                    <TableCell className="text-right font-semibold text-black">
                       {formatCurrency(os.valorServico + os.valorPecas)}
                     </TableCell>
                     <TableCell className="text-right">
@@ -1101,7 +1121,7 @@ export function OrdensServico({
             </DialogDescription>
           </DialogHeader>
           {voiceTranscriptPreview ? (
-            <p className="text-xs text-muted-foreground rounded-md border border-border bg-muted/40 p-2 font-mono leading-relaxed">
+            <p className="text-xs text-black/70 rounded-md border border-border bg-muted/40 p-2 font-mono leading-relaxed">
               {voiceTranscriptPreview}
             </p>
           ) : null}
@@ -1111,7 +1131,7 @@ export function OrdensServico({
               <p className="font-medium text-amber-900 dark:text-amber-100">
                 Cliente novo — não encontrado nas ordens atuais
               </p>
-              <p className="text-muted-foreground">
+              <p className="text-black/70">
                 A OS será criada com este nome. Cadastre o cliente em Clientes para histórico e contato
                 completos.
               </p>
@@ -1253,8 +1273,8 @@ export function OrdensServico({
               </SelectContent>
             </Select>
             {formData.termoGarantia && (
-              <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
-                {getGarantiaParaServico(formData.termoGarantia)?.detalhes}
+              <p className="text-xs text-black/70 leading-relaxed line-clamp-3">
+                {getGarantiaById(formData.termoGarantia)?.detalhes}
               </p>
             )}
           </div>
@@ -1497,8 +1517,8 @@ export function OrdensServico({
                       className="border-2 border-dashed border-border rounded-xl p-8 text-center cursor-pointer hover:border-primary transition-colors"
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      <Camera className="w-10 h-10 text-muted-foreground mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">
+                      <Camera className="w-10 h-10 text-black/70 mx-auto mb-2" />
+                      <p className="text-sm text-black/70">
                         Clique ou arraste fotos do aparelho para anexar ao laudo
                       </p>
                     </div>
@@ -1670,7 +1690,7 @@ export function OrdensServico({
                       onChange={(e) => setParcelasCarne(e.target.value)}
                       className="w-24 bg-card border-border"
                     />
-                    <span className="text-sm text-muted-foreground">parcelas mensais</span>
+                    <span className="text-sm text-black/70">parcelas mensais</span>
                     <Button
                       type="button"
                       variant="outline"
@@ -1680,7 +1700,7 @@ export function OrdensServico({
                       Gerar Boleto/Carnê
                     </Button>
                   </div>
-                  <div className="text-xs text-muted-foreground space-y-1">
+                  <div className="text-xs text-black/70 space-y-1">
                     {gerarParcelasCarne(totalOS, Math.max(1, parseInt(parcelasCarne || "1", 10))).map((p) => (
                       <p key={p.numero}>{p.numero}/{parcelasCarne} - {formatCurrency(p.valor)} - vence em {p.vencimento}</p>
                     ))}
@@ -1745,7 +1765,7 @@ export function OrdensServico({
                     return (
                     <div key={status} className="flex items-center shrink-0">
                       <div className={`flex flex-col items-center ${
-                        current ? "text-primary" : done ? "text-primary" : "text-muted-foreground"
+                        current ? "text-primary" : done ? "text-primary" : "text-black/70"
                       }`}>
                         {done ? (
                           <CheckCircle2 className="w-6 h-6" />
@@ -1773,17 +1793,17 @@ export function OrdensServico({
                 {/* Info do Cliente */}
                 <Card className="bg-secondary border-border">
                   <CardContent className="p-4">
-                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <h3 className="font-semibold text-black mb-3 flex items-center gap-2">
                       <User className="w-4 h-4" /> Cliente
                     </h3>
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div>
-                        <span className="text-muted-foreground">Nome:</span>
-                        <p className="font-medium">{viewingOS.cliente.nome}</p>
+                        <span className="text-black/70">Nome:</span>
+                        <p className="font-medium text-black">{viewingOS.cliente.nome}</p>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Telefone:</span>
-                        <p className="font-medium">{viewingOS.cliente.telefone}</p>
+                        <span className="text-black/70">Telefone:</span>
+                        <p className="font-medium text-black">{viewingOS.cliente.telefone}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -1792,17 +1812,17 @@ export function OrdensServico({
                 {/* Info do Aparelho */}
                 <Card className="bg-secondary border-border">
                   <CardContent className="p-4">
-                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <h3 className="font-semibold text-black mb-3 flex items-center gap-2">
                       <Smartphone className="w-4 h-4" /> Aparelho
                     </h3>
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div>
-                        <span className="text-muted-foreground">Marca/Modelo:</span>
-                        <p className="font-medium">{viewingOS.aparelho.marca} {viewingOS.aparelho.modelo}</p>
+                        <span className="text-black/70">Marca/Modelo:</span>
+                        <p className="font-medium text-black">{viewingOS.aparelho.marca} {viewingOS.aparelho.modelo}</p>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">IMEI:</span>
-                        <p className="font-mono">{viewingOS.aparelho.imei || "-"}</p>
+                        <span className="text-black/70">IMEI:</span>
+                        <p className="font-mono text-black">{viewingOS.aparelho.imei || "-"}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -1810,20 +1830,20 @@ export function OrdensServico({
 
                 <Card className="bg-secondary border-border">
                   <CardContent className="p-4">
-                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <h3 className="font-semibold text-black mb-3 flex items-center gap-2">
                       <Calendar className="w-4 h-4" /> Entrada e saída
                     </h3>
                     <div className="grid grid-cols-2 gap-2 text-sm">
                       <div>
-                        <span className="text-muted-foreground">Entrada:</span>
-                        <p className="font-medium">
+                        <span className="text-black/70">Entrada:</span>
+                        <p className="font-medium text-black">
                           {formatDate(viewingOS.dataEntrada)}
                           {viewingOS.horaEntrada ? ` · ${viewingOS.horaEntrada}` : ""}
                         </p>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Saída:</span>
-                        <p className="font-medium">
+                        <span className="text-black/70">Saída:</span>
+                        <p className="font-medium text-black">
                           {viewingOS.dataSaida && viewingOS.horaSaida
                             ? `${formatDate(viewingOS.dataSaida)} · ${viewingOS.horaSaida}`
                             : "—"}
@@ -1837,17 +1857,17 @@ export function OrdensServico({
                 {mostraTecnicoLaudoOs && (
                 <Card className="bg-secondary border-border">
                   <CardContent className="p-4">
-                    <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <h3 className="font-semibold text-black mb-3 flex items-center gap-2">
                       <FileText className="w-4 h-4" /> Laudo Técnico
                     </h3>
                     <div className="space-y-3 text-sm">
                       <div>
-                        <span className="text-muted-foreground">Defeito:</span>
-                        <p className="font-medium">{viewingOS.defeito}</p>
+                        <span className="text-black/70">Defeito:</span>
+                        <p className="font-medium text-black">{viewingOS.defeito}</p>
                       </div>
                       {viewingOS.solucao && (
                         <div>
-                          <span className="text-muted-foreground">Solução:</span>
+                          <span className="text-black/70">Solução:</span>
                           <p className="font-medium text-primary">{viewingOS.solucao}</p>
                         </div>
                       )}
@@ -1860,15 +1880,15 @@ export function OrdensServico({
                 <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
                   <div className="grid grid-cols-3 gap-4 text-center">
                     <div>
-                      <p className="text-sm text-muted-foreground">Serviço</p>
-                      <p className="text-lg font-semibold">{formatCurrency(viewingOS.valorServico)}</p>
+                      <p className="text-sm text-black/70">Serviço</p>
+                      <p className="text-lg font-semibold text-black">{formatCurrency(viewingOS.valorServico)}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Peças</p>
-                      <p className="text-lg font-semibold">{formatCurrency(viewingOS.valorPecas)}</p>
+                      <p className="text-sm text-black/70">Peças</p>
+                      <p className="text-lg font-semibold text-black">{formatCurrency(viewingOS.valorPecas)}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Total</p>
+                      <p className="text-sm text-black/70">Total</p>
                       <p className="text-xl font-bold text-primary">
                         {formatCurrency(viewingOS.valorServico + viewingOS.valorPecas)}
                       </p>
@@ -1917,15 +1937,15 @@ export function OrdensServico({
                     <div className="space-y-3 text-sm">
                       <div>
                         <p className="font-semibold text-primary">
-                          {getGarantiaParaServico(viewingOS.termoGarantia)?.servico}
+                          {getGarantiaById(viewingOS.termoGarantia)?.servico}
                         </p>
-                        <p className="text-muted-foreground mt-1 leading-relaxed">
-                          {getGarantiaParaServico(viewingOS.termoGarantia)?.detalhes}
+                        <p className="text-black/70 mt-1 leading-relaxed">
+                          {getGarantiaById(viewingOS.termoGarantia)?.detalhes}
                         </p>
                       </div>
                       <Separator />
-                      <p className="text-xs text-muted-foreground italic">
-                        {config.termosGarantia.garantiaLegal}
+                      <p className="text-xs text-black/70 italic">
+                        {termosGarantia.garantiaLegal}
                       </p>
                     </div>
                   </CardContent>
@@ -1938,24 +1958,24 @@ export function OrdensServico({
                   <h3 className="font-semibold text-foreground mb-4 text-center">
                     Declaracao de Ciencia e Aceite
                   </h3>
-                  <p className="text-xs text-muted-foreground text-center mb-6">
+                  <p className="text-xs text-black/70 text-center mb-6">
                     Declaro que estou ciente das condicoes de garantia acima e concordo com os termos de servico.
                   </p>
                   <div className="grid grid-cols-2 gap-8 mt-6">
                     <div className="text-center">
                       <div className="border-t border-foreground pt-2">
-                        <p className="text-xs text-muted-foreground">Assinatura do Cliente</p>
+                        <p className="text-xs text-black/70">Assinatura do Cliente</p>
                         <p className="text-sm font-medium mt-1">{viewingOS.cliente.nome}</p>
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="border-t border-foreground pt-2">
-                        <p className="text-xs text-muted-foreground">Assinatura do Tecnico</p>
+                        <p className="text-xs text-black/70">Assinatura do Tecnico</p>
                         <p className="text-sm font-medium mt-1">{nomeEmpresaRodape}</p>
                       </div>
                     </div>
                   </div>
-                  <p className="text-xs text-center text-muted-foreground mt-4">
+                  <p className="text-xs text-center text-black/70 mt-4">
                     Entrada: {formatDate(viewingOS.dataEntrada)}
                     {viewingOS.horaEntrada ? ` às ${viewingOS.horaEntrada}` : ""}
                     {viewingOS.dataSaida && viewingOS.horaSaida
@@ -1966,8 +1986,8 @@ export function OrdensServico({
               </Card>
 
               {/* Rodape com dados da empresa */}
-              <div className="mt-6 pt-4 border-t border-border text-center text-xs text-muted-foreground">
-                <p className="font-semibold text-foreground">{nomeEmpresaRodape}</p>
+              <div className="mt-6 pt-4 border-t border-border text-center text-xs text-black/70">
+                <p className="font-semibold text-black">{nomeEmpresaRodape}</p>
                 <p>{getEnderecoDocumentos()}</p>
                 <p>
                   CNPJ: {cnpjRodape} | WhatsApp: {whatsappRodape}

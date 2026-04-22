@@ -15,6 +15,7 @@ export interface MovimentoFinanceiro {
   valor: number
   descricao: string
   categoria: string
+  status?: "Pago" | "Pendente"
   at: string
 }
 
@@ -48,14 +49,14 @@ export const CARTEIRAS_INICIAIS: Carteira[] = [
   },
   {
     id: "cart-rafacell",
-    nome: "RAFACELL",
+    nome: "Empresa (caixa)",
     saldoInicial: 0,
     cor: "#0ea5e9",
     tipo: "empresa",
   },
   {
     id: "cart-rafa-brinquedos",
-    nome: "Rafa Brinquedos",
+    nome: "Operação secundária",
     saldoInicial: 0,
     cor: "#f97316",
     tipo: "empresa",

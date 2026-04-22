@@ -89,15 +89,34 @@ const notasFiscaisServico = [
 
 export function MinhaAssinatura() {
   const searchParams = useSearchParams()
-  const { config, updateAssinatura } = useConfigEmpresa()
+  const { config, updateAssinatura, configHydrated } = useConfigEmpresa()
   const { toast } = useToast()
   const [isRenewModalOpen, setIsRenewModalOpen] = useState(false)
   const [serverTrustExpired, setServerTrustExpired] = useState<boolean | null>(null)
-  const pixPayload = "00020126330014BR.GOV.BCB.PIX0111482412050001955204000053039865802BR5920RAFACELL ASSISTEC6008TAGUAI62070503***6304ABCD"
-  const vencimento = new Date(`${config.assinatura.vencimento}T00:00:00`)
-  const expiradoLocal = new Date() > vencimento
+  const [mounted, setMounted] = useState(false)
+  /** Exemplo estático (não é PIX válido); apenas para demonstração de cópia no painel. */
+  const pixPayload =
+    "00020126330014BR.GOV.BCB.PIX0111482412050001955204000053039865802BR5920MINHA LOJA PJ     6008CIDADE62070503***6304ABCD"
+
+  useEffect(() => setMounted(true), [])
+
+  const vencimentoStr = (config?.assinatura?.vencimento ?? "").trim()
+  const vencimentoValido = /^\d{4}-\d{2}-\d{2}$/.test(vencimentoStr)
+  const expiradoLocal = useMemo(() => {
+    if (!mounted || !vencimentoValido) return false
+    const d = new Date(`${vencimentoStr}T12:00:00`)
+    if (Number.isNaN(d.getTime())) return false
+    return Date.now() > d.getTime()
+  }, [mounted, vencimentoStr, vencimentoValido])
+
   const expirado = serverTrustExpired ?? expiradoLocal
-  const recursos = useMemo(() => recursosPorPlano[config.assinatura.plano], [config.assinatura.plano])
+  const planoAtual = (config?.assinatura?.plano ?? "bronze") as "bronze" | "prata" | "ouro"
+  const recursos = useMemo(() => {
+    if (planoAtual === "bronze" || planoAtual === "prata" || planoAtual === "ouro") {
+      return recursosPorPlano[planoAtual]
+    }
+    return recursosPorPlano.bronze
+  }, [planoAtual])
   const blockedFlow = searchParams.get("blocked") === "1"
 
   useEffect(() => {
@@ -127,12 +146,16 @@ export function MinhaAssinatura() {
     if (renew || blocked) setIsRenewModalOpen(true)
   }, [searchParams])
 
-  const formatDate = (v: string) => new Date(`${v}T00:00:00`).toLocaleDateString("pt-BR")
+  const formatDate = (v: string) => {
+    const t = (v ?? "").trim()
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return "—"
+    const d = new Date(`${t}T12:00:00`)
+    return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR")
+  }
   const formatCurrency = (value: number) =>
     new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value)
 
-  const planoAtual = config.assinatura.plano
-  const tierAtual = PLAN_ORDER[planoAtual]
+  const tierAtual = PLAN_ORDER[planoAtual] ?? 0
 
   const handleEscolherPlano = (id: "bronze" | "prata" | "ouro", valor: number) => {
     if (id === planoAtual) return
@@ -141,6 +164,17 @@ export function MinhaAssinatura() {
       title: "Plano atualizado",
       description: `Seu plano agora é ${id.charAt(0).toUpperCase() + id.slice(1)} (${formatCurrency(valor)}/mês).`,
     })
+  }
+
+  if (!configHydrated) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 rounded-xl bg-background p-8 text-center">
+        <p className="text-muted-foreground">Carregando dados da assinatura…</p>
+        <p className="text-xs text-muted-foreground max-w-sm">
+          Sincronizando com o armazenamento local do navegador para evitar divergência de exibição.
+        </p>
+      </div>
+    )
   }
 
   return (

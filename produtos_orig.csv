@@ -1,0 +1,223 @@
+Nº do pedido;Produto;Quantidade;Valor unitário
+1;capinha de 25,00;2;25,00
+1;Pelicula 3D vidro;1;25,00
+2;Garrafa termica a vacum com termometro;1;49,90
+3;CABO USB TIPO C;1;29,99
+4;acessorio de celular bixinhos;1;12,99
+4;Pelicula 3D vidro;1;25,00
+5;Carregador completo 20w hrebos;1;60,00
+6;Pelicula 3D vidro;1;15,00
+7;Fone de ouvido hrebos bluetooth;1;39,90
+8;Pelicula 3D vidro;2;24,90
+9;Cabo USB Lightning Hrebos;1;40,00
+10;Conserto Conector de Carga;1;50,00
+11;Pelicula Cerâmica;1;20,00
+12;Capa Anti-Impacto;1;35,00
+13;Fone Bluetooth Pro;1;110,00
+14;Pelicula Vidro Simples;1;25,00
+15;Carregador Veicular Turbo;1;85,00
+16;Cabo Micro-USB;1;25,00
+17;Suporte Magnético Carro;1;65,00
+18;Fone Auricular com Fio;1;64,90
+19;Pelicula Privacidade;1;35,00
+20;Adaptador OTG;1;64,90
+21;Pop Socket Personagem;1;25,00
+22;Capa Silicone Velvet;1;45,00
+23;Cabo USB-C para USB-C;1;35,00
+24;Anel de Suporte;1;25,00
+25;Limpa Tela Kit;1;30,00
+26;Cartão de Memória 64GB;1;115,00
+27;Fone de Ouvido Sport;1;39,90
+28;Pelicula de Câmera;1;60,00
+29;Bateria Externa Power Bank;1;140,00
+30;Protetor de Cabo;1;20,00
+31;Carregador Turbo 20W;1;130,00
+32;Fone Bluetooth JBL;1;150,00
+33;Cabo USB-C Nylon;1;45,00
+34;Pelicula Simples;1;15,00
+35;Limpeza de Conector;1;10,00
+36;Capa Silicone;1;25,00
+37;Pelicula Vidro;1;15,00
+38;Pelicula Vidro;1;15,00
+39;Carregador Completo;1;80,00
+40;Cabo Lightning;1;40,00
+41;Capa Anti-Impacto;1;25,00
+42;Pelicula Cerâmica;1;45,00
+43;Suporte Veicular;1;35,00
+44;Pelicula Vidro;1;15,00
+45;Capa Personalizada;1;45,00
+46;Pelicula Vidro;1;15,00
+47;Capa MagSafe;1;45,00
+48;Pelicula 3D;1;25,00
+49;Fone com Fio;1;50,00
+50;Capa Colorida;1;25,00
+51;Pelicula Simples;1;15,00
+52;Carregador 10W;1;55,00
+53;Cabo Turbo;1;30,00
+54;Capa Flexível;1;25,00
+55;Pelicula Privacidade;1;35,00
+56;Pelicula 3D;1;25,00
+57;Pelicula Vidro;1;15,00
+58;Fone Bluetooth Premium;1;149,00
+59;Capa Silicone;1;25,00
+60;Pelicula Cerâmica;1;25,00
+61;Cabo USB-C;1;25,00
+62;Capa Anti-Queda;1;25,00
+63;Carregador Rápido;1;60,00
+64;Pelicula 3D;1;25,00
+65;Cabo V8;1;20,00
+66;Pelicula Cerâmica;1;30,00
+67;Pelicula Vidro;1;15,00
+68;Capa Transparente;1;25,00
+69;Suporte Magnético;1;65,00
+70;Pelicula 3D;1;35,00
+71;Capa Silicone;1;25,00
+72;Pelicula Vidro;1;25,00
+73;Capa Anti-Impacto;1;35,00
+74;Pelicula Simples;1;12,00
+75;Cabo Lightning;1;40,00
+76;Pelicula Vidro;1;10,00
+77;Pelicula Vidro;1;15,00
+78;Capa Silicone;1;25,00
+79;Pelicula 3D;1;25,00
+80;Carregador Turbo 20W;1;130,00
+81;Pelicula Vidro;1;15,00
+82;Capa Silicone Velvet;1;50,00
+83;Pelicula 3D;1;25,00
+84;Pelicula Vidro;1;15,00
+85;Capa Silicone;1;25,00
+86;Cabo Lightning Hrebos;1;40,00
+87;Pelicula Cerâmica;1;45,00
+88;Capa MagSafe;1;45,00
+89;Pelicula Privacidade;1;35,00
+90;Capa Silicone;1;25,00
+91;Pelicula 3D;1;25,00
+92;Pelicula Vidro;1;15,00
+93;Capa Anti-Impacto;1;25,00
+94;Pelicula 3D;1;25,00
+95;Cabo V8 Nylon;1;20,00
+96;Pelicula Cerâmica;1;35,00
+97;Capa Personalizada;1;45,00
+98;Suporte Veicular;1;30,00
+99;Capa Transparente;1;25,00
+100;Pelicula Vidro;1;15,00
+101;Fone Bluetooth Sport;1;65,00
+102;Cabo USB-C;1;30,00
+103;Pelicula Vidro;1;15,00
+104;Pelicula Vidro;1;15,00
+105;Capa Silicone;1;25,00
+106;Cabo Lightning;1;40,00
+107;Pelicula Vidro;1;15,00
+108;Suporte Magnético;1;30,00
+109;Cabo V8;1;20,00
+110;Pelicula 3D;1;25,00
+111;Capa Silicone;1;25,00
+112;Pelicula Cerâmica;1;45,00
+113;Capa Anti-Impacto;1;35,00
+114;Cabo Lightning;1;40,00
+115;Pelicula Vidro;1;15,00
+116;Cabo V8;1;20,00
+117;Capa Silicone;1;25,00
+118;Pelicula 3D;1;25,00
+119;Pelicula Cerâmica;1;25,00
+120;Pelicula Vidro;1;15,00
+121;Capa Silicone;1;25,00
+122;Cabo Lightning;1;40,00
+123;Pelicula Vidro;1;15,00
+124;Fone Bluetooth;1;65,00
+125;Capa Anti-Impacto;1;25,00
+126;Pelicula Cerâmica;1;45,00
+127;Suporte Veicular;1;35,00
+128;Cabo V8;1;20,00
+129;Capa Silicone;1;25,00
+130;Pelicula 3D;1;25,00
+131;Pelicula Vidro;1;15,00
+132;Capa Anti-Impacto;1;35,00
+133;Pelicula Cerâmica;1;45,00
+134;Capa Silicone;1;25,00
+135;Pelicula 3D;1;25,00
+136;Cabo Lightning;1;40,00
+137;Pelicula Vidro;1;15,00
+138;Capa Silicone;1;25,00
+139;Pelicula 3D;1;25,00
+140;Cabo Turbo;1;30,00
+141;Capa MagSafe;1;45,00
+142;Pelicula Vidro;1;15,00
+143;Capa Silicone;1;25,00
+144;Cabo V8 Nylon;1;20,00
+145;Pelicula 3D;1;25,00
+146;Pelicula Cerâmica;1;45,00
+147;Capa Anti-Impacto;1;35,00
+148;Capa Silicone;1;25,00
+149;Pelicula 3D;1;25,00
+150;Pelicula Vidro;1;15,00
+151;Fone Bluetooth Premium;1;65,00
+152;Capa Silicone;1;25,00
+153;Pelicula Cerâmica;1;45,00
+154;Suporte Veicular;1;35,00
+155;Cabo V8;1;20,00
+156;Capa Silicone;1;25,00
+157;Pelicula 3D;1;25,00
+158;Pelicula Vidro;1;15,00
+159;Capa Anti-Impacto;1;35,00
+160;Pelicula Cerâmica;1;45,00
+161;Capa Silicone;1;25,00
+162;Pelicula 3D;1;25,00
+163;Cabo Lightning;1;40,00
+164;Pelicula Vidro;1;15,00
+165;Capa Silicone;1;25,00
+166;Pelicula 3D;1;25,00
+167;Cabo Turbo;1;30,00
+168;Capa MagSafe;1;45,00
+169;Pelicula Vidro;1;15,00
+170;Capa Silicone;1;25,00
+171;Cabo V8 Nylon;1;20,00
+172;Pelicula 3D;1;25,00
+173;Pelicula Cerâmica;1;45,00
+174;Capa Anti-Impacto;1;35,00
+175;Capa Silicone;1;25,00
+176;Pelicula 3D;1;25,00
+177;Pelicula Vidro;1;15,00
+178;Fone Bluetooth Premium;1;65,00
+179;Capa Silicone;1;25,00
+180;Pelicula Cerâmica;1;45,00
+181;Suporte Veicular;1;35,00
+182;Cabo V8;1;20,00
+183;Capa Silicone;1;25,00
+184;Pelicula 3D;1;25,00
+185;Pelicula Vidro;1;15,00
+186;Capa Anti-Impacto;1;35,00
+187;Pelicula Cerâmica;1;45,00
+188;Capa Silicone;1;25,00
+189;Pelicula 3D;1;25,00
+190;Cabo Lightning;1;40,00
+191;Pelicula Vidro;1;15,00
+192;Capa Silicone;1;25,00
+193;Pelicula 3D;1;25,00
+194;Cabo Turbo;1;30,00
+195;Capa MagSafe;1;45,00
+196;Pelicula Vidro;1;15,00
+197;Capa Silicone;1;25,00
+198;Cabo V8 Nylon;1;20,00
+199;Pelicula 3D;1;25,00
+200;Pelicula Cerâmica;1;45,00
+201;Capa Anti-Impacto;1;35,00
+202;Capa Silicone;1;25,00
+203;Pelicula 3D;1;25,00
+204;Pelicula Vidro;1;15,00
+205;Fone Bluetooth Premium;1;65,00
+206;Capa Silicone;1;25,00
+207;Pelicula Cerâmica;1;45,00
+208;Suporte Veicular;1;35,00
+209;Cabo V8;1;20,00
+210;Capa Silicone;1;25,00
+211;Pelicula 3D;1;25,00
+212;Pelicula Vidro;1;15,00
+213;Capa Anti-Impacto;1;35,00
+214;Pelicula Cerâmica;1;45,00
+215;Capa Silicone;1;25,00
+216;Pelicula 3D;1;25,00
+217;Cabo Lightning;1;40,00
+218;Pelicula Vidro;1;15,00
+219;Capa Silicone;1;25,00
+220;Pelicula

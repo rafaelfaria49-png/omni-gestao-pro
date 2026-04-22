@@ -125,3 +125,31 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Recibo térmico 80 mm: só o cupom aparece na impressão (evita sidebar/header). */
+@media print {
+  @page {
+    size: 80mm auto;
+    margin: 2mm;
+  }
+  html[data-printing-recibo="true"] body * {
+    visibility: hidden !important;
+  }
+  html[data-printing-recibo="true"] body .recibo-print-root,
+  html[data-printing-recibo="true"] body .recibo-print-root * {
+    visibility: visible !important;
+  }
+  html[data-printing-recibo="true"] body .recibo-print-root {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    right: 0 !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 auto !important;
+    padding: 2mm 3mm 4mm !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-sizing: border-box !important;
+  }
+}

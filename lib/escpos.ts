@@ -66,6 +66,8 @@ export type PdvReceiptInput = {
   nomeFantasia: string
   cnpj: string
   enderecoLinha?: string
+  /** Rodapé por unidade (ex.: StoreSettings.receiptFooter). */
+  receiptFooter?: string
   itens: Array<{ name: string; quantity: number; unitPrice: number; lineTotal: number }>
   subtotal: number
   taxes: number
@@ -105,6 +107,14 @@ export function buildPdvReceiptEscPos(input: PdvReceiptInput): Uint8Array {
   parts.push(line(`Valor final pago: ${br.format(input.total)}`))
   parts.push(escposBold(false))
   parts.push(line(""))
+  const footer = (input.receiptFooter || "").trim()
+  if (footer) {
+    for (const ln of footer.split(/\r?\n/)) {
+      const t = ln.trim()
+      if (t) parts.push(line(t.slice(0, 48)))
+    }
+    parts.push(line(""))
+  }
   parts.push(line("Obrigado!"))
   parts.push(escposFeed(3))
   parts.push(escposCutFull())

@@ -1,5 +1,6 @@
 "use client"
 
+// Importação/listagem de clientes: Server Actions em `clientes-import-actions.ts` (revalidatePath após importar).
 import { Suspense, useCallback, useEffect, useState } from "react"
 import dynamic from "next/dynamic"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -24,9 +25,12 @@ import { DailyCloseScheduler } from "@/components/dashboard/daily-close-schedule
 import { OrdensServico, type OrdemServico } from "@/components/dashboard/os/ordens-servico"
 import { Orcamentos } from "@/components/dashboard/orcamentos/orcamentos"
 import { ConfiguracoesSistema } from "@/components/dashboard/configuracoes/configuracoes-sistema"
+import { GestaoUnidadesSaas } from "@/components/dashboard/configuracoes/gestao-unidades-saas"
 import { AppOpsProviders } from "@/components/dashboard/app-ops-providers"
+import { FirstAccessWizard } from "@/components/onboarding/first-access-wizard"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
+import { useStoreSettings } from "@/lib/store-settings-provider"
 import { useOperationsStore } from "@/lib/operations-store"
 import { useToast } from "@/hooks/use-toast"
 import type { VoiceIntent } from "@/lib/voice-intents"
@@ -38,6 +42,10 @@ const VendasPDV = dynamic(
 )
 const TrocasDevolucao = dynamic(
   () => import("@/components/dashboard/vendas/trocas-devolucao").then((m) => m.TrocasDevolucao),
+  { loading: () => <div className="text-sm text-muted-foreground">Carregando…</div> }
+)
+const VendasArquivoGeral = dynamic(
+  () => import("@/components/dashboard/vendas/vendas-arquivo-geral").then((m) => m.VendasArquivoGeral),
   { loading: () => <div className="text-sm text-muted-foreground">Carregando…</div> }
 )
 const ControleConsumo = dynamic(
@@ -52,6 +60,10 @@ const RelatoriosGerenciais = dynamic(
   () => import("@/components/dashboard/relatorios/relatorios-gerenciais").then((m) => m.RelatoriosGerenciais),
   { loading: () => <div className="text-sm text-muted-foreground">Carregando relatorios...</div> }
 )
+const Dashboard360 = dynamic(
+  () => import("@/components/dashboard/relatorios/dashboard-360").then((m) => m.Dashboard360),
+  { loading: () => <div className="text-sm text-muted-foreground">Carregando Dashboard 360…</div> }
+)
 const PlanejamentoCompras = dynamic(
   () => import("@/components/dashboard/estoque/planejamento-compras").then((m) => m.PlanejamentoCompras),
   { loading: () => <div className="text-sm text-muted-foreground">Carregando planejamento...</div> }
@@ -60,6 +72,7 @@ const PlanejamentoCompras = dynamic(
 /** Módulos que revalidam o selo no servidor a cada entrada (PDV, O.S., Financeiro). */
 const CRITICAL_SUBSCRIPTION_PAGES = new Set([
   "vendas",
+  "vendas-arquivo",
   "trocas",
   "controle-consumo",
   "os",
@@ -68,17 +81,20 @@ const CRITICAL_SUBSCRIPTION_PAGES = new Set([
   "contas-pagar",
   "contas-receber",
   "relatorios-financeiros",
+  "dashboard-360",
 ])
 
 function initialTabConfiguracoes(page: string): string {
-  if (page === "config-marca") return "marca-logo"
-  if (page === "config-certificado") return "certificado"
-  if (page === "config-garantia") return "termos-garantia"
-  if (page === "config-backup") return "backup"
-  if (page === "config-multilojas") return "multilojas"
-  if (page === "config-ajustes") return "ajustes"
-  if (page === "config-pdv") return "pdv-personalizacao"
-  return "dados-empresa"
+  if (page === "config-multilojas") return "rede"
+  if (page === "config-backup") return "sistema"
+  if (page === "logs-sistema") return "sistema"
+  if (page === "whatsapp") return "sistema"
+  if (page === "plano") return "sistema"
+  if (page === "config-pdv") return "pdv"
+  if (page === "config-garantia") return "pdv"
+  if (page === "config-ajustes") return "pdv"
+  // Dados/Marca/Certificado caem em Unidade Atual
+  return "unidade"
 }
 
 export default function DashboardPage() {
@@ -112,8 +128,9 @@ function DashboardContent() {
     openNovo?: boolean
     openImport?: boolean
   } | null>(null)
-  const { config, configHydrated } = useConfigEmpresa()
-  const { empresaDocumentos } = useLojaAtiva()
+  const { config } = useConfigEmpresa()
+  const { empresaDocumentos, cadastroBasicoIncompleto } = useLojaAtiva()
+  const { pdvParams } = useStoreSettings()
   const { ordens, setOrdens } = useOperationsStore()
   const isBronze = config.assinatura.plano === "bronze"
   const { toast } = useToast()
@@ -135,8 +152,8 @@ function DashboardContent() {
     return false
   }, [])
 
+  /** Assinatura não depende de `configHydrated` — esperar só a config bloqueava o gate e deixava o dashboard em “Verificando assinatura…” indefinidamente. */
   useEffect(() => {
-    if (!configHydrated) return
     let cancelled = false
     void (async () => {
       const ok = await pollSubscriptionUntilResolved()
@@ -144,23 +161,26 @@ function DashboardContent() {
       setSubscriptionGate(ok ? "ok" : "blocked")
       if (!ok) {
         router.replace("/meu-plano?blocked=1&renew=1")
-        return
       }
-      const raw = searchParams.get("page")
-      if (raw === "plano") {
-        router.replace("/meu-plano")
-        return
-      }
-      if (raw === "suporte") {
-        router.replace("/suporte")
-        return
-      }
-      setCurrentPage(raw ?? "dashboard")
     })()
     return () => {
       cancelled = true
     }
-  }, [searchParams, router, pollSubscriptionUntilResolved, configHydrated])
+  }, [pollSubscriptionUntilResolved, router])
+
+  useEffect(() => {
+    if (subscriptionGate !== "ok") return
+    const raw = searchParams.get("page")
+    if (raw === "plano") {
+      router.replace("/meu-plano")
+      return
+    }
+    if (raw === "suporte") {
+      router.replace("/suporte")
+      return
+    }
+    setCurrentPage(raw ?? "dashboard")
+  }, [subscriptionGate, searchParams, router])
 
   const goToPage = (page: string) => {
     if (page === "logs-sistema") {
@@ -176,18 +196,22 @@ function DashboardContent() {
       return
     }
     void (async () => {
-      if (CRITICAL_SUBSCRIPTION_PAGES.has(page)) {
+      const [base, ...rest] = String(page || "").split("&")
+      const basePage = base || page
+      if (CRITICAL_SUBSCRIPTION_PAGES.has(basePage)) {
         const ok = await pollSubscriptionUntilResolved()
         if (!ok) {
           router.push("/meu-plano?blocked=1&renew=1")
           return
         }
       }
-      setCurrentPage(page)
-      if (page === "dashboard") {
+      setCurrentPage(basePage)
+      if (basePage === "dashboard") {
         router.replace("/", { scroll: false })
       } else {
-        router.replace(`/?page=${encodeURIComponent(page)}`, { scroll: false })
+        // permite extras: "trocas&sale=VDA-..."
+        const extra = rest.length ? `&${rest.join("&")}` : ""
+        router.replace(`/?page=${encodeURIComponent(basePage)}${extra}`, { scroll: false })
       }
     })()
   }
@@ -322,7 +346,14 @@ function DashboardContent() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div
+      className={
+        currentPage === "vendas"
+          ? "flex h-screen max-h-screen overflow-hidden bg-background"
+          : "flex min-h-screen bg-background"
+      }
+    >
+      <FirstAccessWizard />
       <DailyCloseScheduler />
       <Sidebar
         onNavigate={goToPage}
@@ -330,16 +361,30 @@ function DashboardContent() {
         collapsed={sidebarCollapsed}
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
       />
-      
-      <div className="flex-1 flex flex-col">
+
+      <div
+        className={
+          currentPage === "vendas"
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+            : "flex min-h-0 flex-1 flex-col"
+        }
+      >
         <Header />
         {currentPage === "dashboard" ? <AiMestreCommandBar /> : null}
         <main
-          className={`flex-1 p-4 lg:p-6 pb-24 lg:pb-6 overflow-auto ${
-            currentPage === "dashboard" ? "pt-20 md:pt-24" : ""
-          }`}
+          className={
+            currentPage === "vendas"
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+              : `flex-1 p-4 lg:p-6 pb-24 lg:pb-6 overflow-auto ${currentPage === "dashboard" ? "pt-20 md:pt-24" : ""}`
+          }
         >
-          <div className="max-w-6xl mx-auto space-y-6">
+          <div
+            className={
+              currentPage === "vendas"
+                ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+                : "max-w-6xl mx-auto space-y-6"
+            }
+          >
             {currentPage === "whatsapp" ? (
               <>
                 <div>
@@ -356,7 +401,13 @@ function DashboardContent() {
                     Carteiras pessoais e da empresa, lançamentos por voz ou texto e transferências
                   </p>
                 </div>
-                <GestaoCarteiras />
+                {cadastroBasicoIncompleto ? (
+                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
+                  </div>
+                ) : (
+                  <GestaoCarteiras />
+                )}
               </>
             ) : currentPage === "fluxo-caixa" ? (
               <>
@@ -364,7 +415,13 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Fluxo de Caixa</h1>
                   <p className="text-muted-foreground">Visão geral de entradas e saídas em tempo real</p>
                 </div>
-                <FluxoCaixa />
+                {cadastroBasicoIncompleto ? (
+                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
+                  </div>
+                ) : (
+                  <FluxoCaixa />
+                )}
               </>
             ) : currentPage === "contas-pagar" ? (
               <>
@@ -372,7 +429,13 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Contas a Pagar</h1>
                   <p className="text-muted-foreground">Gerencie despesas fixas, compras e pagamentos a fornecedores</p>
                 </div>
-                <ContasPagar />
+                {cadastroBasicoIncompleto ? (
+                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
+                  </div>
+                ) : (
+                  <ContasPagar />
+                )}
               </>
             ) : currentPage === "contas-receber" ? (
               <>
@@ -380,7 +443,13 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Contas a Receber</h1>
                   <p className="text-muted-foreground">Controle pagamentos de OS, vendas e carnês</p>
                 </div>
-                <ContasReceber />
+                {cadastroBasicoIncompleto ? (
+                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
+                  </div>
+                ) : (
+                  <ContasReceber />
+                )}
               </>
             ) : currentPage === "relatorios-financeiros" ? (
               <>
@@ -388,21 +457,42 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Relatórios Financeiros</h1>
                   <p className="text-muted-foreground">Acompanhe o lucro mensal e a saúde financeira da empresa</p>
                 </div>
-                <RelatoriosFinanceiros />
+                {cadastroBasicoIncompleto ? (
+                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
+                  </div>
+                ) : (
+                  <RelatoriosFinanceiros />
+                )}
               </>
             ) : currentPage === "vendas" ? (
+              <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
+                {cadastroBasicoIncompleto ? (
+                  <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
+                    <div className="max-w-lg rounded-2xl border border-border bg-card p-8 text-center">
+                      <h2 className="text-lg font-semibold text-foreground">Cadastro inicial obrigatório</h2>
+                      <p className="mt-2 text-sm text-muted-foreground">
+                        Para operar o PDV, salve o nome da loja e o CNPJ no fluxo de primeiro acesso.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <VendasPDV
+                    linkedOsId={linkedOsSaleId}
+                    onSaleCompleted={() => setLinkedOsSaleId(null)}
+                    voiceCartSeed={voicePdvCart}
+                    onVoiceCartSeedConsumed={() => setVoicePdvCart(null)}
+                    voiceOpenCaixaSignal={voiceCaixaSignal}
+                  />
+                )}
+              </div>
+            ) : currentPage === "vendas-arquivo" ? (
               <>
                 <div>
-                  <h1 className="text-2xl font-bold text-foreground">Vendas (Caixa/PDV)</h1>
-                  <p className="text-muted-foreground">Realize vendas rápidas com sugestões inteligentes de complementos</p>
+                  <h1 className="text-2xl font-bold text-foreground">Histórico de Vendas</h1>
+                  <p className="text-muted-foreground">Base central (PDV + Financeiro) com status real</p>
                 </div>
-                <VendasPDV
-                  linkedOsId={linkedOsSaleId}
-                  onSaleCompleted={() => setLinkedOsSaleId(null)}
-                  voiceCartSeed={voicePdvCart}
-                  onVoiceCartSeedConsumed={() => setVoicePdvCart(null)}
-                  voiceOpenCaixaSignal={voiceCaixaSignal}
-                />
+                <VendasArquivoGeral onNavigateToTrocas={(saleId) => goToPage(`trocas&sale=${encodeURIComponent(saleId)}`)} />
               </>
             ) : currentPage === "trocas" ? (
               <>
@@ -413,7 +503,7 @@ function DashboardContent() {
                 <TrocasDevolucao />
               </>
             ) : currentPage === "controle-consumo" ? (
-              config.pdv.moduloControleConsumo ? (
+              pdvParams.moduloControleConsumo ? (
                 <>
                   <div>
                     <h1 className="text-2xl font-bold text-foreground">Controle de Consumo</h1>
@@ -427,14 +517,14 @@ function DashboardContent() {
                 <div className="p-6 rounded-xl border border-border bg-card max-w-lg">
                   <h2 className="text-xl font-semibold text-foreground">Controle de Consumo</h2>
                   <p className="text-muted-foreground mt-2">
-                    Ative o módulo em Configurações → Ajustes para usar mesas e comandas.
+                    Ative o módulo em Configurações → Parâmetros do PDV para usar mesas e comandas.
                   </p>
                   <button
                     type="button"
                     className="mt-4 h-10 px-4 rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
-                    onClick={() => goToPage("config-ajustes")}
+                    onClick={() => goToPage("config-pdv")}
                   >
-                    Abrir Configurações (aba Ajustes)
+                    Abrir Configurações (Parâmetros do PDV)
                   </button>
                 </div>
               )
@@ -540,17 +630,31 @@ function DashboardContent() {
                 </div>
                 <RelatoriosGerenciais />
               </>
-            ) : currentPage === "configuracoes" || currentPage === "config-empresa" || currentPage === "config-ajustes" || currentPage === "config-pdv" || currentPage === "config-marca" || currentPage === "config-certificado" || currentPage === "config-garantia" || currentPage === "config-backup" || currentPage === "config-multilojas" ? (
+            ) : currentPage === "dashboard-360" ? (
+              <>
+                <div>
+                  <h1 className="text-2xl font-bold text-foreground">Dashboard 360</h1>
+                  <p className="text-muted-foreground">
+                    Lucro real, rankings, ticket médio e linha do tempo por cliente (PDV + importações)
+                  </p>
+                </div>
+                <Dashboard360 />
+              </>
+            ) : currentPage === "config-multilojas" ? (
+              <>
+                <div>
+                  <h1 className="text-2xl font-bold text-foreground">Gestão da Rede</h1>
+                  <p className="text-muted-foreground">Adicione e gerencie unidades (Loja 1, Loja 2...) e o perfil de cada uma</p>
+                </div>
+                <GestaoUnidadesSaas />
+              </>
+            ) : currentPage === "configuracoes" || currentPage === "config-empresa" || currentPage === "config-ajustes" || currentPage === "config-pdv" || currentPage === "config-marca" || currentPage === "config-certificado" || currentPage === "config-garantia" || currentPage === "config-backup" ? (
               <>
                 <div>
                   <h1 className="text-2xl font-bold text-foreground">Configurações do Sistema</h1>
                   <p className="text-muted-foreground">Gerencie os dados da empresa, marca e termos de garantia</p>
                 </div>
-                <ConfiguracoesSistema
-                  initialTab={initialTabConfiguracoes(
-                    isBronze && currentPage === "config-multilojas" ? "config-empresa" : currentPage
-                  )}
-                />
+                <ConfiguracoesSistema initialTab={initialTabConfiguracoes(currentPage)} />
               </>
             ) : (
               <>

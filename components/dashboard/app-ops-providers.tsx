@@ -7,6 +7,7 @@ import { PerfilLojaProvider } from "@/lib/perfil-loja-provider"
 import { LojaAtivaProvider, useLojaAtiva } from "@/lib/loja-ativa"
 import { OperationsProvider } from "@/lib/operations-store"
 import { FinanceiroProvider } from "@/lib/financeiro-store"
+import { StoreSettingsProvider } from "@/lib/store-settings-provider"
 
 function OperationsWithStorageKey({ children }: { children: ReactNode }) {
   const { opsStorageKey } = useLojaAtiva()
@@ -21,15 +22,17 @@ function OperationsWithStorageKey({ children }: { children: ReactNode }) {
 export function AppOpsProviders({ children }: { children: ReactNode }) {
   return (
     <ConfigEmpresaProvider>
-      <PerfilLojaProvider>
       <LojaAtivaProvider>
-        <FinanceiroProvider>
-          <OperationsWithStorageKey>
-            <CaixaProvider>{children}</CaixaProvider>
-          </OperationsWithStorageKey>
-        </FinanceiroProvider>
+        <PerfilLojaProvider>
+          <StoreSettingsProvider>
+            <FinanceiroProvider>
+              <OperationsWithStorageKey>
+                <CaixaProvider>{children}</CaixaProvider>
+              </OperationsWithStorageKey>
+            </FinanceiroProvider>
+          </StoreSettingsProvider>
+        </PerfilLojaProvider>
       </LojaAtivaProvider>
-      </PerfilLojaProvider>
     </ConfigEmpresaProvider>
   )
 }

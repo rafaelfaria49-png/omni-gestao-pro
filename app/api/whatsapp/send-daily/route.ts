@@ -4,6 +4,7 @@ import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import { sendDailyClosingToPhone } from "@/lib/whatsapp-daily-server"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
+import { storeIdFromAssistecRequestForRead } from "@/lib/store-id-from-request"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Assinatura inválida" }, { status: 403 })
   }
 
-  let body: { phone?: string; empresaNome?: string }
+  let body: { phone?: string; empresaNome?: string; storeId?: string }
   try {
     body = (await request.json()) as typeof body
   } catch {
@@ -39,7 +40,9 @@ export async function POST(request: Request) {
   }
 
   const empresaNome = (body.empresaNome ?? APP_DISPLAY_NAME).trim() || APP_DISPLAY_NAME
-  const r = await sendDailyClosingToPhone({ phoneDigits: phone, empresaNome })
+  const storeId =
+    typeof body.storeId === "string" && body.storeId.trim() ? body.storeId.trim() : storeIdFromAssistecRequestForRead(request)
+  const r = await sendDailyClosingToPhone({ phoneDigits: phone, empresaNome, storeId })
 
   if (!r.ok) {
     return NextResponse.json({ ok: false, error: r.error }, { status: 502 })

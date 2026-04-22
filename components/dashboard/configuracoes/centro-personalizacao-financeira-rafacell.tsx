@@ -47,15 +47,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { useToast } from "@/hooks/use-toast"
+import { useLojaAtiva } from "@/lib/loja-ativa"
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 import {
   type CentroFinanceiroV3,
   type ContaBanco,
   type ContaTemplate,
   defaultCentroFinanceiroV3,
-  loadCentroFinanceiroV3,
+  loadCentroFinanceiroV3ForStore,
   normalizeCentroV3,
   novaMaquininhaVazia,
-  persistCentroFinanceiroV3,
+  persistCentroFinanceiroV3ForStore,
   taxasSugeridasPagBank,
 } from "@/lib/rafacell-centro-financeiro"
 
@@ -95,6 +97,11 @@ function formatBRL(n: number): string {
 
 export function CentroPersonalizacaoFinanceiraRafacell() {
   const { toast } = useToast()
+  const { lojaAtivaId } = useLojaAtiva()
+  const effectiveStoreId = useMemo(
+    () => (lojaAtivaId || LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID,
+    [lojaAtivaId]
+  )
   const [hydrated, setHydrated] = useState(false)
   const [draft, setDraft] = useState<CentroFinanceiroV3>(() => defaultCentroFinanceiroV3())
   const [baselineJson, setBaselineJson] = useState("")
@@ -111,11 +118,39 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
   const [modoRepasse, setModoRepasse] = useState<string>("debito")
 
   useEffect(() => {
-    const loaded = loadCentroFinanceiroV3()
-    setDraft(loaded)
-    setBaselineJson(JSON.stringify(loaded))
-    setHydrated(true)
-  }, [])
+    let cancelled = false
+    setHydrated(false)
+    void (async () => {
+      let loaded = loadCentroFinanceiroV3ForStore(effectiveStoreId)
+      try {
+        const r = await fetch(`/api/stores/${encodeURIComponent(effectiveStoreId)}/settings`, {
+          credentials: "include",
+          cache: "no-store",
+        })
+        const j = (await r.json().catch(() => null)) as { settings?: { cardFees?: unknown } | null } | null
+        const cf = j?.settings?.cardFees
+        if (cf && typeof cf === "object") {
+          const o = cf as Partial<CentroFinanceiroV3> & { maquininhas?: unknown }
+          if (Array.isArray(o.maquininhas) && o.maquininhas.length > 0) {
+            loaded = normalizeCentroV3({
+              ...loaded,
+              ...o,
+              maquininhas: o.maquininhas as CentroFinanceiroV3["maquininhas"],
+            })
+          }
+        }
+      } catch {
+        /* mantém local */
+      }
+      if (cancelled) return
+      setDraft(loaded)
+      setBaselineJson(JSON.stringify(loaded))
+      setHydrated(true)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [effectiveStoreId])
 
   const isDirty = useMemo(
     () => hydrated && JSON.stringify(draft) !== baselineJson,
@@ -146,16 +181,26 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
     return m?.taxas ?? taxasSugeridasPagBank()
   }, [draft.maquininhas, calcMaquininhaIdEfetivo])
 
-  const salvarAlteracoes = useCallback(() => {
+  const salvarAlteracoes = useCallback(async () => {
     const normalized = normalizeCentroV3(draft)
     setDraft(normalized)
-    persistCentroFinanceiroV3(normalized)
+    persistCentroFinanceiroV3ForStore(effectiveStoreId, normalized)
+    try {
+      await fetch(`/api/stores/${encodeURIComponent(effectiveStoreId)}/settings`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cardFees: normalized }),
+      })
+    } catch {
+      /* rede — local já persistido */
+    }
     setBaselineJson(JSON.stringify(normalized))
     toast({
       title: "Alterações salvas",
-      description: "Configurações gravadas neste navegador (localStorage).",
+      description: "Taxas e maquininhas gravadas para esta unidade (navegador + servidor).",
     })
-  }, [draft, toast])
+  }, [draft, toast, effectiveStoreId])
 
   const setAtivoMaquininha = (id: string, ativo: boolean) => {
     setDraft((prev) => {
@@ -308,7 +353,7 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
           Centro de Personalização Financeira
         </h2>
         <p className="text-sm text-muted-foreground">
-          RAFACELL ASSISTEC — contas, maquininhas e taxas.{" "}
+          Contas bancárias, maquininhas e taxas de cartão.{" "}
           {isDirty && <span className="text-amber-600 font-medium">Alterações não salvas.</span>}
         </p>
       </div>
@@ -619,7 +664,7 @@ export function CentroPersonalizacaoFinanceiraRafacell() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
                 <Target className="w-5 h-5 text-primary" />
-                Metas RAFACELL
+                Metas financeiras
               </CardTitle>
               <CardDescription>Metas e anotações (gravadas ao salvar).</CardDescription>
             </CardHeader>

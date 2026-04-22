@@ -6,6 +6,11 @@ import type { Orcamento } from "@/lib/orcamento-types"
 import { normalizeDocDigits } from "@/lib/cpf"
 import { OPS_KEY_LEGACY } from "@/lib/loja-ativa"
 import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
+import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
+import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
+import type { DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
+
+export type { DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
 
 /** Variação de produto (tamanho, cor, sabor, etc.) */
 export type ProdutoAtributoDef = {
@@ -48,45 +53,6 @@ export interface DailyLedger {
   vendasCreditoVale: number
   totalVendas: number
   osAbertas: number
-}
-
-export interface PaymentBreakdownFull {
-  dinheiro: number
-  pix: number
-  cartaoDebito: number
-  cartaoCredito: number
-  carne: number
-  creditoVale: number
-}
-
-export interface SaleLineRecord {
-  inventoryId: string
-  name: string
-  quantity: number
-  unitPrice: number
-  lineTotal: number
-  qtyReturned?: number
-}
-
-export interface SaleRecord {
-  id: string
-  at: string
-  lines: SaleLineRecord[]
-  total: number
-  customerCpf?: string
-  customerName?: string
-  paymentBreakdown: PaymentBreakdownFull
-}
-
-export interface DevolucaoRecord {
-  id: string
-  at: string
-  saleId: string
-  customerCpf: string
-  customerName: string
-  lines: { inventoryId: string; name: string; quantity: number; valor: number }[]
-  mode: "vale_credito" | "somente_estoque"
-  creditIssued: number
 }
 
 function todayStr(): string {
@@ -134,6 +100,7 @@ function normalizePaymentBreakdown(pb?: Partial<PaymentBreakdownFull> & { cartao
     cartaoDebito: pb?.cartaoDebito ?? legacyCartao,
     cartaoCredito: pb?.cartaoCredito ?? 0,
     carne: pb?.carne ?? 0,
+    aPrazo: pb?.aPrazo ?? 0,
     creditoVale: pb?.creditoVale ?? 0,
   }
 }
@@ -146,6 +113,14 @@ function nextSaleId(sales: SaleRecord[]): string {
     if (m && parseInt(m[1], 10) === year) max = Math.max(max, parseInt(m[2], 10))
   }
   return `VDA-${year}-${String(max + 1).padStart(4, "0")}`
+}
+
+/** Mescla vendas do Postgres sem sobrescrever o que já veio do localStorage (mesmo `id`). */
+function mergeSalesById(local: SaleRecord[], remote: SaleRecord[]): SaleRecord[] {
+  const ids = new Set(local.map((s) => s.id))
+  const extra = remote.filter((s) => s.id && !ids.has(s.id))
+  if (extra.length === 0) return local
+  return [...local, ...extra].sort((a, b) => a.at.localeCompare(b.at))
 }
 
 function nextDevolucaoId(list: DevolucaoRecord[]): string {
@@ -310,7 +285,7 @@ export function OperationsProvider({
         }
         return
       }
-      if (storageKey !== OPS_KEY_LEGACY && storageKey.endsWith("-loja-1")) {
+      if (storageKey !== OPS_KEY_LEGACY && storageKey.endsWith(`-${LEGACY_PRIMARY_STORE_ID}`)) {
         const legacy = localStorage.getItem(OPS_KEY_LEGACY)
         if (legacy) {
           const partial = parseLocalRest(legacy, stateRef.current)
@@ -385,8 +360,31 @@ export function OperationsProvider({
 
         const snap = JSON.stringify({ inv: items, ord: ordens })
         lastSentOpsRef.current = snap
+
+        let remoteSales: SaleRecord[] = []
+        try {
+          const rV = await fetch(`/api/ops/vendas-list?lojaId=${encodeURIComponent(lj)}`, {
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              [ASSISTEC_LOJA_HEADER]: lj,
+            },
+          })
+          if (rV.ok) {
+            const jV = (await rV.json()) as { sales?: SaleRecord[] }
+            remoteSales = jV.sales ?? []
+          }
+        } catch {
+          /* ignore */
+        }
+
         if (!cancelled) {
-          setState((prev) => ({ ...prev, inventory: items, ordens }))
+          setState((prev) => ({
+            ...prev,
+            inventory: items,
+            ordens,
+            sales: mergeSalesById(prev.sales, remoteSales),
+          }))
         }
       } catch {
         if (!cancelled) {
@@ -436,16 +434,37 @@ export function OperationsProvider({
 
   const ledgerKey = JSON.stringify(state.dailyLedger)
   useEffect(() => {
+    let cancelled = false
     const t = setTimeout(() => {
-      void fetch("/api/ops/sync-ledger", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: ledgerKey,
-      }).catch(() => {})
+      void (async () => {
+        try {
+          const lj = opsLojaIdFromStorageKey(storageKey)
+          const res = await fetch("/api/ops/sync-ledger", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json",
+              [ASSISTEC_LOJA_HEADER]: lj,
+            },
+            body: ledgerKey,
+          })
+          if (cancelled) return
+          if (!res.ok && process.env.NODE_ENV === "development") {
+            const txt = await res.text().catch(() => "")
+            console.warn("[ops] sync-ledger HTTP", res.status, txt)
+          }
+        } catch (e) {
+          if (!cancelled && process.env.NODE_ENV === "development") {
+            console.warn("[ops] sync-ledger", e)
+          }
+        }
+      })()
     }, 1200)
-    return () => clearTimeout(t)
-  }, [ledgerKey])
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [ledgerKey, storageKey])
 
   const setOrdens: OperationsContextType["setOrdens"] = useCallback((updater) => {
     setState((prev) => ({
@@ -591,12 +610,16 @@ export function OperationsProvider({
         pb.cartaoDebito +
         pb.cartaoCredito +
         pb.carne +
+        pb.aPrazo +
         pb.creditoVale
       if (Math.abs(sumPb - total) > 0.02) {
         return { ok: false, reason: "Soma das formas de pagamento difere do total." }
       }
 
       const cpfNorm = customerCpf ? normalizeDocDigits(customerCpf) : ""
+      if (pb.aPrazo > 0 && !cpfNorm) {
+        return { ok: false, reason: "Selecione o cliente (com CPF) para venda à prazo em Contas a Receber." }
+      }
       if (pb.creditoVale > 0) {
         if (!cpfNorm) return { ok: false, reason: "Informe o cliente (CPF) para usar crédito/vale." }
         const saldo = next.customerCredits[cpfNorm]?.saldo ?? 0
@@ -622,7 +645,7 @@ export function OperationsProvider({
       next.dailyLedger.vendasPix += pb.pix
       next.dailyLedger.vendasCartaoDebito += pb.cartaoDebito
       next.dailyLedger.vendasCartaoCredito += pb.cartaoCredito
-      next.dailyLedger.vendasCarne += pb.carne
+      next.dailyLedger.vendasCarne += pb.carne + pb.aPrazo
       next.dailyLedger.vendasCreditoVale += pb.creditoVale
 
       const saleId = nextSaleId(next.sales)
@@ -662,9 +685,22 @@ export function OperationsProvider({
       }
 
       setState(next)
+      const lj = opsLojaIdFromStorageKey(storageKey)
+      const saleRow = next.sales[next.sales.length - 1]
+      if (saleRow) {
+        void fetch("/api/ops/venda-persist", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            [ASSISTEC_LOJA_HEADER]: lj,
+          },
+          body: JSON.stringify({ sale: saleRow }),
+        }).catch(() => {})
+      }
       return { ok: true, saleId }
     },
-    []
+    [storageKey]
   )
 
   const registrarDevolucao = useCallback<OperationsContextType["registrarDevolucao"]>((input) => {

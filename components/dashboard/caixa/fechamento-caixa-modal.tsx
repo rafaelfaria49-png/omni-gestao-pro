@@ -26,7 +26,7 @@ import {
 import { useCaixa } from "./caixa-provider"
 import { ensureLedger, useOperationsStore } from "@/lib/operations-store"
 import { appendAuditLog } from "@/lib/audit-log"
-import { useConfigEmpresa, configPadrao } from "@/lib/config-empresa"
+import { useLojaAtiva } from "@/lib/loja-ativa"
 
 interface FechamentoCaixaModalProps {
   isOpen: boolean
@@ -36,11 +36,10 @@ interface FechamentoCaixaModalProps {
 export function FechamentoCaixaModal({ isOpen, onClose }: FechamentoCaixaModalProps) {
   const { caixa, fecharCaixa, getSaldoAtual } = useCaixa()
   const { dailyLedger } = useOperationsStore()
-  const { config } = useConfigEmpresa()
+  const { empresaDocumentos } = useLojaAtiva()
   const [valorContado, setValorContado] = useState("")
   const ledger = ensureLedger(dailyLedger)
-  const userAudit =
-    (config.empresa.nomeFantasia || "").trim() || configPadrao.empresa.nomeFantasia
+  const userAudit = (empresaDocumentos.nomeFantasia || "").trim() || "Loja"
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("pt-BR", {
