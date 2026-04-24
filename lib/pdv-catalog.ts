@@ -3,6 +3,8 @@ import type { InventoryItem, ProdutoAtributoDef } from "@/lib/operations-store"
 export type PdvCatalogProduct = {
   id: string
   name: string
+  /** Código de barras (EAN/GTIN). */
+  barcode?: string
   price: number
   stock: number
   category: string
@@ -88,6 +90,7 @@ export function mergePdvCatalogWithInventory(
       ...p,
       stock: inv.stock,
       price: unit,
+      barcode: inv.barcode || p.barcode,
       precoPorKg: inv.precoPorKg ?? inv.price,
       vendaPorPeso: inv.vendaPorPeso,
       atributos: inv.atributos?.length ? inv.atributos : p.atributos,

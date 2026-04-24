@@ -59,9 +59,9 @@ import {
   novaMaquininhaVazia,
   persistCentroFinanceiroV3ForStore,
   taxasSugeridasPagBank,
-} from "@/lib/rafacell-centro-financeiro"
+} from "@/lib/centro-financeiro"
 
-export type { ContaTemplate, MaquininhaSlug } from "@/lib/rafacell-centro-financeiro"
+export type { ContaTemplate, MaquininhaSlug } from "@/lib/centro-financeiro"
 
 const TEMPLATES: Array<{
   template: ContaTemplate

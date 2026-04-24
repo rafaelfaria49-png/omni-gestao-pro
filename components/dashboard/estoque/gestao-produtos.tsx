@@ -42,7 +42,7 @@ import type {
   SpeechRecognitionErrorEventLike,
 } from "@/lib/web-speech-recognition"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -79,11 +79,14 @@ import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { resolveLojaIdParaConsultaClientes } from "@/lib/clientes-loja-resolve"
 import { pickCostPrice, pickSalePrice } from "@/lib/inventory-item-from-api"
 import { TypeToConfirmDialog } from "@/components/dashboard/safety/type-to-confirm-dialog"
+import { cn } from "@/lib/utils"
 
 interface Product {
   id: string
   nome: string
   codigo: string
+  /** Código de barras (EAN) para bipar no cadastro e usar no PDV. */
+  barcode?: string
   /** Slug da categoria (`peca`, `servico`, ou slug criado na importação). */
   categoria: string
   precoCusto: number
@@ -120,6 +123,7 @@ const mockProducts: Product[] = []
 const emptyProduct: Omit<Product, "id"> = {
   nome: "",
   codigo: "",
+  barcode: "",
   categoria: "peca",
   precoCusto: 0,
   precoVenda: 0,
@@ -279,7 +283,8 @@ export function GestaoProdutos({
           return {
             id: String(it.id ?? ""),
             nome: String(it.name ?? ""),
-            codigo: String(it.id ?? ""),
+            codigo: String((row.sku as any) ?? it.id ?? ""),
+            barcode: typeof row.barcode === "string" ? row.barcode : "",
             categoria: rawCategory,
             precoCusto: Number.isFinite(precoCusto) ? precoCusto : 0,
             precoVenda: Number.isFinite(precoVenda) ? precoVenda : 0,
@@ -560,15 +565,39 @@ export function GestaoProdutos({
     }
   }
 
+  const applyProductImageFile = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      toast({
+        title: "Arquivo inválido",
+        description: "Envie apenas imagens (JPG, PNG, WebP…).",
+        variant: "destructive",
+      })
+      return
+    }
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      setPreviewImage(reader.result as string)
+    }
+    reader.readAsDataURL(file)
+  }
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setPreviewImage(reader.result as string)
-      }
-      reader.readAsDataURL(file)
-    }
+    if (file) applyProductImageFile(file)
+    e.target.value = ""
+  }
+
+  const handleImageDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const file = e.dataTransfer.files?.[0]
+    if (file) applyProductImageFile(file)
+  }
+
+  const handleImageDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = "copy"
   }
 
   const blobToDataUrl = (blob: Blob) =>
@@ -1495,21 +1524,37 @@ export function GestaoProdutos({
             <TabsContent value="geral" className="space-y-6">
               {/* Upload de imagem */}
               <div className="flex items-start gap-4">
-                <div 
-                  className="w-28 h-28 rounded-xl bg-secondary border-2 border-dashed border-border flex flex-col items-center justify-center cursor-pointer hover:border-primary transition-colors overflow-hidden"
+                <div
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Área para arrastar ou colar foto do produto"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault()
+                      fileInputRef.current?.click()
+                    }
+                  }}
+                  className={cn(
+                    "flex h-28 w-28 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-border bg-secondary transition-colors",
+                    "hover:border-primary hover:bg-primary/5 hover:shadow-sm",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                  )}
                   onClick={() => fileInputRef.current?.click()}
+                  onDragOver={handleImageDragOver}
+                  onDrop={handleImageDrop}
                 >
                   {previewImage ? (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={previewImage} alt="Preview" className="w-full h-full object-cover" />
+                    <img src={previewImage} alt="Preview" className="h-full w-full object-cover" />
                   ) : (
                     <>
-                      <ImageIcon className="w-8 h-8 text-muted-foreground mb-1" />
-                      <span className="text-xs text-muted-foreground">Arrastar foto</span>
+                      <ImageIcon className="mb-1 h-8 w-8 text-muted-foreground" />
+                      <span className="px-1 text-center text-xs text-muted-foreground">Arrastar foto</span>
                     </>
                   )}
                 </div>
                 <input
+                  id="prod-foto-upload"
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
@@ -1526,20 +1571,23 @@ export function GestaoProdutos({
                 />
                 <div className="flex-1 space-y-3">
                   <Label>Foto do Produto</Label>
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => fileInputRef.current?.click()}
+                  <div className="flex flex-wrap gap-2">
+                    <Label
+                      htmlFor="prod-foto-upload"
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }), "cursor-pointer gap-2")}
                     >
-                      <Upload className="w-4 h-4 mr-2" /> Enviar
-                    </Button>
-                    <Button 
-                      variant="outline" 
+                      <Upload className="h-4 w-4 shrink-0" />
+                      Enviar
+                    </Label>
+                    <Button
+                      variant="outline"
                       size="sm"
-                      onClick={() => cameraInputRef.current?.click()}
+                      type="button"
+                      onClick={() =>
+                        toast.info("A captura por câmera web estará disponível em breve.")
+                      }
                     >
-                      <Camera className="w-4 h-4 mr-2" /> Câmera
+                      <Camera className="mr-2 h-4 w-4" /> Câmera
                     </Button>
                     {previewImage && (
                       <Button 
@@ -1734,17 +1782,35 @@ export function GestaoProdutos({
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="codigo">Código / EAN</Label>
+                  <Label htmlFor="codigo">Código interno (SKU)</Label>
                   <div className="relative">
                     <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                     <Input
                       id="codigo"
                       value={formData.codigo}
                       onChange={(e) => setFormData(prev => ({ ...prev, codigo: e.target.value }))}
-                      placeholder="7891234567890"
+                      placeholder="Ex.: SKU-001 / Código do fornecedor"
                       className="h-12 pl-10 bg-secondary border-border"
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="barcode">Código de Barras (EAN)</Label>
+                  <div className="relative">
+                    <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
+                    <Input
+                      id="barcode"
+                      value={formData.barcode ?? ""}
+                      onChange={(e) => setFormData((prev) => ({ ...prev, barcode: e.target.value }))}
+                      placeholder="Bipe o produto (EAN/GTIN)"
+                      className="h-12 pl-10 bg-secondary border-border"
+                      inputMode="numeric"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Este campo é usado pelo <strong>PDV Alta Performance</strong> para adicionar o item automaticamente no Enter.
+                  </p>
                 </div>
 
                 <div className="space-y-2">

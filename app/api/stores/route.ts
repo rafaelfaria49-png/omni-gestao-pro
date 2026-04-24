@@ -4,10 +4,16 @@ import { prisma } from "@/lib/prisma"
 export const runtime = "nodejs"
 
 type StoreProfileInput = "ASSISTENCIA" | "VARIEDADES" | "SUPERMERCADO"
+type SubscriptionPlanInput = "BRONZE" | "PRATA" | "OURO"
 
 function parseProfile(raw: unknown): StoreProfileInput {
   if (raw === "VARIEDADES" || raw === "SUPERMERCADO" || raw === "ASSISTENCIA") return raw
   return "ASSISTENCIA"
+}
+
+function parseSubscriptionPlan(raw: unknown): SubscriptionPlanInput {
+  if (raw === "PRATA" || raw === "OURO" || raw === "BRONZE") return raw
+  return "BRONZE"
 }
 
 function normalizeStoreId(raw: string): string {
@@ -39,9 +45,11 @@ export async function POST(req: Request) {
       logoUrl: string
       address: unknown
       profile: StoreProfileInput
+      subscriptionPlan: SubscriptionPlanInput
     }>
 
     const profile = parseProfile(body.profile)
+    const subscriptionPlan = parseSubscriptionPlan(body.subscriptionPlan)
     const all = await prisma.store.findMany({ select: { id: true }, orderBy: { id: "asc" } })
     const nextIdx = Math.max(
       1,
@@ -64,6 +72,7 @@ export async function POST(req: Request) {
         logoUrl: (body.logoUrl || "").trim(),
         address: (body.address as any) ?? undefined,
         profile,
+        subscriptionPlan,
       },
     })
 

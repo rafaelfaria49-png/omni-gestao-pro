@@ -106,6 +106,10 @@ function mapStoresResponseToPerfis(stores: Array<Record<string, unknown>>): Perf
       },
       logoUrl: String(s.logoUrl || "").trim(),
       storeProfile: parseStoreProfile(s.profile),
+      subscriptionPlan:
+        s.subscriptionPlan === "OURO" || s.subscriptionPlan === "PRATA" || s.subscriptionPlan === "BRONZE"
+          ? (s.subscriptionPlan as any)
+          : undefined,
     }
   })
 }

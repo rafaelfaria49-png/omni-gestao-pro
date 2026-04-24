@@ -3,9 +3,9 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { flushSync } from "react-dom"
 import { useRouter } from "next/navigation"
-import {
-  Plus,
-  Search,
+import { 
+  Plus, 
+  Search, 
   AlertCircle,
   CheckCircle2,
   Clock,
@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
@@ -511,6 +512,7 @@ export function ContasReceber() {
   const [novaValor, setNovaValor] = useState("")
   const [novaVenc, setNovaVenc] = useState("")
   const [novaTipo, setNovaTipo] = useState("Manual")
+  const [novaObs, setNovaObs] = useState("")
 
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | number | null>(null)
@@ -1891,6 +1893,7 @@ export function ContasReceber() {
       toast({ title: "Preencha descrição e valor", variant: "destructive" })
       return
     }
+    const obs = novaObs.trim()
     const row: ContaReceberRow = {
       id: `cr-${Date.now()}`,
       descricao: novaDesc.trim(),
@@ -1899,6 +1902,7 @@ export function ContasReceber() {
       vencimento: novaVenc.trim() || "—",
       status: "pendente",
       tipo: novaTipo.trim() || "Manual",
+      ...(obs ? { observacoesPagamento: obs } : {}),
     }
     persist([row, ...contas])
     setNovaOpen(false)
@@ -1907,6 +1911,7 @@ export function ContasReceber() {
     setNovaValor("")
     setNovaVenc("")
     setNovaTipo("Manual")
+    setNovaObs("")
     toast({ title: "Título criado" })
   }
 
@@ -1987,7 +1992,7 @@ export function ContasReceber() {
             <Label htmlFor="cr-busca-cliente" className="text-xs text-black/70">
               Pesquisa por nome do cliente
             </Label>
-            <div className="relative">
+          <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/70" />
               <Input
                 id="cr-busca-cliente"
@@ -1997,7 +2002,7 @@ export function ContasReceber() {
                 onChange={(e) => setBusca(e.target.value)}
                 aria-label="Filtrar pela coluna Cliente"
               />
-            </div>
+          </div>
             <p className="text-[11px] text-black/70 max-w-[14rem] leading-snug">
               Filtra por Cliente <em>ou</em> Descrição (sem diferenciar maiúsculas/minúsculas e sem acentos).
             </p>
@@ -2165,13 +2170,13 @@ export function ContasReceber() {
               Nenhum título nesta visão. Importe um extrato em Configurações ou crie um novo título.
             </p>
           ) : (
-            <div className="space-y-3">
-              {contasFiltradas.map((conta) => {
-                const statusConfig = getStatusConfig(conta.status)
+          <div className="space-y-3">
+            {contasFiltradas.map((conta) => {
+              const statusConfig = getStatusConfig(conta.status)
                 const podeReceber = conta.status !== "pago"
-
-                return (
-                  <div
+              
+              return (
+                <div 
                     key={String(conta.id)}
                     className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
                   >
@@ -2193,28 +2198,28 @@ export function ContasReceber() {
                           <User className="w-3 h-3 shrink-0" />
                           <span className="truncate text-black">{conta.cliente}</span>
                           <span className="px-1.5 py-0.5 rounded bg-secondary text-xs shrink-0">{conta.tipo}</span>
-                        </div>
+                    </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
-                      <div className="text-right">
+                    <div className="text-right">
                         <p className="font-semibold text-black">
-                          R$ {conta.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
-                        </p>
+                        R$ {conta.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                      </p>
                         <div className="flex items-center justify-end gap-1 text-sm text-black/70">
-                          <Calendar className="w-3 h-3" />
-                          {conta.vencimento}
-                        </div>
+                        <Calendar className="w-3 h-3" />
+                        {conta.vencimento}
                       </div>
+                    </div>
                       <span
                         className={cn(
                           "px-2 py-1 rounded-full text-xs font-medium transition-colors",
-                          statusConfig.bg,
-                          statusConfig.color
+                      statusConfig.bg,
+                      statusConfig.color
                         )}
                       >
-                        {statusConfig.label}
-                      </span>
+                      {statusConfig.label}
+                    </span>
                       {podeReceber && (
                         <Button
                           type="button"
@@ -2225,13 +2230,13 @@ export function ContasReceber() {
                         >
                           <Banknote className="w-4 h-4 mr-1" />
                           Receber
-                        </Button>
-                      )}
+                      </Button>
+                    )}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button type="button" variant="ghost" size="icon" className="shrink-0" aria-label="Ações">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
+                      <MoreHorizontal className="w-4 h-4" />
+                    </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-64">
                           {podeReceber && (
@@ -2302,11 +2307,11 @@ export function ContasReceber() {
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
-                    </div>
                   </div>
-                )
-              })}
-            </div>
+                </div>
+              )
+            })}
+          </div>
           )}
         </CardContent>
       </Card>
@@ -2329,7 +2334,7 @@ export function ContasReceber() {
                   onChange={(e) => setNovaDesc(e.target.value)}
                   placeholder="Ex.: Serviço / venda"
                 />
-              </div>
+    </div>
               <div>
                 <Label htmlFor="cr-nova-cli" className="text-xs">
                   Cliente
@@ -2353,6 +2358,19 @@ export function ContasReceber() {
                   Tipo / referência
                 </Label>
                 <Input id="cr-nova-tipo" className="h-8 text-sm" value={novaTipo} onChange={(e) => setNovaTipo(e.target.value)} />
+              </div>
+              <div>
+                <Label htmlFor="cr-nova-obs" className="text-xs">
+                  Observações
+                </Label>
+                <Textarea
+                  id="cr-nova-obs"
+                  className="min-h-[80px] text-sm bg-background text-foreground border-input"
+                  value={novaObs}
+                  onChange={(e) => setNovaObs(e.target.value)}
+                  placeholder="Promessa de pagamento, acordo com o cliente, contato do avalista…"
+                  rows={3}
+                />
               </div>
             </div>
             <div className="mt-3 flex flex-row flex-wrap items-center justify-start gap-2 border-t border-border pt-2">
@@ -2729,14 +2747,15 @@ export function ContasReceber() {
 
                   <div>
                     <Label htmlFor="cr-baixa-obs" className="text-xs">
-                      Observações de pagamento
+                      Observações
                     </Label>
-                    <textarea
+                    <Textarea
                       id="cr-baixa-obs"
                       value={baixaObsPagamento}
                       onChange={(e) => setBaixaObsPagamento(e.target.value)}
-                      className="mt-1 min-h-[72px] w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                      placeholder="Ex: Nome do cliente, CPF ou ID do pedido"
+                      className="mt-1 min-h-[88px] w-full text-sm bg-background text-foreground border-input"
+                      placeholder="Detalhes deste recebimento, promessa do cliente, acordo de parcela…"
+                      rows={4}
                     />
                   </div>
 
@@ -3174,14 +3193,15 @@ export function ContasReceber() {
 
               <div>
                 <Label htmlFor="cr-ed-obs" className="text-xs">
-                  Observações de pagamento
+                  Observações
                 </Label>
-                <textarea
+                <Textarea
                   id="cr-ed-obs"
                   value={editObsPagamento}
                   onChange={(e) => setEditObsPagamento(e.target.value)}
-                  className="mt-1 min-h-[72px] w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
-                  placeholder="Ex: Nome do cliente, CPF ou ID do pedido"
+                  className="mt-1 min-h-[88px] w-full text-sm bg-background text-foreground border-input"
+                  placeholder="Promessas de pagamento, negociação, combinados com o cliente (histórico manual)."
+                  rows={4}
                 />
               </div>
             </div>

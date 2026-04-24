@@ -68,6 +68,8 @@ export interface PerfilLojaUnidade {
   logoUrl: string
   /** Perfil operacional da unidade (`Store.profile`). */
   storeProfile?: "ASSISTENCIA" | "VARIEDADES" | "SUPERMERCADO"
+  /** Plano SaaS oficial por unidade (`Store.subscriptionPlan`). */
+  subscriptionPlan?: "BRONZE" | "PRATA" | "OURO"
 }
 
 export interface MinhasLojasConfig {

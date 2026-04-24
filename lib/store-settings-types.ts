@@ -29,11 +29,6 @@ export type StoreSettingsBlob = {
   certificadoA1?: Partial<CertificadoA1Meta>
   /** Preferência de modelo da IA Mestre (apenas plano ouro). */
   aiMestreModel?: string
-  /**
-   * Override manual de plano por unidade (debug/admin).
-   * Persistido em `StoreSettings.printerConfig` para evitar migração.
-   */
-  planoAssinaturaOverride?: "bronze" | "prata" | "ouro"
 }
 
 export type StoreSettingsApi = {

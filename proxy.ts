@@ -103,8 +103,8 @@ export async function proxy(request: NextRequest) {
   }
 
   if (pathname === "/logs-sistema" || pathname.startsWith("/logs-sistema/")) {
-    const admin = request.cookies.get(ADMIN_COOKIE)?.value
-    if (admin !== "1") {
+    const admin = String(request.cookies.get(ADMIN_COOKIE)?.value || "").trim()
+    if (!admin) {
       const u = request.nextUrl.clone()
       u.pathname = "/login-admin"
       u.searchParams.set("next", pathname)

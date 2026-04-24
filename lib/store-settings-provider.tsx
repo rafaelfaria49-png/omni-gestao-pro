@@ -27,15 +27,11 @@ function safeObj(v: unknown): Record<string, unknown> {
 
 function parseBlob(printerConfig: unknown): StoreSettingsBlob {
   const o = safeObj(printerConfig)
-  const planoRaw = typeof (o as any).planoAssinaturaOverride === "string" ? String((o as any).planoAssinaturaOverride).trim() : ""
-  const planoAssinaturaOverride =
-    planoRaw === "bronze" || planoRaw === "prata" || planoRaw === "ouro" ? (planoRaw as "bronze" | "prata" | "ouro") : undefined
   return {
     pdvParams: safeObj(o.pdvParams),
     termosGarantia: safeObj(o.termosGarantia),
     certificadoA1: safeObj(o.certificadoA1),
     aiMestreModel: typeof (o as any).aiMestreModel === "string" ? String((o as any).aiMestreModel).trim() : undefined,
-    planoAssinaturaOverride,
   } as StoreSettingsBlob
 }
 

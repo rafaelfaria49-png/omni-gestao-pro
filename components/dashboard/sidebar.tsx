@@ -6,6 +6,8 @@ import {
   ShoppingCart, 
   FileText, 
   ClipboardList, 
+  Bot,
+  Sparkles,
   Package, 
   Wallet, 
   Users, 
@@ -20,7 +22,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { useStoreSettings } from "@/lib/store-settings-provider"
@@ -29,6 +31,7 @@ import {
   nomeFantasiaOuFallbackUnidadePorOrdem,
 } from "@/lib/store-display-name"
 import { usePerfilLoja } from "@/lib/perfil-loja-provider"
+import type { UserRole } from "@/types"
 
 type SubMenuItem = { 
   label: string
@@ -48,8 +51,8 @@ type MenuItem = {
 }
 
 const menuItems: MenuItem[] = [
+  { icon: Sparkles, label: "IA Mestre", href: "#", externalPath: "/dashboard/ia-mestre" },
   { icon: LayoutDashboard, label: "Painel inicial", href: "#", page: "dashboard-omni", externalPath: "/dashboard" },
-  { icon: Home, label: "Início", href: "#", page: "dashboard" },
   { icon: FileText, label: "Orçamentos", href: "#", page: "orcamentos" },
   {
     icon: ShoppingCart,
@@ -67,8 +70,7 @@ const menuItems: MenuItem[] = [
     label: "Ordens de Serviço",
     href: "#",
     submenu: [
-      { label: "Gestão de OS", href: "#", page: "os-gestao", externalPath: "/dashboard/os" },
-      { label: "Painel integrado", href: "#", page: "os" },
+      { label: "Painel integrado", href: "#", page: "os", externalPath: "/dashboard/os" },
     ],
   },
   { 
@@ -76,7 +78,6 @@ const menuItems: MenuItem[] = [
     label: "Estoque", 
     href: "#",
     submenu: [
-      { label: "Gestão de Estoque", href: "#", page: "estoque-gestao", externalPath: "/dashboard/estoque" },
       { label: "Produtos", href: "#", page: "produtos" },
       { label: "Serviços", href: "#", page: "servicos" },
       { label: "Planejamento de Compras", href: "#", page: "planejamento-compras" },
@@ -152,19 +153,34 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
   const { lojas, lojaAtivaId, setLojaAtivaId, cadastroBasicoIncompleto } = useLojaAtiva()
   const { pdvParams } = useStoreSettings()
   const { perfilLoja } = usePerfilLoja()
-  const [openMenus, setOpenMenus] = useState<string[]>([
-    "Configurações",
-    "Gestão da Rede",
-    "Vendas",
-    "Clientes",
-    "Estoque",
-    "Ordens de Serviço",
-    "Relatórios",
-  ])
+  const [role, setRole] = useState<UserRole>("CAIXA")
+  // UX: iniciar recolhido e deixar o usuário abrir o que quiser.
+  const [openMenus, setOpenMenus] = useState<string[]>([])
   const isBronze = config.assinatura.plano === "bronze"
   const hideOsMenus = perfilLoja === "variedades" || perfilLoja === "supermercado"
 
-  const visibleItems = menuItems.map((item) => {
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await fetch("/api/auth/admin", { method: "GET", credentials: "include", cache: "no-store" })
+        const j = (await r.json().catch(() => null)) as { authenticated?: boolean }
+        if (!cancelled) setRole(j?.authenticated === true ? "ADMIN" : "CAIXA")
+      } catch {
+        if (!cancelled) setRole("CAIXA")
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const visibleItems = menuItems
+    .filter((item) => {
+      if (role !== "CAIXA") return true
+      return item.label === "Vendas" || item.label === "Painel inicial"
+    })
+    .map((item) => {
     if (!item.submenu) return item
     if (hideOsMenus && item.label === "Ordens de Serviço") {
       return { ...item, submenu: [] }
@@ -196,7 +212,8 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
       }
     }
     return item
-  }).filter((it) => !(hideOsMenus && it.label === "Ordens de Serviço"))
+  })
+  .filter((it) => !(hideOsMenus && it.label === "Ordens de Serviço"))
 
   const toggleSubmenu = (label: string) => {
     setOpenMenus(prev => 
@@ -230,7 +247,12 @@ export function Sidebar({ onNavigate, currentPage = "dashboard", collapsed = fal
   const isActive = (page?: string) => page === currentPage
 
   return (
-    <aside className={cn("hidden lg:flex flex-col bg-sidebar border-r border-sidebar-border transition-all", collapsed ? "w-20" : "w-64")}>
+    <aside
+      className={cn(
+        "hidden lg:flex flex-col border-r border-white/5 bg-black/40 backdrop-blur-xl transition-all",
+        collapsed ? "w-20" : "w-64"
+      )}
+    >
       <div className={cn("flex items-center border-b border-sidebar-border", collapsed ? "justify-center p-3" : "justify-between p-4")}>
         <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
           <div className="flex items-center justify-center w-10 h-10 rounded-lg bg-primary">

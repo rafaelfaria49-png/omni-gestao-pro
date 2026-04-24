@@ -1,50 +1,87 @@
 "use client"
 
 import Link from "next/link"
-import { PackageX, Users } from "lucide-react"
+import {
+  AlertTriangle,
+  Banknote,
+  ClipboardList,
+  ShoppingCart,
+  TrendingUp,
+} from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { resolveLojaIdParaConsultaClientes } from "@/lib/clientes-loja-resolve"
 import { useLojaAtiva } from "@/lib/loja-ativa"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts"
+import { Button } from "@/components/ui/button"
 
 export default function DashboardInicioPage() {
-  const { lojaAtivaId } = useLojaAtiva()
+  const { lojaAtivaId, lojas } = useLojaAtiva()
   const lojaHeader = useMemo(() => resolveLojaIdParaConsultaClientes(lojaAtivaId), [lojaAtivaId])
-  const [totalClientes, setTotalClientes] = useState(0)
-  const [produtosEsgotados, setProdutosEsgotados] = useState(0)
-  const [resumoError, setResumoError] = useState<string | null>(null)
+  const lojaNome = useMemo(() => {
+    const id = (lojaAtivaId || "").trim()
+    const hit = id ? lojas.find((l) => l.id === id) : null
+    return (hit?.nomeFantasia || "").trim() || "sua loja"
+  }, [lojaAtivaId, lojas])
+
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [cards, setCards] = useState({
+    faturamentoHoje: 0,
+    osEmAberto: 0,
+    alertaEstoqueCount: 0,
+    contasReceberHoje: 0,
+  })
+  const [faturamento7d, setFaturamento7d] = useState<Array<{ day: string; total: number }>>([])
+  const [movimentos, setMovimentos] = useState<
+    Array<{ kind: "venda" | "os"; id: string; label: string; value: number; at: string }>
+  >([])
+  const [estoqueCritico, setEstoqueCritico] = useState<Array<{ id: string; name: string; stock: number }>>([])
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const r = await fetch(`/api/dashboard/resumo?storeId=${encodeURIComponent(lojaHeader)}`, {
+        setLoading(true)
+        const r = await fetch(`/api/dashboard/elite?storeId=${encodeURIComponent(lojaHeader)}`, {
           cache: "no-store",
           credentials: "include",
           headers: { [ASSISTEC_LOJA_HEADER]: lojaHeader },
         })
-        const j = (await r.json().catch(() => null)) as {
-          ok?: boolean
-          totalClientes?: number
-          produtosEsgotados?: number
-          error?: string
-        } | null
+        const j = (await r.json().catch(() => null)) as any
         if (cancelled) return
-        if (!r.ok || !j?.ok) {
-          setResumoError(j?.error || "Falha ao carregar resumo")
-          setTotalClientes(0)
-          setProdutosEsgotados(0)
-          return
-        }
-        setResumoError(null)
-        setTotalClientes(typeof j.totalClientes === "number" ? j.totalClientes : 0)
-        setProdutosEsgotados(typeof j.produtosEsgotados === "number" ? j.produtosEsgotados : 0)
+        if (!r.ok || !j?.ok) throw new Error(String(j?.error || "Falha ao carregar dashboard"))
+
+        setErr(null)
+        setCards({
+          faturamentoHoje: Number(j.cards?.faturamentoHoje || 0),
+          osEmAberto: Number(j.cards?.osEmAberto || 0),
+          alertaEstoqueCount: Number(j.cards?.alertaEstoqueCount || 0),
+          contasReceberHoje: Number(j.cards?.contasReceberHoje || 0),
+        })
+        setFaturamento7d(Array.isArray(j.faturamento7d) ? j.faturamento7d : [])
+        setMovimentos(Array.isArray(j.movimentos) ? j.movimentos : [])
+        setEstoqueCritico(Array.isArray(j.estoqueCritico) ? j.estoqueCritico : [])
       } catch {
         if (!cancelled) {
-          setResumoError("Falha ao carregar resumo")
-          setTotalClientes(0)
-          setProdutosEsgotados(0)
+          setErr("Falha ao carregar dashboard")
+          setCards({ faturamentoHoje: 0, osEmAberto: 0, alertaEstoqueCount: 0, contasReceberHoje: 0 })
+          setFaturamento7d([])
+          setMovimentos([])
+          setEstoqueCritico([])
         }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     })()
     return () => {
@@ -52,51 +89,220 @@ export default function DashboardInicioPage() {
     }
   }, [lojaHeader])
 
+  const brl = useMemo(
+    () => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }),
+    []
+  )
+
   return (
     <div className="min-h-[calc(100vh-4rem)] bg-background p-4 lg:p-8">
-      <div className="mx-auto max-w-5xl space-y-8">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl">Painel inicial</h1>
-          <p className="mt-1 text-sm text-black/70">Visão rápida por unidade</p>
-          {resumoError ? <p className="mt-2 text-sm text-red-600">{resumoError}</p> : null}
+      <div className="mx-auto max-w-6xl space-y-6">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground md:text-3xl">
+            Olá, <span className="text-primary">Administrador</span>! Veja como está a{" "}
+            <span className="text-primary">{lojaNome}</span> hoje.
+          </h1>
+          <p className="text-sm text-muted-foreground">Dashboard de alto nível (por unidade ativa).</p>
+          {err ? (
+            <p className="mt-2 text-sm text-destructive">{err}</p>
+          ) : null}
         </div>
 
-        <div className="grid gap-6 sm:grid-cols-2">
-          <Link
-            href="/dashboard/clientes"
-            className="group relative overflow-hidden rounded-2xl border border-red-900/40 bg-gradient-to-br from-zinc-950 via-black to-zinc-950 p-8 shadow-lg shadow-red-950/20 transition hover:border-red-600/50 hover:shadow-red-900/30"
-          >
-            <div className="absolute -right-6 -top-6 h-32 w-32 rounded-full bg-red-600/10 blur-2xl transition group-hover:bg-red-600/20" />
-            <div className="relative flex flex-col gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-red-600/20 text-red-500 ring-1 ring-red-600/40">
-                <Users className="h-7 w-7" strokeWidth={2} />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card className="bg-card border-border">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Faturamento hoje</CardTitle>
+              <TrendingUp className="h-5 w-5 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-black tabular-nums text-foreground">
+                {loading ? "—" : brl.format(cards.faturamentoHoje)}
               </div>
-              <div>
-                <p className="text-sm font-medium uppercase tracking-wider text-red-400/90">Clientes</p>
-                <p className="mt-2 text-4xl font-bold tabular-nums text-white">{totalClientes}</p>
-                <p className="mt-1 text-sm text-zinc-400">Total de clientes cadastrados nesta unidade</p>
-              </div>
-              <span className="text-xs font-medium text-red-500/80 group-hover:text-red-400">Abrir gestão →</span>
-            </div>
-          </Link>
+              <p className="mt-1 text-xs text-muted-foreground">Total de vendas registradas hoje.</p>
+            </CardContent>
+          </Card>
 
-          <Link
-            href="/dashboard/estoque"
-            className="group relative overflow-hidden rounded-2xl border border-red-900/40 bg-gradient-to-br from-black via-zinc-950 to-black p-8 shadow-lg shadow-red-950/20 transition hover:border-red-600/50 hover:shadow-red-900/30"
-          >
-            <div className="absolute -left-4 bottom-0 h-28 w-28 rounded-full bg-red-600/10 blur-2xl transition group-hover:bg-red-600/20" />
-            <div className="relative flex flex-col gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-red-950/80 text-red-400 ring-1 ring-red-700/50">
-                <PackageX className="h-7 w-7" strokeWidth={2} />
+          <Card className="bg-card border-border">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">OS em aberto</CardTitle>
+              <ClipboardList className="h-5 w-5 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-black tabular-nums text-foreground">
+                {loading ? "—" : cards.osEmAberto}
               </div>
-              <div>
-                <p className="text-sm font-medium uppercase tracking-wider text-red-400/90">Estoque</p>
-                <p className="mt-2 text-4xl font-bold tabular-nums text-white">{produtosEsgotados}</p>
-                <p className="mt-1 text-sm text-zinc-400">Produtos com estoque zerado nesta unidade</p>
+              <p className="mt-1 text-xs text-muted-foreground">Aberto + Em análise.</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Alerta de estoque</CardTitle>
+              <AlertTriangle className="h-5 w-5 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-black tabular-nums text-foreground">
+                {loading ? "—" : cards.alertaEstoqueCount}
               </div>
-              <span className="text-xs font-medium text-red-500/80 group-hover:text-red-400">Abrir estoque →</span>
-            </div>
-          </Link>
+              <p className="mt-1 text-xs text-muted-foreground">Itens com estoque zerado.</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Contas a receber (hoje)</CardTitle>
+              <Banknote className="h-5 w-5 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-black tabular-nums text-foreground">
+                {loading ? "—" : brl.format(cards.contasReceberHoje)}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">Vencimentos pendentes para hoje.</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="bg-card border-border">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ShoppingCart className="h-4 w-4 text-primary" />
+              Faturamento dos últimos 7 dias
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={faturamento7d} margin={{ left: 8, right: 8, top: 10, bottom: 0 }}>
+                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="4 4" />
+                <XAxis
+                  dataKey="day"
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                  tickFormatter={(v) => String(v).slice(5)}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 12 }}
+                  tickFormatter={(v) => `${Number(v) / 1000}k`}
+                />
+                <Tooltip
+                  cursor={{ stroke: "hsl(var(--primary))", strokeWidth: 1 }}
+                  contentStyle={{
+                    background: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: 12,
+                    color: "hsl(var(--foreground))",
+                  }}
+                  formatter={(value: any) => brl.format(Number(value || 0))}
+                  labelFormatter={(l) => `Dia ${String(l)}`}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="total"
+                  stroke="var(--primary)"
+                  fill="hsl(var(--primary) / 0.18)"
+                  strokeWidth={2.25}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card className="bg-card border-border">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Últimas vendas/OS</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-hidden rounded-lg border border-border">
+                <table className="w-full text-sm">
+                  <thead className="bg-background/60">
+                    <tr className="text-left">
+                      <th className="px-3 py-2 font-semibold text-foreground">Cliente</th>
+                      <th className="px-3 py-2 font-semibold text-foreground">Valor</th>
+                      <th className="px-3 py-2 font-semibold text-foreground">Data</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movimentos.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="px-3 py-6 text-center text-muted-foreground">
+                          {loading ? "Carregando…" : "Sem movimentações recentes."}
+                        </td>
+                      </tr>
+                    ) : (
+                      movimentos.map((m) => (
+                        <tr key={`${m.kind}-${m.id}`} className="border-t border-border hover:bg-muted/30">
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className={cn(
+                                  "inline-flex h-6 items-center rounded-md px-2 text-[11px] font-semibold",
+                                  m.kind === "venda"
+                                    ? "bg-emerald-500/15 text-emerald-600"
+                                    : "bg-blue-500/15 text-blue-600"
+                                )}
+                              >
+                                {m.kind === "venda" ? "Venda" : "OS"}
+                              </span>
+                              <span className="truncate font-medium text-foreground">{m.label}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 tabular-nums font-semibold text-foreground">
+                            {brl.format(m.value)}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {new Date(m.at).toLocaleString("pt-BR")}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Resumo de estoque crítico</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {estoqueCritico.length === 0 ? (
+                <div className="rounded-lg border border-border bg-background/40 px-4 py-6 text-center text-sm text-muted-foreground">
+                  {loading ? "Carregando…" : "Sem itens para exibir."}
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {estoqueCritico.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/40 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Estoque atual: <span className="font-semibold tabular-nums">{p.stock}</span>
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        asChild
+                        className="shrink-0"
+                      >
+                        <Link href="/?page=planejamento-compras">Pedir mais</Link>
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

@@ -6,7 +6,7 @@ import * as React from 'react'
 import type { ToastActionElement, ToastProps } from '@/components/ui/toast'
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+const TOAST_REMOVE_DELAY = 5000
 
 type ToasterToast = ToastProps & {
   id: string
@@ -139,7 +139,7 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, 'id'>
 
-function toast({ ...props }: Toast) {
+function baseToast({ ...props }: Toast) {
   const id = genId()
 
   const update = (props: ToasterToast) =>
@@ -168,6 +168,18 @@ function toast({ ...props }: Toast) {
   }
 }
 
+/** Toast de erro (variante destrutiva); alias pedido em fluxos de PDV e validação. */
+function toastError(description: React.ReactNode) {
+  return baseToast({ variant: 'destructive', description })
+}
+
+/** Toast informativo (variante default). */
+function toastInfo(description: React.ReactNode) {
+  return baseToast({ variant: 'default', description })
+}
+
+export const toast = Object.assign(baseToast, { error: toastError, info: toastInfo })
+
 function useToast() {
   const [state, setState] = React.useState<State>(memoryState)
 
@@ -188,4 +200,4 @@ function useToast() {
   }
 }
 
-export { useToast, toast }
+export { useToast }

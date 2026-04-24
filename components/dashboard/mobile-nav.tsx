@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   ShoppingCart,
   ClipboardList,
+  Bot,
   Package,
   Wallet,
   Menu,
@@ -47,7 +48,7 @@ type MobileFullItem = {
 }
 
 const mobileMenuItems: MobileMoreItem[] = [
-  { icon: Home, label: "Início", page: "dashboard" },
+  { icon: LayoutDashboard, label: "Painel", href: "/dashboard" },
   { icon: ShoppingCart, label: "PDV", page: "vendas" },
   { icon: ClipboardList, label: "OS", page: "os" },
   { icon: Package, label: "Estoque", page: "produtos" },
@@ -55,7 +56,8 @@ const mobileMenuItems: MobileMoreItem[] = [
 ]
 
 const fullMenuItems: MobileFullItem[] = [
-  { icon: Home, label: "Início", page: "dashboard" },
+  { icon: Bot, label: "🤖 IA Mestre", externalPath: "/dashboard/ia-mestre" },
+  { icon: LayoutDashboard, label: "Painel inicial", externalPath: "/dashboard" },
   { icon: ShoppingCart, label: "Vendas (Caixa/PDV)", page: "vendas" },
   { icon: ShoppingCart, label: "Histórico de Vendas", page: "vendas-arquivo" },
   { icon: ShoppingCart, label: "Trocas e devolução", page: "trocas" },
@@ -65,8 +67,7 @@ const fullMenuItems: MobileFullItem[] = [
     label: "Ordens de Serviço",
     page: "os",
     sub: [
-      { label: "Gestão de OS", page: "os-gestao", externalPath: "/dashboard/os" },
-      { label: "Painel integrado", page: "os" },
+      { label: "Painel integrado", page: "os", externalPath: "/dashboard/os" },
     ],
   },
   {
@@ -74,7 +75,6 @@ const fullMenuItems: MobileFullItem[] = [
     label: "Estoque",
     page: "produtos",
     sub: [
-      { label: "Gestão de Estoque", page: "estoque-gestao", externalPath: "/dashboard/estoque" },
       { label: "Produtos", page: "produtos" },
       { label: "Serviços", page: "servicos" },
       { label: "Planejamento de Compras", page: "planejamento-compras" },
@@ -262,6 +262,10 @@ export function MobileNav({ onNavigate, currentPage = "dashboard" }: MobileNavPr
             ) : (
               <button
                 onClick={() => {
+                  if (item.href) {
+                    window.location.href = item.href
+                    return
+                  }
                   if (
                     cadastroBasicoIncompleto &&
                     item.page &&

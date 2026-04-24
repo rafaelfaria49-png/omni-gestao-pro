@@ -19,6 +19,7 @@ type StoreRow = {
   logoUrl: string
   address: any
   profile: StoreProfile
+  subscriptionPlan?: "BRONZE" | "PRATA" | "OURO"
 }
 
 type StoreSettings = {
@@ -105,6 +106,7 @@ export function GestaoUnidadesSaas() {
           logoUrl: draft.logoUrl,
           address: draft.address,
           profile: draft.profile,
+          subscriptionPlan: draft.subscriptionPlan,
         }),
       })
       if (!r1.ok) throw new Error("Falha ao salvar unidade")
@@ -236,31 +238,21 @@ export function GestaoUnidadesSaas() {
               </div>
 
               <div className="space-y-1">
-                <Label>Plano (override por unidade)</Label>
+                <Label>Plano (SaaS)</Label>
                 <Select
-                  value={String((settings.printerConfig as any)?.planoAssinaturaOverride || "bronze")}
-                  onValueChange={(v) =>
-                    setSettings({
-                      ...settings,
-                      printerConfig: {
-                        ...(settings.printerConfig && typeof settings.printerConfig === "object" ? (settings.printerConfig as any) : {}),
-                        planoAssinaturaOverride: v,
-                      },
-                    })
-                  }
+                  value={draft.subscriptionPlan || "BRONZE"}
+                  onValueChange={(v) => setDraft({ ...draft, subscriptionPlan: v as any })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="bronze">Bronze</SelectItem>
-                    <SelectItem value="prata">Prata</SelectItem>
-                    <SelectItem value="ouro">Ouro</SelectItem>
+                    <SelectItem value="BRONZE">Bronze</SelectItem>
+                    <SelectItem value="PRATA">Prata</SelectItem>
+                    <SelectItem value="OURO">Ouro</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  Salva no banco por unidade para testes (IA e gatilhos de UI podem respeitar esse override).
-                </p>
+                <p className="text-xs text-muted-foreground">Campo oficial da unidade (salvo na tabela `stores`).</p>
               </div>
             </div>
 

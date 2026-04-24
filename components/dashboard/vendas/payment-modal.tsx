@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { 
   Banknote, 
   CreditCard, 
@@ -39,8 +39,9 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useToast } from "@/hooks/use-toast"
-import type { MaquininhaConfig } from "@/lib/rafacell-centro-financeiro"
-import { getMaquininhasParaPdvForStore } from "@/lib/rafacell-centro-financeiro"
+import { PdvVisorTotal } from "./painel-total"
+import type { MaquininhaConfig } from "@/lib/centro-financeiro"
+import { getMaquininhasParaPdvForStore } from "@/lib/centro-financeiro"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 import { normalizeDocDigits } from "@/lib/cpf"
@@ -72,6 +73,26 @@ export interface PaymentMethod {
   maquininhaNome?: string
 }
 
+/** Ajusta valores lançados para que a soma bata com `total` (ex.: troco em dinheiro). */
+export function normalizePaymentsToMatchTotal(payments: PaymentMethod[], total: number): PaymentMethod[] {
+  const sum = payments.reduce((s, p) => s + p.value, 0)
+  let excess = Math.round((sum - total) * 100) / 100
+  if (excess <= 0.02) return payments
+
+  const adjusted = payments.map((p) => ({ ...p }))
+  const trimFrom = (predicate: (t: PaymentMethodType) => boolean) => {
+    for (let i = adjusted.length - 1; i >= 0 && excess > 0.02; i--) {
+      if (!predicate(adjusted[i].type)) continue
+      const take = Math.min(adjusted[i].value, excess)
+      adjusted[i].value = Math.round((adjusted[i].value - take) * 100) / 100
+      excess = Math.round((excess - take) * 100) / 100
+    }
+  }
+  trimFrom((t) => t === "dinheiro")
+  trimFrom((t) => t !== "dinheiro")
+  return adjusted.filter((p) => p.value > 0.02)
+}
+
 interface Customer {
   id: string
   name: string
@@ -94,7 +115,12 @@ interface PaymentModalProps {
   selectedCustomer?: Customer | null
   /** Saldo de crédito/vale (mesmo CPF) para abatimento. */
   customerStoreCredit?: number
-  onConfirm?: (payments: PaymentMethod[]) => void
+  /** ID local do operador do caixa (auditoria). */
+  cashierId?: string
+  onConfirm?: (
+    payments: PaymentMethod[],
+    meta?: { cashierId?: string; discountAuthorizedByAdminId?: string; discountReais?: number; discountPercent?: number }
+  ) => void
   /** Quando definido ao abrir, adiciona automaticamente uma linha quitando o total restante com essa forma (pagamento “full” em um toque). */
   instantPayIntent?: PaymentMethodType | null
   onInstantPayIntentConsumed?: () => void
@@ -114,6 +140,7 @@ export function PaymentModal({
   custoPeca = 120.00,
   selectedCustomer,
   customerStoreCredit = 0,
+  cashierId,
   onConfirm,
   instantPayIntent = null,
   onInstantPayIntentConsumed,
@@ -132,6 +159,10 @@ export function PaymentModal({
   const [cartaoLiberado, setCartaoLiberado] = useState(true)
   const [maquininhasAtivasPdv, setMaquininhasAtivasPdv] = useState<MaquininhaConfig[]>([])
   const [maquininhaPdvId, setMaquininhaPdvId] = useState("")
+  const [adminSessionOk, setAdminSessionOk] = useState(false)
+  const [supervisorPin, setSupervisorPin] = useState("")
+  const [supervisorBusy, setSupervisorBusy] = useState(false)
+  const [supervisorErr, setSupervisorErr] = useState<string | null>(null)
 
   useEffect(() => {
     if (!isOpen) {
@@ -152,7 +183,16 @@ export function PaymentModal({
     payments.some((p) => p.type === "carne" || p.type === "a_prazo") && !documentoClienteValido(cpfEfetivo)
 
   const totalPaid = payments.reduce((sum, p) => sum + p.value, 0)
-  const remaining = Math.max(0, total - totalPaid)
+  const faltaPagar = Math.max(0, total - totalPaid)
+  const temDinheiro = payments.some((p) => p.type === "dinheiro")
+  const troco =
+    temDinheiro && totalPaid > total + 0.009 ? Math.round((totalPaid - total) * 100) / 100 : 0
+
+  const descontoManualAtivo = useMemo(() => {
+    const r = Number(discountReais) || 0
+    const p = Number(discountPercent) || 0
+    return r > 0.009 || p > 0.009
+  }, [discountPercent, discountReais])
   useEffect(() => {
     if (!isOpen) return
     const pdv = getMaquininhasParaPdvForStore(storeIdForPdv)
@@ -172,17 +212,33 @@ export function PaymentModal({
       setPayments([])
       setCurrentValue("")
       setSelectedType(null)
+      setSupervisorPin("")
+      setSupervisorErr(null)
+      setSupervisorBusy(false)
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await fetch("/api/auth/admin", { method: "GET", credentials: "include", cache: "no-store" })
+        const j = (await r.json().catch(() => null)) as { authenticated?: boolean }
+        if (!cancelled) setAdminSessionOk(j?.authenticated === true)
+      } catch {
+        if (!cancelled) setAdminSessionOk(false)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
   }, [isOpen])
 
   const handleAddPayment = useCallback(
     (type: PaymentMethodType) => {
       if (type === "a_prazo" && !selectedCustomer) {
-        toast({
-          variant: "destructive",
-          title: "Cliente obrigatório",
-          description: "Selecione o cliente (com identificação) para lançar à prazo em Contas a Receber.",
-        })
+        toast.error("⚠️ Selecione um cliente na tela inicial para liberar a venda a prazo.")
         return
       }
       if ((type === "a_prazo" || type === "carne") && selectedCustomer && !documentoClienteValido(cpfEfetivo)) {
@@ -221,7 +277,10 @@ export function PaymentModal({
         }
         const raw = currentValue.replace(",", ".").trim()
         const parsed = parseFloat(raw)
-        const value = Number.isFinite(parsed) && parsed > 0 ? parsed : max
+        const parsedOk = Number.isFinite(parsed) && parsed > 0
+        const base = parsedOk ? parsed : max
+        const value =
+          type === "dinheiro" ? base : Math.min(base, max)
         if (value <= 0) return prev
 
         const maq =
@@ -232,7 +291,7 @@ export function PaymentModal({
         const newPayment: PaymentMethod = {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           type,
-          value: Math.min(value, max),
+          value,
           installments: type === "carne" ? parseInt(carneInstallments, 10) || 1 : undefined,
           ...(maq ? { maquininhaId: maq.id, maquininhaNome: maq.nome } : {}),
         }
@@ -302,7 +361,7 @@ export function PaymentModal({
   }
 
   const handleGerarBoletoCarne = () => {
-    const valorTotal = parseFloat(currentValue) || remaining
+    const valorTotal = parseFloat(currentValue) || faltaPagar
     const qtd = Math.max(1, parseInt(carneInstallments || "1", 10))
     const parcelas = gerarParcelasCarne(valorTotal, qtd)
     const empresa = config.empresa
@@ -417,14 +476,11 @@ export function PaymentModal({
           </div>
 
           {/* Total em Destaque - Visível para o Cliente */}
-          <Card className="bg-secondary border-2 border-primary">
-            <CardContent className="pt-6 pb-6">
-              <div className="text-center">
-                <p className="text-sm text-muted-foreground uppercase tracking-wide mb-1">Total a Pagar</p>
-                <p className="text-5xl font-bold text-primary">{formatCurrency(total)}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <PdvVisorTotal
+            label="Total a pagar"
+            valorFormatado={formatCurrency(total)}
+            className="py-6 [&_p]:text-5xl [&_p]:font-bold"
+          />
 
           {exibirCapturaCpf && selectedCustomer && (
             <Card className="border-amber-500/50 bg-amber-500/10">
@@ -477,13 +533,29 @@ export function PaymentModal({
                   <p className="text-2xl font-bold text-green-500">{formatCurrency(totalPaid)}</p>
                 </CardContent>
               </Card>
-              <Card className={`${remaining > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-green-500/10 border-green-500/30'}`}>
+              <Card
+                className={
+                  faltaPagar > 0.009
+                    ? "border-amber-500/30 bg-amber-500/10"
+                    : troco > 0
+                      ? "border-emerald-500/35 bg-emerald-500/10"
+                      : "border-green-500/30 bg-green-500/10"
+                }
+              >
                 <CardContent className="pt-4 pb-4">
-                  <p className={`text-xs uppercase mb-1 ${remaining > 0 ? 'text-amber-400' : 'text-green-400'}`}>
-                    {remaining > 0 ? 'Restante' : 'Completo'}
+                  <p
+                    className={`mb-1 text-xs uppercase ${
+                      faltaPagar > 0.009 ? "text-amber-400" : troco > 0 ? "text-emerald-400" : "text-green-400"
+                    }`}
+                  >
+                    {faltaPagar > 0.009 ? "Restante" : troco > 0 ? "Troco" : "Completo"}
                   </p>
-                  <p className={`text-2xl font-bold ${remaining > 0 ? 'text-amber-500' : 'text-green-500'}`}>
-                    {formatCurrency(remaining)}
+                  <p
+                    className={`text-2xl font-bold ${
+                      faltaPagar > 0.009 ? "text-amber-500" : troco > 0 ? "text-emerald-500" : "text-green-500"
+                    }`}
+                  >
+                    {formatCurrency(faltaPagar > 0.009 ? faltaPagar : troco > 0 ? troco : 0)}
                   </p>
                 </CardContent>
               </Card>
@@ -518,7 +590,7 @@ export function PaymentModal({
           )}
 
           {/* Input de Valor */}
-          {remaining > 0 && (
+          {faltaPagar > 0 && (
             <div className="space-y-3">
               <Label className="text-sm text-muted-foreground">Valor a Adicionar</Label>
               <div className="flex gap-2">
@@ -526,7 +598,7 @@ export function PaymentModal({
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">R$</span>
                   <Input
                     type="number"
-                    placeholder={remaining.toFixed(2)}
+                    placeholder={faltaPagar.toFixed(2)}
                     value={currentValue}
                     onChange={(e) => setCurrentValue(e.target.value)}
                     className="pl-10 h-12 text-lg font-semibold bg-secondary border-border"
@@ -563,7 +635,7 @@ export function PaymentModal({
                 <Button 
                   variant="outline" 
                   size="sm" 
-                  onClick={() => handleQuickValue(remaining)}
+                  onClick={() => handleQuickValue(faltaPagar)}
                   className="border-border hover:bg-primary hover:text-primary-foreground"
                 >
                   Total Restante
@@ -573,7 +645,7 @@ export function PaymentModal({
           )}
 
           {/* Botões de Forma de Pagamento */}
-          {remaining > 0 && (
+          {faltaPagar > 0 && (
             <div className="space-y-3">
               <Label className="text-sm text-muted-foreground">Escolha a Forma de Pagamento</Label>
               {selectedCustomer && customerStoreCredit > 0 && (
@@ -613,10 +685,10 @@ export function PaymentModal({
                     handleAddPayment("dinheiro")
                   }}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "dinheiro"
                       ? "border-emerald-500 bg-emerald-500/10 dark:border-emerald-400/70 dark:bg-emerald-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-emerald-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-emerald-400/45"
                   )}
                 >
                   <Banknote className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
@@ -631,10 +703,10 @@ export function PaymentModal({
                     handleAddPayment("pix")
                   }}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "pix"
                       ? "border-teal-500 bg-teal-500/10 dark:border-teal-400/70 dark:bg-teal-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-teal-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-teal-400/45"
                   )}
                 >
                   <QrCode className="h-5 w-5 text-teal-600 dark:text-teal-400" />
@@ -655,10 +727,10 @@ export function PaymentModal({
                     handleAddPayment("cartao_debito")
                   }}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "cartao_debito"
                       ? "border-slate-500 bg-slate-500/10 dark:border-slate-400/70 dark:bg-slate-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-slate-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-slate-400/45"
                   )}
                 >
                   <CreditCard className="h-5 w-5 text-slate-600 dark:text-slate-300" />
@@ -679,10 +751,10 @@ export function PaymentModal({
                     handleAddPayment("cartao_credito")
                   }}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "cartao_credito"
                       ? "border-blue-500 bg-blue-500/10 dark:border-blue-400/70 dark:bg-blue-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-blue-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-blue-400/45"
                   )}
                 >
                   <CreditCard className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -692,21 +764,24 @@ export function PaymentModal({
                 <Button
                   size="lg"
                   variant="outline"
-                  disabled={!selectedCustomer}
                   title={
                     !selectedCustomer
-                      ? "Selecione o cliente no PDV para faturar à prazo em Contas a Receber"
+                      ? "Clique para ver o aviso: selecione o cliente na tela do PDV para à prazo"
                       : "Gera título em Contas a Receber ao confirmar a venda"
                   }
                   onClick={() => {
+                    if (!selectedCustomer) {
+                      toast.error("⚠️ Selecione um cliente na tela inicial para liberar a venda a prazo.")
+                      return
+                    }
                     setSelectedType("a_prazo")
                     handleAddPayment("a_prazo")
                   }}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "a_prazo"
                       ? "border-violet-500 bg-violet-500/10 dark:border-violet-400/70 dark:bg-violet-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-violet-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-violet-400/45"
                   )}
                 >
                   <CalendarClock className="h-5 w-5 text-violet-600 dark:text-violet-400" />
@@ -722,10 +797,10 @@ export function PaymentModal({
                     handleAddPayment("credito_vale")
                   }}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "credito_vale"
                       ? "border-amber-500 bg-amber-500/10 dark:border-amber-400/70 dark:bg-amber-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-amber-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-amber-400/45"
                   )}
                 >
                   <Wallet className="h-5 w-5 text-amber-600 dark:text-amber-400" />
@@ -739,10 +814,10 @@ export function PaymentModal({
                   title={!selectedCustomer ? "Selecione o cliente no PDV para carnê ou boleto" : undefined}
                   onClick={() => setSelectedType("carne")}
                   className={cn(
-                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/65",
+                    "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
                     selectedType === "carne"
                       ? "border-orange-500 bg-orange-500/10 dark:border-orange-400/70 dark:bg-orange-500/20"
-                      : "border-border dark:border-zinc-600 dark:hover:border-orange-400/45"
+                      : "border-border dark:border-white/10 dark:hover:border-orange-400/45"
                   )}
                 >
                   <FileText className="h-5 w-5 text-orange-600 dark:text-orange-400" />
@@ -753,7 +828,7 @@ export function PaymentModal({
           )}
 
           {/* Módulo Carnê */}
-          {selectedType === "carne" && remaining > 0 && (
+          {selectedType === "carne" && faltaPagar > 0 && (
             <Card className="border-primary bg-primary/5">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
@@ -772,7 +847,7 @@ export function PaymentModal({
                       <SelectContent>
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((n) => (
                           <SelectItem key={n} value={n.toString()}>
-                            {n}x de {formatCurrency((parseFloat(currentValue) || remaining) / n)}
+                            {n}x de {formatCurrency((parseFloat(currentValue) || faltaPagar) / n)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -781,7 +856,7 @@ export function PaymentModal({
                   <div className="space-y-2">
                     <Label className="text-sm">Valor Total Carnê</Label>
                     <div className="h-10 px-3 flex items-center bg-secondary rounded-md border border-border">
-                      <span className="font-semibold">{formatCurrency(parseFloat(currentValue) || remaining)}</span>
+                      <span className="font-semibold">{formatCurrency(parseFloat(currentValue) || faltaPagar)}</span>
                     </div>
                   </div>
                 </div>
@@ -804,7 +879,7 @@ export function PaymentModal({
                   </Button>
                 </div>
                 <div className="space-y-1 text-xs text-muted-foreground">
-                  {gerarParcelasCarne(parseFloat(currentValue) || remaining, parseInt(carneInstallments || "1", 10)).map((p) => (
+                  {gerarParcelasCarne(parseFloat(currentValue) || faltaPagar, parseInt(carneInstallments || "1", 10)).map((p) => (
                     <p key={p.numero}>{p.numero}/{carneInstallments} - {formatCurrency(p.valor)} - vence em {p.vencimento}</p>
                   ))}
                 </div>
@@ -848,6 +923,63 @@ export function PaymentModal({
 
           <Separator className="bg-border" />
 
+          {descontoManualAtivo && !adminSessionOk ? (
+            <div className="rounded-xl border-2 border-amber-500/35 bg-amber-500/10 px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-200">
+                Desconto manual exige supervisor
+              </p>
+              <p className="mt-1 text-xs text-foreground/80 dark:text-white/70">
+                Para confirmar a venda com desconto, informe a <strong>Senha do Supervisor</strong>.
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs text-muted-foreground">Senha do Supervisor</Label>
+                  <Input
+                    type="password"
+                    value={supervisorPin}
+                    onChange={(e) => setSupervisorPin(e.target.value)}
+                    className="h-11 bg-background"
+                    placeholder="PIN"
+                    autoComplete="off"
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11"
+                  disabled={supervisorBusy || supervisorPin.trim().length === 0}
+                  onClick={async () => {
+                    setSupervisorErr(null)
+                    setSupervisorBusy(true)
+                    try {
+                      const r = await fetch("/api/auth/admin", {
+                        method: "POST",
+                        credentials: "include",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ pin: supervisorPin.trim() }),
+                      })
+                      if (!r.ok) {
+                        setSupervisorErr("Senha inválida.")
+                        setAdminSessionOk(false)
+                        return
+                      }
+                      setAdminSessionOk(true)
+                      setSupervisorPin("")
+                    } catch {
+                      setSupervisorErr("Falha ao validar senha.")
+                      setAdminSessionOk(false)
+                    } finally {
+                      setSupervisorBusy(false)
+                    }
+                  }}
+                >
+                  Autorizar
+                </Button>
+              </div>
+              {supervisorErr ? <p className="mt-2 text-xs text-destructive">{supervisorErr}</p> : null}
+            </div>
+          ) : null}
+
           {/* Botões de Impressão */}
           <div className="space-y-3">
             <Label className="text-sm text-muted-foreground">Impressão e Documentos</Label>
@@ -856,7 +988,7 @@ export function PaymentModal({
                 size="lg"
                 variant="outline"
                 className="h-14 border-border hover:bg-secondary"
-                disabled={remaining > 0}
+                disabled={faltaPagar > 0.02}
                 onClick={() => toast({ title: "Cupom pronto para impressão", description: "Envie para a impressora térmica conectada." })}
               >
                 <Printer className="w-5 h-5 mr-2" />
@@ -870,7 +1002,7 @@ export function PaymentModal({
                 size="lg"
                 variant="outline"
                 className="h-14 border-border hover:bg-secondary"
-                disabled={remaining > 0}
+                disabled={faltaPagar > 0.02}
                 onClick={() => toast({ title: "Contrato de garantia gerado", description: "Documento preparado para impressão A4." })}
               >
                 <FileCheck className="w-5 h-5 mr-2" />
@@ -901,14 +1033,33 @@ export function PaymentModal({
                   })
                   return
                 }
-                onConfirm?.(payments)
+                if (descontoManualAtivo && !adminSessionOk) {
+                  toast({
+                    variant: "destructive",
+                    title: "Supervisor obrigatório",
+                    description: "Autorize o desconto manual para confirmar a venda.",
+                  })
+                  return
+                }
+                const normalized = normalizePaymentsToMatchTotal(payments, total)
+                const adminIdForAudit = descontoManualAtivo
+                  ? cashierId
+                    ? `${cashierId}:admin`
+                    : "admin_session"
+                  : undefined
+                onConfirm?.(normalized, {
+                  cashierId,
+                  discountAuthorizedByAdminId: descontoManualAtivo ? adminIdForAudit : undefined,
+                  discountReais: Number(discountReais) || 0,
+                  discountPercent: Number(discountPercent) || 0,
+                })
                 onClose()
               }}
-              disabled={remaining > 0 || docInvalidoParaConfirmar}
-              className="flex-1 h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+              disabled={faltaPagar > 0.02 || docInvalidoParaConfirmar || (descontoManualAtivo && !adminSessionOk)}
+              className="flex-1 h-12 bg-emerald-600 font-bold text-black hover:bg-emerald-500 disabled:opacity-50"
             >
-              {remaining > 0
-                ? `Falta ${formatCurrency(remaining)}`
+              {faltaPagar > 0.02
+                ? `Falta ${formatCurrency(faltaPagar)}`
                 : docInvalidoParaConfirmar
                   ? "Informe o CPF/CNPJ"
                   : "Confirmar Pagamento"}

@@ -22,6 +22,8 @@ export type ProdutoAtributoDef = {
 export interface InventoryItem {
   id: string
   name: string
+  /** Código de barras (EAN/GTIN) — usado no PDV Alta Performance. */
+  barcode?: string
   stock: number
   cost: number
   price: number
@@ -195,6 +197,12 @@ interface OperationsContextType {
     customerName?: string
     openCaixaIfClosed?: boolean
     saldoInicialAoAbrir?: number
+    auditMeta?: {
+      cashierId?: string
+      discountAuthorizedByAdminId?: string
+      discountReais?: number
+      discountPercent?: number
+    }
   }) => { ok: true; saleId: string } | { ok: false; reason: string }
   registrarDevolucao: (input: {
     saleId: string
@@ -562,6 +570,7 @@ export function OperationsProvider({
       customerName,
       openCaixaIfClosed,
       saldoInicialAoAbrir,
+      auditMeta,
     }) => {
       const current = stateRef.current
       const next: OpsState = {
@@ -669,6 +678,10 @@ export function OperationsProvider({
         customerCpf: cpfNorm || undefined,
         customerName: customerName?.trim() || undefined,
         paymentBreakdown: pb,
+        cashierId: auditMeta?.cashierId,
+        discountAuthorizedByAdminId: auditMeta?.discountAuthorizedByAdminId,
+        discountReais: auditMeta?.discountReais,
+        discountPercent: auditMeta?.discountPercent,
       })
 
       if (linkedOsId) {

@@ -28,6 +28,14 @@ export interface SaleRecord {
   customerCpf?: string
   customerName?: string
   paymentBreakdown: PaymentBreakdownFull
+  /** Auditoria: operador do caixa (id local do dispositivo). */
+  cashierId?: string
+  /** Auditoria: supervisor/admin que autorizou desconto manual (id local quando disponível). */
+  discountAuthorizedByAdminId?: string
+  /** Desconto manual no checkout (somente auditoria). */
+  discountReais?: number
+  /** Desconto manual no checkout (somente auditoria). */
+  discountPercent?: number
 }
 
 export interface DevolucaoRecord {

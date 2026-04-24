@@ -41,8 +41,9 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#0ea5e9' },
-    { media: '(prefers-color-scheme: dark)', color: '#0c4a6e' },
+    { media: '(prefers-color-scheme: light)', color: '#f8fafc' },
+    /* Preto ardósia profundo (alinhado ao dark do app) */
+    { media: '(prefers-color-scheme: dark)', color: '#030712' },
   ],
 }
 
@@ -53,7 +54,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR" suppressHydrationWarning>
-      <body className="font-sans antialiased">
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased tracking-tight">
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"

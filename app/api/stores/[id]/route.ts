@@ -4,10 +4,16 @@ import { prisma } from "@/lib/prisma"
 export const runtime = "nodejs"
 
 type StoreProfileInput = "ASSISTENCIA" | "VARIEDADES" | "SUPERMERCADO"
+type SubscriptionPlanInput = "BRONZE" | "PRATA" | "OURO"
 
 function parseProfile(raw: unknown): StoreProfileInput {
   if (raw === "VARIEDADES" || raw === "SUPERMERCADO" || raw === "ASSISTENCIA") return raw
   return "ASSISTENCIA"
+}
+
+function parseSubscriptionPlan(raw: unknown): SubscriptionPlanInput | undefined {
+  if (raw === "PRATA" || raw === "OURO" || raw === "BRONZE") return raw
+  return undefined
 }
 
 export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) {
@@ -31,9 +37,11 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       logoUrl: string
       address: unknown
       profile: StoreProfileInput
+      subscriptionPlan: SubscriptionPlanInput
     }>
 
     const profile = body.profile != null ? parseProfile(body.profile) : undefined
+    const subscriptionPlan = body.subscriptionPlan != null ? parseSubscriptionPlan(body.subscriptionPlan) : undefined
 
     const store = await prisma.store.update({
       where: { id },
@@ -44,6 +52,7 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         ...(body.logoUrl != null ? { logoUrl: String(body.logoUrl).trim() } : {}),
         ...(body.address !== undefined ? { address: body.address as any } : {}),
         ...(profile ? { profile } : {}),
+        ...(subscriptionPlan ? { subscriptionPlan } : {}),
       },
     })
     return NextResponse.json({ ok: true, store })

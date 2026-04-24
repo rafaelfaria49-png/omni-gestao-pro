@@ -3,30 +3,20 @@
 import { useState, useEffect } from "react"
 import { 
   Building2, 
-  Upload, 
-  FileKey, 
   Save, 
   RotateCcw,
   Shield,
-  AlertTriangle,
-  Check,
-  Image as ImageIcon,
-  MapPin,
   Phone,
   Mail,
-  Palette,
+  Receipt,
+  MessageCircle,
   Plus,
   Pencil,
   Trash2,
-  Database,
   Store,
-  Download,
   Settings,
-  MessageCircle,
   LayoutGrid,
   UtensilsCrossed,
-  Wallet,
-  Receipt,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -42,16 +32,13 @@ import {
   WHITELABEL_EMAIL_PADRAO,
   WHITELABEL_NOME_FANTASIA_PADRAO,
   WHITELABEL_TELEFONE_PADRAO,
-  type ConfigSistema,
-  type EnderecoEmpresa,
-  type PerfilLojaUnidade,
 } from "@/lib/config-empresa"
 import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { useToast } from "@/hooks/use-toast"
 import { usePerfilLoja } from "@/lib/perfil-loja-provider"
 import { ASSISTEC_STORES_SYNC_STORAGE_KEY, useLojaAtiva } from "@/lib/loja-ativa"
-import { maxLojasPermitidas } from "@/lib/plano-lojas"
+import { cn } from "@/lib/utils"
 import {
   Select,
   SelectContent,
@@ -70,11 +57,43 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { CentroPersonalizacaoFinanceiraRafacell } from "@/components/dashboard/configuracoes/centro-personalizacao-financeira-rafacell"
-import { ImportadorDadosExternos } from "@/components/dashboard/configuracoes/backup-importador/importador-dados-externos"
 import type { StoreSettingsBlob, StorePdvParams } from "@/lib/store-settings-types"
 
 const ATALHOS_PDV_MAX = 24
+const PDV_LAYOUT_STORAGE_KEY = "@omnigestao:pdv-layout"
+const RAMO_ATUACAO_STORAGE_PREFIX = "@omnigestao:ramo-atuacao:"
+
+type RamoAtuacao = "assistencia" | "supermercado" | "moda" | "outros"
+
+function ramoLabel(r: RamoAtuacao): string {
+  if (r === "assistencia") return "Assistência Técnica"
+  if (r === "supermercado") return "Supermercado/Mercearia"
+  if (r === "moda") return "Moda/Vestuário"
+  return "Variedades/Outros"
+}
+
+function assistenciaDefaultGarantiasProfissionais(): Array<{ id: string; servico: string; detalhes: string }> {
+  return [
+    {
+      id: "troca_tela",
+      servico: "Troca de Tela",
+      detalhes:
+        "Garantia de 90 dias. Cobre: Perda de sensibilidade ao toque (touch) e falhas de imagem de fábrica. NÃO COBRE: Vidro trincado, display vazado, manchas por pressão ou danos por líquidos. A remoção do selo de garantia anula este termo.",
+    },
+    {
+      id: "troca_bateria",
+      servico: "Troca de Bateria",
+      detalhes:
+        "Garantia de 90 dias. Cobre: Estufamento ou vício de carga (descarregando rápido de forma anormal). NÃO COBRE: Desgaste natural por ciclos de carga, danos por carregadores paralelos ou oxidação.",
+    },
+    {
+      id: "desoxidacao",
+      servico: "Desoxidação (Banho Químico)",
+      detalhes:
+        "Procedimento de tentativa de recuperação. Sem garantia de funcionamento pleno posterior devido à natureza corrosiva da água. O cliente declara ciência do risco de o aparelho parar de funcionar durante ou após o processo.",
+    },
+  ]
+}
 
 /** Lista editável de cards rápidos: pelo menos uma linha vazia se não houver dados. */
 function atalhosParaEdicao(
@@ -105,69 +124,22 @@ function parseCategoriasOcultasText(text: string): string[] {
   return out
 }
 
-function emptyEnderecoLoja(): EnderecoEmpresa {
-  return { rua: "", numero: "", bairro: "", cidade: "", estado: "", cep: "" }
-}
-
-function emptyPerfilLoja(id: string): PerfilLojaUnidade {
-  return {
-    id,
-    nomeFantasia: "",
-    razaoSocial: "",
-    cnpj: "",
-    endereco: emptyEnderecoLoja(),
-    logoUrl: "",
-  }
-}
-
-function padPerfisLojas(lojas: PerfilLojaUnidade[], count: number): PerfilLojaUnidade[] {
-  const out: PerfilLojaUnidade[] = []
-  for (let i = 0; i < count; i++) {
-    const existing = lojas[i]
-    const id = `loja-${i + 1}`
-    out.push(
-      existing
-        ? { ...existing, id: existing.id?.trim() || id }
-        : emptyPerfilLoja(id)
-    )
-  }
-  return out
-}
-
-function buildPerfisFromConfig(c: ConfigSistema): PerfilLojaUnidade[] {
-  const max = maxLojasPermitidas(c.assinatura.plano)
-  const saved = c.minhasLojas?.lojas ?? []
-  if (saved.length > 0) return padPerfisLojas(saved, max)
-  return padPerfisLojas(
-    [
-      {
-        id: LEGACY_PRIMARY_STORE_ID,
-        nomeFantasia: c.empresa.nomeFantasia,
-        razaoSocial: c.empresa.razaoSocial,
-        cnpj: c.empresa.cnpj,
-        endereco: { ...c.empresa.endereco },
-        logoUrl: c.empresa.identidadeVisual.logoUrl || "",
-      },
-    ],
-    max
-  )
-}
+// (limpeza total) helpers legados de "marca/logo", "certificado" e "rede" removidos.
 
 interface ConfiguracoesSistemaProps {
   initialTab?: string
 }
 
-export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: ConfiguracoesSistemaProps) {
+function normalizeConfigTab(input: string | undefined): "geral" | "pdv-vendas" | "servicos-garantias" {
+  const t = String(input || "").trim()
+  if (t === "pdv-vendas" || t === "pdv") return "pdv-vendas"
+  if (t === "servicos-garantias" || t === "garantias") return "servicos-garantias"
+  return "geral"
+}
+
+export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSistemaProps) {
   const {
     config,
-    updateEmpresa,
-    updateTermosGarantia,
-    updateCategoriaGarantia,
-    addCategoriaGarantia,
-    removeCategoriaGarantia,
-    resetConfig,
-    updatePdv,
-    updateMinhasLojas,
   } = useConfigEmpresa()
   const isBronze = config.assinatura.plano === "bronze"
   const { lojaAtivaId, refreshStoresList } = useLojaAtiva()
@@ -177,33 +149,15 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   const [termosTitulo, setTermosTitulo] = useState(configPadrao.termosGarantia.tituloGeral)
   const [termosCategorias, setTermosCategorias] = useState(() => [...configPadrao.termosGarantia.categorias])
   
-  const [activeTab, setActiveTab] = useState(initialTab)
+  const [activeTab, setActiveTab] = useState(() => normalizeConfigTab(initialTab))
   const [isSaving, setIsSaving] = useState(false)
-  const [savedMessage, setSavedMessage] = useState("")
-  
   // Estado local para formulário (sincronizado com o contexto)
   const [nomeFantasia, setNomeFantasia] = useState(config.empresa.nomeFantasia)
-  const [razaoSocial, setRazaoSocial] = useState(config.empresa.razaoSocial)
   const [cnpj, setCnpj] = useState(config.empresa.cnpj)
-  const [rua, setRua] = useState(config.empresa.endereco.rua)
-  const [numero, setNumero] = useState(config.empresa.endereco.numero)
-  const [bairro, setBairro] = useState(config.empresa.endereco.bairro)
-  const [cidade, setCidade] = useState(config.empresa.endereco.cidade)
-  const [estado, setEstado] = useState(config.empresa.endereco.estado)
-  const [cep, setCep] = useState(config.empresa.endereco.cep)
   const [telefone, setTelefone] = useState(config.empresa.contato.telefone)
   const [whatsapp, setWhatsapp] = useState(config.empresa.contato.whatsapp)
   const [whatsappDono, setWhatsappDono] = useState(config.empresa.contato.whatsappDono ?? "")
   const [email, setEmail] = useState(config.empresa.contato.email)
-  const [logo, setLogo] = useState<string | null>(config.empresa.identidadeVisual.logoUrl || null)
-  const [certificado, setCertificado] = useState<File | null>(null)
-  const [senhaCertificado, setSenhaCertificado] = useState("")
-  const [statusCertificado, setStatusCertificado] = useState(config.empresa.fiscal.certificadoDigitalStatus)
-
-  // Cores do tema
-  const [corPrimaria, setCorPrimaria] = useState("#FF0000")
-  const [corFundo, setCorFundo] = useState("#000000")
-  const [corTexto, setCorTexto] = useState("#FFFFFF")
 
   /** Texto da garantia legal + rascunho por id de categoria (sincronizado com o contexto). */
   const [textosTermos, setTextosTermos] = useState<Record<string, string>>(() => ({
@@ -217,6 +171,9 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   const [editingTermoId, setEditingTermoId] = useState<string | null>(null)
   const [editingTermo, setEditingTermo] = useState({ titulo: "", texto: "" })
   const [atalhosPDV, setAtalhosPDV] = useState(() => atalhosParaEdicao(config.pdv.atalhosRapidos))
+  const [pdvLayout, setPdvLayout] = useState<"classic" | "supermercado">("classic")
+  const [ramoAtuacao, setRamoAtuacao] = useState<RamoAtuacao>("assistencia")
+  const [remoteHasTermosGarantia, setRemoteHasTermosGarantia] = useState(false)
   const [ocultarCategoriasNoPdv, setOcultarCategoriasNoPdv] = useState(
     () => config.pdv.ocultarCategoriasNoPdv ?? configPadrao.pdv.ocultarCategoriasNoPdv
   )
@@ -238,40 +195,48 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   const [moduloControleConsumo, setModuloControleConsumo] = useState(
     () => config.pdv.moduloControleConsumo ?? configPadrao.pdv.moduloControleConsumo
   )
-  const [isGeneratingBackup, setIsGeneratingBackup] = useState(false)
   const [deleteTermoId, setDeleteTermoId] = useState<string | null>(null)
-  const [perfisLojas, setPerfisLojas] = useState<PerfilLojaUnidade[]>(() => buildPerfisFromConfig(configPadrao))
   const { perfilLoja } = usePerfilLoja()
-  const maxLojas = maxLojasPermitidas(config.assinatura.plano)
 
   // Atualizar aba quando prop mudar
   useEffect(() => {
-    setActiveTab(initialTab)
+    setActiveTab(normalizeConfigTab(initialTab))
   }, [initialTab])
+
+  useEffect(() => {
+    try {
+      const raw = String(localStorage.getItem(PDV_LAYOUT_STORAGE_KEY) || "").trim()
+      if (raw === "supermercado" || raw === "classic") setPdvLayout(raw)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  useEffect(() => {
+    const id = (lojaAtivaId || LEGACY_PRIMARY_STORE_ID).trim()
+    const k = `${RAMO_ATUACAO_STORAGE_PREFIX}${id}`
+    try {
+      const raw = String(localStorage.getItem(k) || "").trim()
+      if (raw === "assistencia" || raw === "supermercado" || raw === "moda" || raw === "outros") {
+        setRamoAtuacao(raw)
+        return
+      }
+    } catch {
+      /* ignore */
+    }
+    setRamoAtuacao(perfilLoja === "supermercado" ? "supermercado" : perfilLoja === "variedades" ? "outros" : "assistencia")
+  }, [lojaAtivaId, perfilLoja])
 
   // Sincronizar com o contexto quando ele mudar
   useEffect(() => {
     // Multi-tenant: para dados por unidade, carregamos do banco abaixo (não do config global).
     if (lojaAtivaId) return
     setNomeFantasia(config.empresa.nomeFantasia)
-    setRazaoSocial(config.empresa.razaoSocial)
     setCnpj(config.empresa.cnpj)
-    setRua(config.empresa.endereco.rua)
-    setNumero(config.empresa.endereco.numero)
-    setBairro(config.empresa.endereco.bairro)
-    setCidade(config.empresa.endereco.cidade)
-    setEstado(config.empresa.endereco.estado)
-    setCep(config.empresa.endereco.cep)
     setTelefone(config.empresa.contato.telefone)
     setWhatsapp(config.empresa.contato.whatsapp)
     setWhatsappDono(config.empresa.contato.whatsappDono ?? "")
     setEmail(config.empresa.contato.email)
-    setStatusCertificado(config.empresa.fiscal.certificadoDigitalStatus)
-    setLogo(config.empresa.identidadeVisual.logoUrl || null)
-    const [cf, cp, ct] = config.empresa.identidadeVisual.coresTema
-    if (cf) setCorFundo(cf)
-    if (cp) setCorPrimaria(cp)
-    if (ct) setCorTexto(ct)
     setTextosTermos({
       garantiaLegal: config.termosGarantia.garantiaLegal,
       ...Object.fromEntries(config.termosGarantia.categorias.map((c) => [c.id, c.detalhes])),
@@ -290,7 +255,6 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
       config.pdv.aliquotaImpostoEstimadoPdv ?? configPadrao.pdv.aliquotaImpostoEstimadoPdv
     )
     setModuloControleConsumo(config.pdv.moduloControleConsumo ?? configPadrao.pdv.moduloControleConsumo)
-    setPerfisLojas(buildPerfisFromConfig(config))
     setTermosTitulo(config.termosGarantia.tituloGeral)
     setTermosCategorias([...config.termosGarantia.categorias])
   }, [config])
@@ -309,35 +273,23 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
         const jSettings = (await rSettings.json().catch(() => ({}))) as { settings?: any }
         if (cancelled) return
         const s = jStore.store ?? {}
-        const addr = s.address && typeof s.address === "object" ? s.address : {}
         const st = jSettings.settings ?? {}
         const printerCfg = st.printerConfig && typeof st.printerConfig === "object" ? (st.printerConfig as Record<string, unknown>) : {}
         const blob: StoreSettingsBlob = {
           pdvParams: (printerCfg.pdvParams as any) || undefined,
           termosGarantia: (printerCfg.termosGarantia as any) || undefined,
-          certificadoA1: (printerCfg.certificadoA1 as any) || undefined,
         }
         setRemotePrinterConfig(printerCfg)
         setRemoteReceiptFooter(String(st.receiptFooter || ""))
 
         // Loja nova: campos vêm vazios para preencher.
         setNomeFantasia(String(s.name || ""))
-        setRazaoSocial(String(s.name || ""))
         setCnpj(String(s.cnpj || ""))
         setTelefone(String(s.phone || ""))
-        setLogo(String(s.logoUrl || "") || null)
-        setRua(String((addr as any).rua || ""))
-        setNumero(String((addr as any).numero || ""))
-        setBairro(String((addr as any).bairro || ""))
-        setCidade(String((addr as any).cidade || ""))
-        setEstado(String((addr as any).estado || ""))
-        setCep(String((addr as any).cep || ""))
 
         setEmail(String(st.contactEmail || ""))
         setWhatsapp(String(st.contactWhatsapp || ""))
         setWhatsappDono(String(st.contactWhatsappDono || ""))
-        setCertificado(null)
-        setSenhaCertificado("")
 
         // PDV params por unidade
         const pdv: Partial<StorePdvParams> = (blob.pdvParams as any) || {}
@@ -354,6 +306,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
         // Termos de garantia por unidade
         if (blob.termosGarantia && typeof blob.termosGarantia === "object") {
+          setRemoteHasTermosGarantia(true)
           const tg = blob.termosGarantia as any
           const legal = String(tg.garantiaLegal ?? configPadrao.termosGarantia.garantiaLegal)
           const categorias = Array.isArray(tg.categorias) ? tg.categorias : configPadrao.termosGarantia.categorias
@@ -368,39 +321,25 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             garantiaLegal: legal,
             ...Object.fromEntries((categorias as any[]).map((c) => [String(c.id), String(c.detalhes ?? "")])),
           }))
+        } else {
+          setRemoteHasTermosGarantia(false)
         }
 
-        // Certificado por unidade (metadata)
-        const cert = (blob.certificadoA1 as any) || {}
-        if (cert && typeof cert === "object" && cert.status) {
-          setStatusCertificado(String(cert.status))
-        } else {
-          setStatusCertificado("Inativo")
-        }
+        // Certificado/identidade visual/backup removidos desta tela (limpeza total)
       } catch {
         if (!cancelled) {
           // se falhar, não herda da RafaCell (mantém vazio)
           setNomeFantasia("")
-          setRazaoSocial("")
           setCnpj("")
           setTelefone("")
-          setLogo(null)
-          setRua("")
-          setNumero("")
-          setBairro("")
-          setCidade("")
-          setEstado("")
-          setCep("")
           setEmail("")
           setWhatsapp("")
           setWhatsappDono("")
           setRemotePrinterConfig({})
           setRemoteReceiptFooter("")
-          setStatusCertificado("Inativo")
           setTermosTitulo(configPadrao.termosGarantia.tituloGeral)
           setTermosCategorias([...configPadrao.termosGarantia.categorias])
-          setCertificado(null)
-          setSenhaCertificado("")
+          setRemoteHasTermosGarantia(false)
         }
       }
     })()
@@ -409,24 +348,17 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
     }
   }, [lojaAtivaId])
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onloadend = () => {
-        setLogo(reader.result as string)
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
-  const handleCertificadoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setCertificado(file)
-      setStatusCertificado("Ativo")
-    }
-  }
+  useEffect(() => {
+    // Defaults profissionais só para Assistência e somente se a unidade não tiver termos customizados no banco
+    if (ramoAtuacao !== "assistencia") return
+    if (remoteHasTermosGarantia) return
+    const profissionais = assistenciaDefaultGarantiasProfissionais()
+    setTermosCategorias(profissionais)
+    setTextosTermos((prev) => ({
+      ...prev,
+      ...Object.fromEntries(profissionais.map((c) => [c.id, c.detalhes])),
+    }))
+  }, [ramoAtuacao, remoteHasTermosGarantia])
 
   const handleSave = async () => {
     const nomeTrim = nomeFantasia.trim()
@@ -441,130 +373,76 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
     setIsSaving(true)
     try {
-      // Multi-tenant: empresa/contato por unidade (storeId).
-      if (lojaAtivaId) {
-        const lojaHeader = lojaAtivaId.trim()
-        const storeRes = await fetch(`/api/stores/${encodeURIComponent(lojaHeader)}`, {
-          method: "PUT",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            [ASSISTEC_LOJA_HEADER]: lojaHeader,
-          },
-          body: JSON.stringify({
-            name: nomeTrim,
-            cnpj,
-            phone: telefone,
-            logoUrl: logo || "",
-            address: { rua, numero, bairro, cidade, estado, cep },
-          }),
-        })
-        if (!storeRes.ok) {
-          const err = (await storeRes.json().catch(() => ({}))) as { error?: string }
-          throw new Error(err.error || `Falha ao salvar unidade (HTTP ${storeRes.status})`)
-        }
-        await fetch(`/api/stores/${encodeURIComponent(lojaHeader)}/settings`, {
-          method: "PUT",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            [ASSISTEC_LOJA_HEADER]: lojaHeader,
-          },
-          body: JSON.stringify({
-            contactEmail: email,
-            contactWhatsapp: whatsapp,
-            contactWhatsappDono: whatsappDono,
-            receiptFooter: remoteReceiptFooter,
-            printerConfig: {
-              ...(remotePrinterConfig || {}),
-              pdvParams: {
-                atalhosRapidos: atalhosPDV
-                  .filter((a) => a.nome.trim() && a.preco > 0)
-                  .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
-                garantiaPadraoDias: Math.max(1, Math.min(365, Math.round(Number(garantiaPadraoDias)) || configPadrao.pdv.garantiaPadraoDias)),
-                validadeOrcamentoDias: Math.max(1, Math.min(365, Math.round(Number(validadeOrcamentoDias)) || configPadrao.pdv.validadeOrcamentoDias)),
-                incluirImpostoEstimadoNoPdv,
-                aliquotaImpostoEstimadoPdv: Math.max(0, Math.min(100, Number(aliquotaImpostoEstimadoPdv) || 0)),
-                ocultarCategoriasNoPdv,
-                categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
-                moduloControleConsumo,
-              },
-              termosGarantia: {
-                ...configPadrao.termosGarantia,
-                tituloGeral: termosTitulo,
-                garantiaLegal: textosTermos.garantiaLegal ?? "",
-                categorias: termosCategorias.map((c) => ({
-                  ...c,
-                  detalhes: textosTermos[c.id] ?? c.detalhes,
-                })),
-              },
-              certificadoA1: {
-                status: statusCertificado,
-                fileName: certificado?.name || undefined,
-                updatedAt: new Date().toISOString(),
-              },
-            },
-          }),
-        })
-        await refreshStoresList()
-        try {
-          localStorage.setItem(ASSISTEC_STORES_SYNC_STORAGE_KEY, String(Date.now()))
-        } catch {
-          /* ignore */
-        }
-      } else {
-        // Modo legado (sem multiloja): mantém config global.
-        updateEmpresa({
-          nomeFantasia: nomeTrim,
-          razaoSocial,
-          cnpj,
-          endereco: { rua, numero, bairro, cidade, estado, cep },
-          contato: { telefone, whatsapp, whatsappDono, email },
-          identidadeVisual: { logoUrl: logo || "", coresTema: [corFundo, corPrimaria, corTexto] },
-          fiscal: {
-            certificadoDigitalStatus: statusCertificado,
-            tipoCertificado: "A1",
-            senhaCertificado,
-          },
-        })
+      // Hardening: arquitetura primária storeId-only. Sem loja ativa, não salva.
+      if (!lojaAtivaId) {
+        throw new Error("Nenhuma unidade ativa selecionada.")
       }
 
-      if (!lojaAtivaId) {
-        updateTermosGarantia({ garantiaLegal: textosTermos.garantiaLegal ?? "" })
-      termosCategorias.forEach((c) => {
-          const detalhes = textosTermos[c.id]
-          if (detalhes !== undefined) updateCategoriaGarantia(c.id, detalhes)
-        })
-        const rawG = Math.round(Number(garantiaPadraoDias)) || configPadrao.pdv.garantiaPadraoDias
-        const rawV = Math.round(Number(validadeOrcamentoDias)) || configPadrao.pdv.validadeOrcamentoDias
-        const diasG = Math.max(1, Math.min(365, rawG))
-        const diasV = Math.max(1, Math.min(365, rawV))
-        const ali = Math.max(0, Math.min(100, Number(aliquotaImpostoEstimadoPdv) || 0))
-        updatePdv({
-          atalhosRapidos: atalhosPDV
-            .filter((a) => a.nome.trim() && a.preco > 0)
-            .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
-          garantiaPadraoDias: diasG,
-          validadeOrcamentoDias: diasV,
-          incluirImpostoEstimadoNoPdv,
-          aliquotaImpostoEstimadoPdv: ali,
-          ocultarCategoriasNoPdv,
-          categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
-          moduloControleConsumo,
-        })
-
-        updateMinhasLojas({
-          lojas: padPerfisLojas(perfisLojas, maxLojas).map((p, idx) => ({
-            ...p,
-            id: p.id?.trim() || `loja-${idx + 1}`,
-          })),
-        })
+      const lojaHeader = lojaAtivaId.trim()
+      const storeRes = await fetch(`/api/stores/${encodeURIComponent(lojaHeader)}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          [ASSISTEC_LOJA_HEADER]: lojaHeader,
+        },
+        body: JSON.stringify({
+          name: nomeTrim,
+          cnpj,
+          phone: telefone,
+        }),
+      })
+      if (!storeRes.ok) {
+        const err = (await storeRes.json().catch(() => ({}))) as { error?: string }
+        throw new Error(err.error || `Falha ao salvar unidade (HTTP ${storeRes.status})`)
+      }
+      await fetch(`/api/stores/${encodeURIComponent(lojaHeader)}/settings`, {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          [ASSISTEC_LOJA_HEADER]: lojaHeader,
+        },
+        body: JSON.stringify({
+          contactEmail: email,
+          contactWhatsapp: whatsapp,
+          contactWhatsappDono: whatsappDono,
+          receiptFooter: remoteReceiptFooter,
+          printerConfig: {
+            ...(remotePrinterConfig || {}),
+            pdvParams: {
+              atalhosRapidos: atalhosPDV
+                .filter((a) => a.nome.trim() && a.preco > 0)
+                .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
+              garantiaPadraoDias: Math.max(1, Math.min(365, Math.round(Number(garantiaPadraoDias)) || configPadrao.pdv.garantiaPadraoDias)),
+              validadeOrcamentoDias: Math.max(1, Math.min(365, Math.round(Number(validadeOrcamentoDias)) || configPadrao.pdv.validadeOrcamentoDias)),
+              incluirImpostoEstimadoNoPdv,
+              aliquotaImpostoEstimadoPdv: Math.max(0, Math.min(100, Number(aliquotaImpostoEstimadoPdv) || 0)),
+              ocultarCategoriasNoPdv,
+              categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
+              moduloControleConsumo,
+            },
+            termosGarantia: {
+              ...configPadrao.termosGarantia,
+              tituloGeral: termosTitulo,
+              garantiaLegal: textosTermos.garantiaLegal ?? "",
+              categorias: termosCategorias.map((c) => ({
+                ...c,
+                detalhes: textosTermos[c.id] ?? c.detalhes,
+              })),
+            },
+          },
+        }),
+      })
+      await refreshStoresList()
+      try {
+        localStorage.setItem(ASSISTEC_STORES_SYNC_STORAGE_KEY, String(Date.now()))
+      } catch {
+        /* ignore */
       }
 
       // Perfil da Loja não é global: é coluna do Store (editar em Minhas Lojas / Gestão de Unidades).
 
-      setSavedMessage("Alterações salvas com sucesso!")
-      setTimeout(() => setSavedMessage(""), 3000)
     } catch (e) {
       toast({
         title: "Não foi possível salvar",
@@ -600,15 +478,12 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
   const handleAddTermo = () => {
     if (novoTermo.titulo && novoTermo.texto) {
       const id = novoTermo.titulo.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "")
-      addCategoriaGarantia({
-        id,
-        servico: novoTermo.titulo,
-        detalhes: novoTermo.texto
-      })
+      const next = { id, servico: novoTermo.titulo, detalhes: novoTermo.texto }
+      setTermosCategorias((prev) => [...prev, next])
+      setTextosTermos((prev) => ({ ...prev, [id]: novoTermo.texto }))
       setNovoTermo({ titulo: "", texto: "" })
       setIsAddingTermo(false)
-      setSavedMessage("Novo termo cadastrado!")
-      setTimeout(() => setSavedMessage(""), 3000)
+      toast({ title: "Termo cadastrado", description: "Novo termo adicionado com sucesso." })
     }
   }
 
@@ -622,11 +497,13 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
 
   const handleSaveEditTermo = () => {
     if (editingTermoId && editingTermo.titulo && editingTermo.texto) {
-      updateCategoriaGarantia(editingTermoId, editingTermo.texto, editingTermo.titulo)
+      setTermosCategorias((prev) =>
+        prev.map((c) => (c.id === editingTermoId ? { ...c, servico: editingTermo.titulo, detalhes: editingTermo.texto } : c))
+      )
+      setTextosTermos((prev) => ({ ...prev, [editingTermoId]: editingTermo.texto }))
       setEditingTermoId(null)
       setEditingTermo({ titulo: "", texto: "" })
-      setSavedMessage("Termo atualizado!")
-      setTimeout(() => setSavedMessage(""), 3000)
+      toast({ title: "Termo atualizado", description: "Alterações salvas no termo." })
     }
   }
 
@@ -638,10 +515,14 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
       userLabel: `${(config.empresa.nomeFantasia || "Loja").trim() || "Administrador"} (sessão local)`,
       detail: `Termo de garantia excluído: ${cat?.servico ?? deleteTermoId}`,
     })
-    removeCategoriaGarantia(deleteTermoId)
+    setTermosCategorias((prev) => prev.filter((c) => c.id !== deleteTermoId))
+    setTextosTermos((prev) => {
+      const next = { ...prev }
+      delete next[deleteTermoId]
+      return next
+    })
     setDeleteTermoId(null)
-    setSavedMessage("Termo excluído!")
-    setTimeout(() => setSavedMessage(""), 3000)
+    toast({ title: "Termo excluído", description: "O termo foi removido." })
   }
 
   const formatCnpj = (value: string) => {
@@ -653,93 +534,89 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
       .replace(/(\d{4})(\d)/, "$1-$2")
   }
 
-  const handleBackup = async () => {
-    setIsGeneratingBackup(true)
-    const backupPayload = {
-      generatedAt: new Date().toISOString(),
-      empresa: {
-        ...config.empresa,
-        nomeFantasia: config.empresa.nomeFantasia || WHITELABEL_NOME_FANTASIA_PADRAO,
-        cnpj: config.empresa.cnpj || WHITELABEL_CNPJ_PADRAO,
-      },
-      termosGarantia: config.termosGarantia,
-      minhasLojas: config.minhasLojas,
-    }
-    const blob = new Blob([JSON.stringify(backupPayload, null, 2)], {
-      type: "application/json;charset=utf-8",
-    })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `backup-erp-${new Date().toISOString().slice(0, 10)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    await new Promise((r) => setTimeout(r, 400))
-    setIsGeneratingBackup(false)
-    setSavedMessage("Backup gerado com sucesso!")
-    setTimeout(() => setSavedMessage(""), 3000)
-  }
-
-  const handleLogoLojaUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      const url = reader.result as string
-      setPerfisLojas((prev) => {
-        const next = [...prev]
-        next[index] = { ...next[index], logoUrl: url }
-        return next
-      })
-    }
-    reader.readAsDataURL(file)
-  }
-
   const handleRestaurarPadroesPdv = () => {
     const def = configPadrao.pdv
     setAtalhosPDV(atalhosParaEdicao(def.atalhosRapidos))
     setOcultarCategoriasNoPdv(def.ocultarCategoriasNoPdv)
     setCategoriasOcultasText(def.categoriasOcultasNoPdv.join("\n"))
     setModuloControleConsumo(def.moduloControleConsumo)
-    updatePdv({
-      atalhosRapidos: def.atalhosRapidos,
-      ocultarCategoriasNoPdv: def.ocultarCategoriasNoPdv,
-      categoriasOcultasNoPdv: [...def.categoriasOcultasNoPdv],
-      moduloControleConsumo: def.moduloControleConsumo,
-    })
-    setSavedMessage("Personalização do PDV restaurada aos padrões.")
-    setTimeout(() => setSavedMessage(""), 3000)
+    toast({ title: "PDV restaurado", description: "Parâmetros do PDV restaurados aos padrões." })
   }
 
   return (
     <>
-    <div className="space-y-6">
-      {/* Mensagem de sucesso */}
-      {savedMessage && (
-        <div className="bg-green-500/10 border border-green-500/20 text-green-500 px-4 py-3 rounded-lg flex items-center gap-2">
-          <Check className="w-5 h-5" />
-          {savedMessage}
-        </div>
-      )}
+    <div className="space-y-6 pb-28">
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3 h-auto gap-1 bg-secondary p-1">
-          <TabsTrigger value="unidade" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+        <TabsList
+          className={cn(
+            "grid w-full h-auto gap-1 bg-secondary p-1",
+            ramoAtuacao === "assistencia" ? "grid-cols-3" : "grid-cols-2"
+          )}
+        >
+          <TabsTrigger value="geral" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <Building2 className="w-4 h-4 mr-2 hidden sm:inline" />
-            Unidade Atual
+            Geral
           </TabsTrigger>
-          <TabsTrigger value="pdv" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+          <TabsTrigger value="pdv-vendas" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
             <LayoutGrid className="w-4 h-4 mr-2 hidden sm:inline" />
-            Parâmetros do PDV
+            PDV e Vendas
           </TabsTrigger>
-          <TabsTrigger value="sistema" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-            <Database className="w-4 h-4 mr-2 hidden sm:inline" />
-            Sistema
-          </TabsTrigger>
+          {ramoAtuacao === "assistencia" ? (
+            <TabsTrigger value="servicos-garantias" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <Shield className="w-4 h-4 mr-2 hidden sm:inline" />
+              Serviços e Garantias
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
-        {/* ABA 1: DADOS DA EMPRESA */}
-        <TabsContent value="unidade" className="mt-6">
+        {/* ABA 1: GERAL */}
+        <TabsContent value="geral" className="mt-6 space-y-6">
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Store className="w-5 h-5 text-primary" />
+                Ramo de Atuação
+              </CardTitle>
+              <CardDescription>
+                Ajusta a experiência do sistema para o seu nicho. A aba “Serviços e Garantias” só aparece para Assistência.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 max-w-xl">
+              <Label>Ramo de Atuação</Label>
+              <Select
+                value={ramoAtuacao}
+                onValueChange={(v) => {
+                  const next: RamoAtuacao =
+                    v === "supermercado" ? "supermercado" : v === "moda" ? "moda" : v === "outros" ? "outros" : "assistencia"
+                  setRamoAtuacao(next)
+                  const id = (lojaAtivaId || LEGACY_PRIMARY_STORE_ID).trim()
+                  const k = `${RAMO_ATUACAO_STORAGE_PREFIX}${id}`
+                  try {
+                    localStorage.setItem(k, next)
+                  } catch {
+                    /* ignore */
+                  }
+                  if (next !== "assistencia" && activeTab === "servicos-garantias") setActiveTab("geral")
+                  toast({ title: "Ramo atualizado", description: `Agora: ${ramoLabel(next)}.` })
+                }}
+              >
+                <SelectTrigger className="h-12">
+                  <SelectValue placeholder="Selecione o ramo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="assistencia">Assistência Técnica</SelectItem>
+                  <SelectItem value="supermercado">Supermercado/Mercearia</SelectItem>
+                  <SelectItem value="moda">Moda/Vestuário</SelectItem>
+                  <SelectItem value="outros">Variedades/Outros</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Preferência salva no navegador por unidade ativa.
+              </p>
+            </CardContent>
+          </Card>
+
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -778,77 +655,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                  <MapPin className="w-4 h-4" />
-                  Endereço Completo
-                </Label>
-                <div className="grid grid-cols-4 gap-2">
-                  <Input
-                    value={rua}
-                    onChange={(e) => setRua(e.target.value)}
-                    placeholder="Rua Dona Beni"
-                    className="col-span-3 h-10"
-                  />
-                  <Input
-                    value={numero}
-                    onChange={(e) => setNumero(e.target.value)}
-                    placeholder="Nº"
-                    className="h-10"
-                  />
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  <Input
-                    value={bairro}
-                    onChange={(e) => setBairro(e.target.value)}
-                    placeholder="Centro"
-                    className="h-10"
-                  />
-                  <Input
-                    value={cidade}
-                    onChange={(e) => setCidade(e.target.value)}
-                    placeholder="Taguaí"
-                    className="col-span-2 h-10"
-                  />
-                  <Input
-                    value={estado}
-                    onChange={(e) => setEstado(e.target.value)}
-                    placeholder="SP"
-                    className="h-10"
-                    maxLength={2}
-                  />
-                </div>
-                <Input
-                  value={cep}
-                  onChange={(e) => setCep(e.target.value)}
-                  placeholder="CEP: 18890-000"
-                  className="h-10 max-w-[200px]"
-                />
-              </div>
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* Ajustes: contatos, mensagens WhatsApp (orçamento), atalhos PDV */}
-        <TabsContent value="pdv" className="mt-6 space-y-6">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Store className="w-5 h-5 text-primary" />
-                Tipo da unidade (por loja)
-              </CardTitle>
-              <CardDescription>
-                O perfil não é global. Cada unidade (storeId) tem seu próprio tipo: Assistência/Variedades/Supermercado.
-                Altere em <strong>Gestão da Rede → Gestão de Unidades</strong>.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Unidade atual: <strong>{lojaAtivaId || LEGACY_PRIMARY_STORE_ID}</strong> · Perfil: <strong>{perfilLoja}</strong>
-              </p>
-            </CardContent>
-          </Card>
-
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -913,6 +721,74 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                   Recebe o resumo diário via API Evolution e o comando &quot;fechar dia&quot; pelo webhook.
                 </p>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ABA 2: PDV E VENDAS */}
+        <TabsContent value="pdv-vendas" className="mt-6 space-y-6">
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <LayoutGrid className="w-5 h-5 text-primary" />
+                Personalização do PDV
+              </CardTitle>
+              <CardDescription>
+                Escolha o layout do caixa para esta máquina (preferência salva no navegador).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 max-w-xl">
+              <div className="space-y-2">
+                <Label>Layout do PDV</Label>
+                <Select
+                  value={pdvLayout}
+                  onValueChange={(v) => {
+                    const next = v === "supermercado" ? "supermercado" : "classic"
+                    setPdvLayout(next)
+                    try {
+                      localStorage.setItem(PDV_LAYOUT_STORAGE_KEY, next)
+                    } catch {
+                      /* ignore */
+                    }
+                    toast({
+                      title: "Layout do PDV atualizado",
+                      description:
+                        next === "supermercado"
+                          ? "Layout Alta Performance ativado."
+                          : "Layout Serviços ativado.",
+                    })
+                  }}
+                >
+                  <SelectTrigger className="h-12">
+                    <SelectValue placeholder="Selecione o layout do PDV" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="classic">Layout Serviços (Foco em Assistência e Orçamentos)</SelectItem>
+                    <SelectItem value="supermercado">Layout Alta Performance (Foco em Agilidade)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Dica: o PDV muda na próxima abertura da tela (ou recarregando a página).
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Store className="w-5 h-5 text-primary" />
+                Tipo da unidade (por loja)
+              </CardTitle>
+              <CardDescription>
+                O perfil não é global. Cada unidade (storeId) tem seu próprio tipo: Assistência/Variedades/Supermercado.
+                Altere em <strong>Gestão da Rede → Gestão de Unidades</strong>.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Unidade atual: <strong>{lojaAtivaId || LEGACY_PRIMARY_STORE_ID}</strong> · Perfil: <strong>{perfilLoja}</strong>
+              </p>
             </CardContent>
           </Card>
 
@@ -1048,6 +924,10 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             </CardContent>
           </Card>
 
+        </TabsContent>
+
+        {ramoAtuacao === "assistencia" ? (
+          <TabsContent value="servicos-garantias" className="mt-6 space-y-6">
           <Card className="bg-card border-border">
             <CardHeader className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div>
@@ -1184,238 +1064,6 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
             </CardContent>
           </Card>
 
-        </TabsContent>
-
-        <TabsContent value="pdv" className="mt-6 space-y-6">
-          <CentroPersonalizacaoFinanceiraRafacell />
-        </TabsContent>
-
-        {/* ABA 2: MARCA E LOGO */}
-        <TabsContent value="unidade" className="mt-6">
-          <div className="grid gap-6 lg:grid-cols-2">
-            {/* Upload de Logo */}
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ImageIcon className="w-5 h-5 text-primary" />
-                  Logo da Empresa
-                </CardTitle>
-                <CardDescription>
-                  Imagem que aparecerá nos documentos (PNG, JPG)
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-col items-center gap-6">
-                  {/* Preview da Logo */}
-                  <div className="w-40 h-40 border-2 border-dashed border-border rounded-lg flex items-center justify-center bg-secondary/50 overflow-hidden">
-                    {logo ? (
-                      <img 
-                        src={logo} 
-                        alt="Logo" 
-                        className="w-full h-full object-contain"
-                      />
-                    ) : (
-                      <div className="text-center text-muted-foreground">
-                        <ImageIcon className="w-12 h-12 mx-auto mb-2" />
-                        <span className="text-sm">Sem logo</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Botão de Upload */}
-                  <div className="w-full space-y-3">
-                    <Label 
-                      htmlFor="logo-upload" 
-                      className="flex items-center justify-center gap-2 h-12 px-4 bg-secondary hover:bg-secondary/80 rounded-lg cursor-pointer transition-colors w-full"
-                    >
-                      <Upload className="w-5 h-5" />
-                      Escolher Imagem
-                    </Label>
-                    <input
-                      id="logo-upload"
-                      type="file"
-                      accept="image/png,image/jpeg,image/jpg"
-                      onChange={handleLogoUpload}
-                      className="hidden"
-                    />
-                    <p className="text-xs text-muted-foreground text-center">
-                      Recomendado: 200x200px, fundo transparente (PNG)
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Cores do Tema */}
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Palette className="w-5 h-5 text-primary" />
-                  Cores do Tema
-                </CardTitle>
-                <CardDescription>
-                  Tema visual: Preto, Vermelho e Branco
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Cor Primária (Botões/Destaques)</Label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="color"
-                        value={corPrimaria}
-                        onChange={(e) => setCorPrimaria(e.target.value)}
-                        className="w-12 h-12 rounded-lg border border-border cursor-pointer"
-                      />
-                      <Input
-                        value={corPrimaria}
-                        onChange={(e) => setCorPrimaria(e.target.value)}
-                        className="h-10 flex-1 uppercase"
-                        maxLength={7}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Cor de Fundo</Label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="color"
-                        value={corFundo}
-                        onChange={(e) => setCorFundo(e.target.value)}
-                        className="w-12 h-12 rounded-lg border border-border cursor-pointer"
-                      />
-                      <Input
-                        value={corFundo}
-                        onChange={(e) => setCorFundo(e.target.value)}
-                        className="h-10 flex-1 uppercase"
-                        maxLength={7}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Cor do Texto</Label>
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="color"
-                        value={corTexto}
-                        onChange={(e) => setCorTexto(e.target.value)}
-                        className="w-12 h-12 rounded-lg border border-border cursor-pointer"
-                      />
-                      <Input
-                        value={corTexto}
-                        onChange={(e) => setCorTexto(e.target.value)}
-                        className="h-10 flex-1 uppercase"
-                        maxLength={7}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Preview do Tema */}
-                <div className="p-4 rounded-lg border border-border" style={{ backgroundColor: corFundo }}>
-                  <p className="text-sm font-medium mb-2" style={{ color: corTexto }}>Preview do Tema</p>
-                  <Button size="sm" style={{ backgroundColor: corPrimaria, color: corTexto }}>
-                    Botão Exemplo
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* ABA 3: CERTIFICADO DIGITAL */}
-        <TabsContent value="unidade" className="mt-6">
-          <Card className="bg-card border-border max-w-2xl">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileKey className="w-5 h-5 text-primary" />
-                Certificado Digital A1
-              </CardTitle>
-              <CardDescription>
-                Necessário para emissão de NF-e (.pfx ou .p12)
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Status do Certificado */}
-              <div className="flex items-center gap-4 p-4 bg-secondary/50 rounded-lg">
-                <div className="w-14 h-14 bg-primary/10 rounded-lg flex items-center justify-center">
-                  <FileKey className="w-7 h-7 text-primary" />
-                </div>
-                <div className="flex-1">
-                  {certificado ? (
-                    <>
-                      <p className="font-medium text-foreground text-lg">
-                        {certificado.name}
-                      </p>
-                      <p className="text-sm text-green-500 flex items-center gap-1">
-                        <Check className="w-4 h-4" />
-                        Status: Ativo
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="font-medium text-foreground text-lg">
-                        Nenhum certificado enviado
-                      </p>
-                      <p className="text-sm text-yellow-500">
-                        Status: {statusCertificado}
-                      </p>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Upload */}
-              <div className="space-y-4">
-                <Label 
-                  htmlFor="cert-upload" 
-                  className="flex items-center justify-center gap-2 h-14 px-4 bg-secondary hover:bg-secondary/80 rounded-lg cursor-pointer transition-colors text-base"
-                >
-                  <Upload className="w-5 h-5" />
-                  {certificado ? "Substituir Certificado" : "Enviar Certificado A1"}
-                </Label>
-                <input
-                  id="cert-upload"
-                  type="file"
-                  accept=".pfx,.p12"
-                  onChange={handleCertificadoUpload}
-                  className="hidden"
-                />
-
-                {certificado && (
-                  <div className="space-y-2">
-                    <Label htmlFor="cert-senha">Senha do Certificado</Label>
-                    <Input
-                      id="cert-senha"
-                      type="password"
-                      value={senhaCertificado}
-                      onChange={(e) => setSenhaCertificado(e.target.value)}
-                      placeholder="Digite a senha do certificado"
-                      className="h-12"
-                    />
-                  </div>
-                )}
-              </div>
-
-              {/* Instruções */}
-              <div className="p-4 bg-muted/50 rounded-lg text-sm text-muted-foreground space-y-2">
-                <p className="font-medium text-foreground">Instruções:</p>
-                <ul className="list-disc list-inside space-y-1">
-                  <li>Apenas certificados do tipo A1 são suportados</li>
-                  <li>Formatos aceitos: .pfx ou .p12</li>
-                  <li>A senha é necessária para validar o certificado</li>
-                  <li>Certifique-se de que o certificado está válido (não expirado)</li>
-                </ul>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ABA 4: TERMOS DE GARANTIA */}
-        <TabsContent value="pdv" className="mt-6">
           <div className="space-y-6">
             {/* Header com Botões */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -1426,15 +1074,12 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                 </p>
               </div>
               <div className="flex gap-2">
-                <Button 
-                  onClick={() => setIsAddingTermo(true)}
-                  className="bg-primary hover:bg-primary/90"
-                >
+                <Button onClick={() => setIsAddingTermo(true)} className="bg-primary hover:bg-primary/90">
                   <Plus className="w-4 h-4 mr-2" />
                   Novo Termo
                 </Button>
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={handleRestaurarTodosTermos}
                   className="border-primary text-primary hover:bg-primary hover:text-primary-foreground"
                 >
@@ -1458,8 +1103,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     <Label>Título do Termo *</Label>
                     <Input
                       value={novoTermo.titulo}
-                      onChange={(e) => setNovoTermo(prev => ({ ...prev, titulo: e.target.value }))}
-                      placeholder="Ex: Serviço de Software"
+                      onChange={(e) => setNovoTermo((prev) => ({ ...prev, titulo: e.target.value }))}
+                      placeholder="Ex: Troca de Tela"
                       className="h-12"
                     />
                   </div>
@@ -1467,17 +1112,23 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     <Label>Texto da Garantia *</Label>
                     <Textarea
                       value={novoTermo.texto}
-                      onChange={(e) => setNovoTermo(prev => ({ ...prev, texto: e.target.value }))}
+                      onChange={(e) => setNovoTermo((prev) => ({ ...prev, texto: e.target.value }))}
                       rows={4}
                       placeholder="Digite as condições de garantia para este serviço..."
                       className="resize-none"
                     />
                   </div>
                   <div className="flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => { setIsAddingTermo(false); setNovoTermo({ titulo: "", texto: "" }) }}>
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsAddingTermo(false)
+                        setNovoTermo({ titulo: "", texto: "" })
+                      }}
+                    >
                       Cancelar
                     </Button>
-                    <Button 
+                    <Button
                       onClick={handleAddTermo}
                       disabled={!novoTermo.titulo || !novoTermo.texto}
                       className="bg-primary hover:bg-primary/90"
@@ -1505,8 +1156,8 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                       </CardDescription>
                     </div>
                   </div>
-                  <Button 
-                    variant="ghost" 
+                  <Button
+                    variant="ghost"
                     size="sm"
                     onClick={() => handleRestaurarTermos("garantiaLegal")}
                     className="text-muted-foreground hover:text-primary"
@@ -1518,9 +1169,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
               <CardContent>
                 <Textarea
                   value={textosTermos.garantiaLegal ?? ""}
-                  onChange={(e) =>
-                    setTextosTermos((prev) => ({ ...prev, garantiaLegal: e.target.value }))
-                  }
+                  onChange={(e) => setTextosTermos((prev) => ({ ...prev, garantiaLegal: e.target.value }))}
                   rows={3}
                   className="resize-none text-sm"
                 />
@@ -1540,7 +1189,7 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                         {editingTermoId === categoria.id ? (
                           <Input
                             value={editingTermo.titulo}
-                            onChange={(e) => setEditingTermo(prev => ({ ...prev, titulo: e.target.value }))}
+                            onChange={(e) => setEditingTermo((prev) => ({ ...prev, titulo: e.target.value }))}
                             className="h-8 text-base font-semibold"
                           />
                         ) : (
@@ -1554,34 +1203,33 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                     <div className="flex gap-1">
                       {editingTermoId === categoria.id ? (
                         <>
-                          <Button 
-                            variant="ghost" 
+                          <Button
+                            variant="ghost"
                             size="sm"
-                            onClick={() => { setEditingTermoId(null); setEditingTermo({ titulo: "", texto: "" }) }}
+                            onClick={() => {
+                              setEditingTermoId(null)
+                              setEditingTermo({ titulo: "", texto: "" })
+                            }}
                             className="text-muted-foreground"
                           >
                             Cancelar
                           </Button>
-                          <Button 
-                            size="sm"
-                            onClick={handleSaveEditTermo}
-                            className="bg-primary hover:bg-primary/90"
-                          >
+                          <Button size="sm" onClick={handleSaveEditTermo} className="bg-primary hover:bg-primary/90">
                             <Save className="w-4 h-4" />
                           </Button>
                         </>
                       ) : (
                         <>
-                          <Button 
-                            variant="ghost" 
+                          <Button
+                            variant="ghost"
                             size="icon"
                             onClick={() => handleEditTermo(categoria.id)}
                             className="text-muted-foreground hover:text-primary h-8 w-8"
                           >
                             <Pencil className="w-4 h-4" />
                           </Button>
-                          <Button 
-                            variant="ghost" 
+                          <Button
+                            variant="ghost"
                             size="icon"
                             onClick={() => setDeleteTermoId(categoria.id)}
                             className="text-muted-foreground hover:text-red-500 h-8 w-8"
@@ -1597,96 +1245,49 @@ export function ConfiguracoesSistema({ initialTab = "dados-empresa" }: Configura
                   {editingTermoId === categoria.id ? (
                     <Textarea
                       value={editingTermo.texto}
-                      onChange={(e) => setEditingTermo(prev => ({ ...prev, texto: e.target.value }))}
+                      onChange={(e) => setEditingTermo((prev) => ({ ...prev, texto: e.target.value }))}
                       rows={4}
                       className="resize-none text-sm"
                     />
                   ) : (
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {categoria.detalhes}
-                    </p>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{categoria.detalhes}</p>
                   )}
                 </CardContent>
               </Card>
             ))}
           </div>
-        </TabsContent>
 
-        <TabsContent value="sistema" className="mt-6">
-          <div className="space-y-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Upload className="w-5 h-5 text-primary" />
-                  Central de Importação de Dados
-                </CardTitle>
-                <CardDescription>
-                  Importação universal (um arquivo por vez) com mapeamento inteligente e validação antes de gravar.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <ImportadorDadosExternos />
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Database className="w-5 h-5 text-primary" />
-                  Backup do Sistema
-                </CardTitle>
-                <CardDescription>
-                  Gere um arquivo JSON com dados da empresa (cadastro, termos e lojas) para arquivo externo ou migração.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 text-sm text-muted-foreground">
-                  Recomendação: gerar backup diário ao final do expediente para manter histórico e segurança jurídica.
-                </div>
-                <div className="flex justify-end">
-                  <Button
-                    onClick={handleBackup}
-                    className="bg-primary hover:bg-primary/90"
-                    disabled={isGeneratingBackup}
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    {isGeneratingBackup ? "Gerando..." : "Gerar Backup"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
-
-        <TabsContent value="__rede_hidden" className="mt-6">
-          <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-            A gestão de unidades foi movida para o menu <strong>Gestão da Rede</strong>.
-          </div>
-        </TabsContent>
+        ) : null}
       </Tabs>
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 mt-4 border-t border-border">
-        <p className="text-sm text-muted-foreground max-w-xl">
-          Um único salvamento aplica empresa, marca, certificado, termos de garantia, contatos, mensagens de orçamento e atalhos do PDV.
-        </p>
-        <Button
-          size="lg"
-          className="h-12 px-8 bg-primary hover:bg-primary/90 shrink-0"
-          onClick={handleSave}
-          disabled={isSaving}
-        >
-          {isSaving ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-              Salvando...
-            </>
-          ) : (
-            <>
-              <Save className="w-5 h-5 mr-2" />
-              Salvar alterações
-            </>
-          )}
-        </Button>
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background/95 px-4 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:-mx-0 sm:rounded-b-lg">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <p className="text-sm text-muted-foreground max-w-xl">
+            Salve as configurações da unidade ativa. O layout do PDV também é gravado no navegador.
+          </p>
+          <Button
+            size="lg"
+            className="h-12 px-8 bg-primary hover:bg-primary/90 shrink-0"
+            onClick={() => {
+              handleSave()
+              toast({ title: "Configurações salvas", description: "Preferências atualizadas com sucesso." })
+            }}
+            disabled={isSaving}
+          >
+            {isSaving ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                Salvando...
+              </>
+            ) : (
+              <>
+                <Save className="w-5 h-5 mr-2" />
+                Salvar Configurações
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </div>
 

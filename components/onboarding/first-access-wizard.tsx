@@ -26,6 +26,7 @@ export function FirstAccessWizard() {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<WizardStep>(1)
   const [saving, setSaving] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
 
   const [nomeFantasia, setNomeFantasia] = useState("")
   const [cnpj, setCnpj] = useState("")
@@ -36,7 +37,8 @@ export function FirstAccessWizard() {
   const [email, setEmail] = useState("")
   const [perfil, setPerfil] = useState<StoreProfile>("ASSISTENCIA")
 
-  const canClose = !cadastroBasicoIncompleto
+  const dismissKey = useMemo(() => `@omnigestao:first-access-wizard:dismissed:${storeId}`, [storeId])
+  const canClose = !cadastroBasicoIncompleto || dismissed
   const title = useMemo(() => {
     if (step === 1) return "Boas-vindas! Vamos configurar sua loja"
     if (step === 2) return "Endereço e contatos"
@@ -44,13 +46,20 @@ export function FirstAccessWizard() {
   }, [step])
 
   useEffect(() => {
-    if (cadastroBasicoIncompleto) {
+    try {
+      const raw = String(sessionStorage.getItem(dismissKey) || "")
+      if (raw === "1") setDismissed(true)
+    } catch {
+      /* ignore */
+    }
+
+    if (cadastroBasicoIncompleto && !dismissed) {
       setOpen(true)
       setStep(1)
     } else {
       setOpen(false)
     }
-  }, [cadastroBasicoIncompleto])
+  }, [cadastroBasicoIncompleto, dismissKey, dismissed])
 
   useEffect(() => {
     // Prefill com dados remotos (se existirem) para evitar “wizard infinito” por falta de hidratação.
@@ -140,6 +149,12 @@ export function FirstAccessWizard() {
 
       toast({ title: "Cadastro concluído", description: "Dados básicos salvos. Você já pode operar o sistema." })
       setOpen(false)
+      setDismissed(false)
+      try {
+        sessionStorage.removeItem(dismissKey)
+      } catch {
+        /* ignore */
+      }
     } catch (e) {
       toast({
         variant: "destructive",
@@ -155,17 +170,44 @@ export function FirstAccessWizard() {
     <Dialog
       open={open}
       onOpenChange={(v) => {
-        if (!v && !canClose) return
+        if (!v && !canClose) {
+          setDismissed(true)
+          try {
+            sessionStorage.setItem(dismissKey, "1")
+          } catch {
+            /* ignore */
+          }
+          setOpen(false)
+          return
+        }
         setOpen(v)
       }}
     >
       <DialogContent
         className="sm:max-w-[720px]"
         onPointerDownOutside={(e) => {
-          if (!canClose) e.preventDefault()
+          if (!canClose) {
+            e.preventDefault()
+            setDismissed(true)
+            try {
+              sessionStorage.setItem(dismissKey, "1")
+            } catch {
+              /* ignore */
+            }
+            setOpen(false)
+          }
         }}
         onEscapeKeyDown={(e) => {
-          if (!canClose) e.preventDefault()
+          if (!canClose) {
+            e.preventDefault()
+            setDismissed(true)
+            try {
+              sessionStorage.setItem(dismissKey, "1")
+            } catch {
+              /* ignore */
+            }
+            setOpen(false)
+          }
         }}
       >
         <DialogHeader>
@@ -260,9 +302,27 @@ export function FirstAccessWizard() {
           </div>
         ) : null}
 
-        <div className="flex items-center justify-between gap-3 pt-2">
-          <div className="text-xs text-muted-foreground">Passo {step} de 3</div>
-          <div className="flex gap-2">
+        <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center justify-between gap-3 sm:justify-start">
+            <div className="text-xs text-muted-foreground">Passo {step} de 3</div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setDismissed(true)
+                try {
+                  sessionStorage.setItem(dismissKey, "1")
+                } catch {
+                  /* ignore */
+                }
+                setOpen(false)
+              }}
+            >
+              Voltar depois
+            </Button>
+          </div>
+
+          <div className="flex gap-2 sm:justify-end">
             {step > 1 ? (
               <Button type="button" variant="outline" onClick={back} disabled={saving}>
                 Voltar

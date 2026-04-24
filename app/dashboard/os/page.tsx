@@ -12,7 +12,18 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "@/components/ui/command"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -356,6 +367,9 @@ export default function DashboardOsPage() {
   const [novoClienteTel, setNovoClienteTel] = useState("")
   const [novoClienteEmail, setNovoClienteEmail] = useState("")
   const [novoClienteError, setNovoClienteError] = useState<string | null>(null)
+  const [novoEquipamentoOpen, setNovoEquipamentoOpen] = useState(false)
+  const [quickEqMarca, setQuickEqMarca] = useState("")
+  const [quickEqModelo, setQuickEqModelo] = useState("")
   const [clienteId, setClienteId] = useState("")
   const [equipamento, setEquipamento] = useState("")
   const [imei, setImei] = useState("")
@@ -656,7 +670,33 @@ export default function DashboardOsPage() {
 
   const closeModal = () => {
     if (submitting) return
+    setNovoClienteOpen(false)
+    setNovoEquipamentoOpen(false)
     setModalOpen(false)
+  }
+
+  const openNovoClienteDialog = () => {
+    setClientePickerOpen(false)
+    setNovoClienteError(null)
+    setNovoClienteNome("")
+    setNovoClienteTel("")
+    setNovoClienteEmail("")
+    setNovoClienteOpen(true)
+  }
+
+  const salvarEquipamentoRapido = () => {
+    const marca = quickEqMarca.trim()
+    const modelo = quickEqModelo.trim()
+    if (!marca && !modelo) {
+      toast({ title: "Preencha marca ou modelo", variant: "destructive" })
+      return
+    }
+    const nome = [marca, modelo].filter(Boolean).join(" ")
+    setEquipamento(nome)
+    setQuickEqMarca("")
+    setQuickEqModelo("")
+    setNovoEquipamentoOpen(false)
+    toast({ title: "Equipamento preenchido", description: nome })
   }
 
   const submit = async () => {
@@ -995,16 +1035,28 @@ export default function DashboardOsPage() {
 
                 <TabsContent value="dispositivo" className="mt-4 space-y-3">
               <div>
-                <label className="text-sm text-black/70">
-                  Cliente <span className="text-red-400">*</span>
-                </label>
+                <div className="flex items-end justify-between gap-2">
+                  <label className="flex-1 text-sm text-muted-foreground">
+                    Cliente <span className="text-red-400">*</span>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 text-primary hover:text-primary"
+                    title="Novo cliente (abre por cima; a OS permanece aberta)"
+                    onClick={openNovoClienteDialog}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
                 <Popover open={clientePickerOpen} onOpenChange={setClientePickerOpen}>
                   <PopoverTrigger asChild>
                     <button
                       type="button"
                       className={cn(
-                        "mt-1 flex h-10 w-full items-center justify-between rounded-md border border-border bg-background px-3 text-left text-black",
-                        !(clienteId || "").trim() && "text-black/50"
+                        "mt-1 flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-left text-foreground",
+                        !(clienteId || "").trim() && "text-muted-foreground"
                       )}
                       aria-expanded={clientePickerOpen}
                     >
@@ -1020,7 +1072,7 @@ export default function DashboardOsPage() {
                         value={clienteSearch}
                         onValueChange={setClienteSearch}
                         placeholder="Digite nome/telefone…"
-                        className="text-black placeholder:text-black/50"
+                        className="text-foreground placeholder:text-muted-foreground"
                       />
                       <CommandList>
                         <CommandEmpty>Nenhum cliente encontrado.</CommandEmpty>
@@ -1028,13 +1080,9 @@ export default function DashboardOsPage() {
                           <CommandItem
                             onSelect={() => {
                               setClientePickerOpen(false)
-                              setNovoClienteError(null)
-                              setNovoClienteNome("")
-                              setNovoClienteTel("")
-                              setNovoClienteEmail("")
-                              setNovoClienteOpen(true)
+                              openNovoClienteDialog()
                             }}
-                            className="text-black"
+                            className="text-foreground"
                           >
                             <Plus className="mr-2 h-4 w-4" />
                             + Novo Cliente
@@ -1057,7 +1105,7 @@ export default function DashboardOsPage() {
                                   setClienteId(c.id)
                                   setClientePickerOpen(false)
                                 }}
-                                className="text-black"
+                                className="text-foreground"
                               >
                                 <Check
                                   className={cn(
@@ -1078,143 +1126,100 @@ export default function DashboardOsPage() {
                 </Popover>
               </div>
 
-              {novoClienteOpen ? (
-                <div className="rounded-lg border border-border bg-background/50 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold text-black">Novo cliente</p>
-                    <button
-                      type="button"
-                      className="text-xs text-black/70 hover:underline"
-                      onClick={() => setNovoClienteOpen(false)}
-                    >
-                      fechar
-                    </button>
-                  </div>
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <div className="sm:col-span-2">
-                      <label className="text-sm text-black/70">Nome *</label>
-                      <input
-                        value={novoClienteNome}
-                        onChange={(e) => setNovoClienteNome(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black"
-                        placeholder="Nome do cliente"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm text-black/70">Telefone *</label>
-                      <input
-                        value={novoClienteTel}
-                        onChange={(e) => setNovoClienteTel(formatPhoneBrInput(e.target.value))}
-                        className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black"
-                        placeholder="(11) 99999-0000"
-                        inputMode="tel"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-sm text-black/70">E-mail (opcional)</label>
-                      <input
-                        value={novoClienteEmail}
-                        onChange={(e) => setNovoClienteEmail(e.target.value)}
-                        className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black"
-                        placeholder="cliente@email.com"
-                        inputMode="email"
-                      />
-                    </div>
-                  </div>
-                  {novoClienteError ? <p className="mt-2 text-sm text-red-600">{novoClienteError}</p> : null}
-                  <div className="mt-3 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      className="h-9 rounded-md border border-border bg-background px-3 text-sm text-black hover:bg-muted"
-                      onClick={() => setNovoClienteOpen(false)}
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      className="h-9 rounded-md bg-black px-3 text-sm font-semibold text-white hover:bg-zinc-900"
-                      onClick={async () => {
-                        const n = novoClienteNome.trim()
-                        const t = novoClienteTel.trim()
-                        const e = novoClienteEmail.trim()
-                        if (!n) return setNovoClienteError('O campo "Nome" é obrigatório.')
-                        if (!t || !isValidPhoneBr(t)) return setNovoClienteError("Informe um telefone válido com DDD.")
-                        setNovoClienteError(null)
-                        try {
-                          await createClienteInline(lojaHeader, { name: n, phone: t, ...(e ? { email: e } : {}) })
-                          const list = await loadClientes()
-                          const hit =
-                            list.find(
-                              (c) => c.name.trim().toLowerCase() === n.toLowerCase() && (c.phone ?? "") === t
-                            ) ?? null
-                          if (hit?.id) setClienteId(hit.id)
-                          setNovoClienteOpen(false)
-                        } catch (err) {
-                          setNovoClienteError(err instanceof Error ? err.message : String(err))
-                        }
-                      }}
-                    >
-                      Salvar cliente
-                    </button>
-                  </div>
-                </div>
-              ) : null}
               <div>
-                <label className="text-sm text-black/70">
-                  Equipamento <span className="text-red-400">*</span>
-                </label>
+                <div className="flex items-end justify-between gap-2">
+                  <label className="flex-1 text-sm text-muted-foreground">
+                    Equipamento <span className="text-red-400">*</span>
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 shrink-0 text-primary hover:text-primary"
+                    title="Montar nome do aparelho rapidamente (modal por cima)"
+                    onClick={() => {
+                      setQuickEqMarca("")
+                      setQuickEqModelo("")
+                      setNovoEquipamentoOpen(true)
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
                 <input
                   value={equipamento}
                   onChange={(e) => setEquipamento(e.target.value)}
                   placeholder="Ex.: iPhone 11"
-                  className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black placeholder:text-black/50 focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                  className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <div>
-                  <label className="text-sm text-black/70">IMEI</label>
+                  <label className="text-sm text-muted-foreground">IMEI</label>
                   <input
                     value={imei}
                     onChange={(e) => setImei(e.target.value)}
                     placeholder="Somente números"
                     inputMode="numeric"
-                    className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black placeholder:text-black/50 focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-black/70">Cor</label>
+                  <label className="text-sm text-muted-foreground">Cor</label>
                   <input
                     value={corAparelho}
                     onChange={(e) => setCorAparelho(e.target.value)}
                     placeholder="Ex.: Preto, Azul"
-                    className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black placeholder:text-black/50 focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </div>
-                <div>
-                  <label className="text-sm text-black/70">Senha do aparelho</label>
-                  <div className="mt-1 grid grid-cols-2 gap-2">
-                    <Select value={senhaTipo} onValueChange={(v) => setSenhaTipo(v as any)}>
-                      <SelectTrigger className="h-10 w-full border-border bg-background text-black">
+                <div className="sm:col-span-3">
+                  <label className="text-sm text-muted-foreground">Senha / desbloqueio do aparelho</label>
+                  <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-start">
+                    <Select
+                      value={senhaTipo}
+                      onValueChange={(v) => setSenhaTipo(v === "padrao" ? "padrao" : "numerica")}
+                    >
+                      <SelectTrigger className="h-10 w-full shrink-0 border-input bg-background text-foreground sm:max-w-[220px]">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="numerica">Senha Numérica</SelectItem>
-                        <SelectItem value="padrao">Desenho/Padrão</SelectItem>
+                        <SelectItem value="numerica">Senha numérica</SelectItem>
+                        <SelectItem value="padrao">Desenho / padrão</SelectItem>
                       </SelectContent>
                     </Select>
-                    <input
-                      value={senhaAparelho}
-                      onChange={(e) => setSenhaAparelho(e.target.value)}
-                      placeholder={senhaTipo === "numerica" ? "Ex.: 1234" : "Ex.: padrão"}
-                      className="h-10 w-full rounded-md border border-border bg-background px-3 text-black placeholder:text-black/50 focus:outline-none focus:ring-2 focus:ring-red-600/40"
-                    />
+                    <div className="min-w-0 flex-1">
+                      {senhaTipo === "padrao" ? (
+                        <Textarea
+                          value={senhaAparelho}
+                          onChange={(e) => setSenhaAparelho(e.target.value)}
+                          placeholder="Descreva o padrão (ex.: L no canto inferior esquerdo, depois linha diagonal…)"
+                          rows={3}
+                          autoComplete="off"
+                          className="min-h-[88px] resize-y bg-background text-foreground border-input"
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          value={senhaAparelho}
+                          onChange={(e) => setSenhaAparelho(e.target.value)}
+                          placeholder="Ex.: 1234 ou 000000"
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                      )}
+                    </div>
                   </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Em <strong>Desenho / padrão</strong> use o campo de texto para registrar como desbloquear o aparelho.
+                  </p>
                 </div>
               </div>
 
               <div>
-                <label className="text-sm text-black/70">
+                <label className="text-sm text-muted-foreground">
                   Defeito <span className="text-red-400">*</span>
                 </label>
                 <textarea
@@ -1222,17 +1227,17 @@ export default function DashboardOsPage() {
                   onChange={(e) => setDefeito(e.target.value)}
                   placeholder="Descrição do problema"
                   rows={3}
-                  className="mt-1 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-black placeholder:text-black/50 focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                  className="mt-1 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
               <div>
-                <label className="text-sm text-black/70">Laudo técnico (opcional)</label>
+                <label className="text-sm text-muted-foreground">Laudo técnico (opcional)</label>
                 <textarea
                   value={laudoTecnico}
                   onChange={(e) => setLaudoTecnico(e.target.value)}
                   placeholder="Observações internas / laudo"
                   rows={3}
-                  className="mt-1 w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-black placeholder:text-black/50 focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                  className="mt-1 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
 
@@ -1317,14 +1322,14 @@ export default function DashboardOsPage() {
                 </TabsContent>
 
                 <TabsContent value="financeiro" className="mt-4 space-y-3">
-              <div className="rounded-lg border border-border bg-background/40 p-3">
-                <p className="text-sm font-medium text-black">Peças do estoque</p>
-                <p className="text-xs text-black/70">Ao salvar, o sistema dá baixa no estoque e soma ao total da OS.</p>
+              <div className="rounded-lg border border-border bg-muted/30 p-3 dark:bg-zinc-900/60">
+                <p className="text-sm font-medium text-foreground">Peças do estoque</p>
+                <p className="text-xs text-muted-foreground">Ao salvar, o sistema dá baixa no estoque e soma ao total da OS.</p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end">
                   <div className="flex-1">
-                    <label className="text-xs text-black/70">Produto</label>
+                    <label className="text-xs text-muted-foreground">Produto</label>
                     <Select value={pickProdutoId || undefined} onValueChange={setPickProdutoId}>
-                      <SelectTrigger className="mt-0.5 h-10 w-full border-border bg-background text-black">
+                      <SelectTrigger className="mt-0.5 h-10 w-full border-input bg-background text-foreground">
                         <SelectValue placeholder="Selecione uma peça" />
                       </SelectTrigger>
                       <SelectContent>
@@ -1351,15 +1356,15 @@ export default function DashboardOsPage() {
                         key={l.key}
                         className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-sm"
                       >
-                        <span className="min-w-0 flex-1 truncate font-medium text-black">{l.nome}</span>
-                        <span className="text-black/70 tabular-nums">{formatMoney(l.precoUnitario)} venda</span>
-                        <span className="text-black/70 tabular-nums">{formatMoney(l.custoUnitario)} custo</span>
+                        <span className="min-w-0 flex-1 truncate font-medium text-foreground">{l.nome}</span>
+                        <span className="text-muted-foreground tabular-nums">{formatMoney(l.precoUnitario)} venda</span>
+                        <span className="text-muted-foreground tabular-nums">{formatMoney(l.custoUnitario)} custo</span>
                         <input
                           type="number"
                           min={1}
                           value={l.quantidade}
                           onChange={(e) => updateQtyLinha(l.key, parseInt(e.target.value, 10) || 1)}
-                          className="h-8 w-16 rounded border border-border bg-background px-2 text-center text-black tabular-nums"
+                          className="h-8 w-16 rounded-md border border-input bg-background px-2 text-center text-foreground tabular-nums"
                         />
                         <input
                           type="number"
@@ -1371,10 +1376,10 @@ export default function DashboardOsPage() {
                             const custoUnitario = Number.isFinite(v) && v >= 0 ? v : 0
                             setLinhas((prev) => prev.map((x) => (x.key === l.key ? { ...x, custoUnitario } : x)))
                           }}
-                          className="h-8 w-24 rounded border border-border bg-background px-2 text-center text-black tabular-nums"
+                          className="h-8 w-24 rounded-md border border-input bg-background px-2 text-center text-foreground tabular-nums"
                           aria-label="Custo unitário"
                         />
-                        <span className="tabular-nums text-black">{formatMoney(l.precoUnitario * l.quantidade)}</span>
+                        <span className="tabular-nums text-foreground">{formatMoney(l.precoUnitario * l.quantidade)}</span>
                         <button
                           type="button"
                           onClick={() => removeLinha(l.key)}
@@ -1386,13 +1391,13 @@ export default function DashboardOsPage() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-2 text-xs text-black/70">Nenhuma peça vinculada.</p>
+                  <p className="mt-2 text-xs text-muted-foreground">Nenhuma peça vinculada.</p>
                 )}
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="text-sm text-black/70">
+                  <label className="text-sm text-muted-foreground">
                     Valor mão de obra (serviço / sem peças) <span className="text-red-400">*</span>
                   </label>
                   <input
@@ -1400,13 +1405,13 @@ export default function DashboardOsPage() {
                     onChange={(e) => setValorBaseStr(digitsToMoneyBrString(e.target.value))}
                     placeholder="R$ 0,00"
                     inputMode="decimal"
-                    className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-black/70">Forma de pagamento</label>
+                  <label className="text-sm text-muted-foreground">Forma de pagamento</label>
                   <Select value={formaPagamento || undefined} onValueChange={setFormaPagamento}>
-                    <SelectTrigger className="mt-1 h-10 w-full border-border bg-background text-black">
+                    <SelectTrigger className="mt-1 h-10 w-full border-input bg-background text-foreground">
                       <SelectValue placeholder="Selecione…" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1419,28 +1424,28 @@ export default function DashboardOsPage() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-sm text-black/70">Valor de entrada (sinal)</label>
+                  <label className="text-sm text-muted-foreground">Valor de entrada (sinal)</label>
                   <input
                     value={valorEntradaStr}
                     onChange={(e) => setValorEntradaStr(digitsToMoneyBrString(e.target.value))}
                     placeholder="R$ 0,00"
                     inputMode="decimal"
-                    className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-black/70">Data prevista de entrega</label>
+                  <label className="text-sm text-muted-foreground">Data prevista de entrega</label>
                   <input
                     type="date"
                     value={dataPrevistaEntrega}
                     onChange={(e) => setDataPrevistaEntrega(e.target.value)}
-                    className="mt-1 h-10 w-full rounded-md border border-border bg-background px-3 text-black focus:outline-none focus:ring-2 focus:ring-red-600/40"
+                    className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-black/70">Status</label>
+                  <label className="text-sm text-muted-foreground">Status</label>
                   <Select value={status} onValueChange={(v) => setStatus(v as StatusOrdemServico)}>
-                    <SelectTrigger className="mt-1 h-10 w-full border-border bg-background text-black">
+                    <SelectTrigger className="mt-1 h-10 w-full border-input bg-background text-foreground">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1454,28 +1459,28 @@ export default function DashboardOsPage() {
                 </div>
               </div>
 
-              <div className="rounded-lg border border-red-900/40 bg-zinc-950/50 px-4 py-3">
-                <div className="flex justify-between text-sm text-black/70">
+              <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 dark:border-zinc-700 dark:bg-zinc-900/80">
+                <div className="flex justify-between text-sm text-muted-foreground">
                   <span>Subtotal peças</span>
-                  <span className="tabular-nums text-black">{formatMoney(somaPecas)}</span>
+                  <span className="tabular-nums text-foreground">{formatMoney(somaPecas)}</span>
                 </div>
-                <div className="mt-1 flex justify-between text-sm text-black/70">
+                <div className="mt-1 flex justify-between text-sm text-muted-foreground">
                   <span>Custo peças</span>
-                  <span className="tabular-nums text-black">{formatMoney(somaCustoPecas)}</span>
+                  <span className="tabular-nums text-foreground">{formatMoney(somaCustoPecas)}</span>
                 </div>
-                <div className="mt-1 flex justify-between text-sm text-black/70">
+                <div className="mt-1 flex justify-between text-sm text-muted-foreground">
                   <span>Valor base</span>
-                  <span className="tabular-nums text-black">{formatMoney(parsedValorBase)}</span>
+                  <span className="tabular-nums text-foreground">{formatMoney(parsedValorBase)}</span>
                 </div>
                 {adminChecked && isAdmin ? (
-                  <div className="mt-1 flex justify-between text-sm text-black/70">
+                  <div className="mt-1 flex justify-between text-sm text-muted-foreground">
                     <span>Lucro bruto (admin)</span>
-                    <span className="tabular-nums text-black">{formatMoney(lucroBrutoEstimado)}</span>
+                    <span className="tabular-nums text-foreground">{formatMoney(lucroBrutoEstimado)}</span>
                   </div>
                 ) : null}
-                <div className="mt-2 flex justify-between border-t border-border pt-2 text-base font-semibold text-black">
+                <div className="mt-2 flex justify-between border-t border-border pt-2 text-base font-semibold text-foreground dark:border-zinc-600">
                   <span>Total da OS</span>
-                  <span className="tabular-nums text-red-400">{formatMoney(totalOs)}</span>
+                  <span className="tabular-nums text-primary">{formatMoney(totalOs)}</span>
                 </div>
               </div>
                 </TabsContent>
@@ -1507,6 +1512,121 @@ export default function DashboardOsPage() {
           </div>
         </div>
       ) : null}
+
+      <Dialog open={novoClienteOpen} onOpenChange={setNovoClienteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Novo cliente</DialogTitle>
+            <DialogDescription>
+              Cadastro rápido. Este painel fica por cima da OS; ao salvar, o cliente é selecionado automaticamente.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2 space-y-2">
+              <Label htmlFor="os-novo-cli-nome">Nome *</Label>
+              <Input
+                id="os-novo-cli-nome"
+                value={novoClienteNome}
+                onChange={(e) => setNovoClienteNome(e.target.value)}
+                placeholder="Nome do cliente"
+                className="bg-background text-foreground border-input"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="os-novo-cli-tel">Telefone *</Label>
+              <Input
+                id="os-novo-cli-tel"
+                value={novoClienteTel}
+                onChange={(e) => setNovoClienteTel(formatPhoneBrInput(e.target.value))}
+                placeholder="(11) 99999-0000"
+                inputMode="tel"
+                className="bg-background text-foreground border-input"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="os-novo-cli-email">E-mail (opcional)</Label>
+              <Input
+                id="os-novo-cli-email"
+                value={novoClienteEmail}
+                onChange={(e) => setNovoClienteEmail(e.target.value)}
+                placeholder="cliente@email.com"
+                inputMode="email"
+                className="bg-background text-foreground border-input"
+              />
+            </div>
+          </div>
+          {novoClienteError ? <p className="text-sm text-destructive">{novoClienteError}</p> : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setNovoClienteOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={async () => {
+                const n = novoClienteNome.trim()
+                const t = novoClienteTel.trim()
+                const e = novoClienteEmail.trim()
+                if (!n) return setNovoClienteError('O campo "Nome" é obrigatório.')
+                if (!t || !isValidPhoneBr(t)) return setNovoClienteError("Informe um telefone válido com DDD.")
+                setNovoClienteError(null)
+                try {
+                  await createClienteInline(lojaHeader, { name: n, phone: t, ...(e ? { email: e } : {}) })
+                  const list = await loadClientes()
+                  const hit =
+                    list.find((c) => c.name.trim().toLowerCase() === n.toLowerCase() && (c.phone ?? "") === t) ?? null
+                  if (hit?.id) setClienteId(hit.id)
+                  setNovoClienteOpen(false)
+                } catch (err) {
+                  setNovoClienteError(err instanceof Error ? err.message : String(err))
+                }
+              }}
+            >
+              Salvar cliente
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={novoEquipamentoOpen} onOpenChange={setNovoEquipamentoOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Equipamento rápido</DialogTitle>
+            <DialogDescription>
+              Informe marca e modelo; o nome será colado no campo Equipamento da OS (você pode editar depois).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="os-eq-marca">Marca</Label>
+              <Input
+                id="os-eq-marca"
+                value={quickEqMarca}
+                onChange={(e) => setQuickEqMarca(e.target.value)}
+                placeholder="Ex.: Apple"
+                className="bg-background text-foreground border-input"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="os-eq-modelo">Modelo</Label>
+              <Input
+                id="os-eq-modelo"
+                value={quickEqModelo}
+                onChange={(e) => setQuickEqModelo(e.target.value)}
+                placeholder="Ex.: iPhone 13"
+                className="bg-background text-foreground border-input"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setNovoEquipamentoOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="button" onClick={salvarEquipamentoRapido}>
+              Aplicar ao campo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}>
         <AlertDialogContent className="border-border bg-card">

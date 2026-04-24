@@ -22,5 +22,5 @@ export async function getVerifiedSubscriptionFromCookies(): Promise<
 
 export async function isAdminSession(): Promise<boolean> {
   const jar = await cookies()
-  return jar.get(ADMIN_COOKIE)?.value === "1"
+  return !!(jar.get(ADMIN_COOKIE)?.value || "").trim()
 }

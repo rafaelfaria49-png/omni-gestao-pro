@@ -179,6 +179,14 @@ function DashboardContent() {
       router.replace("/suporte")
       return
     }
+    if (raw === "dashboard-omni") {
+      router.replace("/dashboard")
+      return
+    }
+    if (raw === "clientes-gestao") {
+      router.replace("/dashboard/clientes")
+      return
+    }
     setCurrentPage(raw ?? "dashboard")
   }, [subscriptionGate, searchParams, router])
 

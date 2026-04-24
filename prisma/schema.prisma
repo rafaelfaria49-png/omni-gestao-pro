@@ -15,6 +15,12 @@ enum StoreProfile {
   SUPERMERCADO
 }
 
+enum SubscriptionPlan {
+  BRONZE
+  PRATA
+  OURO
+}
+
 model Store {
   /** Use ids estáveis: loja-1, loja-2, ... */
   id       String       @id
@@ -25,6 +31,8 @@ model Store {
   /** Endereço completo (rua/numero/bairro/cidade/uf/cep) como JSON. */
   address  Json?        @map("address") @db.JsonB
   profile  StoreProfile @default(ASSISTENCIA) @map("profile")
+  /** Plano SaaS oficial por unidade (first-class). */
+  subscriptionPlan SubscriptionPlan @default(BRONZE) @map("subscriptionPlan")
   createdAt DateTime    @default(now()) @map("createdAt")
   updatedAt DateTime    @updatedAt @map("updatedAt")
 
@@ -37,6 +45,8 @@ model Store {
   vendas Venda[]
   categorias CategoriaProduto[]
   settings StoreSettings?
+  iaConversations IaConversation[]
+  iaMessages IaMessage[]
 
   @@index([profile])
   @@map("stores")
@@ -59,6 +69,47 @@ model StoreSettings {
   updatedAt     DateTime @updatedAt @map("updatedAt")
 
   @@map("store_settings")
+}
+
+model IaConversation {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /** Nome opcional (ex.: "Campanhas Abril", "OS/Orçamentos"). */
+  title     String   @default("") @map("title")
+  /** Modelo selecionado (ex.: "gpt-4o", "claude-3.5", "auto"). */
+  model     String   @default("auto") @map("model")
+  /** Se true, aplicar identidade/brand voice da loja. */
+  brandVoiceEnabled Boolean @default(true) @map("brandVoiceEnabled")
+
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  messages  IaMessage[]
+
+  @@index([storeId, updatedAt])
+  @@map("ia_conversations")
+}
+
+model IaMessage {
+  id             String   @id @default(cuid())
+  storeId         String   @map("storeId")
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  conversationId  String   @map("conversationId")
+  conversation    IaConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role            String   @map("role") // "user" | "assistant" | "system"
+  content         String   @map("content") @db.Text
+  /** Payload auxiliar opcional (tokens, tool calls, etc.) */
+  meta            Json?    @map("meta") @db.JsonB
+
+  createdAt       DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("ia_messages")
 }
 
 model Cliente {
@@ -134,6 +185,8 @@ model Produto {
   store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
   /** Código de barras / SKU (pode se repetir em lojas diferentes). */
   sku       String?  @map("sku")
+  /** Código de barras (EAN/GTIN) — leitura no PDV Alta Performance. */
+  barcode   String?  @map("barcode")
   name      String   @map("name")
   stock     Int      @default(0) @map("stock")
   /** Custo unitário (planilhas/backup): coluna `price_cost` no Supabase. */
@@ -147,6 +200,7 @@ model Produto {
 
   @@index([storeId])
   @@unique([storeId, sku], name: "storeId_sku")
+  @@unique([storeId, barcode], name: "storeId_barcode")
   @@map("estoque_produtos")
 }
 

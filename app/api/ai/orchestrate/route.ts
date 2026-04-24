@@ -42,32 +42,39 @@ export async function POST(req: Request) {
 
   const lojaId = lojaIdFromRequest(req, body)
 
-  // Plano: preferir cookie verificado quando existir (estrutura pronta para DB no futuro).
-  let plano: PlanoAssinatura | string = (body.plano as PlanoAssinatura) ?? "bronze"
+  // Plano (first-class): resolve sempre a partir da unidade (Store.subscriptionPlan).
+  // Fallback temporário: cookie verificado / body, para compatibilidade em ambientes sem coluna preenchida.
+  let plano: PlanoAssinatura | string = "bronze"
   try {
-    const sub = await getVerifiedSubscriptionFromCookies()
-    if (sub.ok && typeof sub.plano === "string" && sub.plano.trim()) {
-      plano = sub.plano.trim()
-    }
+    const store = await prisma.store.findUnique({ where: { id: lojaId }, select: { subscriptionPlan: true } })
+    const p = String(store?.subscriptionPlan || "").trim()
+    if (p === "OURO") plano = "ouro"
+    else if (p === "PRATA") plano = "prata"
+    else if (p === "BRONZE") plano = "bronze"
   } catch {
-    /* ignora */
+    /* ignore */
+  }
+  if (plano === "bronze") {
+    try {
+      const sub = await getVerifiedSubscriptionFromCookies()
+      if (sub.ok && typeof sub.plano === "string" && sub.plano.trim()) {
+        plano = sub.plano.trim()
+      } else if (typeof body.plano === "string" && body.plano.trim()) {
+        plano = body.plano.trim()
+      }
+    } catch {
+      /* ignora */
+    }
   }
 
   // Modelo: básico travado no backend; premium pode escolher (request + preferência salva).
   let storedModel: string | null = null
-  let planoOverride: PlanoAssinatura | null = null
   try {
     const st = await prisma.storeSettings.findUnique({ where: { storeId: lojaId }, select: { printerConfig: true } })
     const cfg = st?.printerConfig && typeof st.printerConfig === "object" ? (st.printerConfig as Record<string, unknown>) : null
     storedModel = cfg && typeof (cfg as any).aiMestreModel === "string" ? String((cfg as any).aiMestreModel).trim() : null
-    const raw = cfg && typeof (cfg as any).planoAssinaturaOverride === "string" ? String((cfg as any).planoAssinaturaOverride).trim() : ""
-    planoOverride = raw === "bronze" || raw === "prata" || raw === "ouro" ? (raw as PlanoAssinatura) : null
   } catch {
     storedModel = null
-    planoOverride = null
-  }
-  if (planoOverride) {
-    plano = planoOverride
   }
   const model = pickMestreModel({ plano, requestedModel: body.model, storedModel })
 

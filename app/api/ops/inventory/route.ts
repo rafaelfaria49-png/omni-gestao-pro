@@ -47,6 +47,7 @@ async function withDbRetry<T>(label: string, fn: () => Promise<T>, attempts = 6)
 type InvPayload = {
   id: string
   name: string
+  barcode?: string
   stock: number
   cost: number
   price: number
@@ -58,9 +59,14 @@ type InvPayload = {
 
 function rowToItem(row: Produto): InvPayload {
   const sku = typeof (row as unknown as { sku?: unknown }).sku === "string" ? String((row as unknown as { sku: string }).sku) : ""
+  const barcode =
+    typeof (row as unknown as { barcode?: unknown }).barcode === "string"
+      ? String((row as unknown as { barcode: string }).barcode)
+      : ""
   return {
     id: sku.trim() || row.id,
     name: row.name,
+    barcode: barcode.trim() || undefined,
     stock: row.stock,
     cost: row.precoCusto,
     price: row.price,
@@ -73,6 +79,7 @@ function itemToCreate(lojaId: string, item: InvPayload) {
     storeId: lojaId,
     sku: item.id,
     name: item.name,
+    barcode: typeof item.barcode === "string" && item.barcode.trim() ? item.barcode.trim() : undefined,
     stock: Math.max(0, Math.floor(item.stock)),
     precoCusto: Number.isFinite(item.cost) ? item.cost : 0,
     price: item.price,
@@ -163,6 +170,7 @@ export async function PUT(req: Request) {
     normalized.push({
       id,
       name,
+      barcode: typeof o.barcode === "string" ? o.barcode : typeof (o as { codigoBarras?: unknown }).codigoBarras === "string" ? String((o as any).codigoBarras) : "",
       stock: typeof o.stock === "number" && Number.isFinite(o.stock) ? o.stock : 0,
       cost: typeof o.cost === "number" && Number.isFinite(o.cost) ? o.cost : 0,
       price: typeof o.price === "number" && Number.isFinite(o.price) ? o.price : 0,
