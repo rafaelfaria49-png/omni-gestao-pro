@@ -3,6 +3,7 @@ import { Prisma } from "@/generated/prisma"
 import { prisma } from "@/lib/prisma"
 import { isValidPhoneBr } from "@/lib/phone-br"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -21,6 +22,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (!id?.trim()) return badRequest("ID inválido")
 
   try {
+    const gate = await requireAdmin()
+    if (!gate.ok) return gate.res
     const body = (await req.json()) as { name?: unknown; phone?: unknown; email?: unknown }
 
     const name = typeof body.name === "string" ? body.name.trim() : ""
@@ -71,6 +74,8 @@ export async function DELETE(req: Request, context: { params: Promise<{ id: stri
   if (!id?.trim()) return badRequest("ID inválido")
 
   try {
+    const gate = await requireAdmin()
+    if (!gate.ok) return gate.res
     const storeId = storeIdFromAssistecRequestForWrite(req)
     if (!storeId) {
       return badRequest("Unidade obrigatória: envie o header x-assistec-loja-id ou query storeId.")

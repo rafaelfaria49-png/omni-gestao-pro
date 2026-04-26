@@ -48,14 +48,20 @@ function defaultPdvParams(): StorePdvParams {
     incluirImpostoEstimadoNoPdv: !!configPadrao.pdv.incluirImpostoEstimadoNoPdv,
     aliquotaImpostoEstimadoPdv: Number(configPadrao.pdv.aliquotaImpostoEstimadoPdv) || 0,
     moduloControleConsumo: !!configPadrao.pdv.moduloControleConsumo,
+    pdvClassicLayout: "lovable",
   }
 }
 
 function mergePdvParams(base: StorePdvParams, patch: Partial<StorePdvParams> | undefined): StorePdvParams {
   const p = patch ?? {}
+  const layout =
+    p.pdvClassicLayout === "services" || p.pdvClassicLayout === "lovable"
+      ? p.pdvClassicLayout
+      : base.pdvClassicLayout
   return {
     ...base,
     ...p,
+    pdvClassicLayout: layout,
     atalhosRapidos: Array.isArray(p.atalhosRapidos) ? p.atalhosRapidos : base.atalhosRapidos,
     categoriasOcultasNoPdv: Array.isArray(p.categoriasOcultasNoPdv) ? p.categoriasOcultasNoPdv : base.categoriasOcultasNoPdv,
   }

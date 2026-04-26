@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { Building2, Check } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -8,6 +9,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
 import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
+import { useStudioTheme } from "@/components/theme/ThemeProvider"
+import { cn } from "@/lib/utils"
 
 type StoreProfile = "ASSISTENCIA" | "VARIEDADES" | "SUPERMERCADO"
 
@@ -33,6 +36,8 @@ function emptyAddress() {
 }
 
 export function GestaoUnidadesSaas() {
+  const { mode } = useStudioTheme()
+  const isBlack = mode === "black"
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [stores, setStores] = useState<StoreRow[]>([])
@@ -159,46 +164,121 @@ export function GestaoUnidadesSaas() {
   }
 
   return (
-    <Card className="bg-card border-border">
+    <Card
+      className={cn(
+        "border transition-colors duration-300",
+        isBlack
+          ? "border-white/10 bg-[#000000] text-white"
+          : "border-slate-200 bg-white text-foreground"
+      )}
+    >
       <CardHeader>
-        <CardTitle>Gestão de Unidades (SaaS)</CardTitle>
-        <CardDescription>
-          Cadastre Loja 2/3, defina perfil (Assistência/Variedades/Supermercado) e personalize rodapé do cupom por CNPJ.
+        <CardTitle
+          className={cn("text-2xl font-bold", isBlack ? "text-white" : "text-slate-900")}
+        >
+          Gestão de Unidades (SaaS)
+        </CardTitle>
+        <CardDescription
+          className={cn(
+            isBlack ? "text-white/65" : "text-slate-600"
+          )}
+        >
+          Cadastre Loja 2/3, defina perfil (Assistência/Variedades/Supermercado) e personalize rodapé do cupom por
+          CNPJ.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div className="space-y-1">
-            <Label>Unidade</Label>
-            {stores.length > 0 ? (
-              <Select value={selectedId || stores[0]!.id} onValueChange={setSelectedId}>
-                <SelectTrigger className="w-[min(24rem,100%)]">
-                  <SelectValue placeholder={loading ? "Carregando..." : "Selecione"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {stores.map((s) => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.id} — {(s.name || "Unidade").trim()}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <p className="text-sm text-muted-foreground">{loading ? "Carregando unidades…" : "Nenhuma unidade cadastrada."}</p>
+      <CardContent className="space-y-6">
+        {loading ? (
+          <p className={cn("text-center text-sm", isBlack ? "text-white/60" : "text-slate-600")}>
+            Carregando unidades…
+          </p>
+        ) : stores.length > 0 ? (
+          <div className="flex flex-wrap items-stretch justify-center gap-4">
+            {stores.map((s) => {
+              const active = s.id === selectedId
+              const name = (s.name || "Unidade").trim()
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setSelectedId(s.id)}
+                  className={cn(
+                    "flex h-40 w-40 shrink-0 flex-col items-center justify-center gap-2 rounded-xl border-2 p-3 text-center transition-all duration-200",
+                    isBlack
+                      ? active
+                        ? "border-primary bg-[#000000] shadow-[0_0_0_1px] shadow-primary/40"
+                        : "border-white/10 bg-[#000000] hover:border-white/25"
+                      : active
+                        ? "border-primary bg-white shadow-sm"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "flex h-11 w-11 items-center justify-center rounded-lg",
+                      active
+                        ? "bg-primary/15 text-primary"
+                        : isBlack
+                          ? "text-white/80"
+                          : "text-slate-700"
+                    )}
+                  >
+                    {active ? <Check className="h-6 w-6" /> : <Building2 className="h-6 w-6" />}
+                  </div>
+                  <span
+                    className={cn(
+                      "w-full break-words text-xs font-medium leading-tight",
+                      isBlack ? "text-white" : "text-slate-900"
+                    )}
+                  >
+                    {name}
+                  </span>
+                  <span
+                    className={cn("w-full truncate font-mono text-[10px]", isBlack ? "text-white/55" : "text-slate-500")}
+                    title={s.id}
+                  >
+                    {s.id}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          <p
+            className={cn(
+              "text-center text-sm",
+              isBlack ? "text-white/60" : "text-slate-600"
             )}
-          </div>
-          <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={createStore} disabled={loading}>
-              Nova unidade
-            </Button>
-            <Button type="button" onClick={save} disabled={!draft}>
-              Salvar unidade
-            </Button>
-          </div>
+          >
+            Nenhuma unidade cadastrada.
+          </p>
+        )}
+
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={createStore}
+            disabled={loading}
+            className={cn(
+              isBlack
+                ? "border-white/20 bg-[#000000] text-white hover:bg-white/10 hover:text-white"
+                : "border-slate-200 bg-white"
+            )}
+          >
+            Nova unidade
+          </Button>
+          <Button type="button" onClick={save} disabled={!draft}>
+            Salvar unidade
+          </Button>
         </div>
 
         {!draft ? (
-          <p className="text-sm text-muted-foreground">Selecione uma unidade para editar.</p>
+          <p
+            className={cn("text-center text-sm", isBlack ? "text-white/55" : "text-slate-600")}
+          >
+            {stores.length ? "Toque em uma unidade para editar." : ""}
+          </p>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-3">

@@ -93,6 +93,14 @@ import {
 } from "@/lib/web-speech-recognition"
 import { usePerfilLoja } from "@/lib/perfil-loja-provider"
 import { cn } from "@/lib/utils"
+import {
+  defaultEntradaRapida,
+  formatEntradaRapidaResumo,
+  mergeEntradaRapida,
+  type EntradaComponentId,
+  type EntradaEstado,
+} from "@/lib/os-entrada-checklist"
+import { OsEntradaRapidaGrid } from "@/components/dashboard/os/os-entrada-rapida-grid"
 
 type SpeechRecognitionLike = {
   lang: string
@@ -127,6 +135,8 @@ export interface OrdemServico {
     imei: string
     cor: string
   }
+  /** Checklist visual rápido (Tela, Bateria, Wi-Fi, Câmera, Som). */
+  entradaRapida?: Record<EntradaComponentId, EntradaEstado>
   checklist: ChecklistItem[]
   defeito: string
   solucao: string
@@ -191,6 +201,13 @@ export const INITIAL_ORDENS: OrdemServico[] = [
       imei: "354678091234567",
       cor: "Preto"
     },
+    entradaRapida: {
+      tela: "defeito",
+      bateria: "ok",
+      wifi: "ok",
+      camera: "ok",
+      som: "nao_testado",
+    },
     checklist: [
       { id: "1", label: "Liga normalmente?", checked: true },
       { id: "2", label: "Tela quebrada?", checked: true },
@@ -226,6 +243,7 @@ export const INITIAL_ORDENS: OrdemServico[] = [
       imei: "358765432109876",
       cor: "Branco"
     },
+    entradaRapida: defaultEntradaRapida(),
     checklist: [
       { id: "1", label: "Liga normalmente?", checked: false },
       { id: "2", label: "Tela quebrada?", checked: false },
@@ -259,6 +277,7 @@ export const INITIAL_ORDENS: OrdemServico[] = [
       imei: "352143658709123",
       cor: "Azul"
     },
+    entradaRapida: defaultEntradaRapida(),
     checklist: [
       { id: "1", label: "Liga normalmente?", checked: true },
       { id: "2", label: "Tela quebrada?", checked: false },
@@ -283,21 +302,22 @@ export const INITIAL_ORDENS: OrdemServico[] = [
 function criarFormularioOSVazio(): Omit<OrdemServico, "id" | "numero"> {
   const d = new Date()
   return {
-    cliente: { nome: "", telefone: "", cpf: "" },
-    aparelho: { marca: "", modelo: "", imei: "", cor: "" },
+  cliente: { nome: "", telefone: "", cpf: "" },
+  aparelho: { marca: "", modelo: "", imei: "", cor: "" },
+    entradaRapida: defaultEntradaRapida(),
     checklist: defaultChecklist.map((c) => ({ ...c })),
-    defeito: "",
-    solucao: "",
-    status: "em_reparo",
+  defeito: "",
+  solucao: "",
+  status: "em_reparo",
     dataEntrada: d.toISOString().split("T")[0],
     horaEntrada: horaAtualHHMM(),
-    dataPrevisao: "",
+  dataPrevisao: "",
     dataSaida: null,
     horaSaida: null,
-    valorServico: 0,
-    valorPecas: 0,
-    fotos: [],
-    observacoes: "",
+  valorServico: 0,
+  valorPecas: 0,
+  fotos: [],
+  observacoes: "",
     termoGarantia: "garantia_troca_tela",
     textoGarantiaEditado: "",
   }
@@ -463,6 +483,7 @@ export function OrdensServico({
       setFormData({
         cliente: { ...os.cliente },
         aparelho: { ...os.aparelho },
+        entradaRapida: mergeEntradaRapida(os.entradaRapida),
         checklist: [...os.checklist],
         defeito: os.defeito,
         solucao: os.solucao,
@@ -552,15 +573,6 @@ export function OrdensServico({
 
   const removePhoto = (index: number) => {
     setPhotoPreview(prev => prev.filter((_, i) => i !== index))
-  }
-
-  const handleChecklistChange = (itemId: string, checked: boolean) => {
-    setFormData(prev => ({
-      ...prev,
-      checklist: prev.checklist.map(item =>
-        item.id === itemId ? { ...item, checked } : item
-      )
-    }))
   }
 
   const handlePrintOS = async (os: OrdemServico, type: "termica" | "a4") => {
@@ -898,14 +910,14 @@ export function OrdensServico({
       {/* Header com acoes */}
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
-          <Button
-            size="lg"
+        <Button 
+          size="lg" 
             className="bg-primary hover:bg-primary/90 h-12 px-6 text-base font-semibold text-primary-foreground"
-            onClick={() => handleOpenModal()}
-          >
-            <Plus className="w-5 h-5 mr-2" />
-            Nova OS
-          </Button>
+          onClick={() => handleOpenModal()}
+        >
+          <Plus className="w-5 h-5 mr-2" />
+          Nova OS
+        </Button>
           <Button
             type="button"
             size="lg"
@@ -1400,29 +1412,10 @@ export function OrdensServico({
 
               <Separator />
 
-              {/* Checklist de Entrada */}
-              <div className="space-y-3">
-                <h3 className="font-semibold text-foreground">Checklist de Entrada</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {formData.checklist.map((item) => (
-                    <div 
-                      key={item.id}
-                      className={`flex items-center gap-2 p-3 rounded-lg border transition-colors cursor-pointer ${
-                        item.checked 
-                          ? "bg-primary/10 border-primary/30" 
-                          : "bg-secondary border-border hover:border-primary/30"
-                      }`}
-                      onClick={() => handleChecklistChange(item.id, !item.checked)}
-                    >
-                      <Checkbox 
-                        checked={item.checked}
-                        onCheckedChange={(checked) => handleChecklistChange(item.id, checked === true)}
-                      />
-                      <span className="text-sm">{item.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <OsEntradaRapidaGrid
+                value={formData.entradaRapida}
+                onChange={(entradaRapida) => setFormData((prev) => ({ ...prev, entradaRapida }))}
+              />
             </TabsContent>
 
             {/* Aba Laudo (somente Assistência Técnica) */}
@@ -1545,7 +1538,7 @@ export function OrdensServico({
                   <Label>Status da OS</Label>
                   <Select 
                     value={formData.status}
-                    onValueChange={(value: OrdemServico["status"]) =>
+                    onValueChange={(value: OrdemServico["status"]) => 
                       setFormData((prev) => {
                         const next = { ...prev, status: value }
                         if (
@@ -1704,8 +1697,8 @@ export function OrdensServico({
                     {gerarParcelasCarne(totalOS, Math.max(1, parseInt(parcelasCarne || "1", 10))).map((p) => (
                       <p key={p.numero}>{p.numero}/{parcelasCarne} - {formatCurrency(p.valor)} - vence em {p.vencimento}</p>
                     ))}
-                  </div>
                 </div>
+                      </div>
               </div>
             </TabsContent>
           </Tabs>
@@ -1777,7 +1770,7 @@ export function OrdensServico({
                           <Circle className="w-6 h-6" />
                         )}
                         <span className="text-xs mt-1 hidden sm:block max-w-[4.5rem] text-center">
-                          {status === "aguardando_peca" ? "Aguard." :
+                          {status === "aguardando_peca" ? "Aguard." : 
                            status === "em_reparo" ? "Reparo" :
                            status === "pronto" ? "Pronto" :
                            status === "finalizado" ? "Final" : "Pago"}
@@ -1824,6 +1817,14 @@ export function OrdensServico({
                         <span className="text-black/70">IMEI:</span>
                         <p className="font-mono text-black">{viewingOS.aparelho.imei || "-"}</p>
                       </div>
+                    </div>
+                    <div className="mt-3 rounded-lg border border-border bg-background/60 p-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-black/50">
+                        Checklist entrada
+                      </span>
+                      <p className="mt-1 font-mono text-[11px] leading-snug text-black">
+                        {formatEntradaRapidaResumo(mergeEntradaRapida(viewingOS.entradaRapida))}
+                      </p>
                     </div>
                   </CardContent>
                 </Card>

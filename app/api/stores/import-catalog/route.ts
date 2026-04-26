@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { storeIdFromAssistecRequestForRead } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -18,6 +19,8 @@ export const revalidate = 0
 export async function POST(req: Request) {
   const actorStore = storeIdFromAssistecRequestForRead(req)
   try {
+    const gate = await requireAdmin()
+    if (!gate.ok) return gate.res
     const body = (await req.json()) as {
       fromStoreId?: unknown
       toStoreId?: unknown

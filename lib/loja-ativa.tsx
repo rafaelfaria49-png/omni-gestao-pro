@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -136,6 +137,10 @@ export function LojaAtivaProvider({ children }: { children: ReactNode }) {
     return out
   }, [lojasRemote, lojasConfig])
   const [lojaAtivaId, setLojaAtivaIdState] = useState<string | null>(null)
+  const lojaAtivaIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    lojaAtivaIdRef.current = lojaAtivaId
+  }, [lojaAtivaId])
 
   const refreshStoresList = useCallback(async () => {
     if (typeof window === "undefined") return
@@ -194,6 +199,7 @@ export function LojaAtivaProvider({ children }: { children: ReactNode }) {
   const setLojaAtivaId = useCallback((id: string) => {
     const next = id.trim()
     if (!next) return
+    const prev = (lojaAtivaIdRef.current || "").trim()
     setLojaAtivaIdState(next)
     try {
       localStorage.setItem(LOJA_ATIVA_STORAGE, next)
@@ -201,6 +207,49 @@ export function LojaAtivaProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     setActiveStoreCookie(next)
+
+    // Hardening: valida carga mínima da unidade (settings/ops) e evita “tela branca/travamento”.
+    // Se falhar, volta para a loja anterior, limpa cache da unidade e alerta.
+    if (typeof window !== "undefined") {
+      void (async () => {
+        const ac = new AbortController()
+        const t = window.setTimeout(() => ac.abort(), 6500)
+        try {
+          const [rSettings, rInv] = await Promise.all([
+            fetch(`/api/stores/${encodeURIComponent(next)}/settings`, {
+              credentials: "include",
+              cache: "no-store",
+              signal: ac.signal,
+            }),
+            fetch(`/api/ops/inventory?lojaId=${encodeURIComponent(next)}`, {
+              credentials: "include",
+              cache: "no-store",
+              signal: ac.signal,
+            }),
+          ])
+          if (!rSettings.ok || !rInv.ok) throw new Error("unavailable")
+        } catch {
+          // limpa cache de vendas/ops desta unidade para evitar estado quebrado
+          try {
+            localStorage.removeItem(opsKeyForLoja(next))
+          } catch {
+            /* ignore */
+          }
+          if (prev) {
+            setLojaAtivaIdState(prev)
+            try {
+              localStorage.setItem(LOJA_ATIVA_STORAGE, prev)
+            } catch {
+              /* ignore */
+            }
+            setActiveStoreCookie(prev)
+          }
+          window.alert("Dados da unidade indisponíveis no momento")
+        } finally {
+          window.clearTimeout(t)
+        }
+      })()
+    }
   }, [lojas])
 
   const lojaSelecionada = useMemo(() => {

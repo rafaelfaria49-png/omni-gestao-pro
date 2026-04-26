@@ -21,6 +21,15 @@ enum SubscriptionPlan {
   OURO
 }
 
+enum MarketingMediaJobKind {
+  IMAGE
+  VOICE
+  VIDEO
+  AVATAR
+  REUNIAO
+  AUTOMACAO
+}
+
 model Store {
   /** Use ids estáveis: loja-1, loja-2, ... */
   id       String       @id
@@ -47,9 +56,29 @@ model Store {
   settings StoreSettings?
   iaConversations IaConversation[]
   iaMessages IaMessage[]
+  marketingIaPosts MarketingIaPost[]
+  marketingMediaJobs MarketingMediaJob[]
 
   @@index([profile])
   @@map("stores")
+}
+
+/** Legenda e agendamentos do Estúdio Marketing IA (IA Mestre), por unidade. */
+model MarketingIaPost {
+  id           String    @id @default(cuid())
+  storeId      String    @map("storeId")
+  store        Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  caption      String    @map("caption") @db.Text
+  productName  String    @default("") @map("productName")
+  tone         String    @default("") @map("tone")
+  /** GENERATED (rascunho/gerado) | SCHEDULED (agendado) */
+  status       String    @default("GENERATED") @map("status")
+  scheduledFor DateTime? @map("scheduledFor")
+  createdAt    DateTime  @default(now()) @map("createdAt")
+  updatedAt    DateTime  @updatedAt @map("updatedAt")
+
+  @@index([storeId, createdAt])
+  @@map("marketing_ia_posts")
 }
 
 model StoreSettings {
@@ -66,9 +95,37 @@ model StoreSettings {
   printerConfig Json?  @map("printerConfig") @db.JsonB
   /** Taxas de cartão e regras financeiras por unidade. */
   cardFees      Json?  @map("cardFees") @db.JsonB
+  /** Créditos do Estúdio de Mídia (locução / vídeo IA) por unidade. */
+  marketingMediaCredits Int @default(50) @map("marketingMediaCredits")
+  /** Mascote 3D fixo da loja (consistência de personagem). */
+  mascotCharacterSeed String @default("") @map("mascotCharacterSeed")
+  mascotPromptBase String @default("") @map("mascotPromptBase") @db.Text
   updatedAt     DateTime @updatedAt @map("updatedAt")
 
   @@map("store_settings")
+}
+
+/** Histórico de jobs de mídia (locução/vídeo) para auditoria e evolução futura. */
+model MarketingMediaJob {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /** Kind legado (String). Preferir `kindV2`. */
+  kind      String   @map("kind")
+  /** Kind novo (enum) para padronização/validação. */
+  kindV2    MarketingMediaJobKind? @map("kindV2")
+  /** Seed do personagem (Mascote Studio / consistência). */
+  characterSeed String? @map("characterSeed")
+  /** Prompt base fixo do personagem. */
+  promptBase String? @map("promptBase") @db.Text
+  /** Status por rede social (multidifusão). */
+  socialNetworkStatus Json? @map("socialNetworkStatus") @db.JsonB
+  meta      Json?    @map("meta") @db.JsonB
+  creditsAfter Int?  @map("creditsAfter")
+  createdAt DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@map("marketing_media_jobs")
 }
 
 model IaConversation {
@@ -373,4 +430,19 @@ model ItemVenda {
 
   @@index([vendaId])
   @@map("venda_itens")
+}
+
+/** Usuários internos do sistema (operadores e administradores). */
+model User {
+  id        String   @id @default(cuid())
+  name      String   @default("") @map("name")
+  /** PIN numérico/curto usado para autorização rápida no PDV. */
+  pin       String   @unique @map("pin")
+  /** "ADMIN" | "CAIXA" (mantido string para compatibilidade simples). */
+  role      String   @default("CAIXA") @map("role")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@index([role])
+  @@map("users")
 }

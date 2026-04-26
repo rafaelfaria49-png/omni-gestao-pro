@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 
@@ -17,11 +18,15 @@ export async function GET(_: Request, ctx: { params: Promise<{ id: string }> }) 
 export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params
   try {
+    const gate = await requireAdmin()
+    if (!gate.ok) return gate.res
     const body = (await req.json()) as Partial<{
       contactEmail: string
       contactWhatsapp: string
       contactWhatsappDono: string
       receiptFooter: string
+      mascotCharacterSeed: string
+      mascotPromptBase: string
       printerConfig: unknown
       cardFees: unknown
     }>
@@ -34,6 +39,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         contactWhatsapp: (body.contactWhatsapp || "").trim(),
         contactWhatsappDono: (body.contactWhatsappDono || "").trim(),
         receiptFooter: (body.receiptFooter || "").trim(),
+        mascotCharacterSeed: (body.mascotCharacterSeed || "").trim(),
+        mascotPromptBase: (body.mascotPromptBase || "").trim(),
         printerConfig: body.printerConfig as any,
         cardFees: body.cardFees as any,
       },
@@ -42,6 +49,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         ...(body.contactWhatsapp != null ? { contactWhatsapp: String(body.contactWhatsapp).trim() } : {}),
         ...(body.contactWhatsappDono != null ? { contactWhatsappDono: String(body.contactWhatsappDono).trim() } : {}),
         ...(body.receiptFooter != null ? { receiptFooter: String(body.receiptFooter).trim() } : {}),
+        ...(body.mascotCharacterSeed != null ? { mascotCharacterSeed: String(body.mascotCharacterSeed).trim() } : {}),
+        ...(body.mascotPromptBase != null ? { mascotPromptBase: String(body.mascotPromptBase).trim() } : {}),
         ...(body.printerConfig !== undefined ? { printerConfig: body.printerConfig as any } : {}),
         ...(body.cardFees !== undefined ? { cardFees: body.cardFees as any } : {}),
       },

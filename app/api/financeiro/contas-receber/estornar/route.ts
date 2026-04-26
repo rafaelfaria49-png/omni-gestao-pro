@@ -5,6 +5,7 @@ import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 
@@ -24,6 +25,8 @@ export async function POST(request: Request) {
   if (!sub.ok) {
     return NextResponse.json({ ok: false, error: "Não autorizado" }, { status: 401 })
   }
+  const adminGate = await requireAdmin()
+  if (!adminGate.ok) return adminGate.res
   const now = await getTrustedTimeMs()
   if (isVencimentoExpired(now, sub.vencimento) || sub.status !== "ativa") {
     return NextResponse.json({ ok: false, error: "Assinatura inválida" }, { status: 403 })

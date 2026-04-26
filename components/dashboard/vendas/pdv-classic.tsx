@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { KeyboardEvent as ReactKeyboardEvent } from "react"
 import { useRouter } from "next/navigation"
 import {
   Search,
@@ -70,6 +71,9 @@ import {
   newPdvLineId,
   type PdvCatalogProduct,
 } from "@/lib/pdv-catalog"
+import { findPdvProductByScan } from "@/lib/pdv-scan-product"
+import { PdvOmniClassicShell, type PdvOmniCartRow } from "./pdv-omni-classic-shell"
+import { useStudioTheme } from "@/components/theme/ThemeProvider"
 import { PDV_IMPORT_COMANDA_KEY, type PdvImportComandaPayload } from "@/lib/pdv-comanda-bridge"
 import { AttrProductDialog, WeightProductDialog } from "./pdv-product-dialogs"
 import {
@@ -81,6 +85,8 @@ import {
 } from "@/services/hardware-bridge"
 import { appendAuditLog } from "@/lib/audit-log"
 import { AUDIT_DISCOUNT_ALERT_PCT } from "@/lib/audit-constants"
+import { formatEntradaRapidaResumo, mergeEntradaRapida } from "@/lib/os-entrada-checklist"
+import { isOsVirtualSaleLine, osPecasInventoryId, osServicoInventoryId } from "@/lib/os-pdv-virtual-lines"
 
 type SaleMode = "balcao" | "completa"
 
@@ -101,6 +107,8 @@ type CartItem = {
   complementos?: string[]
   vendaPorPeso?: boolean
   atributosLabel?: string
+  /** Resumo checklist entrada (O.S. / serviço). */
+  lineDetail?: string
 }
 
 type Product = PdvCatalogProduct
@@ -126,6 +134,8 @@ export interface VendasPDVProps {
   onVoiceCartSeedConsumed?: () => void
   voiceOpenCaixaSignal?: number
   onVoiceOpenCaixaConsumed?: () => void
+  /** `omni-smart` = caixa Lovable (F1–F9); `default` = tela completa legada (Services). */
+  uiShell?: "default" | "omni-smart"
 }
 
 export function PdvClassic({
@@ -135,15 +145,18 @@ export function PdvClassic({
   onVoiceCartSeedConsumed,
   voiceOpenCaixaSignal = 0,
   onVoiceOpenCaixaConsumed,
+  uiShell = "default",
 }: VendasPDVProps) {
   const router = useRouter()
   const { config } = useConfigEmpresa()
   const { empresaDocumentos, getEnderecoDocumentos, lojaAtivaId, opsStorageKey, storesRefreshNonce } =
     useLojaAtiva()
   const { pdvParams } = useStoreSettings()
+  const { mode: studioThemeMode } = useStudioTheme()
+  const classicStudio = studioThemeMode === "classic"
   const lojaKey = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
   const { adicionarEntrada, adicionarSaida } = useCaixa()
-  const { inventory, finalizeSaleTransaction, getSaldoCreditoCliente } = useOperationsStore()
+  const { inventory, finalizeSaleTransaction, getSaldoCreditoCliente, ordens } = useOperationsStore()
   const cashierId = useMemo(() => getOrCreatePdvOperatorId(), [])
   const { toast } = useToast()
   const [saleMode, setSaleMode] = useState<SaleMode>("balcao")
@@ -182,6 +195,22 @@ export function PdvClassic({
   const productInputRef = useRef<HTMLInputElement>(null)
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const comandaImportDone = useRef(false)
+  const linkedOsHydratedRef = useRef<string | null>(null)
+  const shellBipeRef = useRef<HTMLInputElement>(null)
+  const [bipeCode, setBipeCode] = useState("")
+  const [shellNextQty, setShellNextQty] = useState("1")
+  const [shellSeller, setShellSeller] = useState("01 — Caixa 1")
+  const [shellInfo, setShellInfo] = useState("Sistema pronto. Bipe um produto ou pressione F3 para pesquisar.")
+  const [shellHighlightLineId, setShellHighlightLineId] = useState<string | null>(null)
+  const [selectedCartLineId, setSelectedCartLineId] = useState<string | null>(null)
+  const [shellProductSearchOpen, setShellProductSearchOpen] = useState(false)
+  const [shellClientSearchOpen, setShellClientSearchOpen] = useState(false)
+  const [shellQtyEditOpen, setShellQtyEditOpen] = useState(false)
+  const [shellCancelSaleOpen, setShellCancelSaleOpen] = useState(false)
+  const [shellAdvancedOpen, setShellAdvancedOpen] = useState(false)
+  const [shellReceivablesOpen, setShellReceivablesOpen] = useState(false)
+  const [lastSaleTotal, setLastSaleTotal] = useState<number | null>(null)
+  const [shellCustomerField, setShellCustomerField] = useState("CONSUMIDOR")
 
   /** Bloqueio do PDV até cadastrar Nome Fantasia (Store.name) da unidade no banco. */
   const [storePdvGate, setStorePdvGate] = useState<{ ready: boolean; block: boolean }>({
@@ -325,6 +354,106 @@ export function PdvClassic({
       c.phone.includes(customerSearch)
   )
 
+  const storeDisplayName = useMemo(() => {
+    const n = (empresaDocumentos.nomeFantasia || configPadrao.empresa.nomeFantasia || "Loja").trim()
+    return n || "Loja"
+  }, [empresaDocumentos.nomeFantasia])
+
+  const shellClientOptions = useMemo(
+    () => [{ id: "0", label: "CONSUMIDOR" }, ...customers.map((c) => ({ id: c.id, label: `${c.name} — CPF ${c.cpf}` }))],
+    [customers]
+  )
+
+  const shellCartRows: PdvOmniCartRow[] = useMemo(
+    () =>
+      cart.map((i) => {
+        const inv = inventory.find((x) => x.id === i.inventoryId)
+        const code =
+          isOsVirtualSaleLine(i.inventoryId) ? "OS" : (inv?.barcode && inv.barcode.trim()) || i.inventoryId
+        return {
+          lineId: i.lineId,
+          code,
+          description: i.name,
+          detail: i.lineDetail,
+          unit: i.vendaPorPeso ? "KG" : "UN",
+          unitPrice: i.price,
+          qty: i.quantity,
+        }
+      }),
+    [cart, inventory]
+  )
+
+  useEffect(() => {
+    if (!linkedOsId) {
+      linkedOsHydratedRef.current = null
+      return
+    }
+    if (linkedOsHydratedRef.current === linkedOsId) {
+      const osEarly = ordens.find((o) => o.id === linkedOsId)
+      const telEarly = String(osEarly?.cliente?.telefone || "").replace(/\D/g, "")
+      if (telEarly.length >= 8) {
+        const hit = customers.find((c) => c.phone.replace(/\D/g, "") === telEarly)
+        if (hit) setSelectedCustomer(hit)
+      }
+      return
+    }
+    const os = ordens.find((o) => o.id === linkedOsId)
+    if (!os) return
+    linkedOsHydratedRef.current = linkedOsId
+
+    const er = mergeEntradaRapida(os.entradaRapida)
+    const resumo = formatEntradaRapidaResumo(er)
+    const next: CartItem[] = []
+    if (os.valorServico > 0.001) {
+      next.push({
+        lineId: newPdvLineId(osServicoInventoryId(os.id)),
+        inventoryId: osServicoInventoryId(os.id),
+        name: `Serviço · ${os.numero}`,
+        price: os.valorServico,
+        quantity: 1,
+        complementos: [],
+        lineDetail: resumo,
+      })
+    }
+    if (os.valorPecas > 0.001) {
+      next.push({
+        lineId: newPdvLineId(osPecasInventoryId(os.id)),
+        inventoryId: osPecasInventoryId(os.id),
+        name: `Peças · ${os.numero}`,
+        price: os.valorPecas,
+        quantity: 1,
+        complementos: [],
+        lineDetail: os.valorServico > 0.001 ? undefined : resumo,
+      })
+    }
+    if (next.length) {
+      setCart(next)
+      const lastId = next[next.length - 1]!.lineId
+      setSelectedCartLineId(lastId)
+      if (uiShell !== "default") {
+        setShellHighlightLineId(lastId)
+        window.setTimeout(() => {
+          setShellHighlightLineId((h) => (h === lastId ? null : h))
+        }, 1400)
+        queueMicrotask(() => shellBipeRef.current?.focus())
+      }
+    }
+    const tel = String(os.cliente?.telefone || "").replace(/\D/g, "")
+    if (tel.length >= 8) {
+      const hit = customers.find((c) => c.phone.replace(/\D/g, "") === tel)
+      if (hit) setSelectedCustomer(hit)
+    }
+  }, [linkedOsId, ordens, customers, uiShell])
+
+  const qtyEditDefault = useMemo(() => {
+    const line = cart.find((i) => i.lineId === selectedCartLineId)
+    return line ? String(line.quantity) : "1"
+  }, [cart, selectedCartLineId])
+
+  useEffect(() => {
+    setShellCustomerField(selectedCustomer?.name ?? "CONSUMIDOR")
+  }, [selectedCustomer])
+
   const updateCustomerCpf = useCallback((customerId: string, cpfDigits: string) => {
     const display = formatBrDocDisplay(cpfDigits)
     setCustomers((prev) => prev.map((c) => (c.id === customerId ? { ...c, cpf: display } : c)))
@@ -338,11 +467,13 @@ export function PdvClassic({
     quantity: number
     vendaPorPeso?: boolean
     atributosLabel?: string
+    lineDetail?: string
   }) => {
+    const lineId = newPdvLineId(params.inventoryId)
     setCart((prev) => [
       ...prev,
       {
-        lineId: newPdvLineId(params.inventoryId),
+        lineId,
         inventoryId: params.inventoryId,
         name: params.name,
         price: params.price,
@@ -350,13 +481,31 @@ export function PdvClassic({
         complementos: [],
         vendaPorPeso: params.vendaPorPeso,
         atributosLabel: params.atributosLabel,
+        lineDetail: params.lineDetail,
       },
     ])
+    setSelectedCartLineId(lineId)
+    if (uiShell !== "default") {
+      setShellHighlightLineId(lineId)
+      window.setTimeout(() => {
+        setShellHighlightLineId((h) => (h === lineId ? null : h))
+      }, 1400)
+      queueMicrotask(() => shellBipeRef.current?.focus())
+    }
   }
 
-  const addToCart = (product: Product) => {
+  const addToCart = (product: Product, presetQty?: number) => {
+    const baseQty = presetQty ?? 1
     if (product.stock <= 0) {
       toast({ title: "Sem estoque", description: `${product.name} está sem saldo no estoque.` })
+      return
+    }
+    if (!product.vendaPorPeso && baseQty > product.stock) {
+      toast({
+        title: "Sem estoque",
+        description: `${product.name}: solicitado ${baseQty}, disponível ${product.stock}.`,
+        variant: "destructive",
+      })
       return
     }
     if (product.atributos && product.atributos.length > 0) {
@@ -380,7 +529,7 @@ export function PdvClassic({
       inventoryId: product.id,
       name: product.name,
       price: product.price,
-      quantity: 1,
+      quantity: baseQty,
     })
     setSelectedProduct(product)
   }
@@ -388,6 +537,31 @@ export function PdvClassic({
   const addQuickItem = (item: Product) => {
     addToCart(item)
   }
+
+  const handleShellBipeKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== "Enter") return
+      e.preventDefault()
+      const raw = bipeCode.trim()
+      if (!raw) return
+      const q = Number(shellNextQty.replace(",", ".")) || 1
+      const found = findPdvProductByScan(raw, products)
+      if (!found) {
+        toast({ title: "Produto não encontrado", description: `Código "${raw}" não localizado no cadastro.` })
+        setShellInfo(`✕ Produto "${raw}" não localizado no cadastro.`)
+        queueMicrotask(() => shellBipeRef.current?.focus())
+        return
+      }
+      addToCart(found, q)
+      setBipeCode("")
+      setShellNextQty("1")
+      setShellInfo(
+        `✓ ${found.name} adicionado · ${new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(found.price * q)}`
+      )
+      queueMicrotask(() => shellBipeRef.current?.focus())
+    },
+    [addToCart, bipeCode, products, shellNextQty, toast]
+  )
 
   const addComplemento = (productId: string, complementoName: string, complementoPrice: number) => {
     const inv = `comp-${productId}`
@@ -629,7 +803,8 @@ export function PdvClassic({
   }
 
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    if (uiShell !== "default") return
+    const handler = (e: globalThis.KeyboardEvent) => {
       const target = e.target as HTMLElement | null
       const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")
       if (e.key === "F1") {
@@ -686,7 +861,119 @@ export function PdvClassic({
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [cart.length])
+  }, [cart.length, uiShell])
+
+  const shellModalBlocking =
+    isPaymentModalOpen ||
+    shellProductSearchOpen ||
+    shellClientSearchOpen ||
+    shellQtyEditOpen ||
+    shellCancelSaleOpen ||
+    shellAdvancedOpen ||
+    shellReceivablesOpen ||
+    attrDialogOpen ||
+    weightDialogOpen ||
+    operationType !== null ||
+    showKeyboardHelp ||
+    showOperationsMenu
+
+  const focusShellBipe = useCallback(() => {
+    if (uiShell === "default") return
+    queueMicrotask(() => shellBipeRef.current?.focus())
+  }, [uiShell])
+
+  const openShellShortcut = useCallback(
+    (key: string) => {
+      if (uiShell === "default") return
+      const goBipe = () => focusShellBipe()
+      switch (key) {
+        case "F1":
+          if (cart.length === 0) {
+            toast({ title: "Nenhum item", description: "Adicione produtos antes de finalizar." })
+            goBipe()
+            return
+          }
+          setInstantPayIntent(null)
+          setIsPaymentModalOpen(true)
+          break
+        case "F2":
+          setShellClientSearchOpen(true)
+          break
+        case "F3":
+          setShellProductSearchOpen(true)
+          break
+        case "F4":
+          if (!selectedCartLineId) {
+            toast({ title: "Selecione um item", description: "Clique na lista para alterar a quantidade." })
+            goBipe()
+            return
+          }
+          setShellQtyEditOpen(true)
+          break
+        case "F5":
+          if (!selectedCartLineId) {
+            toast({ title: "Selecione um item", description: "Clique em um item da lista para cancelá-lo." })
+            goBipe()
+            return
+          }
+          setCart((prev) => prev.filter((i) => i.lineId !== selectedCartLineId))
+          setSelectedCartLineId(null)
+          setShellInfo("Item cancelado.")
+          goBipe()
+          break
+        case "F6":
+          setShellCancelSaleOpen(true)
+          break
+        case "F7":
+        case "F8":
+          goBipe()
+          break
+        case "F9":
+          setShellReceivablesOpen(true)
+          break
+        case "CTRL":
+          setShellAdvancedOpen(true)
+          break
+        default:
+          break
+      }
+    },
+    [cart.length, focusShellBipe, selectedCartLineId, toast, uiShell]
+  )
+
+  useEffect(() => {
+    if (uiShell === "default") return
+    const fnKeys = new Set(["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9"])
+    let ctrlDown = false
+    const down = (e: globalThis.KeyboardEvent) => {
+      if (shellModalBlocking) return
+      if (e.key === "Control") ctrlDown = true
+      else ctrlDown = false
+      if (!fnKeys.has(e.key)) return
+      e.preventDefault()
+      openShellShortcut(e.key)
+    }
+    const up = (e: globalThis.KeyboardEvent) => {
+      if (shellModalBlocking) return
+      if (e.key === "Control" && ctrlDown) {
+        e.preventDefault()
+        openShellShortcut("CTRL")
+      }
+      ctrlDown = false
+    }
+    window.addEventListener("keydown", down)
+    window.addEventListener("keyup", up)
+    return () => {
+      window.removeEventListener("keydown", down)
+      window.removeEventListener("keyup", up)
+    }
+  }, [openShellShortcut, shellModalBlocking, uiShell])
+
+  useEffect(() => {
+    if (uiShell === "default") return
+    const t = window.setTimeout(() => shellBipeRef.current?.focus(), 100)
+    return () => window.clearTimeout(t)
+  }, [uiShell])
 
   useEffect(() => {
     if (!voiceCartSeed?.key) return
@@ -744,7 +1031,7 @@ export function PdvClassic({
 
   if (lojaAtivaId && !storePdvGate.ready) {
     return (
-      <div className="flex min-h-[280px] w-full flex-1 items-center justify-center text-base font-medium text-black/70">
+      <div className="flex min-h-[280px] w-full flex-1 items-center justify-center text-base font-medium text-white/70">
         Carregando dados da unidade…
       </div>
     )
@@ -752,9 +1039,9 @@ export function PdvClassic({
 
   if (storePdvGate.block) {
     return (
-      <div className="flex min-h-[360px] w-full flex-1 flex-col items-center justify-center gap-4 border border-amber-300/80 bg-amber-50/90 px-6 py-10 text-center">
-        <h2 className="text-xl font-black text-black">Cadastre o nome da empresa desta unidade</h2>
-        <p className="max-w-lg text-base text-black/80">
+      <div className="flex min-h-[360px] w-full flex-1 flex-col items-center justify-center gap-4 rounded-2xl border border-white/10 bg-white/5 px-6 py-10 text-center backdrop-blur-xl">
+        <h2 className="text-xl font-black text-white">Cadastre o nome da empresa desta unidade</h2>
+        <p className="max-w-lg text-base text-white/70">
           O PDV fica bloqueado até a unidade <strong>{lojaAtivaId}</strong> ter um <strong>Nome fantasia</strong> salvo no
           banco. Acesse <strong>Configurações → Dados da Empresa</strong>, preencha e salve.
         </p>
@@ -767,17 +1054,157 @@ export function PdvClassic({
 
   return (
     <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden text-[17px] text-foreground antialiased sm:text-[18px]">
-      <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-0 overflow-hidden border-t border-neutral-200/70 bg-background px-0 py-0 dark:border-white/10 lg:flex-row">
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r-0 lg:border-r lg:border-neutral-200/70 dark:lg:border-white/10">
+      {uiShell === "omni-smart" ? (
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-t transition-colors duration-300",
+            classicStudio
+              ? "border-slate-200/90 bg-slate-50"
+              : "border-white/10 bg-[#000000]"
+          )}
+        >
           <CaixaStatusBar
             variant="pdv"
             openAberturaSignal={voiceOpenCaixaSignal}
             onOpenAberturaSignalConsumed={onVoiceOpenCaixaConsumed}
           />
+          <PdvOmniClassicShell
+              storeName={storeDisplayName}
+              cartRows={shellCartRows}
+              highlightLineId={shellHighlightLineId}
+              selectedLineId={selectedCartLineId}
+              onSelectLine={setSelectedCartLineId}
+              total={total}
+              itemCount={cart.length}
+              previousSaleTotal={lastSaleTotal}
+              bipeCode={bipeCode}
+              onBipeChange={setBipeCode}
+              bipeRef={shellBipeRef}
+              onBipeKeyDown={handleShellBipeKeyDown}
+              customerDisplay={shellCustomerField}
+              onCustomerDisplayChange={(v) => setShellCustomerField(v)}
+              nextQtyStr={shellNextQty}
+              onNextQtyStrChange={setShellNextQty}
+              seller={shellSeller}
+              onSellerChange={setShellSeller}
+              info={shellInfo}
+              onShortcutAction={openShellShortcut}
+              onFinalizeClick={() => openShellShortcut("F1")}
+              products={products}
+              productSearchOpen={shellProductSearchOpen}
+              onProductSearchOpenChange={(open) => {
+                setShellProductSearchOpen(open)
+                if (!open) focusShellBipe()
+              }}
+              clientSearchOpen={shellClientSearchOpen}
+              onClientSearchOpenChange={(open) => {
+                setShellClientSearchOpen(open)
+                if (!open) focusShellBipe()
+              }}
+              clientOptions={shellClientOptions}
+              onPickClient={(label) => {
+                const row = shellClientOptions.find((x) => x.label === label)
+                if (!row || row.id === "0") {
+                  setSelectedCustomer(null)
+                  setCustomerSearch("")
+                } else {
+                  const c = customers.find((x) => x.id === row.id)
+                  if (c) setSelectedCustomer(c)
+                }
+                setShellClientSearchOpen(false)
+                focusShellBipe()
+              }}
+              qtyEditOpen={shellQtyEditOpen}
+              onQtyEditOpenChange={(open) => {
+                setShellQtyEditOpen(open)
+                if (!open) focusShellBipe()
+              }}
+              qtyEditDefault={qtyEditDefault}
+              onQtyEditConfirm={(raw) => {
+                const v = Number(String(raw).replace(",", "."))
+                if (!Number.isFinite(v) || v <= 0) {
+                  toast({
+                    title: "Quantidade inválida",
+                    description: "Informe um número maior que zero.",
+                    variant: "destructive",
+                  })
+                  return
+                }
+                const id = selectedCartLineId
+                if (!id) return
+                setCart((prev) => prev.map((i) => (i.lineId === id ? { ...i, quantity: v } : i)))
+                setShellQtyEditOpen(false)
+                setShellInfo("Quantidade atualizada.")
+                focusShellBipe()
+              }}
+              cancelSaleOpen={shellCancelSaleOpen}
+              onCancelSaleOpenChange={(open) => {
+                setShellCancelSaleOpen(open)
+                if (!open) focusShellBipe()
+              }}
+              onConfirmCancelSale={() => {
+                setCart([])
+                setSelectedCartLineId(null)
+                setShellHighlightLineId(null)
+                setBipeCode("")
+                setShellNextQty("1")
+                setSelectedCustomer(null)
+                setShellCustomerField("CONSUMIDOR")
+                setShellCancelSaleOpen(false)
+                setShellInfo("Venda cancelada. Sistema limpo.")
+                focusShellBipe()
+              }}
+              advancedOpen={shellAdvancedOpen}
+              onAdvancedOpenChange={(open) => {
+                setShellAdvancedOpen(open)
+                if (!open) focusShellBipe()
+              }}
+              receivablesOpen={shellReceivablesOpen}
+              onReceivablesOpenChange={(open) => {
+                setShellReceivablesOpen(open)
+                if (!open) focusShellBipe()
+              }}
+              onOpenReceivablesModule={() => {
+                setShellReceivablesOpen(false)
+                router.push("/?page=contas-receber")
+                focusShellBipe()
+              }}
+              onAddProductFromSearch={(p) => {
+                setShellProductSearchOpen(false)
+                addToCart(p)
+                focusShellBipe()
+              }}
+            />
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "flex min-h-0 w-full min-w-0 flex-1 flex-col gap-0 overflow-hidden border-t px-0 py-0 lg:flex-row transition-colors duration-300",
+            classicStudio
+              ? "border-slate-200/90 bg-slate-50"
+              : "border-white/10 bg-[#000000]"
+          )}
+        >
+          <div
+            className={cn(
+              "flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r-0 lg:border-r",
+              classicStudio ? "lg:border-slate-200/90" : "lg:border-white/10"
+            )}
+          >
+            <CaixaStatusBar
+              variant="pdv"
+              openAberturaSignal={voiceOpenCaixaSignal}
+              onOpenAberturaSignalConsumed={onVoiceOpenCaixaConsumed}
+            />
 
-          <div className="shrink-0 border-b border-neutral-200/80 bg-background py-2.5 dark:border-white/10">
-            <div className="px-1 sm:px-2">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div
+              className={cn(
+                "shrink-0 border-b py-2.5",
+                classicStudio ? "border-slate-200/90 bg-slate-50" : "border-white/10 bg-[#000000]"
+              )}
+            >
+              <div className="px-1 sm:px-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex w-full rounded-lg bg-secondary p-1 sm:w-auto">
                   <button
                     onClick={() => {
@@ -828,7 +1255,6 @@ export function PdvClassic({
                 </div>
               </div>
             </div>
-          </div>
 
           {saleMode === "balcao" && (
             <div className="shrink-0 border-b border-dashed border-neutral-200/80 bg-background py-2 dark:border-white/10">
@@ -1148,8 +1574,16 @@ export function PdvClassic({
             )}
           </div>
         </div>
+      </div>
 
-        <div className="flex min-h-0 w-full min-w-0 flex-col overflow-hidden border-l-2 border-border bg-muted/40 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md lg:h-full lg:w-[450px] lg:min-w-[450px] lg:max-w-[450px] lg:shrink-0 lg:grow-0">
+        <div
+          className={cn(
+            "flex min-h-0 w-full min-w-0 flex-col overflow-hidden border-l-2 lg:h-full lg:w-[450px] lg:min-w-[450px] lg:max-w-[450px] lg:shrink-0 lg:grow-0",
+            classicStudio
+              ? "border-slate-200/90 bg-slate-50"
+              : "border-white/10 bg-[#000000]"
+          )}
+        >
           {cart.length === 0 ? (
             <div className="flex min-h-0 flex-1 flex-col justify-center px-2 py-8 text-center sm:px-3">
               <div className="shrink-0 border-b-2 border-border px-2 pb-2 pt-2.5 text-left sm:px-3 dark:border-white/10">
@@ -1208,6 +1642,14 @@ export function PdvClassic({
                         <p className="line-clamp-2 break-words text-base font-bold leading-tight text-foreground">
                           {item.name}
                         </p>
+                        {item.lineDetail ? (
+                          <p
+                            className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-muted-foreground dark:text-cyan-200/85"
+                            title={item.lineDetail}
+                          >
+                            {item.lineDetail}
+                          </p>
+                        ) : null}
                         <p className="mt-0.5 text-base font-bold tabular-nums leading-none text-emerald-600 dark:text-emerald-400">
                           R$ {item.price.toFixed(2)}
                           {item.vendaPorPeso ? "/kg" : ""}
@@ -1369,7 +1811,7 @@ export function PdvClassic({
 
                 <Button
                   type="button"
-                  className="min-h-[52px] w-full shrink-0 rounded-xl bg-emerald-600 py-3 text-lg font-bold text-black shadow-lg hover:bg-emerald-500 sm:text-xl"
+                  className="min-h-[52px] w-full shrink-0 rounded-xl bg-emerald-600 py-3 text-lg font-bold text-zinc-950 shadow-lg hover:bg-emerald-500 sm:text-xl"
                   onClick={() => openPaymentModal(null)}
                   disabled={saleMode === "completa" && !selectedCustomer}
                 >
@@ -1384,12 +1826,14 @@ export function PdvClassic({
           )}
         </div>
       </div>
+      )}
 
       <PaymentModal
         isOpen={isPaymentModalOpen}
         onClose={() => {
           setIsPaymentModalOpen(false)
           setInstantPayIntent(null)
+          if (uiShell !== "default") focusShellBipe()
         }}
         cartSubtotal={subtotal}
         total={total}
@@ -1406,7 +1850,10 @@ export function PdvClassic({
         cashierId={cashierId}
         onConfirm={(payments, meta) => {
           const saleLines = cart
-            .filter((item) => inventory.some((i) => i.id === item.inventoryId))
+            .filter(
+              (item) =>
+                isOsVirtualSaleLine(item.inventoryId) || inventory.some((i) => i.id === item.inventoryId)
+            )
             .map((item) => ({
               inventoryId: item.inventoryId,
               quantity: item.quantity,
@@ -1478,6 +1925,7 @@ export function PdvClassic({
               })
             }
           }
+          setLastSaleTotal(total)
           setCart([])
           setDiscountReais(0)
           setDiscountPercent(0)
@@ -1487,6 +1935,9 @@ export function PdvClassic({
             title: "Venda finalizada",
             description: `${payments.length} forma(s) de pagamento confirmada(s).`,
           })
+          if (uiShell !== "default") {
+            queueMicrotask(() => shellBipeRef.current?.focus())
+          }
         }}
       />
 

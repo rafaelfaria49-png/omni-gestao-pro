@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import { 
   Building2, 
   Save, 
@@ -17,6 +18,8 @@ import {
   Settings,
   LayoutGrid,
   UtensilsCrossed,
+  Sparkles,
+  Zap,
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -36,6 +39,7 @@ import {
 import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { useToast } from "@/hooks/use-toast"
+import { UploadCloud, ShieldCheck, KeyRound } from "lucide-react"
 import { usePerfilLoja } from "@/lib/perfil-loja-provider"
 import { ASSISTEC_STORES_SYNC_STORAGE_KEY, useLojaAtiva } from "@/lib/loja-ativa"
 import { cn } from "@/lib/utils"
@@ -57,11 +61,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import type { StoreSettingsBlob, StorePdvParams } from "@/lib/store-settings-types"
+import type { StoreSettingsBlob, StorePdvParams, PdvClassicLayoutKind } from "@/lib/store-settings-types"
+import { useStoreSettings } from "@/lib/store-settings-provider"
+import { readPdvClassicLayout, writePdvClassicLayout } from "@/lib/pdv-classic-layout"
 
 const ATALHOS_PDV_MAX = 24
 const PDV_LAYOUT_STORAGE_KEY = "@omnigestao:pdv-layout"
 const RAMO_ATUACAO_STORAGE_PREFIX = "@omnigestao:ramo-atuacao:"
+
+type PdvEstiloOpcao = "lovable" | "services" | "supermercado"
 
 type RamoAtuacao = "assistencia" | "supermercado" | "moda" | "outros"
 
@@ -138,6 +146,7 @@ function normalizeConfigTab(input: string | undefined): "geral" | "pdv-vendas" |
 }
 
 export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSistemaProps) {
+  const { refresh: refreshStoreSettings } = useStoreSettings()
   const {
     config,
   } = useConfigEmpresa()
@@ -146,6 +155,11 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
   const { toast } = useToast()
   const [remotePrinterConfig, setRemotePrinterConfig] = useState<Record<string, unknown>>({})
   const [remoteReceiptFooter, setRemoteReceiptFooter] = useState("")
+  const [certPassword, setCertPassword] = useState("")
+  const [certUploadBusy, setCertUploadBusy] = useState(false)
+  const [permitirFinanceiro, setPermitirFinanceiro] = useState(true)
+  const [permitirEstoque, setPermitirEstoque] = useState(true)
+  const [permitirMarketingIA, setPermitirMarketingIA] = useState(true)
   const [termosTitulo, setTermosTitulo] = useState(configPadrao.termosGarantia.tituloGeral)
   const [termosCategorias, setTermosCategorias] = useState(() => [...configPadrao.termosGarantia.categorias])
   
@@ -172,6 +186,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
   const [editingTermo, setEditingTermo] = useState({ titulo: "", texto: "" })
   const [atalhosPDV, setAtalhosPDV] = useState(() => atalhosParaEdicao(config.pdv.atalhosRapidos))
   const [pdvLayout, setPdvLayout] = useState<"classic" | "supermercado">("classic")
+  const [pdvClassicLayout, setPdvClassicLayout] = useState<PdvClassicLayoutKind>("lovable")
   const [ramoAtuacao, setRamoAtuacao] = useState<RamoAtuacao>("assistencia")
   const [remoteHasTermosGarantia, setRemoteHasTermosGarantia] = useState(false)
   const [ocultarCategoriasNoPdv, setOcultarCategoriasNoPdv] = useState(
@@ -207,6 +222,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
     try {
       const raw = String(localStorage.getItem(PDV_LAYOUT_STORAGE_KEY) || "").trim()
       if (raw === "supermercado" || raw === "classic") setPdvLayout(raw)
+      setPdvClassicLayout(readPdvClassicLayout())
     } catch {
       /* ignore */
     }
@@ -280,6 +296,22 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
           termosGarantia: (printerCfg.termosGarantia as any) || undefined,
         }
         setRemotePrinterConfig(printerCfg)
+        try {
+          const c = (printerCfg as any)?.certificadoA1
+          setCertPassword(typeof c?.senha === "string" ? String(c.senha) : "")
+        } catch {
+          setCertPassword("")
+        }
+        try {
+          const p = (printerCfg as any)?.permissionsCaixa
+          setPermitirFinanceiro(p?.permitirFinanceiro !== false)
+          setPermitirEstoque(p?.permitirEstoque !== false)
+          setPermitirMarketingIA(p?.permitirMarketingIA !== false)
+        } catch {
+          setPermitirFinanceiro(true)
+          setPermitirEstoque(true)
+          setPermitirMarketingIA(true)
+        }
         setRemoteReceiptFooter(String(st.receiptFooter || ""))
 
         // Loja nova: campos vêm vazios para preencher.
@@ -303,6 +335,11 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
         setIncluirImpostoEstimadoNoPdv(Boolean(pdv.incluirImpostoEstimadoNoPdv ?? configPadrao.pdv.incluirImpostoEstimadoNoPdv))
         setAliquotaImpostoEstimadoPdv(Number(pdv.aliquotaImpostoEstimadoPdv ?? configPadrao.pdv.aliquotaImpostoEstimadoPdv) || 0)
         setModuloControleConsumo(Boolean(pdv.moduloControleConsumo ?? configPadrao.pdv.moduloControleConsumo))
+
+        const rawClassic = (pdv as Partial<StorePdvParams>).pdvClassicLayout
+        setPdvClassicLayout(
+          rawClassic === "services" || rawClassic === "lovable" ? rawClassic : readPdvClassicLayout()
+        )
 
         // Termos de garantia por unidade
         if (blob.termosGarantia && typeof blob.termosGarantia === "object") {
@@ -336,6 +373,10 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
           setWhatsapp("")
           setWhatsappDono("")
           setRemotePrinterConfig({})
+          setCertPassword("")
+          setPermitirFinanceiro(true)
+          setPermitirEstoque(true)
+          setPermitirMarketingIA(true)
           setRemoteReceiptFooter("")
           setTermosTitulo(configPadrao.termosGarantia.tituloGeral)
           setTermosCategorias([...configPadrao.termosGarantia.categorias])
@@ -347,6 +388,58 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
       cancelled = true
     }
   }, [lojaAtivaId])
+
+  const certificadoA1 = (remotePrinterConfig as any)?.certificadoA1 as
+    | { fileName?: string; vencimento?: string; uploadedAt?: string; senha?: string }
+    | undefined
+
+  async function onPickCertFile(file: File | null) {
+    if (!file) return
+    setCertUploadBusy(true)
+    try {
+      const name = String(file.name || "").trim() || "certificado.pfx"
+      const ext = name.toLowerCase()
+      if (!ext.endsWith(".pfx") && !ext.endsWith(".p12")) {
+        throw new Error("Envie um arquivo .pfx ou .p12")
+      }
+      const buf = await file.arrayBuffer()
+      const bytes = new Uint8Array(buf)
+      let binary = ""
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+      const base64 = btoa(binary)
+      setRemotePrinterConfig((prev) => ({
+        ...(prev || {}),
+        certificadoA1: {
+          ...(typeof (prev as any)?.certificadoA1 === "object" ? (prev as any).certificadoA1 : {}),
+          fileName: name,
+          pfxBase64: base64,
+          uploadedAt: new Date().toISOString(),
+        },
+      }))
+      toast({ title: "Certificado carregado", description: "Arquivo anexado. Clique em Salvar para aplicar na unidade." })
+    } catch (e) {
+      toast({
+        title: "Falha no upload",
+        description: e instanceof Error ? e.message : "Erro inesperado",
+        variant: "destructive",
+      })
+    } finally {
+      setCertUploadBusy(false)
+    }
+  }
+
+  function syncPermissionsPatch(patch: Partial<{ permitirFinanceiro: boolean; permitirEstoque: boolean; permitirMarketingIA: boolean }>) {
+    setRemotePrinterConfig((prev) => {
+      const current = typeof (prev as any)?.permissionsCaixa === "object" ? (prev as any).permissionsCaixa : {}
+      return {
+        ...(prev || {}),
+        permissionsCaixa: {
+          ...current,
+          ...patch,
+        },
+      }
+    })
+  }
 
   useEffect(() => {
     // Defaults profissionais só para Assistência e somente se a unidade não tiver termos customizados no banco
@@ -388,7 +481,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
         },
         body: JSON.stringify({
           name: nomeTrim,
-          cnpj,
+      cnpj,
           phone: telefone,
         }),
       })
@@ -411,6 +504,11 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
           printerConfig: {
             ...(remotePrinterConfig || {}),
             pdvParams: {
+              ...((): Record<string, unknown> => {
+                const prev = remotePrinterConfig as Record<string, unknown> | undefined
+                const raw = prev?.pdvParams
+                return raw && typeof raw === "object" ? { ...(raw as Record<string, unknown>) } : {}
+              })(),
               atalhosRapidos: atalhosPDV
                 .filter((a) => a.nome.trim() && a.preco > 0)
                 .map((a, idx) => ({ id: a.id || `atalho-${idx + 1}`, nome: a.nome.trim(), preco: a.preco })),
@@ -421,6 +519,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
               ocultarCategoriasNoPdv,
               categoriasOcultasNoPdv: parseCategoriasOcultasText(categoriasOcultasText),
               moduloControleConsumo,
+              pdvClassicLayout,
             },
             termosGarantia: {
               ...configPadrao.termosGarantia,
@@ -440,6 +539,8 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
       } catch {
         /* ignore */
       }
+      writePdvClassicLayout(pdvClassicLayout)
+      void refreshStoreSettings()
 
       // Perfil da Loja não é global: é coluna do Store (editar em Minhas Lojas / Gestão de Unidades).
 
@@ -450,7 +551,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
         variant: "destructive",
       })
     } finally {
-      setIsSaving(false)
+    setIsSaving(false)
     }
   }
 
@@ -543,6 +644,42 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
     toast({ title: "PDV restaurado", description: "Parâmetros do PDV restaurados aos padrões." })
   }
 
+  const aplicarEstiloPdv = (opcao: PdvEstiloOpcao) => {
+    if (opcao === "supermercado") {
+      setPdvLayout("supermercado")
+      try {
+        localStorage.setItem(PDV_LAYOUT_STORAGE_KEY, "supermercado")
+      } catch {
+        /* ignore */
+      }
+      toast({
+        title: "Layout selecionado",
+        description: "Alta Performance (agilidade) ativado. Recarregue o PDV para aplicar.",
+      })
+      return
+    }
+    setPdvLayout("classic")
+    try {
+      localStorage.setItem(PDV_LAYOUT_STORAGE_KEY, "classic")
+    } catch {
+      /* ignore */
+    }
+    const next: PdvClassicLayoutKind = opcao === "lovable" ? "lovable" : "services"
+    setPdvClassicLayout(next)
+    writePdvClassicLayout(next)
+    toast({
+      title: "Layout selecionado",
+      description:
+        next === "lovable"
+          ? "Layout Classic (Omni) ativado. Salve a unidade para persistir no servidor."
+          : "Layout Services ativado. Salve a unidade para persistir no servidor.",
+    })
+  }
+
+  const ativoLovable = pdvLayout === "classic" && pdvClassicLayout === "lovable"
+  const ativoServices = pdvLayout === "classic" && pdvClassicLayout === "services"
+  const ativoAlta = pdvLayout === "supermercado"
+
   return (
     <>
     <div className="space-y-6 pb-28">
@@ -564,9 +701,9 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
           </TabsTrigger>
           {ramoAtuacao === "assistencia" ? (
             <TabsTrigger value="servicos-garantias" className="text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Shield className="w-4 h-4 mr-2 hidden sm:inline" />
+            <Shield className="w-4 h-4 mr-2 hidden sm:inline" />
               Serviços e Garantias
-            </TabsTrigger>
+          </TabsTrigger>
           ) : null}
         </TabsList>
 
@@ -657,6 +794,154 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
 
             </CardContent>
           </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-primary" />
+                Permissões do Funcionário (CAIXA)
+              </CardTitle>
+              <CardDescription>
+                Controle o que o usuário com role <strong>CAIXA</strong> pode ver e acessar nesta unidade.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 max-w-2xl">
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="perm-fin">Permitir Financeiro</Label>
+                  <p className="text-xs text-muted-foreground">Libera menu e rotas do Financeiro para CAIXA.</p>
+                </div>
+                <Switch
+                  id="perm-fin"
+                  checked={permitirFinanceiro}
+                  onCheckedChange={(v) => {
+                    setPermitirFinanceiro(v)
+                    syncPermissionsPatch({ permitirFinanceiro: v })
+                  }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="perm-est">Permitir Estoque</Label>
+                  <p className="text-xs text-muted-foreground">Libera menu e rotas do Estoque para CAIXA.</p>
+                </div>
+                <Switch
+                  id="perm-est"
+                  checked={permitirEstoque}
+                  onCheckedChange={(v) => {
+                    setPermitirEstoque(v)
+                    syncPermissionsPatch({ permitirEstoque: v })
+                  }}
+                  />
+                </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-4">
+                <div className="space-y-1">
+                  <Label htmlFor="perm-mkt">Permitir Marketing IA</Label>
+                  <p className="text-xs text-muted-foreground">Libera menu e acesso ao Estúdio de Marketing IA para CAIXA.</p>
+                </div>
+                <Switch
+                  id="perm-mkt"
+                  checked={permitirMarketingIA}
+                  onCheckedChange={(v) => {
+                    setPermitirMarketingIA(v)
+                    syncPermissionsPatch({ permitirMarketingIA: v })
+                  }}
+                />
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                Importante: após mudar permissões, clique em <strong>Salvar</strong> para aplicar no sistema.
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-primary" />
+                Certificado Digital
+              </CardTitle>
+              <CardDescription>
+                Upload do certificado A1 da unidade (PFX/P12) e senha. Necessário para emissões/integrações que exigem assinatura.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-5 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="cert-a1">Arquivo (.pfx ou .p12)</Label>
+                  <div className="flex items-center gap-3">
+                  <Input
+                      id="cert-a1"
+                      type="file"
+                      accept=".pfx,.p12"
+                      disabled={certUploadBusy}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0] ?? null
+                        void onPickCertFile(f)
+                      }}
+                      className="h-12"
+                    />
+                    <div className="hidden md:flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted/40">
+                      <UploadCloud className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {certificadoA1?.fileName ? `Arquivo atual: ${certificadoA1.fileName}` : "Nenhum arquivo carregado ainda."}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="cert-senha">Senha</Label>
+                  <div className="relative">
+                    <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                      id="cert-senha"
+                      type="password"
+                      value={certPassword}
+                      onChange={(e) => {
+                        const v = e.target.value
+                        setCertPassword(v)
+                        setRemotePrinterConfig((prev) => ({
+                          ...(prev || {}),
+                          certificadoA1: {
+                            ...(typeof (prev as any)?.certificadoA1 === "object" ? (prev as any).certificadoA1 : {}),
+                            senha: v,
+                          },
+                        }))
+                      }}
+                      placeholder="Senha do certificado"
+                      className="h-12 pl-10"
+                  />
+                </div>
+                  <p className="text-xs text-muted-foreground">A senha é usada apenas para validar/usar o certificado no servidor.</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border bg-muted/40 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-0.5">
+                    <p className="text-sm font-semibold text-foreground">
+                      Certificado:{" "}
+                      <span className={certificadoA1?.fileName ? "text-emerald-500" : "text-muted-foreground"}>
+                        {certificadoA1?.fileName ? "Configurado" : "Não Configurado"}
+                      </span>
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Vencimento:{" "}
+                      <span className="text-foreground">
+                        {certificadoA1?.vencimento ? certificadoA1.vencimento : "-"}
+                      </span>
+                    </p>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    {certificadoA1?.uploadedAt ? `Último upload: ${new Date(certificadoA1.uploadedAt).toLocaleString()}` : ""}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -672,14 +957,14 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                     <Phone className="w-4 h-4" />
                     Telefone
                   </Label>
-                  <Input
+                <Input
                     id="telefone-aj"
                     value={telefone}
                     onChange={(e) => setTelefone(e.target.value)}
                     placeholder={WHITELABEL_TELEFONE_PADRAO}
                     className="h-12 text-base"
-                  />
-                </div>
+                />
+              </div>
                 <div className="space-y-2">
                   <Label htmlFor="whatsapp-aj" className="flex items-center gap-2">
                     <Phone className="w-4 h-4" />
@@ -727,64 +1012,134 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
 
         {/* ABA 2: PDV E VENDAS */}
         <TabsContent value="pdv-vendas" className="mt-6 space-y-6">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
                 <LayoutGrid className="w-5 h-5 text-primary" />
-                Personalização do PDV
-              </CardTitle>
-              <CardDescription>
-                Escolha o layout do caixa para esta máquina (preferência salva no navegador).
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 max-w-xl">
-              <div className="space-y-2">
-                <Label>Layout do PDV</Label>
-                <Select
-                  value={pdvLayout}
-                  onValueChange={(v) => {
-                    const next = v === "supermercado" ? "supermercado" : "classic"
-                    setPdvLayout(next)
-                    try {
-                      localStorage.setItem(PDV_LAYOUT_STORAGE_KEY, next)
-                    } catch {
-                      /* ignore */
-                    }
-                    toast({
-                      title: "Layout do PDV atualizado",
-                      description:
-                        next === "supermercado"
-                          ? "Layout Alta Performance ativado."
-                          : "Layout Serviços ativado.",
-                    })
-                  }}
+                Estilo e Layout do PDV
+                </CardTitle>
+                <CardDescription>
+                Uma galeria única: escolha o modelo visual e o comportamento do caixa. A opção fica no navegador; use{" "}
+                <strong>Salvar</strong> na unidade para enviar o Classic/Services ao servidor.
+                </CardDescription>
+              </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-stretch justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => aplicarEstiloPdv("lovable")}
+                  className={cn(
+                    "flex w-[11.25rem] max-w-full flex-col overflow-hidden rounded-2xl border-2 bg-card text-left shadow-sm transition-all duration-200 hover:shadow-md",
+                    ativoLovable
+                      ? "border-primary ring-2 ring-primary"
+                      : "border-border hover:border-primary/50"
+                  )}
                 >
-                  <SelectTrigger className="h-12">
-                    <SelectValue placeholder="Selecione o layout do PDV" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="classic">Layout Serviços (Foco em Assistência e Orçamentos)</SelectItem>
-                    <SelectItem value="supermercado">Layout Alta Performance (Foco em Agilidade)</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Dica: o PDV muda na próxima abertura da tela (ou recarregando a página).
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+                  <div className="relative mx-auto aspect-square w-full max-w-[10rem] overflow-hidden rounded-b-none border-b border-border/50">
+                    <div className="absolute inset-0 bg-[#000000]" aria-hidden />
+                    <div
+                      className="absolute inset-0 bg-slate-50"
+                      style={{ clipPath: "polygon(0 0, 72% 0, 0 100%)" }}
+                      aria-hidden
+                    />
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-between bg-gradient-to-t from-black/50 to-transparent px-2.5 pb-1.5 pt-6 text-[8px] font-bold uppercase tracking-wide">
+                      <span className="text-white drop-shadow">Black</span>
+                      <span className="text-slate-800">Light</span>
+                      </div>
+                  </div>
+                  <div className="space-y-1.5 p-3">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="text-sm font-semibold leading-tight">Layout Classic</span>
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Divisão visual Black e Classic; atalhos e teclado em destaque, alinhado ao tema global.
+                    </p>
+                  </div>
+                </button>
 
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => aplicarEstiloPdv("services")}
+                  className={cn(
+                    "flex w-[11.25rem] max-w-full flex-col overflow-hidden rounded-2xl border-2 bg-card text-left shadow-sm transition-all duration-200 hover:shadow-md",
+                    ativoServices
+                      ? "border-primary ring-2 ring-primary"
+                      : "border-border hover:border-primary/50"
+                  )}
+                >
+                  <div
+                    className="relative mx-auto aspect-square w-full max-w-[10rem] overflow-hidden border-b border-border/50 bg-gradient-to-br from-sky-950 via-cyan-950 to-emerald-950"
+                    aria-hidden
+                  >
+                    <div className="absolute inset-0 opacity-45 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.4),transparent_55%),radial-gradient(circle_at_80%_30%,rgba(16,185,129,0.4),transparent_50%)]" />
+                    <div className="absolute left-[10%] top-[10%] h-[22%] w-[45%] rounded border border-cyan-400/30 bg-sky-900/50 shadow-inner" />
+                    <div className="absolute bottom-[10%] right-[8%] h-[35%] w-[34%] rounded border border-emerald-400/35 bg-emerald-950/60 shadow-inner" />
+                    <div className="absolute left-1/2 top-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2 rounded bg-cyan-300/30" />
+                  </div>
+                  <div className="space-y-1.5 p-3">
+                    <div className="flex items-center gap-1.5">
+                      <UtensilsCrossed className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="text-sm font-semibold leading-tight">Layout Services</span>
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Interface com tons azulados: grade, busca e painel lateral no fluxo tradicional de venda.
+                    </p>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => aplicarEstiloPdv("supermercado")}
+                  className={cn(
+                    "flex w-[11.25rem] max-w-full flex-col overflow-hidden rounded-2xl border-2 bg-card text-left shadow-sm transition-all duration-200 hover:shadow-md",
+                    ativoAlta
+                      ? "border-primary ring-2 ring-primary"
+                      : "border-border hover:border-primary/50"
+                  )}
+                >
+                  <div
+                    className="relative mx-auto aspect-square w-full max-w-[10rem] overflow-hidden border-b border-border/50 bg-gradient-to-b from-amber-950/90 via-amber-900/80 to-neutral-950"
+                    aria-hidden
+                  >
+                    <div className="absolute inset-2.5 grid grid-cols-4 grid-rows-4 gap-0.5 opacity-90 p-0.5">
+                      {["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p"].map((c) => (
+                        <div key={c} className="rounded-[1px] bg-amber-400/25" />
+                      ))}
+                    </div>
+                    <div className="absolute right-2 top-2 rounded-md border border-amber-300/30 bg-amber-500/20 p-1">
+                      <Zap className="h-4 w-4 text-amber-200" />
+                    </div>
+                    <div className="absolute bottom-2 left-2 right-2 h-2 rounded bg-black/30" />
+                  </div>
+                  <div className="space-y-1.5 p-3">
+                    <div className="flex items-center gap-1.5">
+                      <Zap className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="text-sm font-semibold leading-tight">Alta Performance</span>
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Layout compacto: foco em agilidade e venda rápida, ideal para alto giro.
+                    </p>
+                  </div>
+                </button>
+                </div>
+              <p className="text-center text-xs text-muted-foreground">
+                O caixa aplica o layout na próxima abertura da tela de Vendas (ou após recarregar a página).
+              </p>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
                 <Store className="w-5 h-5 text-primary" />
                 Tipo da unidade (por loja)
-              </CardTitle>
-              <CardDescription>
+                </CardTitle>
+                <CardDescription>
                 O perfil não é global. Cada unidade (storeId) tem seu próprio tipo: Assistência/Variedades/Supermercado.
                 Altere em <strong>Gestão da Rede → Gestão de Unidades</strong>.
-              </CardDescription>
-            </CardHeader>
+                </CardDescription>
+              </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
                 Unidade atual: <strong>{lojaAtivaId || LEGACY_PRIMARY_STORE_ID}</strong> · Perfil: <strong>{perfilLoja}</strong>
@@ -826,7 +1181,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
             <CardContent className="grid gap-6 md:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="garantia-dias">Garantia padrão (dias)</Label>
-                <Input
+                      <Input
                   id="garantia-dias"
                   type="number"
                   min={1}
@@ -838,10 +1193,10 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                 <p className="text-xs text-muted-foreground">
                   Usado na linha &quot;Garantia: X dias&quot; ao enviar o orçamento pelo WhatsApp.
                 </p>
-              </div>
-              <div className="space-y-2">
+                    </div>
+                  <div className="space-y-2">
                 <Label htmlFor="validade-dias">Validade do orçamento (dias)</Label>
-                <Input
+                      <Input
                   id="validade-dias"
                   type="number"
                   min={1}
@@ -853,7 +1208,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                 <p className="text-xs text-muted-foreground">
                   Data inicial sugerida ao abrir &quot;Novo orçamento&quot; (pode alterar no formulário).
                 </p>
-              </div>
+                    </div>
             </CardContent>
           </Card>
 
@@ -884,7 +1239,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
               </div>
               <div className="space-y-2 max-w-xs">
                 <Label htmlFor="pdv-aliquota">Alíquota estimada (% sobre o subtotal)</Label>
-                <Input
+                      <Input
                   id="pdv-aliquota"
                   type="number"
                   min={0}
@@ -894,8 +1249,8 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                   onChange={(e) => setAliquotaImpostoEstimadoPdv(parseFloat(e.target.value) || 0)}
                   disabled={!incluirImpostoEstimadoNoPdv}
                   className="h-11"
-                />
-              </div>
+                      />
+                    </div>
             </CardContent>
           </Card>
 
@@ -920,9 +1275,9 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                   checked={moduloControleConsumo}
                   onCheckedChange={setModuloControleConsumo}
                 />
-              </div>
-            </CardContent>
-          </Card>
+                </div>
+              </CardContent>
+            </Card>
 
         </TabsContent>
 
@@ -931,15 +1286,15 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
           <Card className="bg-card border-border">
             <CardHeader className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
               <div>
-                <CardTitle className="flex items-center gap-2">
+              <CardTitle className="flex items-center gap-2">
                   <LayoutGrid className="w-5 h-5 text-primary" />
                   Cards de serviço rápido
-                </CardTitle>
-                <CardDescription>
+              </CardTitle>
+              <CardDescription>
                   Três botões grandes de serviço (nome e valor) e o quarto botão fixo &quot;Nova O.S.&quot; no PDV. Até{" "}
                   {ATALHOS_PDV_MAX} cards de serviço.
-                </CardDescription>
-              </div>
+              </CardDescription>
+                </div>
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -967,7 +1322,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                   <RotateCcw className="w-4 h-4 mr-1" />
                   Restaurar padrões
                 </Button>
-              </div>
+                </div>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1040,7 +1395,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                     Com a busca vazia, produtos das categorias listadas abaixo não aparecem. Ao digitar na busca, todos os
                     resultados válidos são mostrados.
                   </p>
-                </div>
+              </div>
                 <Switch
                   id="ocultar-cat-pdv"
                   checked={ocultarCategoriasNoPdv}
@@ -1078,8 +1433,8 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                   <Plus className="w-4 h-4 mr-2" />
                   Novo Termo
                 </Button>
-                <Button
-                  variant="outline"
+                <Button 
+                  variant="outline" 
                   onClick={handleRestaurarTodosTermos}
                   className="border-primary text-primary hover:bg-primary hover:text-primary-foreground"
                 >
@@ -1128,7 +1483,7 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                     >
                       Cancelar
                     </Button>
-                    <Button
+                    <Button 
                       onClick={handleAddTermo}
                       disabled={!novoTermo.titulo || !novoTermo.texto}
                       className="bg-primary hover:bg-primary/90"
@@ -1156,8 +1511,8 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                       </CardDescription>
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
+                  <Button 
+                    variant="ghost" 
                     size="sm"
                     onClick={() => handleRestaurarTermos("garantiaLegal")}
                     className="text-muted-foreground hover:text-primary"
@@ -1203,8 +1558,8 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                     <div className="flex gap-1">
                       {editingTermoId === categoria.id ? (
                         <>
-                          <Button
-                            variant="ghost"
+                          <Button 
+                            variant="ghost" 
                             size="sm"
                             onClick={() => {
                               setEditingTermoId(null)
@@ -1220,16 +1575,16 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
                         </>
                       ) : (
                         <>
-                          <Button
-                            variant="ghost"
+                          <Button 
+                            variant="ghost" 
                             size="icon"
                             onClick={() => handleEditTermo(categoria.id)}
                             className="text-muted-foreground hover:text-primary h-8 w-8"
                           >
                             <Pencil className="w-4 h-4" />
                           </Button>
-                          <Button
-                            variant="ghost"
+                          <Button 
+                            variant="ghost" 
                             size="icon"
                             onClick={() => setDeleteTermoId(categoria.id)}
                             className="text-muted-foreground hover:text-red-500 h-8 w-8"
@@ -1263,32 +1618,40 @@ export function ConfiguracoesSistema({ initialTab = "geral" }: ConfiguracoesSist
 
       <div className="sticky bottom-0 z-20 -mx-4 border-t border-border bg-background/95 px-4 py-4 backdrop-blur supports-[backdrop-filter]:bg-background/70 sm:-mx-0 sm:rounded-b-lg">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <p className="text-sm text-muted-foreground max-w-xl">
-            Salve as configurações da unidade ativa. O layout do PDV também é gravado no navegador.
-          </p>
-          <Button
-            size="lg"
+          <div className="space-y-1 max-w-xl">
+            <p className="text-sm text-muted-foreground">
+              Salve as configurações da unidade ativa. O layout do PDV também é gravado no navegador.
+            </p>
+            <Link
+              href="/logs-sistema"
+              className="text-xs text-muted-foreground/80 underline-offset-4 hover:underline"
+            >
+              Logs do sistema (auditoria)
+            </Link>
+          </div>
+              <Button 
+                size="lg" 
             className="h-12 px-8 bg-primary hover:bg-primary/90 shrink-0"
             onClick={() => {
               handleSave()
               toast({ title: "Configurações salvas", description: "Preferências atualizadas com sucesso." })
             }}
-            disabled={isSaving}
-          >
-            {isSaving ? (
-              <>
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                Salvando...
-              </>
-            ) : (
-              <>
-                <Save className="w-5 h-5 mr-2" />
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                    Salvando...
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-5 h-5 mr-2" />
                 Salvar Configurações
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
     </div>
 
     <AlertDialog open={deleteTermoId !== null} onOpenChange={(open) => !open && setDeleteTermoId(null)}>

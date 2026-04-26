@@ -5,6 +5,7 @@ import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 
@@ -32,6 +33,8 @@ async function requireSubscription() {
 export async function PUT(req: Request) {
   const gate = await requireSubscription()
   if (!gate.ok) return gate.res
+  const adminGate = await requireAdmin()
+  if (!adminGate.ok) return adminGate.res
 
   const storeId = storeIdFromAssistecRequestForWrite(req)
   if (!storeId) {

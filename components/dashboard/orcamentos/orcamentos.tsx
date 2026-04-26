@@ -53,6 +53,7 @@ import {
 } from "@/components/dashboard/os/ordens-servico"
 import { buildOrcamentoWhatsAppMessage } from "@/lib/whatsapp-orcamento-message"
 import { useOperationsStore } from "@/lib/operations-store"
+import { defaultEntradaRapida } from "@/lib/os-entrada-checklist"
 import { useStoreSettings } from "@/lib/store-settings-provider"
 import type { Orcamento } from "@/lib/orcamento-types"
 
@@ -261,6 +262,7 @@ export function Orcamentos({ ordens, setOrdens }: OrcamentosProps) {
       numero,
       cliente: { ...n.cliente },
       aparelho: { ...n.aparelho },
+      entradaRapida: defaultEntradaRapida(),
       checklist: defaultChecklist.map((c) => ({ ...c })),
       defeito: n.defeito,
       solucao: "",

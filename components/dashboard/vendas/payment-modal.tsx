@@ -160,6 +160,7 @@ export function PaymentModal({
   const [maquininhasAtivasPdv, setMaquininhasAtivasPdv] = useState<MaquininhaConfig[]>([])
   const [maquininhaPdvId, setMaquininhaPdvId] = useState("")
   const [adminSessionOk, setAdminSessionOk] = useState(false)
+  const [authorizedAdmin, setAuthorizedAdmin] = useState<{ id: string; name: string } | null>(null)
   const [supervisorPin, setSupervisorPin] = useState("")
   const [supervisorBusy, setSupervisorBusy] = useState(false)
   const [supervisorErr, setSupervisorErr] = useState<string | null>(null)
@@ -215,6 +216,7 @@ export function PaymentModal({
       setSupervisorPin("")
       setSupervisorErr(null)
       setSupervisorBusy(false)
+      setAuthorizedAdmin(null)
     }
   }, [isOpen])
 
@@ -224,10 +226,14 @@ export function PaymentModal({
     void (async () => {
       try {
         const r = await fetch("/api/auth/admin", { method: "GET", credentials: "include", cache: "no-store" })
-        const j = (await r.json().catch(() => null)) as { authenticated?: boolean }
-        if (!cancelled) setAdminSessionOk(j?.authenticated === true)
+        const j = (await r.json().catch(() => null)) as { authenticated?: boolean; admin?: { id?: string; name?: string } }
+        if (!r.ok || !j) return
+        if (cancelled) return
+        const ok = j?.authenticated === true
+        setAdminSessionOk(ok)
+        setAuthorizedAdmin(ok && j?.admin?.id ? { id: String(j.admin.id), name: String(j.admin.name || "Admin") } : null)
       } catch {
-        if (!cancelled) setAdminSessionOk(false)
+        // falha transiente: manter estado anterior para evitar “fim de sessão” falso
       }
     })()
     return () => {
@@ -288,17 +294,17 @@ export function PaymentModal({
             ? maquininhasAtivasPdv.find((m) => m.id === maquininhaPdvId) ?? maquininhasAtivasPdv[0]
             : undefined
 
-        const newPayment: PaymentMethod = {
+    const newPayment: PaymentMethod = {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-          type,
+      type,
           value,
           installments: type === "carne" ? parseInt(carneInstallments, 10) || 1 : undefined,
           ...(maq ? { maquininhaId: maq.id, maquininhaNome: maq.nome } : {}),
-        }
+    }
         return [...prev, newPayment]
       })
-      setCurrentValue("")
-      setSelectedType(null)
+    setCurrentValue("")
+    setSelectedType(null)
     },
     [
       carneInstallments,
@@ -519,9 +525,9 @@ export function PaymentModal({
                   >
                     Salvar no cadastro
                   </Button>
-                </div>
-              </CardContent>
-            </Card>
+              </div>
+            </CardContent>
+          </Card>
           )}
 
           {/* Status de Pagamento */}
@@ -686,7 +692,7 @@ export function PaymentModal({
                   }}
                   className={cn(
                     "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
-                    selectedType === "dinheiro"
+                    selectedType === "dinheiro" 
                       ? "border-emerald-500 bg-emerald-500/10 dark:border-emerald-400/70 dark:bg-emerald-500/20"
                       : "border-border dark:border-white/10 dark:hover:border-emerald-400/45"
                   )}
@@ -694,7 +700,7 @@ export function PaymentModal({
                   <Banknote className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
                   <span>Dinheiro</span>
                 </Button>
-
+                
                 <Button
                   size="lg"
                   variant="outline"
@@ -704,7 +710,7 @@ export function PaymentModal({
                   }}
                   className={cn(
                     "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
-                    selectedType === "pix"
+                    selectedType === "pix" 
                       ? "border-teal-500 bg-teal-500/10 dark:border-teal-400/70 dark:bg-teal-500/20"
                       : "border-border dark:border-white/10 dark:hover:border-teal-400/45"
                   )}
@@ -787,7 +793,7 @@ export function PaymentModal({
                   <CalendarClock className="h-5 w-5 text-violet-600 dark:text-violet-400" />
                   <span>À prazo</span>
                 </Button>
-
+                
                 <Button
                   size="lg"
                   variant="outline"
@@ -806,7 +812,7 @@ export function PaymentModal({
                   <Wallet className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                   <span>Crédito/Vale</span>
                 </Button>
-
+                
                 <Button
                   size="lg"
                   variant="outline"
@@ -815,7 +821,7 @@ export function PaymentModal({
                   onClick={() => setSelectedType("carne")}
                   className={cn(
                     "h-14 flex flex-col gap-0.5 border-2 text-xs font-semibold text-foreground shadow-sm transition-colors bg-background hover:bg-muted/30 dark:border-white/10 dark:bg-black/60 dark:backdrop-blur-md dark:hover:bg-white/5",
-                    selectedType === "carne"
+                    selectedType === "carne" 
                       ? "border-orange-500 bg-orange-500/10 dark:border-orange-400/70 dark:bg-orange-500/20"
                       : "border-border dark:border-white/10 dark:hover:border-orange-400/45"
                   )}
@@ -961,13 +967,17 @@ export function PaymentModal({
                       if (!r.ok) {
                         setSupervisorErr("Senha inválida.")
                         setAdminSessionOk(false)
+                        setAuthorizedAdmin(null)
                         return
                       }
+                      const j = (await r.json().catch(() => null)) as { admin?: { id?: string; name?: string } }
                       setAdminSessionOk(true)
+                      setAuthorizedAdmin(j?.admin?.id ? { id: String(j.admin.id), name: String(j.admin.name || "Admin") } : { id: "admin", name: "Admin" })
                       setSupervisorPin("")
                     } catch {
                       setSupervisorErr("Falha ao validar senha.")
                       setAdminSessionOk(false)
+                      setAuthorizedAdmin(null)
                     } finally {
                       setSupervisorBusy(false)
                     }
@@ -1042,11 +1052,7 @@ export function PaymentModal({
                   return
                 }
                 const normalized = normalizePaymentsToMatchTotal(payments, total)
-                const adminIdForAudit = descontoManualAtivo
-                  ? cashierId
-                    ? `${cashierId}:admin`
-                    : "admin_session"
-                  : undefined
+                const adminIdForAudit = descontoManualAtivo ? (authorizedAdmin?.id || undefined) : undefined
                 onConfirm?.(normalized, {
                   cashierId,
                   discountAuthorizedByAdminId: descontoManualAtivo ? adminIdForAudit : undefined,
@@ -1056,7 +1062,7 @@ export function PaymentModal({
                 onClose()
               }}
               disabled={faltaPagar > 0.02 || docInvalidoParaConfirmar || (descontoManualAtivo && !adminSessionOk)}
-              className="flex-1 h-12 bg-emerald-600 font-bold text-black hover:bg-emerald-500 disabled:opacity-50"
+              className="flex-1 h-12 bg-emerald-600 font-bold text-zinc-950 hover:bg-emerald-500 disabled:opacity-50"
             >
               {faltaPagar > 0.02
                 ? `Falta ${formatCurrency(faltaPagar)}`

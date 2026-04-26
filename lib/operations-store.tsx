@@ -9,6 +9,7 @@ import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 import type { DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
+import { isOsVirtualSaleLine } from "@/lib/os-pdv-virtual-lines"
 
 export type { DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
 
@@ -599,6 +600,10 @@ export function OperationsProvider({
       }
 
       for (const line of lines) {
+        if (isOsVirtualSaleLine(line.inventoryId)) {
+          if (line.quantity <= 0) return { ok: false, reason: "Quantidade inválida." }
+          continue
+        }
         const item = next.inventory.find((i) => i.id === line.inventoryId)
         if (!item) return { ok: false, reason: `Item de estoque não encontrado: ${line.inventoryId}` }
         if (line.quantity <= 0) return { ok: false, reason: "Quantidade inválida." }
@@ -643,6 +648,7 @@ export function OperationsProvider({
       }
 
       for (const line of lines) {
+        if (isOsVirtualSaleLine(line.inventoryId)) continue
         const item = next.inventory.find((i) => i.id === line.inventoryId)!
         item.stock -= line.quantity
       }
@@ -659,6 +665,17 @@ export function OperationsProvider({
 
       const saleId = nextSaleId(next.sales)
       const saleLines: SaleLineRecord[] = lines.map((ln) => {
+        if (isOsVirtualSaleLine(ln.inventoryId)) {
+          const unit = typeof ln.unitPrice === "number" && Number.isFinite(ln.unitPrice) ? ln.unitPrice : 0
+          return {
+            inventoryId: ln.inventoryId,
+            name: (typeof ln.name === "string" && ln.name.trim()) || "Serviço O.S.",
+            quantity: ln.quantity,
+            unitPrice: unit,
+            lineTotal: Math.round(unit * ln.quantity * 100) / 100,
+            qtyReturned: 0,
+          }
+        }
         const item = next.inventory.find((i) => i.id === ln.inventoryId)!
         const unit = ln.unitPrice ?? item.price
         return {

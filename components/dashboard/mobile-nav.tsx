@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useStaffAccess } from "@/components/auth/AccessGate"
 import { useMemo, useState } from "react"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
@@ -49,7 +50,7 @@ type MobileFullItem = {
 
 const mobileMenuItems: MobileMoreItem[] = [
   { icon: LayoutDashboard, label: "Painel", href: "/dashboard" },
-  { icon: ShoppingCart, label: "PDV", page: "vendas" },
+  { icon: ShoppingCart, label: "PDV", page: "vendas", href: "/dashboard/vendas" },
   { icon: ClipboardList, label: "OS", page: "os" },
   { icon: Package, label: "Estoque", page: "produtos" },
   { icon: Menu, label: "Mais", href: "#", isMore: true },
@@ -58,7 +59,7 @@ const mobileMenuItems: MobileMoreItem[] = [
 const fullMenuItems: MobileFullItem[] = [
   { icon: Bot, label: "🤖 IA Mestre", externalPath: "/dashboard/ia-mestre" },
   { icon: LayoutDashboard, label: "Painel inicial", externalPath: "/dashboard" },
-  { icon: ShoppingCart, label: "Vendas (Caixa/PDV)", page: "vendas" },
+  { icon: ShoppingCart, label: "Vendas (Caixa/PDV)", page: "vendas", externalPath: "/dashboard/vendas" },
   { icon: ShoppingCart, label: "Histórico de Vendas", page: "vendas-arquivo" },
   { icon: ShoppingCart, label: "Trocas e devolução", page: "trocas" },
   { icon: FileText, label: "Orçamentos", page: "orcamentos" },
@@ -106,7 +107,7 @@ const fullMenuItems: MobileFullItem[] = [
     page: "config-multilojas",
     sub: [{ label: "Gestão de Unidades", page: "config-multilojas" }],
   },
-  { icon: Settings, label: "Configurações", page: "config-empresa", sub: [{ label: "Dados da Empresa", page: "config-empresa" }, { label: "Ajustes", page: "config-ajustes" }, { label: "Financeiro (cartões)", page: "config-pdv" }, { label: "Marca/Logo", page: "config-marca" }, { label: "Certificado Digital", page: "config-certificado" }, { label: "Termos de Garantia", page: "config-garantia" }, { label: "Backup", page: "config-backup" }, { label: "Logs do Sistema", page: "logs-sistema" }, { label: "Meu Plano", page: "plano" }, { label: "Suporte", page: "suporte" }] },
+  { icon: Settings, label: "Configurações", page: "config-empresa", sub: [{ label: "Dados da Empresa", page: "config-empresa" }, { label: "Ajustes", page: "config-ajustes" }, { label: "Financeiro (cartões)", page: "config-pdv" }, { label: "Marca/Logo", page: "config-marca" }, { label: "Certificado Digital", page: "config-certificado" }, { label: "Termos de Garantia", page: "config-garantia" }, { label: "Backup", page: "config-backup" }, { label: "Meu Plano", page: "plano" }, { label: "Suporte", page: "suporte" }] },
 ]
 
 interface MobileNavProps {
@@ -116,12 +117,16 @@ interface MobileNavProps {
 
 export function MobileNav({ onNavigate, currentPage = "dashboard" }: MobileNavProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const staffRole = useStaffAccess()
   const { config } = useConfigEmpresa()
   const { cadastroBasicoIncompleto } = useLojaAtiva()
   const { pdvParams } = useStoreSettings()
   const isBronze = config.assinatura.plano === "bronze"
   const fullMenuItemsResolved = useMemo(() => {
     let items = [...fullMenuItems]
+    if (staffRole === "VENDEDOR") {
+      items = items.filter((i) => i.label !== "Financeiro" && i.label !== "Configurações")
+    }
     if (pdvParams.moduloControleConsumo) {
       const idx = items.findIndex((i) => i.page === "trocas")
       if (idx >= 0) {
@@ -154,7 +159,7 @@ export function MobileNav({ onNavigate, currentPage = "dashboard" }: MobileNavPr
       return item
     })
     return items
-  }, [pdvParams.moduloControleConsumo, config.assinatura.plano, isBronze])
+  }, [pdvParams.moduloControleConsumo, config.assinatura.plano, isBronze, staffRole])
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
@@ -189,20 +194,6 @@ export function MobileNav({ onNavigate, currentPage = "dashboard" }: MobileNavPr
                         <li key={menuItem.label}>
                           <button
                             onClick={() => {
-                              if (
-                                cadastroBasicoIncompleto &&
-                                menuItem.page &&
-                                [
-                                  "vendas",
-                                  "carteiras",
-                                  "fluxo-caixa",
-                                  "contas-pagar",
-                                  "contas-receber",
-                                  "relatorios-financeiros",
-                                ].includes(menuItem.page)
-                              ) {
-                                return
-                              }
                               if ("externalPath" in menuItem && menuItem.externalPath) {
                                 window.location.href = menuItem.externalPath
                               } else if (menuItem.page && onNavigate) {
@@ -224,20 +215,6 @@ export function MobileNav({ onNavigate, currentPage = "dashboard" }: MobileNavPr
                                 <li key={subItem.label}>
                                   <button
                                     onClick={() => {
-                                      if (
-                                        cadastroBasicoIncompleto &&
-                                        subItem.page &&
-                                        [
-                                          "vendas",
-                                          "carteiras",
-                                          "fluxo-caixa",
-                                          "contas-pagar",
-                                          "contas-receber",
-                                          "relatorios-financeiros",
-                                        ].includes(subItem.page)
-                                      ) {
-                                        return
-                                      }
                                       if ("externalPath" in subItem && subItem.externalPath) {
                                         window.location.href = subItem.externalPath
                                       } else if (subItem.page && onNavigate) {
@@ -264,20 +241,6 @@ export function MobileNav({ onNavigate, currentPage = "dashboard" }: MobileNavPr
                 onClick={() => {
                   if (item.href) {
                     window.location.href = item.href
-                    return
-                  }
-                  if (
-                    cadastroBasicoIncompleto &&
-                    item.page &&
-                    [
-                      "vendas",
-                      "carteiras",
-                      "fluxo-caixa",
-                      "contas-pagar",
-                      "contas-receber",
-                      "relatorios-financeiros",
-                    ].includes(item.page)
-                  ) {
                     return
                   }
                   if (item.page && onNavigate) onNavigate(item.page)

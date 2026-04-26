@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -15,6 +16,8 @@ function badRequest(message: string) {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireAdmin()
+  if (!gate.ok) return gate.res
   let body: unknown
   try {
     body = await req.json()

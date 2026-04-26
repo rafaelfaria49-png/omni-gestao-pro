@@ -2,12 +2,14 @@
 
 import * as React from "react"
 import { Moon, Sun } from "lucide-react"
-import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
+import { useStudioTheme } from "@/components/theme/ThemeProvider"
+import { cn } from "@/lib/utils"
 
 export function ThemeToggle() {
-  const { theme, setTheme } = useTheme()
+  const { mode, toggle } = useStudioTheme()
   const [mounted, setMounted] = React.useState(false)
+  const isBlack = mode === "black"
 
   React.useEffect(() => {
     setMounted(true)
@@ -16,24 +18,25 @@ export function ThemeToggle() {
   if (!mounted) {
     return (
       <Button variant="ghost" size="icon" className="relative">
-        <Sun className="w-5 h-5" />
+        <Sun className="h-5 w-5" />
       </Button>
     )
   }
 
   return (
     <Button
+      type="button"
       variant="ghost"
       size="icon"
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-      className="relative"
+      onClick={() => toggle()}
+      className={cn("relative", isBlack ? "text-white hover:bg-white/10" : "text-foreground hover:bg-slate-200/80")}
     >
-      {theme === "dark" ? (
-        <Sun className="w-5 h-5 text-foreground transition-all" />
+      {isBlack ? (
+        <Sun className="h-5 w-5 transition-all" aria-hidden />
       ) : (
-        <Moon className="w-5 h-5 text-foreground transition-all" />
+        <Moon className="h-5 w-5 transition-all" aria-hidden />
       )}
-      <span className="sr-only">Alternar tema</span>
+      <span className="sr-only">Alternar tema (Black / Classic)</span>
     </Button>
   )
 }

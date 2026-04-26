@@ -8,6 +8,9 @@ export type CertificadoA1Meta = {
   updatedAt?: string
 }
 
+/** Quando o PDV é o modelo "classic" (não supermercado): UI Lovable (atalhos F1–F9) ou tela completa legada. */
+export type PdvClassicLayoutKind = "lovable" | "services"
+
 export type StorePdvParams = {
   atalhosRapidos: Array<{ id: string; nome: string; preco: number }>
   ocultarCategoriasNoPdv: boolean
@@ -17,6 +20,8 @@ export type StorePdvParams = {
   incluirImpostoEstimadoNoPdv: boolean
   aliquotaImpostoEstimadoPdv: number
   moduloControleConsumo: boolean
+  /** Preferência por unidade (persistida em `printerConfig.pdvParams`). */
+  pdvClassicLayout?: PdvClassicLayoutKind
 }
 
 /**

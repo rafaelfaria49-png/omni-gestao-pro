@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 
@@ -37,6 +38,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
+    const gate = await requireAdmin()
+    if (!gate.ok) return gate.res
     const body = (await req.json()) as Partial<{
       id: string
       name: string

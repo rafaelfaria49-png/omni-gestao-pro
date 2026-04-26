@@ -38,6 +38,7 @@ import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { resolveLojaIdParaConsultaClientes } from "@/lib/clientes-loja-resolve"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { formatPhoneBrInput, isValidPhoneBr } from "@/lib/phone-br"
+import { ConsultoriaIA } from "@/components/dashboard/servicos/consultoria-ia"
 
 type ClienteOpt = { id: string; name: string; phone: string | null }
 
@@ -875,6 +876,8 @@ export default function DashboardOsPage() {
           </div>
         ) : null}
 
+        <ConsultoriaIA />
+
         <div className="rounded-xl border border-border bg-card p-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div className="flex-1">
@@ -1026,6 +1029,11 @@ export default function DashboardOsPage() {
             </div>
 
             <div className="mt-4 space-y-3">
+              {modalMode === "edit" && editingId ? (
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <ConsultoriaIA osId={editingId} lojaId={lojaId} />
+                </div>
+              ) : null}
               <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="dispositivo">1. Dispositivo</TabsTrigger>

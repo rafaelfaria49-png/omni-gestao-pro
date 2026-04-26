@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { isValidPhoneBr } from "@/lib/phone-br"
 import { storeIdFromAssistecRequestForRead, storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -55,6 +56,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    const gate = await requireAdmin()
+    if (!gate.ok) return gate.res
     const body = (await req.json()) as { name?: unknown; phone?: unknown; email?: unknown }
 
     const name = typeof body.name === "string" ? body.name.trim() : ""

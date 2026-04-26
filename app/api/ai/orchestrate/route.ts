@@ -6,6 +6,7 @@ import { storeIdFromAssistecRequestForRead } from "@/lib/store-id-from-request"
 import { composeMestreUserMessage, type StockSummaryRow } from "@/services/ai-mestre-reply"
 import { pickMestreModel } from "@/lib/ai-model-policy"
 import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
+import { requireAdmin } from "@/lib/require-admin"
 
 /** Prisma exige Node; a chamada Gemini em si é compatível com Edge, mas este handler não. */
 export const runtime = "nodejs"
@@ -28,6 +29,8 @@ function lojaIdFromRequest(req: Request, body: Body): string {
 }
 
 export async function POST(req: Request) {
+  const adminGate = await requireAdmin()
+  if (!adminGate.ok) return adminGate.res
   let body: Body
   try {
     body = (await req.json()) as Body

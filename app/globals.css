@@ -40,21 +40,45 @@
   --sidebar-accent-foreground: oklch(0.1 0 0);
   --sidebar-border: oklch(0.9 0 0);
   --sidebar-ring: oklch(0.5 0.22 25);
+
+  /* PDV OmniClassic — tokens HSL (usar com hsl(var(--token))) */
+  --pos-surface: 210 30% 99%;
+  --pos-panel: 0 0% 100%;
+  --pos-row: 0 0% 100%;
+  --pos-row-alt: 210 25% 97%;
+  --pos-row-highlight: 158 64% 92%;
+  --pos-header: 215 30% 96%;
+  --pos-divider: 215 18% 90%;
+  --pos-label: 215 20% 40%;
+  --pos-total: 158 64% 38%;
+  --pos-key: 215 35% 30%;
+  --pos-key-foreground: 210 40% 98%;
+  --pos-input: 0 0% 100%;
+  --pos-input-border: 215 22% 82%;
+  --pos-input-focus: 215 60% 45%;
+  --shadow-pos: 0 1px 2px 0 hsl(215 25% 18% / 0.04), 0 1px 3px 0 hsl(215 25% 18% / 0.06);
+  --shadow-pos-md: 0 4px 12px -2px hsl(215 25% 18% / 0.08), 0 2px 4px -1px hsl(215 25% 18% / 0.05);
+}
+
+/* Classic (light): texto secundário um pouco mais escuro para contraste (acessibilidade). */
+html.light[data-studio-theme="classic"] {
+  --muted-foreground: oklch(0.37 0.012 260);
 }
 
 .dark {
   /* Black Edition (v0): fundo e cartões no mesmo preto neutro; primário azul vibrante */
-  --background: oklch(0.09 0 0);
+  /* Preto absoluto (fidelidade Lovable / Black Edition) */
+  --background: oklch(0 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.09 0 0);
+  --card: oklch(0 0 0);
   --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.09 0 0);
+  --popover: oklch(0 0 0);
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.55 0.2 250);
   --primary-foreground: oklch(0.99 0.01 250);
-  --secondary: oklch(0.14 0 0);
+  --secondary: oklch(0.12 0 0);
   --secondary-foreground: oklch(0.98 0 0);
-  --muted: oklch(0.14 0 0);
+  --muted: oklch(0.12 0 0);
   --muted-foreground: oklch(0.62 0.02 250);
   --accent: oklch(0.18 0.04 250);
   --accent-foreground: oklch(0.98 0 0);
@@ -69,7 +93,7 @@
   --chart-3: oklch(0.48 0.15 250);
   --chart-4: oklch(0.68 0.12 250);
   --chart-5: oklch(0.52 0.16 250);
-  --sidebar: oklch(0.08 0 0);
+  --sidebar: oklch(0 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.55 0.2 250);
   --sidebar-primary-foreground: oklch(0.99 0.01 250);
@@ -126,10 +150,47 @@
   }
   html {
     @apply bg-background;
+    transition: background-color 300ms ease, color 300ms ease, border-color 300ms ease;
   }
   body {
     @apply min-h-screen bg-background text-foreground antialiased;
+    transition: background-color 300ms ease, color 300ms ease, border-color 300ms ease;
   }
+}
+
+@layer utilities {
+  .pos-surface {
+    background-color: hsl(var(--pos-surface));
+  }
+  .pos-panel {
+    background-color: hsl(var(--pos-panel));
+  }
+  .pos-divider {
+    border-color: hsl(var(--pos-divider));
+  }
+  .text-pos-label {
+    color: hsl(var(--pos-label));
+  }
+  .text-pos-total {
+    color: hsl(var(--pos-total));
+  }
+  .shadow-pos {
+    box-shadow: var(--shadow-pos);
+  }
+  .shadow-pos-md {
+    box-shadow: var(--shadow-pos-md);
+  }
+  .tabular-pdv {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Alinha a área de viewport (body) ao shell Black / Classic (Header + Sidebar + main). */
+html[data-studio-theme="black"] body {
+  background-color: #000000;
+}
+html[data-studio-theme="classic"] body {
+  background-color: #f8fafc;
 }
 
 /* Recibo térmico 80 mm: só o cupom aparece na impressão (evita sidebar/header). */

@@ -574,12 +574,12 @@ export function GestaoProdutos({
       })
       return
     }
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      setPreviewImage(reader.result as string)
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        setPreviewImage(reader.result as string)
+      }
+      reader.readAsDataURL(file)
     }
-    reader.readAsDataURL(file)
-  }
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -1524,7 +1524,7 @@ export function GestaoProdutos({
             <TabsContent value="geral" className="space-y-6">
               {/* Upload de imagem */}
               <div className="flex items-start gap-4">
-                <div
+                <div 
                   role="button"
                   tabIndex={0}
                   aria-label="Área para arrastar ou colar foto do produto"
@@ -1579,8 +1579,8 @@ export function GestaoProdutos({
                       <Upload className="h-4 w-4 shrink-0" />
                       Enviar
                     </Label>
-                    <Button
-                      variant="outline"
+                    <Button 
+                      variant="outline" 
                       size="sm"
                       type="button"
                       onClick={() =>

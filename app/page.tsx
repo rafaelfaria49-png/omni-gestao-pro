@@ -27,6 +27,7 @@ import { Orcamentos } from "@/components/dashboard/orcamentos/orcamentos"
 import { ConfiguracoesSistema } from "@/components/dashboard/configuracoes/configuracoes-sistema"
 import { GestaoUnidadesSaas } from "@/components/dashboard/configuracoes/gestao-unidades-saas"
 import { AppOpsProviders } from "@/components/dashboard/app-ops-providers"
+import { AccessGate } from "@/components/auth/AccessGate"
 import { FirstAccessWizard } from "@/components/onboarding/first-access-wizard"
 import { useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
@@ -35,6 +36,8 @@ import { useOperationsStore } from "@/lib/operations-store"
 import { useToast } from "@/hooks/use-toast"
 import type { VoiceIntent } from "@/lib/voice-intents"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
+import { useStudioTheme } from "@/components/theme/ThemeProvider"
+import { cn } from "@/lib/utils"
 
 const VendasPDV = dynamic(
   () => import("@/components/dashboard/vendas/vendas-pdv").then((m) => m.VendasPDV),
@@ -100,9 +103,11 @@ function initialTabConfiguracoes(page: string): string {
 export default function DashboardPage() {
   return (
     <AppOpsProviders>
-      <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-muted-foreground">Carregando…</div>}>
-        <DashboardContent />
-      </Suspense>
+      <AccessGate>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-muted-foreground">Carregando…</div>}>
+          <DashboardContent />
+        </Suspense>
+      </AccessGate>
     </AppOpsProviders>
   )
 }
@@ -134,6 +139,14 @@ function DashboardContent() {
   const { ordens, setOrdens } = useOperationsStore()
   const isBronze = config.assinatura.plano === "bronze"
   const { toast } = useToast()
+  const { mode } = useStudioTheme()
+  const isBlack = mode === "black"
+  const shellSurface = isBlack ? "bg-[#000000]" : "bg-slate-50"
+
+  // UX PDV: ao entrar no PDV, recolher a sidebar automaticamente para maximizar área do caixa.
+  useEffect(() => {
+    if (currentPage === "vendas") setSidebarCollapsed(true)
+  }, [currentPage])
 
   const pollSubscriptionUntilResolved = useCallback(async (): Promise<boolean> => {
     for (let i = 0; i < 30; i++) {
@@ -181,6 +194,10 @@ function DashboardContent() {
     }
     if (raw === "dashboard-omni") {
       router.replace("/dashboard")
+      return
+    }
+    if (raw === "logs-sistema") {
+      router.replace("/logs-sistema")
       return
     }
     if (raw === "clientes-gestao") {
@@ -339,7 +356,13 @@ function DashboardContent() {
 
   if (subscriptionGate === "loading") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground text-sm">
+      <div
+        className={cn(
+          "flex min-h-screen min-h-[100dvh] w-full items-center justify-center text-sm",
+          shellSurface,
+          isBlack ? "text-white/70" : "text-slate-600"
+        )}
+      >
         Verificando assinatura…
       </div>
     )
@@ -347,7 +370,13 @@ function DashboardContent() {
 
   if (subscriptionGate === "blocked") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground text-sm">
+      <div
+        className={cn(
+          "flex min-h-screen min-h-[100dvh] w-full items-center justify-center text-sm",
+          shellSurface,
+          isBlack ? "text-white/70" : "text-slate-600"
+        )}
+      >
         Redirecionando para renovação…
       </div>
     )
@@ -355,11 +384,12 @@ function DashboardContent() {
 
   return (
     <div
-      className={
+      className={cn(
         currentPage === "vendas"
-          ? "flex h-screen max-h-screen overflow-hidden bg-background"
-          : "flex min-h-screen bg-background"
-      }
+          ? "flex h-screen max-h-screen w-full min-h-0 overflow-hidden"
+          : "flex min-h-screen min-h-[100dvh] w-full",
+        shellSurface
+      )}
     >
       <FirstAccessWizard />
       <DailyCloseScheduler />
@@ -409,13 +439,7 @@ function DashboardContent() {
                     Carteiras pessoais e da empresa, lançamentos por voz ou texto e transferências
                   </p>
                 </div>
-                {cadastroBasicoIncompleto ? (
-                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
-                  </div>
-                ) : (
-                  <GestaoCarteiras />
-                )}
+                <GestaoCarteiras />
               </>
             ) : currentPage === "fluxo-caixa" ? (
               <>
@@ -423,13 +447,7 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Fluxo de Caixa</h1>
                   <p className="text-muted-foreground">Visão geral de entradas e saídas em tempo real</p>
                 </div>
-                {cadastroBasicoIncompleto ? (
-                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
-                  </div>
-                ) : (
-                  <FluxoCaixa />
-                )}
+                <FluxoCaixa />
               </>
             ) : currentPage === "contas-pagar" ? (
               <>
@@ -437,13 +455,7 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Contas a Pagar</h1>
                   <p className="text-muted-foreground">Gerencie despesas fixas, compras e pagamentos a fornecedores</p>
                 </div>
-                {cadastroBasicoIncompleto ? (
-                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
-                  </div>
-                ) : (
-                  <ContasPagar />
-                )}
+                <ContasPagar />
               </>
             ) : currentPage === "contas-receber" ? (
               <>
@@ -451,13 +463,7 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Contas a Receber</h1>
                   <p className="text-muted-foreground">Controle pagamentos de OS, vendas e carnês</p>
                 </div>
-                {cadastroBasicoIncompleto ? (
-                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
-                  </div>
-                ) : (
-                  <ContasReceber />
-                )}
+                <ContasReceber />
               </>
             ) : currentPage === "relatorios-financeiros" ? (
               <>
@@ -465,34 +471,17 @@ function DashboardContent() {
                   <h1 className="text-2xl font-bold text-foreground">Relatórios Financeiros</h1>
                   <p className="text-muted-foreground">Acompanhe o lucro mensal e a saúde financeira da empresa</p>
                 </div>
-                {cadastroBasicoIncompleto ? (
-                  <div className="rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
-                    Complete o cadastro básico da loja (nome e CNPJ) para liberar o módulo Financeiro.
-                  </div>
-                ) : (
-                  <RelatoriosFinanceiros />
-                )}
+                <RelatoriosFinanceiros />
               </>
             ) : currentPage === "vendas" ? (
               <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
-                {cadastroBasicoIncompleto ? (
-                  <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
-                    <div className="max-w-lg rounded-2xl border border-border bg-card p-8 text-center">
-                      <h2 className="text-lg font-semibold text-foreground">Cadastro inicial obrigatório</h2>
-                      <p className="mt-2 text-sm text-muted-foreground">
-                        Para operar o PDV, salve o nome da loja e o CNPJ no fluxo de primeiro acesso.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <VendasPDV
-                    linkedOsId={linkedOsSaleId}
-                    onSaleCompleted={() => setLinkedOsSaleId(null)}
-                    voiceCartSeed={voicePdvCart}
-                    onVoiceCartSeedConsumed={() => setVoicePdvCart(null)}
-                    voiceOpenCaixaSignal={voiceCaixaSignal}
-                  />
-                )}
+                <VendasPDV
+                  linkedOsId={linkedOsSaleId}
+                  onSaleCompleted={() => setLinkedOsSaleId(null)}
+                  voiceCartSeed={voicePdvCart}
+                  onVoiceCartSeedConsumed={() => setVoicePdvCart(null)}
+                  voiceOpenCaixaSignal={voiceCaixaSignal}
+                />
               </div>
             ) : currentPage === "vendas-arquivo" ? (
               <>

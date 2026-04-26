@@ -60,7 +60,7 @@ export default function RootLayout({
           defaultTheme="dark"
           enableSystem={false}
           storageKey="omni-gestao-theme"
-          disableTransitionOnChange
+          disableTransitionOnChange={false}
         >
           {children}
           <Toaster />

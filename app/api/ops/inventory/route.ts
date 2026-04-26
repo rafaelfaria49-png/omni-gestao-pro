@@ -6,6 +6,7 @@ import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import type { Produto } from "@/generated/prisma"
 import { storeIdFromAssistecRequestForRead, storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 // (sem normalizeNameForMatch — tabela `product` é minimalista)
 
 export const runtime = "nodejs"
@@ -140,6 +141,8 @@ export async function GET(req: Request) {
 export async function PUT(req: Request) {
   const gate = await requireSubscription()
   if (!gate.ok) return gate.res
+  const adminGate = await requireAdmin()
+  if (!adminGate.ok) return adminGate.res
   const storeId = storeIdFromAssistecRequestForWrite(req)
   if (!storeId) {
     return NextResponse.json(

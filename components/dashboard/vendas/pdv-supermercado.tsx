@@ -107,6 +107,8 @@ export function PdvSupermercado({
   const [supervisorPin, setSupervisorPin] = useState("")
   const [supervisorBusy, setSupervisorBusy] = useState(false)
   const [supervisorErr, setSupervisorErr] = useState<string | null>(null)
+  const [supervisorAction, setSupervisorAction] = useState<"clear_cart" | "remove_line" | null>(null)
+  const [pendingRemoveLineId, setPendingRemoveLineId] = useState<string | null>(null)
 
   const [weightDialogOpen, setWeightDialogOpen] = useState(false)
   const [weightProduct, setWeightProduct] = useState<Product | null>(null)
@@ -141,9 +143,10 @@ export function PdvSupermercado({
       try {
         const r = await fetch("/api/auth/admin", { method: "GET", credentials: "include", cache: "no-store" })
         const j = (await r.json().catch(() => null)) as { authenticated?: boolean }
+        if (!r.ok || !j) return
         if (!cancelled) setAdminSessionOk(j?.authenticated === true)
       } catch {
-        if (!cancelled) setAdminSessionOk(false)
+        // falha transiente: manter estado anterior para evitar “fim de sessão” falso
       }
     })()
     return () => {
@@ -569,6 +572,8 @@ export function PdvSupermercado({
                     productInputRef.current?.focus()
                     return
                   }
+                  setSupervisorAction("clear_cart")
+                  setPendingRemoveLineId(null)
                   setSupervisorErr(null)
                   setSupervisorPin("")
                   setSupervisorDialogOpen(true)
@@ -633,7 +638,17 @@ export function PdvSupermercado({
                         variant="ghost"
                         size="icon"
                         className="h-10 w-10 text-foreground/55 hover:text-destructive dark:text-white/50"
-                        onClick={() => removeFromCart(item.lineId)}
+                        onClick={() => {
+                          if (adminSessionOk) {
+                            removeFromCart(item.lineId)
+                            return
+                          }
+                          setSupervisorAction("remove_line")
+                          setPendingRemoveLineId(item.lineId)
+                          setSupervisorErr(null)
+                          setSupervisorPin("")
+                          setSupervisorDialogOpen(true)
+                        }}
                       >
                         <Trash2 className="h-5 w-5" />
                       </Button>
@@ -664,21 +679,21 @@ export function PdvSupermercado({
             <div className="mt-3 grid grid-cols-3 gap-2">
               <Button
                 type="button"
-                className="h-14 rounded-2xl bg-emerald-600 text-base font-black text-black shadow-lg shadow-emerald-950/30 hover:bg-emerald-500"
+                className="h-14 rounded-2xl bg-emerald-600 text-base font-black text-zinc-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-500"
                 onClick={() => openPaymentModal("dinheiro")}
               >
                 <Banknote className="mr-2 h-5 w-5" /> Dinheiro <span className="ml-2 text-sm font-black opacity-90">[F2]</span>
               </Button>
               <Button
                 type="button"
-                className="h-14 rounded-2xl bg-emerald-600 text-base font-black text-black shadow-lg shadow-emerald-950/30 hover:bg-emerald-500"
+                className="h-14 rounded-2xl bg-emerald-600 text-base font-black text-zinc-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-500"
                 onClick={() => openPaymentModal("pix")}
               >
                 <QrCode className="mr-2 h-5 w-5" /> PIX <span className="ml-2 text-sm font-black opacity-90">[F3]</span>
               </Button>
               <Button
                 type="button"
-                className="h-14 rounded-2xl bg-emerald-600 text-base font-black text-black shadow-lg shadow-emerald-950/30 hover:bg-emerald-500"
+                className="h-14 rounded-2xl bg-emerald-600 text-base font-black text-zinc-950 shadow-lg shadow-emerald-950/30 hover:bg-emerald-500"
                 onClick={() => openPaymentModal("cartao_debito")}
                 title="Cartão (débito)"
               >
@@ -821,6 +836,8 @@ export function PdvSupermercado({
             setSupervisorPin("")
             setSupervisorErr(null)
             setSupervisorBusy(false)
+            setSupervisorAction(null)
+            setPendingRemoveLineId(null)
           }
         }}
       >
@@ -830,7 +847,9 @@ export function PdvSupermercado({
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Cancelar/limpar venda exige autorização de administrador.
+              {supervisorAction === "remove_line"
+                ? "Excluir item exige autorização de administrador."
+                : "Cancelar/limpar venda exige autorização de administrador."}
             </p>
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Senha</Label>
@@ -850,7 +869,7 @@ export function PdvSupermercado({
               </Button>
               <Button
                 type="button"
-                className="flex-1 bg-emerald-600 font-bold text-black hover:bg-emerald-500 disabled:opacity-50"
+                className="flex-1 bg-emerald-600 font-bold text-zinc-950 hover:bg-emerald-500 disabled:opacity-50"
                 disabled={supervisorBusy || supervisorPin.trim().length === 0}
                 onClick={async () => {
                   setSupervisorErr(null)
@@ -868,10 +887,15 @@ export function PdvSupermercado({
                       return
                     }
                     setAdminSessionOk(true)
-                    setCart([])
-                    setDiscountPercent(0)
-                    setDiscountReais(0)
-                    toast({ title: "Carrinho limpo", description: "Autorizado pelo supervisor." })
+                    if (supervisorAction === "remove_line" && pendingRemoveLineId) {
+                      removeFromCart(pendingRemoveLineId)
+                      toast({ title: "Item removido", description: "Autorizado pelo supervisor." })
+                    } else {
+                      setCart([])
+                      setDiscountPercent(0)
+                      setDiscountReais(0)
+                      toast({ title: "Carrinho limpo", description: "Autorizado pelo supervisor." })
+                    }
                     setSupervisorDialogOpen(false)
                     queueMicrotask(hardFocusSearch)
                   } catch {

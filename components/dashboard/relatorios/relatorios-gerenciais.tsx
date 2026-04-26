@@ -1,10 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import {
-  Calendar,
-  Download,
-  TrendingUp,
+import { 
+  Calendar, 
+  Download, 
+  TrendingUp, 
   TrendingDown,
   DollarSign,
   Package,
@@ -35,14 +35,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import {
+import { 
   BarChart as RechartsBarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  Legend, 
   ResponsiveContainer,
 } from "recharts"
 import { cn } from "@/lib/utils"
@@ -243,8 +243,8 @@ export function RelatoriosGerenciais() {
                 {label}
               </Button>
             ))}
-            <Button
-              size="sm"
+              <Button
+                size="sm"
               className="h-9 bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-500 hover:to-orange-500"
               onClick={handleExportPdf}
               disabled={exporting || !resumo || !recebimentos}
@@ -255,7 +255,7 @@ export function RelatoriosGerenciais() {
                 <Download className="mr-2 h-4 w-4" />
               )}
               Exportar fechamento (PDF)
-            </Button>
+              </Button>
           </div>
         </div>
         {periodo === "personalizado" && (
@@ -278,16 +278,16 @@ export function RelatoriosGerenciais() {
                 className="h-9 border-zinc-700 bg-zinc-900 text-zinc-100"
               />
             </div>
-            <Button
-              size="sm"
-              variant="outline"
+              <Button 
+                size="sm"
+                variant="outline" 
               className="border-zinc-600 text-zinc-300"
               onClick={() => carregar()}
               disabled={!dataInicio || !dataFim}
             >
               Aplicar
-            </Button>
-          </div>
+              </Button>
+            </div>
         )}
       </div>
 
@@ -306,7 +306,7 @@ export function RelatoriosGerenciais() {
               <Card className="border-zinc-800/90 bg-zinc-900/60 shadow-inner shadow-black/20">
                 <CardContent className="p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+              <div>
                       <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                         Faturamento bruto
                       </p>
@@ -320,24 +320,24 @@ export function RelatoriosGerenciais() {
                         <Badge className="border-orange-500/40 bg-orange-500/15 text-orange-300">
                           <ShoppingCart className="mr-1 h-3 w-3" />
                           {resumo.totalVendas} vendas
-                        </Badge>
+                  </Badge>
                         <Badge className="border-red-500/40 bg-red-500/10 text-red-300">
                           <ClipboardList className="mr-1 h-3 w-3" />
                           {resumo.totalOs} OS
-                        </Badge>
-                      </div>
-                    </div>
+                  </Badge>
+                </div>
+              </div>
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-orange-600/30 to-red-600/20 ring-1 ring-orange-500/30">
                       <DollarSign className="h-6 w-6 text-orange-400" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
               <Card className="border-zinc-800/90 bg-zinc-900/60">
                 <CardContent className="p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+              <div>
                       <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                         Custo de mercadoria
                       </p>
@@ -351,19 +351,19 @@ export function RelatoriosGerenciais() {
                         {resumo.faturamentoBruto > 0
                           ? `${((resumo.custoMercadoria / resumo.faturamentoBruto) * 100).toFixed(1)}% do faturamento`
                           : "—"}
-                      </p>
-                    </div>
+                </p>
+              </div>
                     <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-zinc-800 ring-1 ring-zinc-700">
                       <Package className="h-6 w-6 text-orange-400" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
               <Card className="border-zinc-800/90 bg-zinc-900/60">
                 <CardContent className="p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+              <div>
                       <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                         Lucro líquido
                       </p>
@@ -377,13 +377,13 @@ export function RelatoriosGerenciais() {
                         <TrendingUp className="h-3.5 w-3.5" />
                         {margemPct}% margem
                       </div>
-                    </div>
+              </div>
                     <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-950/50 ring-1 ring-emerald-700/40">
                       <PieChart className="h-6 w-6 text-emerald-400" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
               <Card className="border-zinc-800/90 bg-zinc-900/60">
                 <CardContent className="p-4 sm:p-5">
@@ -401,15 +401,15 @@ export function RelatoriosGerenciais() {
                         {resumo.faturamentoBruto > 0
                           ? `${((resumo.despesas / resumo.faturamentoBruto) * 100).toFixed(1)}% do faturamento`
                           : "—"}
-                      </div>
-                    </div>
+                </div>
+              </div>
                     <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-zinc-800 ring-1 ring-zinc-700">
                       <Receipt className="h-6 w-6 text-zinc-400" />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              </div>
             </div>
+          </CardContent>
+        </Card>
+      </div>
 
             {/* Recebimentos por canal */}
             <Card className="border-zinc-800/90 bg-zinc-900/40">
@@ -476,39 +476,39 @@ export function RelatoriosGerenciais() {
 
             {/* Gráfico 30 dias */}
             <Card className="border-zinc-800/90 bg-zinc-900/50">
-              <CardHeader>
+        <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-lg text-white">
                   <BarChart3 className="h-5 w-5 text-orange-500" />
                   Vendas de balcão × Ordens de serviço
-                </CardTitle>
+          </CardTitle>
                 <CardDescription className="text-zinc-500">
                   Últimos 30 dias (diário)
                 </CardDescription>
-              </CardHeader>
-              <CardContent>
+        </CardHeader>
+        <CardContent>
                 <div className="h-72 w-full min-w-0 sm:h-80">
-                  <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%">
                     <RechartsBarChart
                       data={grafico30}
                       margin={{ top: 12, right: 8, left: 4, bottom: 0 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#3f3f46" opacity={0.5} />
-                      <XAxis
+                <XAxis 
                         dataKey="diaLabel"
                         tick={{ fill: "#a1a1aa", fontSize: 10 }}
                         interval="preserveStartEnd"
-                      />
-                      <YAxis
+                />
+                <YAxis 
                         tick={{ fill: "#a1a1aa", fontSize: 11 }}
                         tickFormatter={(v) =>
                           `R$ ${(v / 1000).toFixed(v >= 1000 ? 1 : 0)}${v >= 1000 ? "k" : ""}`
                         }
-                      />
-                      <Tooltip
-                        contentStyle={{
+                />
+                <Tooltip 
+                  contentStyle={{ 
                           backgroundColor: "#18181b",
                           border: "1px solid #3f3f46",
-                          borderRadius: "8px",
+                    borderRadius: "8px",
                           color: "#fafafa",
                         }}
                         formatter={(value: number, name: string) => [
@@ -526,19 +526,19 @@ export function RelatoriosGerenciais() {
                         dataKey="vendasBalcao"
                         name="vendasBalcao"
                         fill="#ea580c"
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Bar
+                  radius={[4, 4, 0, 0]}
+                />
+                <Bar 
                         dataKey="ordensServico"
                         name="ordensServico"
                         fill="#dc2626"
-                        radius={[4, 4, 0, 0]}
-                      />
+                  radius={[4, 4, 0, 0]}
+                />
                     </RechartsBarChart>
-                  </ResponsiveContainer>
-                </div>
-              </CardContent>
-            </Card>
+            </ResponsiveContainer>
+          </div>
+        </CardContent>
+      </Card>
 
             {/* Abas de relatórios */}
             <Tabs defaultValue="vendas" className="w-full">
@@ -578,7 +578,7 @@ export function RelatoriosGerenciais() {
                       </Card>
                     </div>
                     <Card className="border-zinc-800 bg-zinc-900/60">
-                      <CardHeader>
+        <CardHeader>
                         <CardTitle className="text-base text-white">Produtos mais vendidos</CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-2">
@@ -594,14 +594,14 @@ export function RelatoriosGerenciais() {
                             <span className="text-sm tabular-nums text-orange-300">
                               {p.quantidade} un. · {formatCurrency(p.receita)}
                             </span>
-                          </div>
+          </div>
                         ))}
                       </CardContent>
                     </Card>
                     <Card className="border-zinc-800 bg-zinc-900/60">
                       <CardHeader>
                         <CardTitle className="text-base text-white">Vendas por vendedor</CardTitle>
-                      </CardHeader>
+        </CardHeader>
                       <CardContent className="space-y-2">
                         {vendas.vendasPorVendedor.map((v) => (
                           <div
@@ -615,7 +615,7 @@ export function RelatoriosGerenciais() {
                             <span className="ml-auto font-semibold tabular-nums text-white">
                               {formatCurrency(v.total)}
                             </span>
-                          </div>
+                      </div>
                         ))}
                       </CardContent>
                     </Card>
@@ -630,13 +630,13 @@ export function RelatoriosGerenciais() {
                       <CardContent className="p-4">
                         <div className="flex items-center gap-3">
                           <Timer className="h-9 w-9 text-orange-400" />
-                          <div>
+                      <div>
                             <p className="text-xs text-zinc-500">Tempo médio de conserto</p>
                             <p className="text-xl font-bold text-white">
                               {osMetrics.tempoMedioConsertoHoras} h
                             </p>
                           </div>
-                        </div>
+                      </div>
                       </CardContent>
                     </Card>
                     <Card className="border-zinc-800 bg-zinc-900/60">
@@ -648,10 +648,10 @@ export function RelatoriosGerenciais() {
                             <p className="text-xl font-bold text-white">
                               {osMetrics.osComGarantiaNoPeriodo}
                             </p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
+          </div>
+          </div>
+        </CardContent>
+      </Card>
                     <Card className="border-zinc-800 bg-zinc-900/60">
                       <CardContent className="p-4">
                         <div className="flex items-center gap-3">
@@ -661,11 +661,11 @@ export function RelatoriosGerenciais() {
                             <p className="text-xl font-bold text-white">
                               {osMetrics.taxaRetornoGarantiaPct}%
                             </p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
+            </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
                 )}
               </TabsContent>
 
@@ -815,7 +815,7 @@ export function RelatoriosGerenciais() {
                         </div>
                         <div className="text-right text-xs text-zinc-500">{doc.data}</div>
                         <Badge
-                          variant="outline"
+              variant="outline" 
                           className="border-zinc-600 text-zinc-300"
                         >
                           {doc.status}
@@ -839,7 +839,7 @@ export function RelatoriosGerenciais() {
             </p>
           </>
         )}
-      </div>
+          </div>
     </div>
   )
 }

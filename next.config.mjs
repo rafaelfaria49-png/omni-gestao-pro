@@ -62,6 +62,15 @@ const nextConfig = {
       { source: "/manifest.json", destination: "/manifest.webmanifest" },
     ]
   },
+  async redirects() {
+    return [
+      {
+        source: "/dashboard/vendas/config",
+        destination: "/?page=config-pdv",
+        permanent: false,
+      },
+    ]
+  },
 }
 
 export default withPWA(nextConfig)

@@ -6,6 +6,7 @@ import {
   listClientesForLoja,
 } from "@/lib/clientes-import-handler"
 import { storeIdFromAssistecRequestForRead, storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -80,6 +81,8 @@ async function handleImport(request: Request) {
     if (!auth.ok) {
       return json(request, { error: "Não autorizado", detail: auth.message }, 401)
     }
+    const adminGate = await requireAdmin()
+    if (!adminGate.ok) return adminGate.res
 
     const lid = storeIdFromAssistecRequestForWrite(request)
     if (!lid) {

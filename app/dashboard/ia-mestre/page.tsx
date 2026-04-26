@@ -13,7 +13,7 @@ export default function IaMestrePage() {
   const [isLoading, setIsLoading] = useState(false)
 
   return (
-    <div className="relative flex h-[calc(100vh-4rem)] w-full overflow-hidden bg-background">
+    <div className="relative flex h-[calc(100vh-4rem)] w-full overflow-hidden bg-black/90">
       {/* Esferas de luz de fundo */}
       <div className="absolute -left-[10%] -top-[10%] h-[40%] w-[40%] rounded-full bg-indigo-500/12 blur-[120px]" />
       <div className="absolute -bottom-[10%] -right-[10%] h-[40%] w-[40%] rounded-full bg-blue-500/12 blur-[120px]" />

@@ -6,6 +6,13 @@ import { PdvSupermercado } from "./pdv-supermercado"
 import { usePerfilLoja } from "@/lib/perfil-loja-provider"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
+import { useStoreSettings } from "@/lib/store-settings-provider"
+import type { PdvClassicLayoutKind } from "@/lib/store-settings-types"
+import { 
+  PDV_CLASSIC_LAYOUT_CHANGED_EVENT,
+  PDV_CLASSIC_LAYOUT_STORAGE_KEY,
+  readPdvClassicLayout,
+} from "@/lib/pdv-classic-layout"
 
 type PdvLayout = "classic" | "supermercado"
 
@@ -14,8 +21,12 @@ const RAMO_ATUACAO_STORAGE_PREFIX = "@omnigestao:ramo-atuacao:"
 
 export function VendasPDV(props: VendasPDVProps) {
   const [layout, setLayout] = useState<PdvLayout>("classic")
+  const [classicLayout, setClassicLayout] = useState<PdvClassicLayoutKind>(() =>
+    typeof window !== "undefined" ? readPdvClassicLayout() : "lovable"
+  )
   const { perfilLoja } = usePerfilLoja()
   const { lojaAtivaId } = useLojaAtiva()
+  const { pdvParams, hydrated } = useStoreSettings()
 
   useEffect(() => {
     const readLayout = () => {
@@ -26,7 +37,6 @@ export function VendasPDV(props: VendasPDVProps) {
           return
         }
 
-        // Smart defaults: se não houver escolha manual, inferir pelo ramo.
         const storeId = (lojaAtivaId || LEGACY_PRIMARY_STORE_ID).trim() || LEGACY_PRIMARY_STORE_ID
         const ramoKey = `${RAMO_ATUACAO_STORAGE_PREFIX}${storeId}`
         const ramoRaw = String(localStorage.getItem(ramoKey) || "").trim()
@@ -51,6 +61,34 @@ export function VendasPDV(props: VendasPDVProps) {
     return () => window.removeEventListener("storage", onStorage)
   }, [lojaAtivaId, perfilLoja])
 
+  useEffect(() => {
+    const sync = () => setClassicLayout(readPdvClassicLayout())
+    sync()
+    window.addEventListener(PDV_CLASSIC_LAYOUT_CHANGED_EVENT, sync)
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PDV_CLASSIC_LAYOUT_STORAGE_KEY) sync()
+    }
+    window.addEventListener("storage", onStorage)
+    return () => {
+      window.removeEventListener(PDV_CLASSIC_LAYOUT_CHANGED_EVENT, sync)
+      window.removeEventListener("storage", onStorage)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hydrated) return
+    const fromDb = pdvParams.pdvClassicLayout
+    if (fromDb === "services" || fromDb === "lovable") {
+      setClassicLayout(fromDb)
+      try {
+        localStorage.setItem(PDV_CLASSIC_LAYOUT_STORAGE_KEY, fromDb)
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [hydrated, pdvParams.pdvClassicLayout])
+
   if (layout === "supermercado") return <PdvSupermercado {...props} />
-  return <PdvClassic {...props} />
+  const uiShell = classicLayout === "services" ? "default" : "omni-smart"
+  return <PdvClassic {...props} uiShell={uiShell} />
 }

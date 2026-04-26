@@ -20,11 +20,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useStudioTheme } from "@/components/theme/ThemeProvider"
+import { cn } from "@/lib/utils"
 
 export function Header() {
+  const { mode } = useStudioTheme()
+  const isBlack = mode === "black"
   const { config } = useConfigEmpresa()
   const { empresaDocumentos, lojas, lojaAtivaId, setLojaAtivaId, storesRefreshNonce } = useLojaAtiva()
   const [storesRemote, setStoresRemote] = useState<Array<{ id: string; name: string; cnpj: string }>>([])
+  const [isAdmin, setIsAdmin] = useState(false)
 
   const logoUrl = empresaDocumentos.identidadeVisual.logoUrl || config.empresa.identidadeVisual.logoUrl
 
@@ -52,9 +57,28 @@ export function Header() {
     }
   }, [storesRefreshNonce])
 
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const r = await fetch("/api/auth/admin", { method: "GET", credentials: "include", cache: "no-store" })
+        const j = (await r.json().catch(() => null)) as { authenticated?: boolean } | null
+        if (!r.ok || !j) return
+        if (cancelled) return
+        setIsAdmin(j.authenticated === true)
+      } catch {
+        /* ignore */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const effectiveStores = storesRemote.length ? storesRemote : lojas.map((l) => ({ id: l.id, name: l.nomeFantasia, cnpj: l.cnpj }))
   const lojaIdAtual = (lojaAtivaId || effectiveStores[0]?.id || LEGACY_PRIMARY_STORE_ID).trim()
   const lojaLinha = effectiveStores.find((l) => l.id === lojaIdAtual)
+  const cnpjMissing = !String(lojaLinha?.cnpj || "").trim()
 
   const labelStore = (s: { id: string; name: string; cnpj: string }, index: number) => {
     const n = (s.name || "").trim()
@@ -78,21 +102,37 @@ export function Header() {
 
   const handleSair = async () => {
     try {
+      await fetch("/api/auth/staff", { method: "DELETE", credentials: "include" })
+    } catch {
+      /* segue mesmo se a sessão já tiver expirado */
+    }
+    try {
       await fetch("/api/auth/admin", { method: "DELETE", credentials: "include" })
     } catch {
-      /* segue para login mesmo se a sessão já tiver expirado */
+      /* legado */
     }
-    window.location.href = "/login-admin"
+    window.location.href = "/"
   }
 
   return (
-    <header className="flex items-center justify-between px-6 py-4 border-b border-border bg-card">
+    <div className="w-full">
+      <header
+        className={cn(
+          "flex items-center justify-between px-6 py-4 border-b transition-colors duration-300",
+          isBlack ? "border-white/10 bg-[#000000] text-white" : "border-slate-200/90 bg-slate-50 text-foreground"
+        )}
+      >
       <div className="flex items-center gap-3 min-w-0">
         {logoUrl ? (
           <img
             src={logoUrl}
             alt={`Logo ${tituloMarca}`}
-            className="w-10 h-10 shrink-0 rounded-lg object-contain bg-card border border-border p-1"
+            className={cn(
+              "w-10 h-10 shrink-0 rounded-lg object-contain border p-1",
+              isBlack
+                ? "border-white/10 bg-[#000000]"
+                : "border-slate-200 bg-white"
+            )}
           />
         ) : (
           <div className="flex shrink-0 items-center justify-center w-10 h-10 rounded-lg bg-primary">
@@ -101,9 +141,23 @@ export function Header() {
         )}
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-bold text-foreground tracking-tight truncate">{tituloMarca}</h1>
+            <h1
+              className={cn(
+                "text-xl font-bold tracking-tight truncate",
+                isBlack ? "text-white" : "text-foreground"
+              )}
+            >
+              {tituloMarca}
+            </h1>
           </div>
-          <p className="text-xs text-muted-foreground">{APP_DISPLAY_NAME} · ERP</p>
+          <p
+            className={cn(
+              "text-xs",
+              isBlack ? "text-white/60" : "text-slate-600"
+            )}
+          >
+            {APP_DISPLAY_NAME} · ERP
+          </p>
         </div>
       </div>
 
@@ -120,7 +174,14 @@ export function Header() {
                 setLojaAtivaId(v)
               }}
             >
-              <SelectTrigger className="h-9 w-[min(18rem,calc(100vw-12rem))] max-w-[280px] bg-background border-border">
+              <SelectTrigger
+                className={cn(
+                  "h-9 w-[min(18rem,calc(100vw-12rem))] max-w-[280px] border",
+                  isBlack
+                    ? "border-white/20 bg-[#000000] text-white"
+                    : "border-slate-200 bg-white"
+                )}
+              >
                 <div className="flex items-center gap-2 min-w-0 flex-1 text-left">
                   <span className="truncate font-medium">
                     {(() => {
@@ -205,6 +266,33 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </header>
+      </header>
+
+      {isAdmin && cnpjMissing ? (
+        <div
+          className={cn(
+            "border-b px-6 py-2 text-xs transition-colors duration-300",
+            isBlack
+              ? "border-white/10 bg-white/[0.03] text-white/80"
+              : "border-slate-200/80 bg-white text-slate-700"
+          )}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <strong>CNPJ não cadastrado</strong> na loja ativa. O sistema continua operando, mas documentos e integrações podem ficar incompletos.
+            </span>
+            <Link
+              href="/?page=config-empresa"
+              className={cn(
+                "font-semibold underline underline-offset-4",
+                isBlack ? "text-cyan-200 hover:text-cyan-100" : "text-blue-700 hover:text-blue-600"
+              )}
+            >
+              Cadastrar agora
+            </Link>
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }

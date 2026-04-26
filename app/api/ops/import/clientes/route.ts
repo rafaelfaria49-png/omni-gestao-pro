@@ -7,6 +7,7 @@ import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import { importClientesJson } from "@/lib/import-clientes-json"
 import { storeIdFromAssistecRequestForRead } from "@/lib/store-id-from-request"
+import { requireAdmin } from "@/lib/require-admin"
 
 export const runtime = "nodejs"
 
@@ -73,9 +74,13 @@ export async function GET(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const gate = await requireAdmin()
+  if (!gate.ok) return gate.res
   return importClientesJson(req)
 }
 
 export async function POST(req: Request) {
+  const gate = await requireAdmin()
+  if (!gate.ok) return gate.res
   return importClientesJson(req)
 }

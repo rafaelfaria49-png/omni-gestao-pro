@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams } from "next/navigation"
 import { Suspense, useState } from "react"
+import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -44,9 +45,18 @@ function LoginContadorForm() {
       <Card className="w-full max-w-md border-border">
         <CardHeader>
           <CardTitle>Área do Contador</CardTitle>
-          <CardDescription>
-            Acesso restrito. Use a senha definida em{" "}
-            <code className="text-xs">ASSISTEC_CONTADOR_PIN</code> (diferente do PIN de administrador).
+          <CardDescription className="space-y-2">
+            <span className="block">
+              Acesso restrito. Use a senha definida em{" "}
+              <code className="text-xs">ASSISTEC_CONTADOR_PIN</code> (diferente do PIN de administrador).
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              Equipe da loja (dono, gerente ou vendedor) entra pela{" "}
+              <Link href="/" className="underline underline-offset-4">
+                página inicial
+              </Link>
+              .
+            </span>
           </CardDescription>
         </CardHeader>
         <CardContent>

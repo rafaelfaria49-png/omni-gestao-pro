@@ -49,7 +49,7 @@ export function ChatPanel({ brandVoiceEnabled, onBrandVoiceChange, onSendMessage
     [...aiModels.recommended.models, ...aiModels.text.models].find((m) => m.id === selectedModel) ?? aiModels.recommended.models[0]
 
   return (
-    <div className="flex h-full w-full flex-col border-r border-white/10 bg-card/30 backdrop-blur-xl lg:w-[420px]">
+    <div className="flex h-full w-full flex-col border-r border-white/10 bg-black/60 backdrop-blur-xl lg:w-[420px]">
       <div className="border-b border-white/10 p-4">
         <Popover open={isModelSelectorOpen} onOpenChange={setIsModelSelectorOpen}>
           <PopoverTrigger asChild>
