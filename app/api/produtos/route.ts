@@ -5,6 +5,7 @@ import { requireCadastrosHubApi } from "@/lib/cadastros/hub-api-gate"
 import { fiscalInputFromBody, mergeProdutoFiscalIntoMetadata } from "@/lib/produto-fiscal"
 import { catalogoInputFromBody, mergeCatalogoAparelhosIntoMetadata } from "@/lib/catalogo-aparelhos/produto-metadata"
 import { duplicateProductResponse, PRODUTO_DUP_SELECT } from "@/lib/produtos/duplicate-product"
+import { normalizeProdutoCategory } from "@/lib/produtos/produto-category"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -128,7 +129,7 @@ export async function POST(req: Request) {
     const stock = parseStock(body.stock)
     const price = parsePrice(body.price)
     const precoCusto = parsePrice(raw.precoCusto ?? raw.cost) ?? 0
-    const category = optTrim(raw, "category", "categoria")
+    const category = normalizeProdutoCategory(optTrim(raw, "category", "categoria"))
     sku = optTrim(raw, "sku", "codigo")
     barcode = optTrim(raw, "barcode", "codigoBarras")
     const brand = optTrim(raw, "brand", "marca") ?? ""
@@ -194,7 +195,7 @@ export async function POST(req: Request) {
         price,
         storeId,
         precoCusto,
-        category: category ?? null,
+        category,
         sku: sku ?? null,
         barcode: barcode ?? null,
         brand,

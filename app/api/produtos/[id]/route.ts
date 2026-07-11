@@ -5,6 +5,7 @@ import { requireCadastrosHubApi } from "@/lib/cadastros/hub-api-gate"
 import { fiscalInputFromBody, mergeProdutoFiscalIntoMetadata } from "@/lib/produto-fiscal"
 import { catalogoInputFromBody, mergeCatalogoAparelhosIntoMetadata } from "@/lib/catalogo-aparelhos/produto-metadata"
 import { duplicateProductResponse, PRODUTO_DUP_SELECT } from "@/lib/produtos/duplicate-product"
+import { normalizeProdutoCategory } from "@/lib/produtos/produto-category"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -97,7 +98,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           : typeof raw.categoria === "string"
             ? raw.categoria.trim()
             : ""
-      data.category = c ? c : null
+      data.category = normalizeProdutoCategory(c)
     }
     if ("sku" in raw || "codigo" in raw) {
       const s = typeof raw.sku === "string" ? raw.sku.trim() : typeof raw.codigo === "string" ? raw.codigo.trim() : ""

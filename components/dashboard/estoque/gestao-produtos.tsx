@@ -361,8 +361,9 @@ export function GestaoProdutos({
           const row = it as Record<string, unknown>
           const precoCusto = pickCostPrice(row)
           const precoVenda = pickSalePrice(row)
-          const rawCategory =
-            typeof it.category === "string" && it.category.trim() ? it.category.trim() : "peca"
+          // Produto antigo sem categoria continua sem categoria no read-back; não inventa
+          // "peca", pois uma edição de outro campo acabaria persistindo esse fallback.
+          const rawCategory = typeof it.category === "string" ? it.category.trim() : ""
           const skuStr = typeof row.sku === "string" ? row.sku.trim() : ""
           const codigoFromApi = typeof row.codigo === "string" ? String(row.codigo).trim() : ""
           const codigoBase = codigoFromApi || skuStr
@@ -732,7 +733,9 @@ export function GestaoProdutos({
         stock: Math.max(0, Math.floor(Number(formData.estoqueAtual) || 0)),
         price: Number(formData.precoVenda) || 0,
         precoCusto: Math.max(0, Number(formData.precoCusto) || 0),
-        category: formData.categoria?.trim() || undefined,
+        // Sempre envia a string canônica. Vazio é remoção explícita no PATCH; omissão
+        // fica reservada para callers que realmente querem preservar sem tocar no campo.
+        category: formData.categoria?.trim() ?? "",
         // PRODUTO-CODIGOS-UI-PAYLOAD-FIX-002 — contrato limpo: só `sku` (Produto.sku) e
         // `barcode` (Produto.barcode). Sem `codigo`/`codigoBarras` duplicados disputando a
         // mesma coluna.

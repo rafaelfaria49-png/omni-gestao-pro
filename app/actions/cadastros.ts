@@ -14,6 +14,10 @@ import {
   PRODUTO_DUP_SELECT,
   type ExistingProdutoLite,
 } from "@/lib/produtos/duplicate-product";
+import {
+  produtoCategoryForRead,
+  produtoCategoryPatch,
+} from "@/lib/produtos/produto-category";
 import { validarGtin, type GtinFormato } from "@/lib/cadastros/gtin";
 import {
   classificarBarcode,
@@ -1061,7 +1065,7 @@ export async function listProdutos(storeId: string, opts?: { q?: string }): Prom
         nome: p.name,
         sku: p.sku ?? "—",
         barras: p.barcode ?? "",
-        categoria: p.category ?? "—",
+        categoria: produtoCategoryForRead(p.category, "—"),
         marca: p.brand || "—",
         fornecedor: p.supplierName || "—",
         estoque: p.stock ?? 0,
@@ -1122,7 +1126,7 @@ export async function listProdutos(storeId: string, opts?: { q?: string }): Prom
         nome: p.name,
         sku: p.sku ?? "—",
         barras: p.barcode ?? "",
-        categoria: p.category ?? "—",
+        categoria: produtoCategoryForRead(p.category, "—"),
         marca: "—",
         fornecedor: "—",
         estoque: p.stock ?? 0,
@@ -1283,7 +1287,7 @@ export async function listProdutosPaginado(
       nome: p.name,
       sku: p.sku ?? "—",
       barras: p.barcode ?? "",
-      categoria: p.category ?? "—",
+      categoria: produtoCategoryForRead(p.category, "—"),
       marca: p.brand || "—",
       fornecedor: p.supplierName || "—",
       estoque: p.stock ?? 0,
@@ -1554,7 +1558,7 @@ export async function upsertProduto(
     nome: string;
     sku?: string;
     barras?: string;
-    categoria?: string;
+    categoria?: string | null;
     marca?: string;
     fornecedor?: string;
     estoque?: number;
@@ -1614,12 +1618,13 @@ export async function upsertProduto(
   // (Bug histórico: `Math.trunc(input.estoque ?? 0)` sobrescrevia stock com 0
   // em qualquer chamada sem estoque, ex.: botão Ativar/Inativar antes do fix.)
   const stockPatch = produtoStockPatch(input.estoque);
+  const categoryPatch = produtoCategoryPatch(input.categoria);
 
   const common = {
     name: nome,
     sku,
     barcode,
-    category: (input.categoria ?? "").trim() || null,
+    ...categoryPatch,
     brand: (input.marca ?? "").trim(),
     supplierName: (input.fornecedor ?? "").trim(),
     precoCusto: Number(input.custo ?? 0),

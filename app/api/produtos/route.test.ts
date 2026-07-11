@@ -115,7 +115,7 @@ type PostJson = {
   field?: string
   message?: string
   error?: string
-  produto?: { id?: string; name?: string; sku?: string | null; barcode?: string | null; stock?: number | null }
+  produto?: { id?: string; name?: string; sku?: string | null; barcode?: string | null; stock?: number | null; category?: string | null; metadata?: unknown }
 }
 
 beforeEach(() => {
@@ -124,11 +124,21 @@ beforeEach(() => {
 
 describe("POST /api/produtos — aviso de duplicidade (CADASTROS-PRODUTOS-DUPLICIDADE-001)", () => {
   it("cadastra produto novo (sem colisão) com 201", async () => {
-    const res = await POST(postReq({ name: "Cabo USB-C", stock: 10, price: 25, sku: "CAB-001" }))
+    const acessorios = { modelos: ["Galaxy A55"] }
+    const res = await POST(postReq({
+      name: "Cabo USB-C",
+      stock: 10,
+      price: 25,
+      sku: "CAB-001",
+      category: "  Cabos  ",
+      metadata: { acessorios },
+    }))
     const json = (await res.json()) as PostJson
     expect(res.status).toBe(201)
     expect(json.ok).toBe(true)
     expect(json.produto?.name).toBe("Cabo USB-C")
+    expect(json.produto?.category).toBe("Cabos")
+    expect(json.produto?.metadata).toEqual({ acessorios })
   })
 
   it("mesmo código de barras/EAN na loja → 409 DUPLICATE_PRODUCT (field barcode)", async () => {

@@ -9,6 +9,7 @@ import { storeIdFromAssistecRequestForRead, storeIdFromAssistecRequestForWrite }
 import { auth } from "@/auth"
 import { canAccessStore } from "@/lib/auth/enterprise-permissions"
 import { getProdutoFiscal, isProdutoFiscalVazio, type ProdutoFiscal } from "@/lib/produto-fiscal"
+import { produtoCategoryForRead } from "@/lib/produtos/produto-category"
 // (sem normalizeNameForMatch — tabela `product` é minimalista)
 
 export const runtime = "nodejs"
@@ -95,7 +96,7 @@ function rowToItem(row: Produto): InvPayload {
     stock: row.stock,
     cost: row.precoCusto,
     price: row.price,
-    category: typeof (row as unknown as { category?: unknown }).category === "string" ? (row as unknown as { category: string }).category : "",
+    category: produtoCategoryForRead((row as unknown as { category?: unknown }).category),
     ...(isProdutoFiscalVazio(fiscal) ? {} : { fiscal }),
   }
 }

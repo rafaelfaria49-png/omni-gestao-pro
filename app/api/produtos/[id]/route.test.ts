@@ -130,7 +130,7 @@ type PatchJson = {
   field?: string
   message?: string
   error?: string
-  produto?: { id?: string; name?: string; sku?: string | null; barcode?: string | null; stock?: number | null }
+  produto?: { id?: string; name?: string; sku?: string | null; barcode?: string | null; stock?: number | null; category?: string | null; metadata?: unknown }
 }
 
 async function runPatch(id: string, body: Record<string, unknown>) {
@@ -201,12 +201,37 @@ describe("PATCH /api/produtos/[id] — aviso de duplicidade na edição (CADASTR
   })
 
   it("editar apenas nome/preço/estoque (sem mexer em SKU/EAN) funciona", async () => {
-    const alvo = h.seedDireto({ name: "Caixa de som", sku: "SOM-1", stock: 3 })
+    const acessorios = { modelos: ["universal"] }
+    const alvo = h.seedDireto({ name: "Caixa de som", sku: "SOM-1", stock: 3, category: "Áudio", metadata: { acessorios } })
     const { res, json } = await runPatch(String(alvo.id), { name: "Caixa de som JBL", price: 199, stock: 8 })
     expect(res.status).toBe(200)
     expect(json.ok).toBe(true)
     expect(json.produto?.name).toBe("Caixa de som JBL")
     expect(json.produto?.stock).toBe(8)
+    expect(json.produto?.category).toBe("Áudio")
+    expect(json.produto?.metadata).toEqual({ acessorios })
+  })
+
+  it("altera categoria e preserva metadata.acessorios", async () => {
+    const acessorios = { modelos: ["iPhone 15"] }
+    const alvo = h.seedDireto({ name: "Capa", category: "Acessórios", metadata: { acessorios } })
+    const { res, json } = await runPatch(String(alvo.id), { category: "  Capinhas  " })
+
+    expect(res.status).toBe(200)
+    expect(json.produto?.category).toBe("Capinhas")
+    expect(json.produto?.metadata).toEqual({ acessorios })
+  })
+
+  it("remove categoria com string vazia e mantém produto antigo sem categoria compatível", async () => {
+    const categorizado = h.seedDireto({ name: "Capa", category: "Capinhas" })
+    const removido = await runPatch(String(categorizado.id), { category: "" })
+    expect(removido.res.status).toBe(200)
+    expect(removido.json.produto?.category).toBeNull()
+
+    const legado = h.seedDireto({ name: "Legado", category: null })
+    const preservado = await runPatch(String(legado.id), { name: "Legado revisado" })
+    expect(preservado.res.status).toBe(200)
+    expect(preservado.json.produto?.category).toBeNull()
   })
 
   it("limpar o SKU (string vazia → null) não dispara duplicidade", async () => {

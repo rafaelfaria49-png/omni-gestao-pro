@@ -165,7 +165,12 @@ function CategoriaMarcaCombobox({
           data-omni-ui-kit="control"
           value={draft}
           onChange={(e) => {
-            setDraft(e.target.value);
+            const next = e.target.value;
+            setDraft(next);
+            // Mantém o payload sincronizado enquanto o operador digita. Antes, o valor
+            // só chegava ao estado pai no blur/seleção; clicar em Salvar podia ler a
+            // categoria anterior (inclusive vazia) no mesmo ciclo de interação.
+            onChange(next);
             if (!open) setOpen(true);
           }}
           onFocus={() => setOpen(true)}
