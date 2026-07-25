@@ -50,6 +50,12 @@ function makeStatefulFakeDb(products: FakeProduct[]) {
     return {
       cliente: { findFirst: async () => null },
       venda: {
+        // Guard de colisão entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001):
+        // fake single-store, então toda venda existente pertence a `STORE`.
+        findUnique: async ({ where }: any) => {
+          const existing = vendas.get(where.pedidoId)
+          return existing ? { id: existing.id, storeId: STORE, pedidoId: where.pedidoId } : null
+        },
         upsert: async ({ where, create }: any) => {
           const existing = vendas.get(where.pedidoId)
           if (existing) return { id: existing.id }

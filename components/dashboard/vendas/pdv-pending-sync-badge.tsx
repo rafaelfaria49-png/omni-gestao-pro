@@ -42,19 +42,31 @@ export function PdvPendingSyncBadge({ className }: { className?: string }) {
     try {
       let ok = 0
       let fail = 0
+      // Vendas bloqueadas por colisão de número com outra loja não entram no reenvio em
+      // lote: o servidor devolve o mesmo 409 fail-closed em toda tentativa e a saída é
+      // renumeração administrada (ver detalhe da venda no Histórico de Vendas).
+      let bloqueadas = 0
       for (const s of salesPend) {
         if (!s.id) continue
+        if (s.syncBlockedCode === "PEDIDO_ID_DE_OUTRA_LOJA") {
+          bloqueadas += 1
+          continue
+        }
         const r = await retrySyncSale(s.id)
         if (r.ok) ok += 1
+        else if (r.code === "PEDIDO_ID_DE_OUTRA_LOJA") bloqueadas += 1
         else fail += 1
       }
+      const sufixoBloqueadas = bloqueadas
+        ? ` · ${bloqueadas} com número ocupado por outra loja (abra o Histórico de Vendas).`
+        : ""
       toast({
-        title: fail === 0 ? "Sincronização reenviada" : "Reenvio parcial",
+        title: fail === 0 && bloqueadas === 0 ? "Sincronização reenviada" : "Reenvio parcial",
         description:
           fail === 0
-            ? `${ok} venda(s) sincronizada(s).`
-            : `${ok} sincronizada(s) · ${fail} ainda pendente(s). Tente novamente ou use o Histórico de Vendas.`,
-        variant: fail === 0 ? "default" : "destructive",
+            ? `${ok} venda(s) sincronizada(s).${sufixoBloqueadas}`
+            : `${ok} sincronizada(s) · ${fail} ainda pendente(s). Tente novamente ou use o Histórico de Vendas.${sufixoBloqueadas}`,
+        variant: fail === 0 && bloqueadas === 0 ? "default" : "destructive",
       })
     } finally {
       setResending(false)

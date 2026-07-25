@@ -354,6 +354,14 @@ export function VendasArquivoGeral() {
     () => (detalhePendenteLocal ? opsSales.find((s) => s.id === detalhePendenteLocal.id) ?? detalhePendenteLocal : null),
     [detalhePendenteLocal, opsSales],
   )
+  /**
+   * O número desta venda já pertence a uma venda de OUTRA loja no banco — o servidor
+   * bloqueou fail-closed (HTTP 409 `PEDIDO_ID_DE_OUTRA_LOJA`) sem gravar nada. Reenviar
+   * de novo só repete o mesmo 409, e a sincronização retroativa também não contorna o
+   * guard: a saída é renumeração administrada. A UI então não oferece nenhuma das duas
+   * ações e mantém os dados locais intactos.
+   */
+  const colisaoOutraLoja = pendenteLocalLive?.syncBlockedCode === "PEDIDO_ID_DE_OUTRA_LOJA"
 
   // Cupom modal
   const [cupomOpen, setCupomOpen] = useState(false)
@@ -473,13 +481,21 @@ export function VendasArquivoGeral() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
-  const { mergedVendas, pendingSyncIds } = useMemo(() => {
+  const { mergedVendas, pendingSyncIds, colisaoLojaIds } = useMemo(() => {
     const historicoIds = new Set(vendas.map((v) => v.id))
 
     // Ids pendentes SEM filtro: alimentam o botão "Limpar pendentes locais" e os
     // guards de ação mesmo quando a linha está oculta por algum filtro ativo.
     const pendingSync = new Set(
       opsSales.filter((s) => s.id && s.syncPending === true).map((s) => s.id),
+    )
+    // Pendentes bloqueadas por colisão de número com outra loja: continuam contando como
+    // pendentes (elas são pendências reais), mas a UI não oferece reenvio — o servidor
+    // devolveria o mesmo 409 fail-closed.
+    const colisaoLoja = new Set(
+      opsSales
+        .filter((s) => s.id && s.syncPending === true && s.syncBlockedCode === "PEDIDO_ID_DE_OUTRA_LOJA")
+        .map((s) => s.id),
     )
 
     // Só vendas LOCAIS pendentes entram no merge — elas ainda não existem no
@@ -528,7 +544,7 @@ export function VendasArquivoGeral() {
     const merged = [...vendas, ...extraLocal].sort(
       (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
     )
-    return { mergedVendas: merged, pendingSyncIds: pendingSync }
+    return { mergedVendas: merged, pendingSyncIds: pendingSync, colisaoLojaIds: colisaoLoja }
   }, [vendas, opsSales, fromDate, toDate, busca, statusFiltro, pagamentoFiltro, terminalFiltro, operadorFiltro])
 
   const isVendaPendenteSync = useCallback(
@@ -577,6 +593,15 @@ export function VendasArquivoGeral() {
         })
         void fetchRemoteSales()
         load()
+      } else if (res.code === "PEDIDO_ID_DE_OUTRA_LOJA") {
+        // Bloqueio fail-closed do servidor: o número já pertence a outra unidade. Nada
+        // foi gravado e reenviar de novo repete o mesmo resultado.
+        toast({
+          title: "Número de venda ocupado por outra loja",
+          description:
+            "Esta venda não pode ser reenviada com o número atual. Nenhum dado foi sobrescrito. Aguarde a recuperação administrada.",
+          variant: "destructive",
+        })
       } else {
         toast({
           title: `Falha ao reenviar ${vendaId}`,
@@ -1429,6 +1454,23 @@ export function VendasArquivoGeral() {
                                 </TooltipTrigger>
                                 <TooltipContent>Imprimir</TooltipContent>
                               </Tooltip>
+                            ) : colisaoLojaIds.has(v.id) ? (
+                              // Colisão de número com outra loja: reenviar repete o mesmo
+                              // 409 fail-closed. A ação vira "abrir detalhe" (orientação).
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                    onClick={() => void openDetalhe(v.id)}
+                                  >
+                                    <AlertTriangle className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Número ocupado por outra loja — ver detalhes</TooltipContent>
+                              </Tooltip>
                             ) : (
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1714,7 +1756,23 @@ export function VendasArquivoGeral() {
                   </div>
                 </div>
 
-                {pendenteLocalLive?.syncBlockedCode === "CAIXA_ORIGINAL_FECHADO" && (
+                {colisaoOutraLoja && (
+                  <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive space-y-1">
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                      Número de venda ocupado por outra loja
+                    </p>
+                    <p>
+                      Esta venda não pode ser reenviada com o número atual. Nenhum dado foi sobrescrito. Aguarde a
+                      recuperação administrada.
+                    </p>
+                    <p className="font-medium">
+                      Não descarte esta venda: os dados locais são a única cópia até a recuperação.
+                    </p>
+                  </div>
+                )}
+
+                {!colisaoOutraLoja && pendenteLocalLive?.syncBlockedCode === "CAIXA_ORIGINAL_FECHADO" && (
                   <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs text-warning space-y-1">
                     <p className="font-semibold flex items-center gap-1.5">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -1728,34 +1786,49 @@ export function VendasArquivoGeral() {
 
                 <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground space-y-1">
                   <p className="font-medium text-foreground">Próximos passos</p>
-                  <p>
-                    Clique em <span className="font-medium text-foreground">Reenviar sincronização</span> para tentar gravar
-                    de novo no servidor. Se a venda nunca chegou no banco (operador, rede ou validação) e você quer apenas
-                    limpar o registro local, use <span className="font-medium text-foreground">Descartar venda local</span>.
-                  </p>
-                  <p>
-                    <span className="font-medium text-foreground">Importante:</span> descartar é limpeza LOCAL — o sistema
-                    verifica no servidor antes. Se a venda já tiver sido gravada no banco, o descarte é bloqueado e ela é
-                    reconciliada como sincronizada. Estoque, financeiro e caixa de vendas não persistidas permanecem intactos.
-                  </p>
+                  {colisaoOutraLoja ? (
+                    <p>
+                      O servidor bloqueou a gravação porque o número{" "}
+                      <span className="font-medium text-foreground">{detalhePendenteLocal.id}</span> já pertence a uma venda
+                      de outra unidade. Reenviar de novo repete o mesmo bloqueio e abrir o caixa não resolve. A venda será
+                      regravada com um número novo pela recuperação administrada.
+                    </p>
+                  ) : (
+                    <>
+                      <p>
+                        Clique em <span className="font-medium text-foreground">Reenviar sincronização</span> para tentar
+                        gravar de novo no servidor. Se a venda nunca chegou no banco (operador, rede ou validação) e você
+                        quer apenas limpar o registro local, use{" "}
+                        <span className="font-medium text-foreground">Descartar venda local</span>.
+                      </p>
+                      <p>
+                        <span className="font-medium text-foreground">Importante:</span> descartar é limpeza LOCAL — o
+                        sistema verifica no servidor antes. Se a venda já tiver sido gravada no banco, o descarte é
+                        bloqueado e ela é reconciliada como sincronizada. Estoque, financeiro e caixa de vendas não
+                        persistidas permanecem intactos.
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-2 pt-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-10 gap-2 text-sm border-warning/40 text-warning hover:bg-warning/10"
-                    onClick={() => void handleReenviarSync(detalhePendenteLocal.id)}
-                    disabled={reenviandoId === detalhePendenteLocal.id}
-                  >
-                    {reenviandoId === detalhePendenteLocal.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                    Reenviar sincronização
-                  </Button>
-                  {pendenteLocalLive?.syncBlockedCode === "CAIXA_ORIGINAL_FECHADO" && (
+                  {!colisaoOutraLoja && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 gap-2 text-sm border-warning/40 text-warning hover:bg-warning/10"
+                      onClick={() => void handleReenviarSync(detalhePendenteLocal.id)}
+                      disabled={reenviandoId === detalhePendenteLocal.id}
+                    >
+                      {reenviandoId === detalhePendenteLocal.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                      Reenviar sincronização
+                    </Button>
+                  )}
+                  {!colisaoOutraLoja && pendenteLocalLive?.syncBlockedCode === "CAIXA_ORIGINAL_FECHADO" && (
                     <Button
                       type="button"
                       variant="outline"
@@ -2217,6 +2290,21 @@ export function VendasArquivoGeral() {
             <p>· Não altera estoque, financeiro ou caixa.</p>
             <p>· Apenas remove o registro local deste dispositivo.</p>
           </div>
+          {/* Venda bloqueada por número ocupado por outra loja: o servidor responde 404
+              para ESTA unidade (a venda gravada é da outra loja), então o descarte segue
+              adiante e o registro local — única cópia até a recuperação — se perde. */}
+          {descartandoLocalId && colisaoLojaIds.has(descartandoLocalId) && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                Esta venda aguarda recuperação administrada
+              </p>
+              <p>
+                O número está ocupado por outra loja e a venda nunca foi gravada nesta unidade — este dispositivo tem a
+                única cópia dos dados. Descartar agora perde a venda em definitivo.
+              </p>
+            </div>
+          )}
           <AlertDialogFooter className="gap-2 sm:gap-0">
             <AlertDialogCancel className="border-border" disabled={descartandoLocalLoading}>
               Voltar

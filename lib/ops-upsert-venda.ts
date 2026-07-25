@@ -4,6 +4,7 @@ import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
 import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 import { sanitizeSaleLinesPayload } from "@/lib/vendas/sanitize-sale-line-payload"
+import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
 
 /**
  * Lançada pela baixa de estoque do PDV quando `enforceStock` está ativo e o saldo
@@ -84,6 +85,42 @@ export class CaixaOriginalFechadoError extends Error {
       "Esta venda pertence a uma sessão de caixa já fechada. Para sincronizar, confirme o lançamento retroativo na sessão original.",
     )
     this.name = "CaixaOriginalFechadoError"
+  }
+}
+
+/**
+ * Lançada quando o `pedidoId` recebido JÁ EXISTE no banco pertencendo a OUTRA loja.
+ *
+ * `Venda.pedidoId` é `@unique` GLOBAL, mas o número `VDA-YYYY-NNNN` é gerado por um
+ * contador LOCAL do navegador (`nextSaleId` em `lib/operations-store.tsx`), que reinicia
+ * em `0001` em cada loja. Duas lojas chegam ao mesmo número, e o `upsert` por `pedidoId`
+ * encontrava a venda da outra loja e a REESCREVIA (o `update` chegava a reatribuir
+ * `storeId`): a venda da loja A trocava de dono, seus `ItemVenda` eram apagados e
+ * recriados com os itens da loja B, enquanto estoque/financeiro originais ficavam órfãos
+ * na loja A — e o novo lançamento entrava na loja B com a data original, fora da janela
+ * de qualquer sessão de caixa (invisível em conferência/fechamento).
+ *
+ * Comprovado em PDV-PENDENCIAS-FANTASMAS-SERVER-PAYLOAD-AUDIT-001: a loja-2 tem
+ * `VDA-2026-0001..0505` com exatamente 5 buracos (0046, 0047, 0111, 0221, 0288), todos
+ * ocupados por vendas íntegras da loja-1.
+ *
+ * Fail-closed: nada é gravado. O caller (`venda-persist`) traduz para HTTP 409. NÃO é
+ * contornável por `allowClosedOriginalSession` — o guard roda antes de qualquer outra
+ * validação ou efeito. A recuperação das vendas bloqueadas exige renumeração
+ * administrada (GOAL próprio), nunca reenvio.
+ */
+export class PedidoIdDeOutraLojaError extends Error {
+  readonly code = "PEDIDO_ID_DE_OUTRA_LOJA"
+  readonly pedidoId: string
+  /** Loja que já é dona do `pedidoId` (para log estruturado — nunca exposto ao operador). */
+  readonly ownerStoreId: string
+  constructor(pedidoId: string, ownerStoreId: string) {
+    super(
+      "Este número de venda já pertence a outra loja. A venda não foi gravada para evitar sobrescrever dados.",
+    )
+    this.name = "PedidoIdDeOutraLojaError"
+    this.pedidoId = pedidoId
+    this.ownerStoreId = ownerStoreId
   }
 }
 
@@ -223,6 +260,21 @@ export async function upsertVendaInTransaction(
   const pedidoId = typeof sale.id === "string" && sale.id.trim() ? sale.id.trim() : ""
   if (!pedidoId) throw new Error("sale.id inválido")
 
+  // ── GUARD FAIL-CLOSED: `pedidoId` já pertence a OUTRA loja ──────────────────
+  // PRIMEIRA coisa depois de validar o id, ANTES de qualquer leitura de negócio,
+  // validação de caixa, upsert, `itemVenda.deleteMany`, baixa de estoque, movimentação
+  // financeira ou título a receber — nada foi escrito quando isto dispara. Rodar antes
+  // do gate de caixa também garante que `allowClosedOriginalSession` (ação manual de
+  // "Sincronizar retroativo") NUNCA contorne a colisão: o erro de colisão tem
+  // precedência sobre `CAIXA_ORIGINAL_FECHADO`.
+  const donoAtual = await tx.venda.findUnique({
+    where: { pedidoId },
+    select: { id: true, storeId: true, pedidoId: true },
+  })
+  if (donoAtual && donoAtual.storeId !== lojaId) {
+    throw new PedidoIdDeOutraLojaError(pedidoId, donoAtual.storeId)
+  }
+
   const total = typeof sale.total === "number" && Number.isFinite(sale.total) ? sale.total : 0
   let at: Date
   try {
@@ -312,11 +364,20 @@ export async function upsertVendaInTransaction(
     }
   }
 
-  // Payload gravado em `Venda.payload`: quando o sync foi retroativo (sessão original
+  // Payload gravado em `Venda.payload`: primeiro removemos os marcadores de sincronização
+  // que só existem no cliente (`syncPending`/`syncBlockedCode` — ver
+  // `lib/vendas/sale-sync-flags.ts`). O PDV envia o `SaleRecord` inteiro, e gravar
+  // `syncPending: true` fazia a venda voltar do servidor já classificada como pendente
+  // em qualquer outro navegador (pendência fantasma). Blacklist, não whitelist: campos
+  // legítimos ainda não tipados continuam sendo persistidos.
+  const salePersistivel = stripClientSyncFlags(sale)
+
+  // `lines` são as linhas já resaneadas por `sanitizeSaleLinesPayload` (acessórios) —
+  // sobrescrevem as linhas cruas do cliente. Quando o sync foi retroativo (sessão original
   // fechada, autorizado explicitamente), carimba metadados de auditoria — nunca enviados
   // pelo cliente, calculados aqui no servidor no momento da gravação.
   const salePayloadForStorage: SalePayload = {
-    ...sale,
+    ...salePersistivel,
     lines,
     ...(isRetroactiveSync
       ? {
@@ -347,8 +408,10 @@ export async function upsertVendaInTransaction(
       operador,
       ...(terminalId ? { terminalId } : {}),
     },
+    // `storeId` NUNCA entra no update: uma `Venda` já existente jamais troca de loja.
+    // O guard fail-closed no topo já barra `pedidoId` de outra loja; manter o campo fora
+    // daqui é a segunda barreira (defesa em profundidade) contra sequestro entre lojas.
     update: {
-      storeId: lojaId,
       payload: asJsonPayload(salePayloadForStorage),
       total,
       at,

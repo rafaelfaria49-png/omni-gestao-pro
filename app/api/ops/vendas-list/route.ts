@@ -3,66 +3,14 @@ import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { requireOpsSubscription, opsLojaIdFromRequest } from "@/lib/ops-api-gate"
 import { auth } from "@/auth"
 import { canAccessStore } from "@/lib/auth/enterprise-permissions"
-import type { PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
+// `saleFromDbRow` vive em `@/lib/vendas/sale-from-db-row` (helper puro e testável) — ele
+// também remove os marcadores client-only (`syncPending`/`syncBlockedCode`) de payloads
+// legados, para que venda vinda do banco nunca volte classificada como pendente.
+import { saleFromDbRow } from "@/lib/vendas/sale-from-db-row"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
-
-const zeroPb: PaymentBreakdownFull = {
-  dinheiro: 0,
-  pix: 0,
-  cartaoDebito: 0,
-  cartaoCredito: 0,
-  carne: 0,
-  aPrazo: 0,
-  creditoVale: 0,
-}
-
-function saleFromDbRow(r: {
-  pedidoId: string
-  total: number
-  at: Date
-  clienteNome: string | null
-  status: string
-  payload: unknown
-  itens: Array<{
-    inventoryId: string | null
-    nome: string
-    quantidade: number
-    precoUnitario: number
-    lineTotal: number
-  }>
-}): SaleRecord {
-  const dbStatus = r.status as SaleRecord["status"] | undefined
-  const p = r.payload
-  if (p && typeof p === "object") {
-    const o = p as Partial<SaleRecord>
-    if (typeof o.id === "string" && o.id === r.pedidoId && Array.isArray(o.lines)) {
-      // Sempre sobrescreve status com o valor autoritativo do banco (o payload pode estar desatualizado).
-      return { ...(o as SaleRecord), status: dbStatus }
-    }
-  }
-
-  const lines: SaleLineRecord[] = r.itens.map((it) => ({
-    inventoryId: it.inventoryId ?? "",
-    name: it.nome,
-    quantity: it.quantidade,
-    unitPrice: it.precoUnitario,
-    lineTotal: it.lineTotal,
-    qtyReturned: 0,
-  }))
-
-  return {
-    id: r.pedidoId,
-    at: r.at.toISOString(),
-    lines,
-    total: r.total,
-    status: dbStatus,
-    customerName: r.clienteNome ?? undefined,
-    paymentBreakdown: zeroPb,
-  }
-}
 
 export async function GET(req: Request) {
   // Autorização de loja (padrão da rota irmã `/api/ops/inventory`): sessão NextAuth →
