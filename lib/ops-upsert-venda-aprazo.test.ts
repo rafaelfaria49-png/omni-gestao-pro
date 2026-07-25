@@ -27,6 +27,9 @@ function makeFakeTx() {
   const tx: any = {
     cliente: { findFirst: async () => null },
     venda: {
+      // Guard de colisão entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001): fake sem
+      // vendas pré-existentes → nenhum `pedidoId` tem dono, o guard passa direto.
+      findUnique: async () => null,
       upsert: async () => ({ id: `venda-${++vendaCounter}` }),
       update: async () => ({}),
     },

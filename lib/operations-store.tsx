@@ -327,7 +327,7 @@ interface OperationsContextType {
    * Reenvia ao servidor uma venda local marcada como `syncPending`. Em sucesso,
    * limpa `syncPending`. Em erro, mantém o estado pendente e devolve o motivo.
    */
-  retrySyncSale: (saleId: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+  retrySyncSale: (saleId: string) => Promise<{ ok: true } | { ok: false; reason: string; code?: string }>
   /**
    * Ação manual explícita (nunca automática): reenvia uma venda pendente cuja sessão de
    * caixa original existe e é desta loja, mas já está `FECHADA`
@@ -335,7 +335,9 @@ interface OperationsContextType {
    * gravá-la retroativamente na PRÓPRIA sessão original (nunca no caixa atual). A UI deve
    * pedir confirmação antes de chamar.
    */
-  retrySyncSaleRetroactive: (saleId: string) => Promise<{ ok: true } | { ok: false; reason: string }>
+  retrySyncSaleRetroactive: (
+    saleId: string,
+  ) => Promise<{ ok: true } | { ok: false; reason: string; code?: string }>
   /**
    * Verifica no servidor se a venda existe antes de descartar localmente.
    * - Se o servidor tem (HTTP 200): NÃO descarta — apenas reconcilia `syncPending=false`.
@@ -899,7 +901,10 @@ export function OperationsProvider({
    * "Sincronizar retroativo" (nunca pelo retry automático nem pelo reenvio normal).
    */
   const doRetrySyncSale = useCallback(
-    async (saleId: string, retroactive: boolean): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    async (
+      saleId: string,
+      retroactive: boolean,
+    ): Promise<{ ok: true } | { ok: false; reason: string; code?: string }> => {
       const sale = stateRef.current.sales.find((s) => s.id === saleId && s.syncPending === true)
       if (!sale) {
         return { ok: false, reason: "Venda local pendente não encontrada (talvez já tenha sincronizado)." }
@@ -935,7 +940,9 @@ export function OperationsProvider({
             sales: prev.sales.map((s) => (s.id === saleId ? { ...s, syncBlockedCode: code } : s)),
           }))
         }
-        return { ok: false, reason: `HTTP ${res.status} — ${detail}` }
+        // `code` sobe junto com a razão para a UI orientar por causa (ex.:
+        // `PEDIDO_ID_DE_OUTRA_LOJA` não deve sugerir novo reenvio nem abrir caixa).
+        return { ok: false, reason: `HTTP ${res.status} — ${detail}`, ...(code ? { code } : {}) }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn("[venda-persist] retry rede", saleId, "lojaId:", lj, err)

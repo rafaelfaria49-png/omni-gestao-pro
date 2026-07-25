@@ -82,3 +82,61 @@ describe("mergeSalesById — propagação de status autoritativo", () => {
     expect(merged).toBe(local)
   })
 })
+
+/**
+ * GOAL: PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001 — estar no `remote` significa estar no
+ * banco, ou seja, confirmada. Nenhum marcador local pode sobreviver ao merge nem ser
+ * reinjetado por uma venda remota extra (payload legado com `syncPending: true`).
+ */
+describe("mergeSalesById — marcadores client-only nunca voltam do servidor", () => {
+  it("9. venda remota EXTRA nunca entra no estado como pendente", () => {
+    const local: SaleRecord[] = []
+    const remote = [
+      venda({ id: "VDA-2026-0046", syncPending: true, syncBlockedCode: "CAIXA_ORIGINAL_FECHADO" }),
+    ]
+    const merged = mergeSalesById(local, remote)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]!.syncPending).toBeUndefined()
+    expect(merged[0]!.syncBlockedCode).toBeUndefined()
+    // Campos legítimos da venda remota preservados.
+    expect(merged[0]!.id).toBe("VDA-2026-0046")
+    expect(merged[0]!.total).toBe(24)
+  })
+
+  it("10. venda local já existente no servidor tem syncPending E syncBlockedCode limpos", () => {
+    const local = [
+      venda({ id: "VDA-2026-0001", syncPending: true, syncBlockedCode: "CAIXA_ORIGINAL_FECHADO" }),
+    ]
+    const remote = [venda({ id: "VDA-2026-0001", status: "concluida" })]
+    const merged = mergeSalesById(local, remote)
+    expect(merged[0]!.syncPending).toBe(false)
+    expect(merged[0]!.syncBlockedCode).toBeUndefined()
+    expect(merged[0]!.status).toBe("concluida")
+  })
+
+  it("10b. limpeza converge: o merge seguinte devolve a MESMA referência", () => {
+    const local = [venda({ id: "VDA-2026-0001", status: "concluida", syncBlockedCode: "X" })]
+    const remote = [venda({ id: "VDA-2026-0001", status: "concluida" })]
+    const primeiro = mergeSalesById(local, remote)
+    expect(primeiro).not.toBe(local)
+    const segundo = mergeSalesById(primeiro, remote)
+    expect(segundo).toBe(primeiro)
+  })
+
+  it("venda local pendente AUSENTE no servidor continua pendente", () => {
+    const local = [venda({ id: "VDA-2026-0046", syncPending: true })]
+    const remote = [venda({ id: "VDA-2026-0500", status: "concluida" })]
+    const merged = mergeSalesById(local, remote)
+    const pendente = merged.find((s) => s.id === "VDA-2026-0046")!
+    expect(pendente.syncPending).toBe(true)
+  })
+
+  it("preserva syncBlockedCode da venda local ausente no servidor (orientação da UI)", () => {
+    const local = [
+      venda({ id: "VDA-2026-0046", syncPending: true, syncBlockedCode: "PEDIDO_ID_DE_OUTRA_LOJA" }),
+    ]
+    const merged = mergeSalesById(local, [])
+    expect(merged[0]!.syncBlockedCode).toBe("PEDIDO_ID_DE_OUTRA_LOJA")
+    expect(merged[0]!.syncPending).toBe(true)
+  })
+})

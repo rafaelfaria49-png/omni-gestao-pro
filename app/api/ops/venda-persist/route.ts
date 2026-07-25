@@ -10,6 +10,7 @@ import {
   UnresolvedProductError,
   CaixaSessaoInvalidaError,
   CaixaOriginalFechadoError,
+  PedidoIdDeOutraLojaError,
   type SalePayload,
 } from "@/lib/ops-upsert-venda"
 
@@ -84,6 +85,24 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true })
   } catch (e) {
+    // Colisão de `pedidoId` entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001): o
+    // número já pertence a uma venda de OUTRA loja. Fail-closed — nada foi gravado e a
+    // venda da outra loja permanece intacta. Não é contornável por reenvio nem por
+    // sincronização retroativa; a saída é renumeração administrada (GOAL próprio).
+    // Log estruturado sem payload nem dados do cliente.
+    if (e instanceof PedidoIdDeOutraLojaError) {
+      console.warn(
+        "[ops/venda-persist] pedido-id-de-outra-loja",
+        JSON.stringify({
+          lojaIdSolicitante: lojaId,
+          pedidoId,
+          ownerStoreId: e.ownerStoreId,
+          terminalId: sale.terminalId ?? null,
+          bloqueio: "fail-closed",
+        }),
+      )
+      return NextResponse.json({ error: e.message, code: e.code }, { status: 409 })
+    }
     // Caixa servidor obrigatório (P1 OPS-SALE-SAFETY-P1-001): venda com entrada no caixa
     // sem `SessaoCaixa` ABERTA válida é falha de negócio (409), não erro de servidor.
     // Nada foi gravado (validação dentro da transação). O PDV mantém `syncPending` e
