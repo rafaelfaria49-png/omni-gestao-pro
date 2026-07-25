@@ -15,6 +15,14 @@ export type FiscalLogAcao =
   | "certificado.ativar"
   | "certificado.desativar"
   | "certificado.update"
+  // GOAL-016B — onboarding orientado por certificado (leitura do A1 e confirmação do cadastro).
+  | "certificado.onboarding.inspecionar"
+  | "certificado.onboarding.confirmar"
+  /**
+   * Identidade importada do A1 SEM custódia do arquivo: nenhum certificado foi armazenado nem
+   * ativado. Ação própria para que a trilha não sugira instalação de certificado.
+   */
+  | "identidade_importada_certificado_custodia_pendente"
 
 function operadorFromSession(session: Session | null): string {
   const u = session?.user

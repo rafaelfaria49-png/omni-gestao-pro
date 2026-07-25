@@ -41,6 +41,12 @@ export type Pkcs12Meta = {
   subject: string
   /** CNPJ (14 dígitos) do certificado, se identificável; senão `null`. */
   cnpj: string | null
+  /** CN do emissor — autoridade certificadora (AC) que emitiu o certificado. */
+  issuerCn: string
+  /** Issuer completo (uma linha). */
+  issuer: string
+  /** E-mail do titular quando presente no certificado (subject/SAN); senão `null`. */
+  email: string | null
   serialNumber: string
   /** Fingerprint SHA-1 (hex minúsculo, sem `:`) — identidade estável para auditoria/UI. */
   fingerprintSha1: string
@@ -84,6 +90,20 @@ function extractCnpj(cert: X509Certificate): string | null {
     const m = san.match(/(\d{14})/)
     if (m) return m[1]!
   }
+  return null
+}
+
+/**
+ * Identifica o e-mail do titular. Ordem: (1) `emailAddress=`/`E=` no subject; (2) `email:` no SAN.
+ * `null` quando o certificado não carrega e-mail (comum em A1 de pessoa jurídica).
+ */
+function extractEmail(cert: X509Certificate): string | null {
+  const subject = String(cert.subject ?? "")
+  const fromSubject = subject.match(/(?:emailAddress|^E|\bE)=([^\n,]+)/)
+  if (fromSubject?.[1]) return fromSubject[1].trim()
+  const san = String(cert.subjectAltName ?? "")
+  const fromSan = san.match(/email:([^\s,]+)/i)
+  if (fromSan?.[1]) return fromSan[1].trim()
   return null
 }
 
@@ -176,6 +196,9 @@ export function loadPkcs12(pfx: Buffer | null | undefined, senha: string): Pkcs1
     titularCn: (String(x509.subject ?? "").match(/CN=([^\n]+)/)?.[1] ?? "").trim(),
     subject: String(x509.subject ?? "").replace(/\s*\n\s*/g, ", ").trim(),
     cnpj: extractCnpj(x509),
+    issuerCn: (String(x509.issuer ?? "").match(/CN=([^\n]+)/)?.[1] ?? "").trim(),
+    issuer: String(x509.issuer ?? "").replace(/\s*\n\s*/g, ", ").trim(),
+    email: extractEmail(x509),
     serialNumber: String(x509.serialNumber ?? ""),
     fingerprintSha1: String(x509.fingerprint ?? "").replace(/:/g, "").toLowerCase(),
     notBefore: new Date(x509.validFrom),
