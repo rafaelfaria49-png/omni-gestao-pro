@@ -39,8 +39,9 @@ import { useToast } from "@/components/configuracoes-v3/hooks/use-toast";
 import { useLojaAtiva } from "@/lib/loja-ativa";
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers";
 import { FiscalOnboardingCertificado } from "./FiscalOnboardingCertificado";
-// Import direto do módulo PURO (evita puxar node-forge/node:crypto do barrel do cofre para o client).
+// Imports diretos dos módulos PUROS (evitam puxar node-forge/node:crypto dos barrels para o client).
 import { calcularAlertaVencimento } from "@/lib/fiscal/vault/certificado-alerta";
+import { algumCertificadoInstalado, certificadoTemCustodia } from "@/lib/fiscal/certificate/certificate-custody";
 
 const REGIME_OPTIONS: Array<{ value: string; label: string; crt: number }> = [
   { value: "SIMPLES_NACIONAL", label: "Simples Nacional", crt: 1 },
@@ -538,8 +539,12 @@ function FiscalSectionContent() {
               </Button>
             }
           >
-            {/* Modo sem certificado: a plataforma segue utilizável, com o fiscal dormente. */}
-            {!certs.some((c) => c.ativo) ? (
+            {/*
+              Modo sem certificado: a plataforma segue utilizável, com o fiscal dormente.
+              "Configurado" exige TUDO junto — blobRef + senhaRef + status ATIVO + ativo=true.
+              Metadados sem custódia NÃO contam como certificado instalado.
+            */}
+            {!algumCertificadoInstalado(certs) ? (
               <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
                 <div className="min-w-0">
@@ -571,6 +576,7 @@ function FiscalSectionContent() {
                         <p className="text-sm font-semibold text-foreground">{c.apelido || c.titularCn || "Certificado"}</p>
                         <Badge variant={c.ativo ? "default" : "outline"}>{c.ativo ? "Ativo" : "Inativo"}</Badge>
                         <Badge variant="secondary">{c.tipo}</Badge>
+                        {!certificadoTemCustodia(c) ? <Badge variant="outline">Não armazenado</Badge> : null}
                         {(() => {
                           const alerta = calcularAlertaVencimento(c.validoAte);
                           if (alerta.nivel === "vencido") return <Badge variant="destructive">Vencido</Badge>;
@@ -585,9 +591,22 @@ function FiscalSectionContent() {
                         {" · "}
                         {c.blobConfigured ? "blob ✓" : "blob —"} / {c.senhaConfigured ? "senha-ref ✓" : "senha-ref —"}
                       </p>
+                      {!certificadoTemCustodia(c) ? (
+                        <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                          Apenas metadados: o arquivo A1 não está no cofre. Reenvie o certificado quando o cofre estiver
+                          configurado para concluir a instalação.
+                        </p>
+                      ) : null}
                     </div>
                     <div className="shrink-0">
-                      <Button type="button" variant={c.ativo ? "ghost" : "outline"} size="sm" onClick={() => void toggleCert(c)}>
+                      {/* Sem custódia a ativação falharia em `blobRef_ausente` — não oferecer o botão. */}
+                      <Button
+                        type="button"
+                        variant={c.ativo ? "ghost" : "outline"}
+                        size="sm"
+                        disabled={!c.ativo && !certificadoTemCustodia(c)}
+                        onClick={() => void toggleCert(c)}
+                      >
                         {c.ativo ? "Desativar" : "Ativar"}
                       </Button>
                     </div>
@@ -603,7 +622,11 @@ function FiscalSectionContent() {
               <StatusRow ok={Boolean(form.cnpj && form.razaoSocial)} label="Dados da empresa (CNPJ + razão social)" />
               <StatusRow ok={Boolean(form.uf && form.municipio && form.codigoMunicipioIbge)} label="Endereço fiscal (UF, município, IBGE)" />
               <StatusRow ok={Boolean(form.cscId && form.cscConfigured)} label="CSC (ID + referência do token)" />
-              <StatusRow ok={certs.some((c) => c.ativo)} label="Certificado digital ativo" />
+              <StatusRow
+                ok={algumCertificadoInstalado(certs)}
+                label="Certificado digital instalado e ativo"
+                hint="Exige arquivo no cofre (blob + senha), validação e ativação"
+              />
               <StatusRow ok={false} label="Emissão habilitada" hint="Permanece desligada nesta fase" neutral />
             </div>
           </SettingsCard>

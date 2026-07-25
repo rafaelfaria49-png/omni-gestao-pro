@@ -29,6 +29,7 @@ const SEM_CERTIFICADOS: CertificadosContexto = {
   fingerprintJaRegistradaNestaLoja: false,
   possuiAtivoComOutraFingerprint: false,
   fingerprintVinculadaAOutraLoja: false,
+  custodiaConfigurada: false,
 }
 
 function certificado(over: Partial<CertificadoExtraido> = {}): CertificadoExtraido {
@@ -309,11 +310,25 @@ describe("reconciliarOnboarding · dormência e custódia (itens 6 e 7)", () => 
         fingerprintJaRegistradaNestaLoja: true,
         possuiAtivoComOutraFingerprint: true,
         fingerprintVinculadaAOutraLoja: false,
+        custodiaConfigurada: false,
       },
     })
     expect(p.podeConfirmar).toBe(true)
     expect(p.reconciliacao.jaRegistradoNestaLoja).toBe(true)
     expect(p.reconciliacao.substituiraCertificadoAtivo).toBe(true)
+  })
+
+  it("sem custódia no cofre, a prévia declara custódia pendente com a mensagem de reenvio", () => {
+    const p = base()
+    expect(p.custodia.pendente).toBe(true)
+    expect(p.custodia.mensagem).toContain("não foi armazenado")
+    expect(p.custodia.mensagem).toContain("reenviar o certificado")
+  })
+
+  it("com custódia já configurada, a prévia deixa de declarar pendência", () => {
+    const p = base({ certificados: { ...SEM_CERTIFICADOS, custodiaConfigurada: true } })
+    expect(p.custodia.pendente).toBe(false)
+    expect(p.custodia.mensagem).toContain("já está referenciado no cofre")
   })
 
   it("a reconciliação não faz nenhuma chamada de rede (zero transmissão)", () => {

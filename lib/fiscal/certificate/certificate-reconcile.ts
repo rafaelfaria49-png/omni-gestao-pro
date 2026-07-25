@@ -17,6 +17,7 @@
 import { canonicalEnvRef } from "@/lib/fiscal/vault/fiscal-secret-vault"
 import { onlyDigits } from "@/lib/fiscal/fiscal-validators"
 import { bloqueio } from "./certificate-inspection"
+import { MENSAGEM_CUSTODIA_PENDENTE } from "./certificate-custody"
 import type { FiscalIdentityLookupResultado, FiscalLookupCampo } from "./lookup-provider"
 import type {
   CampoIdentidadeFiscal,
@@ -121,6 +122,8 @@ export type CertificadosContexto = {
   possuiAtivoComOutraFingerprint: boolean
   /** Mesma fingerprint vinculada a OUTRA unidade (checagem booleana de integridade). */
   fingerprintVinculadaAOutraLoja: boolean
+  /** Mesma fingerprint JÁ com custódia no cofre (blobRef + senhaRef) nesta unidade. */
+  custodiaConfigurada: boolean
 }
 
 export type ReconciliarParams = {
@@ -273,14 +276,14 @@ function resumoLookup(lookup: FiscalIdentityLookupResultado): LookupResumo {
   }
 }
 
-function custodiaPendente(storeId: string): CustodiaSegredo {
+function estadoCustodia(storeId: string, configurada: boolean): CustodiaSegredo {
   return {
-    pendente: true,
+    pendente: !configurada,
     blobRefEsperada: canonicalEnvRef("pfx", storeId),
     senhaRefEsperada: canonicalEnvRef("senha", storeId),
-    mensagem:
-      "O arquivo e a senha do certificado não são gravados por este fluxo. Para ativar o certificado, " +
-      "provisione o material no cofre nas referências indicadas e use a validação/ativação do certificado.",
+    mensagem: configurada
+      ? "O material deste certificado já está referenciado no cofre desta unidade. Valide e ative o certificado para concluir a instalação."
+      : MENSAGEM_CUSTODIA_PENDENTE,
   }
 }
 
@@ -466,7 +469,7 @@ export function reconciliarOnboarding(params: ReconciliarParams): OnboardingPrev
     bloqueios,
     pendencias,
     lookup: resumoLookup(lookup),
-    custodia: custodiaPendente(storeId),
+    custodia: estadoCustodia(storeId, certificados.custodiaConfigurada),
     fiscalEnabledAtual: Boolean(fiscalLoja?.fiscalEnabled),
     transmissao: "nenhuma",
   }

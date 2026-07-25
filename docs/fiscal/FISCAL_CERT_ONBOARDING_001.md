@@ -1,9 +1,28 @@
 # FISCAL-CERTIFICATE-DRIVEN-ONBOARDING-016B — Onboarding fiscal pelo certificado A1
 
-> **Escopo:** o cliente insere o certificado A1; o sistema valida, extrai o que o X.509 realmente
-> carrega, identifica o CNPJ, reconcilia com a loja, pré-preenche a identidade fiscal e pede
-> confirmação **apenas** do que está ausente ou divergente. **Dormente:** `fiscalEnabled` continua
-> `false`, provider intocado, zero CSC criado, **zero transmissão à SEFAZ**.
+> **O que o GOAL-016B entrega:** upload do A1, inspeção, reconciliação com a loja e **importação
+> assistida da identidade fiscal**. **O que ele NÃO entrega:** instalação do certificado. A
+> **custódia persistente do `.pfx` é dependência aberta** — o fluxo completo de instalação em um
+> único envio só estará concluído quando existir provider seguro de persistência.
+>
+> **Dormente:** `fiscalEnabled` continua `false`, provider intocado, zero CSC criado,
+> **zero transmissão à SEFAZ**.
+
+## Estado honesto da entrega
+
+| Capacidade | Estado |
+|---|---|
+| Upload seguro do `.pfx`/`.p12` + senha (só servidor, só memória) | ✅ entregue |
+| Inspeção/extração do X.509 e avaliação fail-closed | ✅ entregue |
+| Reconciliação por CNPJ com `Store`/`ConfiguracaoFiscalLoja` | ✅ entregue |
+| Importação assistida da identidade fiscal com origem por campo | ✅ entregue |
+| Contrato de enriquecimento cadastral (`FiscalIdentityLookupProvider`) | ✅ entregue (sem fonte aprovada) |
+| **Custódia persistente do certificado (cofre real)** | ❌ **dependência aberta** |
+| **Instalação do certificado em um único envio** | ❌ **bloqueada pela custódia** |
+| Ativação / emissão / transmissão | ❌ fora de escopo (permanece dormente) |
+
+**Nenhuma tela, resposta de API ou registro de auditoria afirma que o certificado está instalado,
+configurado ou concluído enquanto `blobRef`/`senhaRef` estiverem ausentes.**
 
 | Item | Valor |
 |---|---|
@@ -31,8 +50,9 @@ POST /api/fiscal/onboarding/certificado        ← NÃO PERSISTE NADA
 POST /api/fiscal/onboarding/confirmar          ← ÚNICO PONTO DE GRAVAÇÃO
       │ reconcilia DE NOVO no servidor (veredito não vem do cliente)
       ├─ ConfiguracaoFiscalLoja.upsert  (sem fiscalEnabled, sem provider, sem CSC)
-      ├─ CertificadoDigital: PENDENTE_VALIDACAO, ativo=false, sem blobRef/senhaRef
-      └─ FiscalLog (auditoria)
+      ├─ CertificadoDigital: SÓ se já houver custódia (blobRef + senhaRef)
+      │     sem custódia ⇒ nenhuma linha é criada, nada é ativado
+      └─ FiscalLog (auditoria sanitizada)
 ```
 
 **Limites do upload:** `512 KB` (`PFX_TAMANHO_MAXIMO_BYTES`), extensões `.pfx`/`.p12`,
@@ -147,19 +167,38 @@ A senha existe apenas no estado local do componente até o envio e é limpa logo
   `configuracaoFiscalLoja.upsert`). `fiscalEnabled` **não entra no upsert**: permanece `false` no
   create e intocado no update. `ambiente`, `modeloFiscal`, `provider`, `cscId` e `cscTokenRef` são
   relidos do estado atual e reescritos iguais — o onboarding não altera nenhum deles.
-- **Certificado** — `CertificadoDigital` com `status = PENDENTE_VALIDACAO`, `ativo = false`,
-  `blobRef = null`, `senhaRef = null`, `uploadedBy` = usuário da sessão. Se a mesma fingerprint já
-  existir na loja, os metadados são atualizados (confirmação idempotente, sem duplicar).
-- **Auditoria** — `FiscalLog` com `certificado.onboarding.inspecionar` e
-  `certificado.onboarding.confirmar`, registrando fingerprint, série, CNPJ, veredito, bloqueios,
-  origens por campo, pendências e estado do lookup. **Nunca** senha, bytes, PEM ou chave.
+- **Certificado** — regra única, em `certificate-custody.ts`:
 
-### Por que `blobRef`/`senhaRef` ficam nulos
+  | Situação | O que acontece |
+  |---|---|
+  | Não existe linha com esta fingerprint | **Nada é criado.** Só a identidade é gravada. |
+  | Existe linha **sem** `blobRef`/`senhaRef` | **Intocada.** Só a identidade é gravada. |
+  | Existe linha **com** `blobRef` + `senhaRef` | Metadados atualizados. **Continua inativa.** |
+
+  Em nenhum caminho o onboarding ativa certificado — a ativação segue sendo ato administrativo
+  separado, dependente da validação do `.pfx` real pelo cofre.
+
+- **Auditoria** — `FiscalLog`. Sem custódia, a ação é
+  `identidade_importada_certificado_custodia_pendente` — o nome declara o que de fato aconteceu
+  (importação de identidade), nunca instalação de certificado. Com custódia, é
+  `certificado.onboarding.confirmar`. O detalhe registra `certificadoArmazenado`,
+  `certificadoAtivo`, `custodiaPendente`, fingerprint, veredito, origens por campo e pendências.
+  **Nunca** senha, bytes, PEM ou chave.
+
+### Por que nenhum `CertificadoDigital` é criado sem custódia
 
 O `EnvVault` do piloto (ADR-0009) **não persiste segredo em runtime** — o provisionamento é manual
-na plataforma. Preencher as referências aqui faria a UI exibir "blob ✓ / senha-ref ✓" sem que
-material algum existisse: seria um mock enganoso. O fluxo devolve as referências **esperadas**
-(`FISCAL_A1_PFX_B64_<LOJA>` e `FISCAL_A1_SENHA_<LOJA>`) e declara a custódia como pendente.
+na plataforma. Duas saídas erradas foram descartadas:
+
+1. **Preencher `blobRef`/`senhaRef`** faria a UI exibir "blob ✓ / senha-ref ✓" sem material algum:
+   mock enganoso.
+2. **Criar a linha com refs nulas** (comportamento do commit `478bfd0`, corrigido aqui) produzia um
+   fantasma: certificado listado na loja, com botão "Ativar" que falharia sempre em
+   `blobRef_ausente`. Parecia instalado sem estar.
+
+A saída honesta: gravar **somente a identidade fiscal**, devolver as referências **esperadas**
+(`FISCAL_A1_PFX_B64_<LOJA>` / `FISCAL_A1_SENHA_<LOJA>`) e declarar a custódia como pendente com a
+mensagem de reenvio. O certificado terá de ser **reenviado** quando o cofre existir.
 
 ### Continuação — validate-then-activate (inalterado, GOAL-008)
 
@@ -171,13 +210,50 @@ material algum existisse: seria um mock enganoso. O fluxo devolve as referência
 
 ## 8. Modo sem certificado (item 7)
 
-A `FiscalSection` exibe **"Certificado digital ainda não configurado."** sempre que não houver
-certificado **ativo** na unidade, explicitando que o cadastro fiscal segue dormente, a emissão fica
-bloqueada e PDV/Operações/Financeiro/Estoque continuam normais. Nada no fluxo liga a emissão.
+A `FiscalSection` exibe **"Certificado digital ainda não configurado."** enquanto **não existirem
+simultaneamente**: `blobRef` válido, `senhaRef` válida, certificado validado (`status = ATIVO`) e
+`ativo = true`. A regra vive em `algumCertificadoInstalado` (`certificate-custody.ts`) e é a mesma
+usada pelo resumo "Certificado digital instalado e ativo" — não há duas definições de "instalado".
+
+Consequência: metadados sem custódia **não** apagam o aviso. Na lista de certificados, uma linha sem
+custódia recebe o selo **"Não armazenado"**, a explicação de que só há metadados, e o botão
+**"Ativar" fica desabilitado** (a ativação falharia em `blobRef_ausente`).
+
+O cadastro fiscal segue dormente, a emissão fica bloqueada e PDV/Operações/Financeiro/Estoque
+continuam normais.
+
+### Tela de resultado da confirmação
+
+Após confirmar, a UI separa visualmente cinco estados — nunca fundidos em um "sucesso" genérico:
+
+1. **Dados importados** — cada campo gravado, com sua origem.
+2. **Identidade fiscal salva** — ✅.
+3. **Certificado analisado** — ✅ (lido no servidor, só em memória).
+4. **Certificado NÃO armazenado** — ⚠️ quando falta custódia.
+5. **Certificado NÃO ativo** — ⚪ sempre, neste fluxo.
+
+Com a mensagem literal:
+
+> Dados fiscais importados do certificado. O arquivo A1 não foi armazenado porque o cofre seguro
+> ainda não está configurado. Será necessário reenviar o certificado para concluir a instalação.
 
 ## 9. Testes
 
-`lib/fiscal/certificate/*.test.ts` — **48 testes**, todos verdes:
+`lib/fiscal/certificate/*.test.ts` + `app/api/fiscal/onboarding/confirmar/route.test.ts` —
+**75 testes**, todos verdes:
+
+| Cenário do corretivo de custódia | Onde |
+|---|---|
+| Refs nulas nunca resultam em certificado ativo | `certificate-custody.test.ts` + rota |
+| Refs nulas nunca aparecem como configurado | `certificate-custody.test.ts` (`certificadoInstalado`) |
+| Identidade fiscal salva separadamente | `route.test.ts` (config gravada, `certs` vazio) |
+| Mensagem de custódia pendente aparece | `route.test.ts` + `certificate-reconcile.test.ts` |
+| Linha só de metadados não é reaproveitada nem ativada | `route.test.ts` |
+| Auditoria sanitizada com a ação correta | `route.test.ts` |
+| Cross-store devolve só booleano (`select { id: true }`) | `route.test.ts` |
+| Segredo enviado por engano é descartado | `route.test.ts` (resposta, auditoria e banco) |
+
+Cenários da entrega original:
 
 | Cenário exigido | Onde |
 |---|---|

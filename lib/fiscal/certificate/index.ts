@@ -21,6 +21,16 @@ export {
 } from "./certificate-inspection"
 
 export {
+  MENSAGEM_CUSTODIA_PENDENTE,
+  algumCertificadoInstalado,
+  certificadoInstalado,
+  certificadoTemCustodia,
+  decidirRegistroCertificado,
+  type CertificadoCustodiaEstado,
+  type DecisaoRegistroCertificado,
+} from "./certificate-custody"
+
+export {
   ORDEM_CAMPOS,
   ROTULOS_CAMPO,
   montarPayloadIdentidadeConfirmada,

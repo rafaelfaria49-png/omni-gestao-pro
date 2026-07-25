@@ -11,6 +11,7 @@
 import { prisma } from "@/lib/prisma"
 import { onlyDigits } from "@/lib/fiscal/fiscal-validators"
 import { readCnaeFromProviderConfig } from "@/lib/fiscal/fiscal-identity-service"
+import { certificadoTemCustodia } from "./certificate-custody"
 import type { CertificadosContexto, FiscalLojaSnapshot, StoreSnapshot } from "./certificate-reconcile"
 
 /**
@@ -91,12 +92,24 @@ export function toStoreSnapshot(
   }
 }
 
+/** Linha de `CertificadoDigital` desta loja com a mesma impressão do arquivo lido. */
+export type CertificadoMesmaFingerprint = {
+  id: string
+  fingerprint: string | null
+  ativo: boolean
+  status: string
+  blobRef: string | null
+  senhaRef: string | null
+}
+
 export type OnboardingContexto = {
   fiscalLoja: FiscalLojaSnapshot | null
   store: StoreSnapshot | null
   certificados: CertificadosContexto
   /** Linha crua da configuração — a rota de confirmação precisa dela para preservar provider/CSC. */
   configRow: ConfiguracaoFiscalLojaRow | null
+  /** Certificado já registrado com a mesma impressão (base da decisão de custódia). */
+  certificadoMesmaFingerprint: CertificadoMesmaFingerprint | null
 }
 
 /** Carrega tudo que a reconciliação precisa. `fingerprint` vazia desliga as checagens por impressão. */
@@ -115,7 +128,7 @@ export async function carregarContextoOnboarding(params: {
     }),
     prisma.certificadoDigital.findMany({
       where: { storeId },
-      select: { fingerprint: true, ativo: true },
+      select: { id: true, fingerprint: true, ativo: true, status: true, blobRef: true, senhaRef: true },
     }),
     fingerprint
       ? prisma.certificadoDigital
@@ -130,14 +143,19 @@ export async function carregarContextoOnboarding(params: {
   const mesmaFingerprint = (v: string | null | undefined) =>
     Boolean(fingerprint) && String(v ?? "").trim().toLowerCase() === fingerprint
 
+  /** Linha desta loja com a MESMA impressão — base da decisão de custódia na confirmação. */
+  const mesmoCertificado = certsDaLoja.find((c) => mesmaFingerprint(c.fingerprint)) ?? null
+
   return {
     fiscalLoja: toFiscalLojaSnapshot(config as ConfiguracaoFiscalLojaRow | null),
     store: toStoreSnapshot(store),
     configRow: config as ConfiguracaoFiscalLojaRow | null,
+    certificadoMesmaFingerprint: mesmoCertificado,
     certificados: {
-      fingerprintJaRegistradaNestaLoja: certsDaLoja.some((c) => mesmaFingerprint(c.fingerprint)),
+      fingerprintJaRegistradaNestaLoja: Boolean(mesmoCertificado),
       possuiAtivoComOutraFingerprint: certsDaLoja.some((c) => c.ativo && !mesmaFingerprint(c.fingerprint)),
       fingerprintVinculadaAOutraLoja: vinculadoAOutraLoja,
+      custodiaConfigurada: certificadoTemCustodia(mesmoCertificado),
     },
   }
 }

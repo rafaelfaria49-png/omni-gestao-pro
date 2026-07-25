@@ -34,7 +34,9 @@ import {
   isValidUf,
 } from "@/lib/fiscal/fiscal-validators"
 import {
+  MENSAGEM_CUSTODIA_PENDENTE,
   bloqueiosDoCertificadoDeclarado,
+  decidirRegistroCertificado,
   montarPayloadIdentidadeConfirmada,
   reconciliarOnboarding,
   resolveFiscalIdentityLookupProvider,
@@ -215,67 +217,73 @@ export async function POST(req: Request) {
       update: { ...writeData },
     })) as FiscalConfigRow
 
-    // Certificado: entra no fluxo validate-then-activate (pendente, inativo, sem refs de segredo).
-    const certMetadata = {
-      apelido: (body.apelido || extraido.nomeEmpresarial || "Certificado A1").slice(0, 120),
-      tipo: "A1",
-      titularCn: extraido.titularCn,
-      cnpjTitular: extraido.cnpj ?? "",
-      serialNumber: extraido.serialNumber,
-      fingerprint: extraido.fingerprintSha1,
-      validoDe: parseIsoDate(extraido.validoDe),
-      validoAte: parseIsoDate(extraido.validoAte),
-    }
+    // ── Certificado: SÓ se já houver custódia (blobRef + senhaRef) para esta impressão ─────────
+    //
+    // Sem custódia, criar um `CertificadoDigital` produziria um fantasma: linha inativa, sem
+    // material no cofre, com botão "Ativar" que falharia em `blobRef_ausente`. A confirmação
+    // então grava SOMENTE a identidade fiscal e declara a custódia como pendente.
+    const decisao = decidirRegistroCertificado(contexto.certificadoMesmaFingerprint)
 
-    const existente = extraido.fingerprintSha1
-      ? await prisma.certificadoDigital.findFirst({
-          where: { storeId: acl.storeId, fingerprint: extraido.fingerprintSha1 },
-          select: { id: true, ativo: true },
-        })
-      : null
+    const certificado =
+      decisao.acao === "atualizar_metadados"
+        ? await prisma.certificadoDigital.update({
+            where: { id: decisao.certificadoId },
+            data: {
+              apelido: (body.apelido || extraido.nomeEmpresarial || "Certificado A1").slice(0, 120),
+              tipo: "A1",
+              titularCn: extraido.titularCn,
+              cnpjTitular: extraido.cnpj ?? "",
+              serialNumber: extraido.serialNumber,
+              fingerprint: extraido.fingerprintSha1,
+              validoDe: parseIsoDate(extraido.validoDe),
+              validoAte: parseIsoDate(extraido.validoAte),
+            },
+            select: { id: true, apelido: true, status: true, ativo: true, validoAte: true },
+          })
+        : null
 
-    const certificado = existente
-      ? await prisma.certificadoDigital.update({
-          where: { id: existente.id },
-          data: certMetadata,
-          select: { id: true, apelido: true, status: true, ativo: true, validoAte: true },
-        })
-      : await prisma.certificadoDigital.create({
-          data: {
-            storeId: acl.storeId,
-            ...certMetadata,
-            status: "PENDENTE_VALIDACAO",
-            ativo: false,
-            // Custódia do segredo é provisionada no cofre — nada de referência falsa aqui.
-            blobRef: null,
-            senhaRef: null,
-            uploadedBy: acl.session.user?.id ?? null,
-          },
-          select: { id: true, apelido: true, status: true, ativo: true, validoAte: true },
-        })
+    const custodiaPendente = decisao.acao === "somente_identidade"
 
     await recordFiscalAdminLog({
       session: acl.session,
       storeId: acl.storeId,
-      acao: "certificado.onboarding.confirmar",
-      mensagem: `Identidade fiscal preenchida pelo certificado A1 (${certificado.apelido || certificado.id})`,
+      // Auditoria sanitizada: sem custódia, o que houve foi IMPORTAÇÃO DE IDENTIDADE — não
+      // instalação de certificado. O nome da ação não pode sugerir o contrário.
+      acao: custodiaPendente
+        ? "identidade_importada_certificado_custodia_pendente"
+        : "certificado.onboarding.confirmar",
+      mensagem: custodiaPendente
+        ? "Identidade fiscal importada do certificado A1 — arquivo não armazenado (custódia pendente)"
+        : `Identidade fiscal importada e metadados do certificado atualizados (${certificado?.apelido || certificado?.id})`,
       detalhe: {
-        certificadoId: certificado.id,
+        certificadoId: certificado?.id ?? null,
+        certificadoArmazenado: !custodiaPendente,
+        certificadoAtivo: certificado?.ativo === true,
+        custodiaPendente,
         fingerprint: extraido.fingerprintSha1,
         cnpjConfere: preview.reconciliacao.confere,
         origens: preview.campos.map((c) => `${c.campo}:${c.origem}`),
         pendencias: preview.pendencias,
         lookup: preview.lookup.status,
         fiscalEnabled: saved.fiscalEnabled,
-        certificadoReaproveitado: Boolean(existente),
       },
     })
 
     return NextResponse.json({
       ok: true,
       config: sanitizeFiscalConfigForClient(saved),
+      /** Identidade fiscal: sempre gravada quando a reconciliação passa. */
+      identidadeSalva: true,
+      /** Certificado: `null` quando não há custódia — nada foi armazenado. */
       certificado,
-      custodia: preview.custodia,
+      certificadoArmazenado: !custodiaPendente,
+      /** Este fluxo nunca ativa certificado — a ativação é ato administrativo separado. */
+      certificadoAtivo: certificado?.ativo === true,
+      custodia: {
+        ...preview.custodia,
+        pendente: custodiaPendente,
+        mensagem: custodiaPendente ? MENSAGEM_CUSTODIA_PENDENTE : preview.custodia.mensagem,
+      },
       pendencias: preview.pendencias,
       fiscalEnabled: saved.fiscalEnabled,
       transmissao: "nenhuma",

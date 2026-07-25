@@ -15,7 +15,7 @@
  */
 
 import { useRef, useState } from "react";
-import { AlertCircle, CheckCircle2, FileKey, Loader2, ShieldCheck, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, CircleDashed, FileKey, Loader2, ShieldCheck, Upload, XCircle } from "lucide-react";
 import { SettingsCard } from "../components/SettingsCard";
 import { Input } from "@/components/configuracoes-v3/components/ui/input";
 import { Label } from "@/components/configuracoes-v3/components/ui/label";
@@ -53,6 +53,45 @@ function dataBr(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString("pt-BR");
 }
 
+/** Resultado da confirmação — cada estado é declarado separadamente, sem juntar o que é distinto. */
+type ResultadoConfirmacao = {
+  identidadeSalva: boolean;
+  certificadoArmazenado: boolean;
+  certificadoAtivo: boolean;
+  custodia: { pendente: boolean; mensagem: string; blobRefEsperada: string; senhaRefEsperada: string };
+  certificadoAnalisado: { titularCn: string; cnpj: string | null; validoAte: string | null; fingerprintSha1: string };
+  camposImportados: { campo: string; rotulo: string; valor: string; origem: OrigemCampo }[];
+};
+
+/** Linha de status de um dos estados do resultado (verde = feito, âmbar = não feito de propósito). */
+function EstadoLinha({
+  ok,
+  neutro,
+  titulo,
+  detalhe,
+}: {
+  ok: boolean;
+  neutro?: boolean;
+  titulo: string;
+  detalhe: string;
+}) {
+  return (
+    <div className="flex items-start gap-3 rounded-lg border border-border bg-card-muted p-3">
+      {ok ? (
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+      ) : neutro ? (
+        <CircleDashed className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      ) : (
+        <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+      )}
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-foreground">{titulo}</p>
+        <p className="text-xs text-muted-foreground">{detalhe}</p>
+      </div>
+    </div>
+  );
+}
+
 export function FiscalOnboardingCertificado({
   storeId,
   onConfirmado,
@@ -70,6 +109,7 @@ export function FiscalOnboardingCertificado({
   const [preview, setPreview] = useState<OnboardingPreview | null>(null);
   const [edits, setEdits] = useState<Partial<Record<CampoIdentidadeFiscal, string>>>({});
   const [apelido, setApelido] = useState("");
+  const [resultado, setResultado] = useState<ResultadoConfirmacao | null>(null);
 
   const limparEntrada = () => {
     setSenha("");
@@ -81,6 +121,7 @@ export function FiscalOnboardingCertificado({
     setPreview(null);
     setEdits({});
     setApelido("");
+    setResultado(null);
     limparEntrada();
   };
 
@@ -116,6 +157,7 @@ export function FiscalOnboardingCertificado({
       }
       setPreview(j.preview);
       setEdits({});
+      setResultado(null);
       setApelido(j.preview.certificado?.nomeEmpresarial ?? "");
       toast({
         title: j.preview.podeConfirmar ? "Certificado lido" : "Certificado lido com pendências",
@@ -155,6 +197,10 @@ export function FiscalOnboardingCertificado({
         ok?: boolean;
         error?: string;
         bloqueios?: { codigo: string; mensagem: string }[];
+        identidadeSalva?: boolean;
+        certificadoArmazenado?: boolean;
+        certificadoAtivo?: boolean;
+        custodia?: ResultadoConfirmacao["custodia"];
       };
       if (!res.ok) {
         toast({
@@ -164,11 +210,34 @@ export function FiscalOnboardingCertificado({
         });
         return;
       }
-      toast({
-        title: "Identidade fiscal preenchida",
-        description: "Certificado registrado como pendente de validação. A emissão permanece desligada.",
+
+      const cert = preview.certificado;
+      setResultado({
+        identidadeSalva: j.identidadeSalva !== false,
+        certificadoArmazenado: j.certificadoArmazenado === true,
+        certificadoAtivo: j.certificadoAtivo === true,
+        custodia: j.custodia ?? preview.custodia,
+        certificadoAnalisado: {
+          titularCn: cert.titularCn,
+          cnpj: cert.cnpj,
+          validoAte: cert.validoAte,
+          fingerprintSha1: cert.fingerprintSha1,
+        },
+        camposImportados: preview.campos
+          .map((c) => ({ campo: c.campo, rotulo: c.rotulo, valor: valorDe(c).trim(), origem: c.origem }))
+          .filter((c) => c.valor !== ""),
       });
-      descartarPrevia();
+      setPreview(null);
+      setEdits({});
+      limparEntrada();
+
+      toast({
+        title: "Identidade fiscal importada",
+        description:
+          j.certificadoArmazenado === true
+            ? "Metadados do certificado atualizados. A emissão permanece desligada."
+            : "O arquivo A1 não foi armazenado — custódia pendente.",
+      });
       onConfirmado();
     } catch (e) {
       toast({
@@ -230,6 +299,89 @@ export function FiscalOnboardingCertificado({
         A senha é usada apenas para abrir o container no servidor e é descartada em seguida. O arquivo, a senha e a chave
         privada não são gravados em banco, log ou disco.
       </p>
+
+      {/* ── Resultado da confirmação: cada estado declarado em separado ───────────────────────── */}
+      {resultado ? (
+        <div className="mt-6 space-y-5 border-t border-border pt-5">
+          {resultado.custodia.pendente ? (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+              <p className="min-w-0 text-sm text-foreground">{resultado.custodia.mensagem}</p>
+            </div>
+          ) : (
+            <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-4">
+              <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-success" />
+              <p className="min-w-0 text-sm text-muted-foreground">{resultado.custodia.mensagem}</p>
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <EstadoLinha
+              ok={resultado.identidadeSalva}
+              titulo="Identidade fiscal salva"
+              detalhe="Os dados confirmados foram gravados no cadastro fiscal da unidade."
+            />
+            <EstadoLinha
+              ok
+              titulo="Certificado analisado"
+              detalhe="O arquivo foi aberto e verificado no servidor, apenas em memória."
+            />
+            <EstadoLinha
+              ok={resultado.certificadoArmazenado}
+              titulo={resultado.certificadoArmazenado ? "Certificado armazenado" : "Certificado NÃO armazenado"}
+              detalhe={
+                resultado.certificadoArmazenado
+                  ? "O material já está referenciado no cofre desta unidade."
+                  : "O arquivo A1 e a senha não foram gravados — o cofre seguro ainda não está configurado."
+              }
+            />
+            <EstadoLinha
+              ok={resultado.certificadoAtivo}
+              neutro={!resultado.certificadoAtivo}
+              titulo={resultado.certificadoAtivo ? "Certificado ativo" : "Certificado NÃO ativo"}
+              detalhe="A ativação é um ato administrativo separado e exige validação do arquivo pelo cofre."
+            />
+          </div>
+
+          <div className="rounded-lg border border-border bg-card-muted p-4">
+            <div className="flex items-center gap-2">
+              <FileKey className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm font-semibold text-foreground">Certificado analisado (não armazenado)</p>
+            </div>
+            <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2">
+              <Linha rotulo="Titular (CN)" valor={resultado.certificadoAnalisado.titularCn || "—"} />
+              <Linha rotulo="CNPJ do titular" valor={resultado.certificadoAnalisado.cnpj || "não identificado"} />
+              <Linha rotulo="Válido até" valor={dataBr(resultado.certificadoAnalisado.validoAte)} />
+              <Linha rotulo="Fingerprint (SHA-1)" valor={resultado.certificadoAnalisado.fingerprintSha1 || "—"} />
+            </dl>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card-muted p-4">
+            <p className="text-sm font-semibold text-foreground">Dados importados para a identidade fiscal</p>
+            <dl className="mt-3 grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2">
+              {resultado.camposImportados.map((c) => (
+                <div key={c.campo} className="min-w-0">
+                  <dt className="text-muted-foreground">
+                    {c.rotulo} · {ORIGEM_LABEL[c.origem]}
+                  </dt>
+                  <dd className="break-all text-foreground">{c.valor}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+
+          {resultado.custodia.pendente ? (
+            <p className="break-all font-mono text-xs text-muted-foreground">
+              Referências esperadas no cofre: {resultado.custodia.blobRefEsperada} ·{" "}
+              {resultado.custodia.senhaRefEsperada}
+            </p>
+          ) : null}
+
+          <Button type="button" variant="ghost" onClick={() => setResultado(null)}>
+            Fechar resumo
+          </Button>
+        </div>
+      ) : null}
 
       {preview ? (
         <div className="mt-6 space-y-5 border-t border-border pt-5">
@@ -335,12 +487,20 @@ export function FiscalOnboardingCertificado({
             </div>
           </div>
 
-          {/* ── Custódia do segredo ─────────────────────────────────────────────── */}
+          {/* ── Custódia do segredo — o que será e o que NÃO será gravado ────────── */}
           <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
             <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-foreground">Custódia do certificado pendente</p>
-              <p className="mt-1 text-sm text-muted-foreground">{preview.custodia.mensagem}</p>
+              <p className="text-sm font-semibold text-foreground">
+                {preview.custodia.pendente
+                  ? "O certificado não será armazenado nesta confirmação"
+                  : "Custódia do certificado já configurada"}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {preview.custodia.pendente
+                  ? "Confirmar grava apenas a identidade fiscal. O cofre seguro ainda não está configurado, então o arquivo A1 e a senha não são guardados e o certificado não fica instalado nem ativo."
+                  : preview.custodia.mensagem}
+              </p>
               <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
                 {preview.custodia.blobRefEsperada} · {preview.custodia.senhaRefEsperada}
               </p>
@@ -353,7 +513,7 @@ export function FiscalOnboardingCertificado({
               {salvando ? "Gravando…" : "Confirmar e preencher identidade fiscal"}
             </Button>
             <span className="text-xs text-muted-foreground">
-              A emissão permanece desligada e nada é transmitido à SEFAZ.
+              Grava só a identidade fiscal. A emissão permanece desligada e nada é transmitido à SEFAZ.
             </span>
           </div>
         </div>
