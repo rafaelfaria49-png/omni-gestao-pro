@@ -38,6 +38,7 @@ import {
 import { useToast } from "@/components/configuracoes-v3/hooks/use-toast";
 import { useLojaAtiva } from "@/lib/loja-ativa";
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers";
+import { FiscalOnboardingCertificado } from "./FiscalOnboardingCertificado";
 // Import direto do módulo PURO (evita puxar node-forge/node:crypto do barrel do cofre para o client).
 import { calcularAlertaVencimento } from "@/lib/fiscal/vault/certificado-alerta";
 
@@ -409,6 +410,9 @@ function FiscalSectionContent() {
         </p>
       ) : noLoja ? null : (
         <>
+          {/* Onboarding pelo certificado A1 — preenche a identidade a partir do próprio certificado */}
+          <FiscalOnboardingCertificado storeId={lojaAtivaId!.trim()} onConfirmado={() => void load()} />
+
           {/* Dados da empresa */}
           <SettingsCard title="Dados da empresa" description="Identificação fiscal do emitente (por loja).">
             <div className="grid gap-6 sm:grid-cols-2">
@@ -526,7 +530,7 @@ function FiscalSectionContent() {
           {/* Certificado Digital */}
           <SettingsCard
             title="Certificado Digital (A1)"
-            description="Cadastro de metadados e referências seguras. O arquivo .pfx e a senha NÃO são enviados aqui — apenas referências ao cofre. O upload binário é habilitado na fase de emissão."
+            description="Metadados e referências seguras do certificado da loja. O arquivo .pfx e a senha não são gravados: no onboarding eles são apenas lidos no servidor, e a custódia do material fica no cofre de segredos."
             headerExtra={
               <Button type="button" variant="outline" size="sm" onClick={openCertModal} disabled={noLoja}>
                 <Plus className="mr-2 h-4 w-4" />
@@ -534,6 +538,20 @@ function FiscalSectionContent() {
               </Button>
             }
           >
+            {/* Modo sem certificado: a plataforma segue utilizável, com o fiscal dormente. */}
+            {!certs.some((c) => c.ativo) ? (
+              <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">Certificado digital ainda não configurado.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    O cadastro fiscal permanece dormente e a emissão de documentos fiscais fica bloqueada. Todos os demais
+                    módulos (PDV, Operações, Financeiro, Estoque) continuam funcionando normalmente.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
             {certs.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted">

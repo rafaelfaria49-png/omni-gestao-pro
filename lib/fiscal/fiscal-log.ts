@@ -15,6 +15,9 @@ export type FiscalLogAcao =
   | "certificado.ativar"
   | "certificado.desativar"
   | "certificado.update"
+  // GOAL-016B — onboarding orientado por certificado (leitura do A1 e confirmação do cadastro).
+  | "certificado.onboarding.inspecionar"
+  | "certificado.onboarding.confirmar"
 
 function operadorFromSession(session: Session | null): string {
   const u = session?.user
