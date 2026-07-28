@@ -25,21 +25,26 @@ export const UPLOAD_EXPIRACAO_SEG = 120
 /* ─────────────────────────── provider gate (GOAL 012C) ─────────────────────────── */
 
 /**
- * Seleciona o provider ativo. Default `"r2"` — não há fallback automático para
- * o Supabase Storage descontinuado: valores aceitos são `"r2"` (ou vazio/ausente).
- * Outros valores falham cerrado com `StorageProviderError` (mensagem segura).
+ * Seleciona o provider ativo. Nesta fase o ÚNICO valor produtivo é `"r2"`.
+ *
+ * Não há default (GOAL 012E · P2): a variável ausente ou vazia FALHA, em vez de
+ * assumir R2 silenciosamente. Um gate que adivinha o provider não é um gate — e
+ * "esqueci de declarar" e "declarei o provider certo" precisam ser distinguíveis.
+ * Não há fallback automático para o Supabase descontinuado em nenhum caminho.
  */
 export const ENV_KEY_PROVIDER = "CONTADOR_STORAGE_PROVIDER" as const
 
-export type StorageProviderId = "r2" | "supabase"
+export type StorageProviderId = "r2"
 
-/** Erro tipado de provider incompatível com a decisão oficial (GOAL 012B). */
+/** Erro tipado de provider ausente/incompatível com a decisão oficial (GOAL 012B). */
 export class StorageProviderError extends Error {
   readonly code = "STORAGE_PROVIDER_INDISPONIVEL" as const
   readonly declarado: string
   constructor(declarado: string) {
     super(
-      `Provider de storage "${declarado}" não é produtivo. Use "r2" (Cloudflare R2, GOAL 012C). O adapter Supabase está descontinuado e não há fallback automático.`,
+      declarado === ""
+        ? `Provider de storage não declarado: defina ${ENV_KEY_PROVIDER}="r2" (Cloudflare R2, GOAL 012C). Não há default nem fallback automático.`
+        : `Provider de storage "${declarado}" não é produtivo. Use "r2" (Cloudflare R2, GOAL 012C). O adapter Supabase está descontinuado e não há fallback automático.`,
     )
     this.name = "StorageProviderError"
     this.declarado = declarado
@@ -47,13 +52,12 @@ export class StorageProviderError extends Error {
 }
 
 /**
- * Lê e valida o provider declarado. Default `"r2"`. Rejeita `"supabase"` (e
- * qualquer outro valor) sem instanciar o adapter legado — fail-closed explícito.
+ * Lê e valida o provider declarado. Aceita SOMENTE `"r2"`; ausente, vazio,
+ * `"supabase"` ou qualquer outro valor lança sem instanciar adapter algum.
  */
 export function lerStorageProvider(env: Record<string, string | undefined> = process.env): StorageProviderId {
   const bruto = (env[ENV_KEY_PROVIDER] ?? "").trim().toLowerCase()
-  if (bruto === "" || bruto === "r2") return "r2"
-  // "supabase" (ou qualquer outro): explicamos sem acionar o adapter deprecated.
+  if (bruto === "r2") return "r2"
   throw new StorageProviderError(bruto)
 }
 
@@ -206,6 +210,16 @@ export function lerStorageR2Config(env: EnvLike = process.env): StorageR2Config 
   }
 
   const accountId = env[ENV_KEYS_R2.accountId]!.trim()
+  // O accountId é interpolado no HOST do endpoint. Um valor com `.`, `/`, `@`, `:`
+  // ou espaço deixaria de ser um subdomínio e viraria outro destino — isto é, as
+  // credenciais R2 seriam apresentadas a um host escolhido pela configuração.
+  // Restringir ao alfabeto de subdomínio fecha essa porta (GOAL 012E · P3).
+  if (!/^[A-Za-z0-9_-]+$/.test(accountId)) {
+    throw new StorageConfigError([
+      `${ENV_KEYS_R2.accountId} (deve conter apenas letras, números, "-" e "_")`,
+    ])
+  }
+
   return Object.freeze({
     accountId,
     accessKeyId: env[ENV_KEYS_R2.accessKeyId]!.trim(),

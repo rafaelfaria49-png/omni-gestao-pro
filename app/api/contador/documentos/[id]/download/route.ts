@@ -12,7 +12,7 @@ import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"
 import { autorizarDownload } from "@/lib/contador/documentos/service"
 import { criarRepoPrisma } from "@/lib/contador/documentos/repo-prisma"
-import { storageR2 } from "@/lib/contador/documentos/storage-r2"
+import { resolverStorageDocumentos } from "@/lib/contador/documentos/storage"
 import { logEvento, respostaErro, respostaFalhaEscopo } from "@/lib/contador/documentos/http"
 
 export const runtime = "nodejs"
@@ -28,7 +28,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     const { signedUrl, expiresInSec } = await autorizarDownload(
       { storeId: escopo.storeId, userId: escopo.userId },
       id,
-      { storage: storageR2, repo: criarRepoPrisma() },
+      { storage: resolverStorageDocumentos(), repo: criarRepoPrisma() },
     )
     logEvento("contador_documento_download", {
       storeId: escopo.storeId,

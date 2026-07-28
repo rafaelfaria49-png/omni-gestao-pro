@@ -7,8 +7,10 @@
  * substitui — ver GOAL 010/012B):
  *  - `storageRef` é sempre o path privado — nunca URL pública, nunca bucket público;
  *  - upload direto do navegador via URL assinada (presigned PUT) — o binário não
- *    passa pela API Next.js;
- *  - upload server-side (ZIP oficial do pacote) via PutObject;
+ *    passa pela API Next.js — com CRIAÇÃO EXCLUSIVA via `If-None-Match: *`
+ *    (GOAL 012E · P2): a URL grava no máximo uma vez, nunca sobrescreve;
+ *  - upload server-side (ZIP oficial do pacote) via PutObject — este SIM sobrescreve,
+ *    de propósito, porque o path é endereçado por conteúdo (ver método);
  *  - download sempre como attachment (Content-Disposition), por URL assinada de
  *    curta duração (<= 300s);
  *  - erros externos viram `StorageError` com mensagem segura (sem token/URL);
@@ -83,6 +85,12 @@ function falha(operacao: string): StorageError {
 }
 
 /**
+ * Valor de `If-None-Match` que significa "só grave se NENHUM objeto existir neste
+ * path" — a escrita condicional que dá criação exclusiva ao PUT assinado.
+ */
+const CRIACAO_EXCLUSIVA = "*" as const
+
+/**
  * Teto default de TTL para signed URLs. Se o caller não passar `expiresInSec`,
  * usa `R2_SIGNED_URL_TTL_SECONDS` (se definido), senão o tete hard-coded do
  * contrato (`UPLOAD_EXPIRACAO_SEG` / `DOWNLOAD_EXPIRACAO_SEG`). O adapter sempre
@@ -124,6 +132,23 @@ export const storageR2: StorageDocumentosPort = {
     }
   },
 
+  /**
+   * URL assinada de PUT com CRIAÇÃO EXCLUSIVA (GOAL 012E · P2).
+   *
+   * `If-None-Match: *` é a escrita condicional da API S3-compatible do R2
+   * (documentada como suportada em PutObject): a gravação só ocorre se o objeto
+   * ainda NÃO existir; caso contrário o R2 responde `412 PreconditionFailed`.
+   *
+   * O ponto que torna isso uma garantia e não um pedido: o header vai para o
+   * `X-Amz-SignedHeaders` da URL (verificado empiricamente — `host;if-none-match`) e
+   * NÃO é hasteado para query string. Portanto o cliente é obrigado a enviá-lo com
+   * exatamente este valor; se omitir ou alterar, a assinatura SigV4 não fecha e o
+   * storage responde 403. Não existe caminho em que o navegador reuse a URL ainda
+   * válida para sobrescrever os bytes já gravados.
+   *
+   * `signableHeaders` é passado explicitamente para fixar esse comportamento em vez
+   * de depender do default do presigner.
+   */
   async criarUploadAssinado(storageRef, expiresInSec): Promise<UploadAssinado> {
     const { client, cfg } = resolverCliente()
     const teto = ttlDefault(cfg, UPLOAD_EXPIRACAO_SEG)
@@ -134,8 +159,12 @@ export const storageR2: StorageDocumentosPort = {
     try {
       const signedUrl = await getSignedUrl(
         client,
-        new PutObjectCommand({ Bucket: cfg.bucket, Key: storageRef }),
-        { expiresIn: ttl },
+        new PutObjectCommand({
+          Bucket: cfg.bucket,
+          Key: storageRef,
+          IfNoneMatch: CRIACAO_EXCLUSIVA,
+        }),
+        { expiresIn: ttl, signableHeaders: new Set(["if-none-match"]) },
       )
       // O frontend faz PUT cru à `signedUrl` e descarta `token` (GOAL 012B §1.7).
       // R2/S3 não emitem token separado — o URL é auto-contido. Mantemos o campo
@@ -145,6 +174,7 @@ export const storageR2: StorageDocumentosPort = {
         signedUrl,
         token: "",
         expiresInSec: ttl,
+        headersObrigatorios: Object.freeze({ "If-None-Match": CRIACAO_EXCLUSIVA }),
       })
     } catch (e) {
       if (e instanceof StorageError) throw e

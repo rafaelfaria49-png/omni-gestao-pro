@@ -115,12 +115,15 @@ describe("config R2 · hard guard contra segredo exposto em NEXT_PUBLIC_*", () =
 })
 
 describe("config R2 · provider gate (CONTADOR_STORAGE_PROVIDER)", () => {
-  it("default quando ausente = r2", () => {
-    expect(lerStorageProvider({})).toBe("r2")
+  // GOAL 012E · P2: não há mais default. Um gate que assume o provider quando a
+  // variável some não distingue "configurado certo" de "esquecido" — e era assim
+  // que o R2 acabava ativo sem ninguém ter declarado nada.
+  it("ausente lança StorageProviderError (sem default silencioso)", () => {
+    expect(() => lerStorageProvider({})).toThrow(StorageProviderError)
   })
 
-  it("default quando vazio/espaços = r2", () => {
-    expect(lerStorageProvider({ [ENV_KEY_PROVIDER]: "   " })).toBe("r2")
+  it("vazio/espaços lança StorageProviderError", () => {
+    expect(() => lerStorageProvider({ [ENV_KEY_PROVIDER]: "   " })).toThrow(StorageProviderError)
   })
 
   it("'r2' explícito = r2", () => {

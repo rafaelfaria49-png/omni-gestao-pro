@@ -12,6 +12,7 @@
     "build": "prisma generate && next build --webpack",
     "start": "next start",
     "lint": "eslint .",
+    "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/lib/tsc.js --noEmit",
     "test": "vitest run",
     "test:fiscal-xsd:unit": "vitest run workers/fiscal-xsd/test/validator.test.ts lib/fiscal/xsd-worker/client.test.ts lib/fiscal/dry-run/dry-run.test.ts lib/fiscal/pipeline/fiscal-pipeline.test.ts lib/fiscal/xml/nfce-xml-builder.test.ts",
     "test:fiscal-xsd:integration": "vitest run workers/fiscal-xsd/test/container.integration.test.ts",

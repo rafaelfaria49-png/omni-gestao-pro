@@ -6,7 +6,7 @@ import {
   DocumentoValidacaoError,
   montarStorageRef,
   sanitizarNomeArquivo,
-  storageRefPertence,
+  storageRefCanonicoConfere,
   validarConteudoReal,
   validarExtensao,
   validarMimeDeclarado,
@@ -120,7 +120,7 @@ describe("validarConteudoReal", () => {
   })
 })
 
-describe("montarStorageRef / storageRefPertence", () => {
+describe("montarStorageRef / storageRefCanonicoConfere", () => {
   it("monta o path canônico contador/{store}/{aaaa-mm}/{docId}/{nome}", () => {
     const ref = montarStorageRef({
       storeId: "loja-1",
@@ -137,10 +137,48 @@ describe("montarStorageRef / storageRefPertence", () => {
     ).toThrow(DocumentoValidacaoError)
   })
 
-  it("storageRefPertence confere loja e documento", () => {
+  it("storageRefCanonicoConfere exige igualdade estrita com o path canônico", () => {
     const ref = "contador/loja-1/2026-07/doc-abc/das.pdf"
-    expect(storageRefPertence(ref, "loja-1", "doc-abc")).toBe(true)
-    expect(storageRefPertence(ref, "loja-2", "doc-abc")).toBe(false)
-    expect(storageRefPertence(ref, "loja-1", "doc-xyz")).toBe(false)
+    const params = {
+      storeId: "loja-1",
+      aaaaMm: "2026-07",
+      documentoId: "doc-abc",
+      nomeSanitizado: "das.pdf",
+    }
+    expect(storageRefCanonicoConfere(ref, params)).toBe(true)
+    expect(storageRefCanonicoConfere(ref, { ...params, storeId: "loja-2" })).toBe(false)
+    expect(storageRefCanonicoConfere(ref, { ...params, documentoId: "doc-xyz" })).toBe(false)
+    expect(storageRefCanonicoConfere(ref, { ...params, aaaaMm: "2026-06" })).toBe(false)
+    expect(storageRefCanonicoConfere(ref, { ...params, nomeSanitizado: "outro.pdf" })).toBe(false)
+  })
+
+  /**
+   * Regressão do P1 (GOAL 012E). A checagem anterior usava
+   * `startsWith(contador/{loja}/)` + `includes(/{docId}/)`, então um `documentoId`
+   * escolhido para casar com QUALQUER segmento do path alheio (aqui, a própria
+   * competência) dava posse sobre o blob de outro documento. Com igualdade estrita
+   * não existe segmento "coringa".
+   */
+  it("não aceita um documentoId que apenas APAREÇA como segmento do path alheio", () => {
+    const refDaVitima = "contador/loja-1/2026-07/doc-vitima/nota.pdf"
+    expect(
+      storageRefCanonicoConfere(refDaVitima, {
+        storeId: "loja-1",
+        aaaaMm: "2026-07",
+        documentoId: "2026-07", // segmento que existe no path da vítima
+        nomeSanitizado: "nota.pdf",
+      }),
+    ).toBe(false)
+  })
+
+  it("rejeita ref com prefixo correto mas caminho estendido (sem prova por prefixo)", () => {
+    expect(
+      storageRefCanonicoConfere("contador/loja-1/2026-07/doc-abc/sub/das.pdf", {
+        storeId: "loja-1",
+        aaaaMm: "2026-07",
+        documentoId: "doc-abc",
+        nomeSanitizado: "das.pdf",
+      }),
+    ).toBe(false)
   })
 })

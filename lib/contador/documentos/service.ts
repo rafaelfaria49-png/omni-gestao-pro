@@ -5,7 +5,7 @@
  * (StorageDocumentosPort) e `repo` (DocumentosRepo). A implementação Prisma da
  * `repo` vive em `repo-prisma.ts`; os testes injetam fakes in-memory. Assim toda a
  * regra (validação, idempotência, versionamento, soft delete, eventos) é testável
- * sem banco nem Supabase reais.
+ * sem banco nem storage reais.
  *
  * Escreve SOMENTE em `ContadorDocumento`, `ContadorCompetencia` (via getOrCreate) e
  * `ContadorEvento`. Nunca toca Financeiro, PDV, Operações ou Fiscal.
@@ -22,12 +22,18 @@ import {
   DocumentoValidacaoError,
   montarStorageRef,
   sanitizarNomeArquivo,
-  storageRefPertence,
+  storageRefCanonicoConfere,
   validarConteudoReal,
   validarExtensao,
   validarMimeDeclarado,
   validarTamanho,
 } from "./validacao"
+import {
+  assinarUploadIntent,
+  verificarUploadIntent,
+  UploadIntentInvalidoError,
+  type UploadIntentPayload,
+} from "./intent"
 import type { StorageDocumentosPort } from "./storage-types"
 
 /* ───────────────────────────── constantes de domínio ───────────────────────────── */
@@ -234,6 +240,16 @@ export type UploadIntentResultado = Readonly<{
   signedUrl: string
   token: string
   expiresInSec: number
+  /**
+   * Autorização assinada que o `complete` vai exigir (GOAL 012E · P1). Opaca para o
+   * cliente: ele só a devolve. Nunca é persistida.
+   */
+  uploadIntent: string
+  /**
+   * Headers que o navegador é OBRIGADO a enviar no PUT — vão na assinatura da URL,
+   * então omiti-los ou alterá-los invalida a requisição (GOAL 012E · P2).
+   */
+  headersObrigatorios: Readonly<Record<string, string>>
 }>
 
 /**
@@ -252,85 +268,176 @@ export async function criarUploadIntent(
 
   const nomeSanitizado = sanitizarNomeArquivo(entrada.nomeArquivo)
   const ext = validarExtensao(nomeSanitizado)
-  validarMimeDeclarado(ext, entrada.mime)
-  validarTamanho(entrada.bytes)
-  if (!normalizarSha256(entrada.sha256)) {
+  const mime = validarMimeDeclarado(ext, entrada.mime)
+  const bytes = validarTamanho(entrada.bytes)
+  const sha256 = normalizarSha256(entrada.sha256)
+  if (!sha256) {
     throw new DocumentoValidacaoError("sha256", "SHA-256 declarado inválido.")
   }
 
   const competencia = await deps.repo.getOrCreateCompetencia(escopo.storeId, comp)
   if (competencia.status === STATUS_COMPETENCIA_FECHADA) throw new CompetenciaFechadaError()
 
-  await validarPredecessor(entrada.versaoDeId, competencia.id, escopo.storeId, deps)
+  const versaoDeId = await validarPredecessor(entrada.versaoDeId, competencia.id, escopo.storeId, deps)
 
+  // `documentoId` é gerado pelo SERVIDOR — o cliente nunca o escolhe (GOAL 012E · P1).
   const documentoId = gerarDocumentoId()
+  const codigo = formatCompetencia(comp)
   const storageRef = montarStorageRef({
     storeId: escopo.storeId,
-    aaaaMm: formatCompetencia(comp),
+    aaaaMm: codigo,
     documentoId,
     nomeSanitizado,
   })
 
   const upload = await deps.storage.criarUploadAssinado(storageRef)
 
+  // Vincula TUDO que o `complete` vai usar. A partir daqui nenhum destes campos
+  // pode mudar sem invalidar a assinatura.
+  const uploadIntent = assinarUploadIntent({
+    storeId: escopo.storeId,
+    userId: escopo.userId,
+    competencia: codigo,
+    competenciaId: competencia.id,
+    documentoId,
+    storageRef,
+    nomeArquivo: nomeSanitizado,
+    mime,
+    bytes,
+    sha256,
+    categoria,
+    versaoDeId,
+  })
+
   return Object.freeze({
     documentoId,
     competenciaId: competencia.id,
-    competencia: formatCompetencia(comp),
+    competencia: codigo,
     storageRef,
     nomeSanitizado,
     signedUrl: upload.signedUrl,
     token: upload.token,
     expiresInSec: upload.expiresInSec,
+    uploadIntent,
+    headersObrigatorios: upload.headersObrigatorios,
   })
 }
 
 /* ───────────────────────────── ETAPA 5 — complete ───────────────────────────── */
 
+/**
+ * Entrada do `complete`.
+ *
+ * `uploadIntent` é a ÚNICA fonte de verdade dos campos vinculados (GOAL 012E · P1).
+ * Os campos vinculados continuam aceitos por compatibilidade, mas apenas para serem
+ * CONFERIDOS: divergir do intent é erro, nunca sobrescrita. `titulo` e `vencimento`
+ * seguem livres — são rótulo editável, não integridade nem posse.
+ */
 export type CompleteEntrada = Readonly<{
-  documentoId: string
-  competencia: string
-  storageRef: string
-  categoria: string
-  titulo: string
-  nomeArquivo: string
-  mime: string
-  bytes: number
-  sha256: string
+  uploadIntent: unknown
+  titulo: unknown
   vencimento?: unknown
-  versaoDeId?: string | null
+  documentoId?: unknown
+  competencia?: unknown
+  storageRef?: unknown
+  categoria?: unknown
+  nomeArquivo?: unknown
+  mime?: unknown
+  bytes?: unknown
+  sha256?: unknown
+  versaoDeId?: unknown
 }>
 
+/** Recusa qualquer tentativa de alterar um campo que o intent já vinculou. */
+function conferirVinculo(campo: string, recebido: unknown, esperado: string | number | null): void {
+  if (recebido === undefined) return // omitir é legítimo: o intent decide.
+  const igual =
+    esperado === null
+      ? recebido === null || recebido === ""
+      : String(recebido) === String(esperado)
+  if (!igual) {
+    throw new UploadIntentInvalidoError(`divergente:${campo}`)
+  }
+}
+
 /**
- * Confirma o upload: LÊ o objeto, valida conteúdo/tamanho/hash real, compara com o
- * intent e só então cria `ContadorDocumento` + evento em transação. Idempotente pelo
- * `documentoId`. Em falha de validação, remove o objeto órfão.
+ * Confirma o upload.
+ *
+ * Ordem deliberada (GOAL 012E · P1) — NADA toca o storage antes da autorização estar
+ * provada:
+ *   1. valida o intent assinado (assinatura + expiração + formato);
+ *   2. amarra `storeId`/`userId` do intent à sessão atual;
+ *   3. recusa qualquer campo vinculado reenviado com valor diferente;
+ *   4. reconstrói o `storageRef` canônico e compara por IGUALDADE ESTRITA;
+ *   5. resolve idempotência só com o repo;
+ *   6. só então abre o conteúdo — e, em falha, remove SOMENTE o objeto do intent.
  */
 export async function completarUpload(
   escopo: EscopoDocumentos,
   entrada: CompleteEntrada,
   deps: Deps,
 ): Promise<{ documento: DocumentoRow; criado: boolean }> {
-  const comp = competenciaOuErro(entrada.competencia)
-  const categoria = categoriaOuErro(entrada.categoria)
-  const titulo = tituloOuErro(entrada.titulo)
-  const vencimento = vencimentoOpcional(entrada.vencimento)
-  const nomeSanitizado = sanitizarNomeArquivo(entrada.nomeArquivo)
-  const ext = validarExtensao(nomeSanitizado)
-  const mime = validarMimeDeclarado(ext, entrada.mime)
-  const bytesDeclarados = validarTamanho(entrada.bytes)
-  const shaDeclarado = normalizarSha256(entrada.sha256)
-  if (!shaDeclarado) throw new DocumentoValidacaoError("sha256", "SHA-256 declarado inválido.")
+  // (1) Autorização assinada — antes de qualquer coisa.
+  const intent: UploadIntentPayload = verificarUploadIntent(entrada.uploadIntent)
 
-  const documentoId = String(entrada.documentoId ?? "").trim()
-  if (!documentoId) throw new DocumentoValidacaoError("documentoId", "documentoId ausente.")
+  // (2) O intent só vale para a sessão que o emitiu.
+  if (intent.storeId !== escopo.storeId) throw new UploadIntentInvalidoError("loja")
+  if (intent.userId !== escopo.userId) throw new UploadIntentInvalidoError("usuario")
 
-  const storageRef = String(entrada.storageRef ?? "").trim()
-  if (!storageRefPertence(storageRef, escopo.storeId, documentoId)) {
-    throw new DocumentoValidacaoError("storageRef", "Caminho de storage não pertence a esta unidade/documento.")
+  // (3) Campos vinculados: conferidos, nunca aceitos como fonte.
+  conferirVinculo("documentoId", entrada.documentoId, intent.documentoId)
+  conferirVinculo("competencia", entrada.competencia, intent.competencia)
+  conferirVinculo("storageRef", entrada.storageRef, intent.storageRef)
+  conferirVinculo("categoria", entrada.categoria, intent.categoria)
+  conferirVinculo("mime", entrada.mime, intent.mime)
+  conferirVinculo("bytes", entrada.bytes, intent.bytes)
+  conferirVinculo("versaoDeId", entrada.versaoDeId, intent.versaoDeId)
+  if (entrada.sha256 !== undefined && !hashesIguais(String(entrada.sha256), intent.sha256)) {
+    throw new UploadIntentInvalidoError("divergente:sha256")
+  }
+  if (entrada.nomeArquivo !== undefined) {
+    // O cliente pode devolver o nome cru ou o já sanitizado; ambos precisam
+    // convergir para o nome que o intent fixou.
+    let nomeRecebido: string
+    try {
+      nomeRecebido = sanitizarNomeArquivo(entrada.nomeArquivo)
+    } catch {
+      throw new UploadIntentInvalidoError("divergente:nomeArquivo")
+    }
+    if (nomeRecebido !== intent.nomeArquivo) {
+      throw new UploadIntentInvalidoError("divergente:nomeArquivo")
+    }
   }
 
-  // Idempotência: se já existe, confere e retorna sem duplicar.
+  // Valores de trabalho: TODOS vêm do intent.
+  const comp = competenciaOuErro(intent.competencia)
+  const categoria = categoriaOuErro(intent.categoria)
+  const nomeSanitizado = intent.nomeArquivo
+  const ext = validarExtensao(nomeSanitizado)
+  const mime = validarMimeDeclarado(ext, intent.mime)
+  const bytesDeclarados = validarTamanho(intent.bytes)
+  const shaDeclarado = normalizarSha256(intent.sha256)
+  if (!shaDeclarado) throw new UploadIntentInvalidoError("campo:sha256")
+  const documentoId = intent.documentoId
+  const storageRef = intent.storageRef
+
+  // Livres — o operador pode corrigir rótulo/prazo entre o intent e a confirmação.
+  const titulo = tituloOuErro(entrada.titulo)
+  const vencimento = vencimentoOpcional(entrada.vencimento)
+
+  // (4) Igualdade estrita contra o path canônico. Sem prefixo, sem substring.
+  if (
+    !storageRefCanonicoConfere(storageRef, {
+      storeId: escopo.storeId,
+      aaaaMm: formatCompetencia(comp),
+      documentoId,
+      nomeSanitizado,
+    })
+  ) {
+    throw new UploadIntentInvalidoError("storageRef")
+  }
+
+  // (5) Idempotência: resolvida só com o repo, sem tocar o storage.
   const existente = await deps.repo.acharDocumentoPorId(documentoId)
   if (existente) {
     if (
@@ -343,11 +450,14 @@ export async function completarUpload(
     throw new DocumentoConflitoError("Documento já confirmado com dados divergentes.")
   }
 
-  const competencia = await deps.repo.getOrCreateCompetencia(escopo.storeId, comp)
+  // A competência é a que o intent fixou — `complete` não cria competência.
+  const competencia = await deps.repo.acharCompetenciaPorId(intent.competenciaId, escopo.storeId)
+  if (!competencia) throw new UploadIntentInvalidoError("competencia")
   if (competencia.status === STATUS_COMPETENCIA_FECHADA) throw new CompetenciaFechadaError()
-  const versaoDeId = await validarPredecessor(entrada.versaoDeId, competencia.id, escopo.storeId, deps)
+  const versaoDeId = await validarPredecessor(intent.versaoDeId, competencia.id, escopo.storeId, deps)
 
-  // Lê e valida o CONTEÚDO real; qualquer falha remove o objeto órfão.
+  // (6) Só agora o storage é tocado. `storageRef` é o objeto do intent — a remoção
+  // em caso de falha atinge exatamente esse objeto e nenhum outro.
   let sha256Servidor: string
   let bytesServidor: number
   try {

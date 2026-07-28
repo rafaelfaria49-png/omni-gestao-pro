@@ -11,6 +11,7 @@
  */
 import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"
+import { formatCompetencia } from "@/lib/contador/competencia"
 import { logEvento, respostaFalhaEscopo } from "@/lib/contador/documentos/http"
 import { competenciaOuErro } from "@/lib/contador/comentarios/service"
 import { construirDadosContador } from "@/lib/contador/readers"
@@ -109,7 +110,9 @@ export async function POST(req: Request) {
       logEvento("contador_alteracao_pos_fechamento", {
         storeId: escopo.storeId,
         userId: escopo.userId,
-        competencia: body.competencia,
+        // Era `body.competencia` — valor CRU do cliente indo direto para o log
+        // estruturado. Agora vai a forma canônica já validada (GOAL 012E · P3).
+        competencia: formatCompetencia(comp),
         versao: competencia.versao,
         diffHash: divergencia.diffHash,
       })

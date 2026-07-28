@@ -26,6 +26,10 @@ import { criarComentario, listarComentarios, type ComentariosRepo } from "@/lib/
 import { alterarStatusDocumento, type StatusRepo } from "@/lib/contador/status/service"
 import { CompetenciaFechadaError as StatusCompetenciaFechada } from "@/lib/contador/documentos/service"
 
+// `criarUploadIntent` assina a autorização de upload (GOAL 012E · P1) e falha
+// cerrado sem segredo no ambiente.
+process.env.AUTH_SECRET ??= "segredo-de-teste-012e"
+
 const COMP = { ano: 2026, mes: 7 }
 const CODIGO = "2026-07"
 const ESCOPO = { storeId: "loja-1", userId: "user-1" }
@@ -100,7 +104,13 @@ function depsDocumentos(statusCompetencia: string): Deps & { eventos: string[] }
       return { existe: true, publico: false }
     },
     async criarUploadAssinado(storageRef) {
-      return { storageRef, signedUrl: "fake://up", token: "t", expiresInSec: 120 }
+      return {
+        storageRef,
+        signedUrl: "fake://up",
+        token: "t",
+        expiresInSec: 120,
+        headersObrigatorios: { "If-None-Match": "*" },
+      }
     },
     async enviarConteudoPrivado() {},
     async obterMetadata() {

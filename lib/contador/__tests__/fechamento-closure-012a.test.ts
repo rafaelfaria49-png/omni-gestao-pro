@@ -24,7 +24,7 @@ import {
 import {
   SNAPSHOT_CAMINHO_PACOTE,
   verificarSnapshotDoPacote,
-  type SnapshotFechamentoV1,
+  type SnapshotFechamentoV2,
 } from "@/lib/contador/fechamento/snapshot"
 import { sha256Texto } from "@/lib/contador/fechamento/canonico"
 import type { ContadorScopeInterno } from "@/lib/contador/scope-core"
@@ -422,7 +422,7 @@ describe("012A · GAP 1 — snapshot reconstruível por versão", () => {
 
     const reconstruido = verificarSnapshotDoPacote(conteudo, itemV1.sha256 as string)
     expect(reconstruido).not.toBeNull()
-    const s = reconstruido as unknown as SnapshotFechamentoV1
+    const s = reconstruido as unknown as SnapshotFechamentoV2
     expect(s.versao).toBe(1)
     expect(s.schemaVersion).toContain("/v2")
     // Adulterar um byte quebra a verificação.

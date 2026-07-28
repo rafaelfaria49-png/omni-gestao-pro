@@ -3,8 +3,12 @@
  *
  * Fase 1 do upload direto. Valida a intenção (sessão + `hubs.contador` + loja ativa +
  * competência aberta + extensão/MIME/tamanho/hash) e devolve uma URL assinada para o
- * navegador enviar o arquivo DIRETO ao Supabase Storage. O binário NUNCA passa por aqui
- * e NENHUM `ContadorDocumento` é criado ainda (só no `complete`).
+ * navegador enviar o arquivo DIRETO ao storage privado (Cloudflare R2 — GOAL 012C).
+ * O binário NUNCA passa por aqui e NENHUM `ContadorDocumento` é criado ainda (só no
+ * `complete`).
+ *
+ * Devolve também `uploadIntent`: a autorização ASSINADA que vincula documentoId,
+ * storageRef e metadados no servidor, e sem a qual o `complete` recusa (GOAL 012E · P1).
  *
  * GOAL CONTADOR-HUB-DOCUMENTOS-REAL-010B · Etapa 5.
  */
@@ -12,7 +16,7 @@ import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"
 import { criarUploadIntent } from "@/lib/contador/documentos/service"
 import { criarRepoPrisma } from "@/lib/contador/documentos/repo-prisma"
-import { storageR2 } from "@/lib/contador/documentos/storage-r2"
+import { resolverStorageDocumentos } from "@/lib/contador/documentos/storage"
 import { logEvento, respostaErro, respostaFalhaEscopo } from "@/lib/contador/documentos/http"
 
 export const runtime = "nodejs"
@@ -44,7 +48,7 @@ export async function POST(req: Request) {
         vencimento: body.vencimento,
         versaoDeId: body.versaoDeId == null ? null : String(body.versaoDeId),
       },
-      { storage: storageR2, repo: criarRepoPrisma() },
+      { storage: resolverStorageDocumentos(), repo: criarRepoPrisma() },
     )
     logEvento("contador_documento_intent", {
       storeId: escopo.storeId,
@@ -62,6 +66,8 @@ export async function POST(req: Request) {
       signedUrl: resultado.signedUrl,
       token: resultado.token,
       expiresInSec: resultado.expiresInSec,
+      uploadIntent: resultado.uploadIntent,
+      headersObrigatorios: resultado.headersObrigatorios,
     })
   } catch (e) {
     return respostaErro(e)

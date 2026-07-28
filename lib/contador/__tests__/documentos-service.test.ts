@@ -22,7 +22,13 @@ import {
   type DocumentosRepo,
 } from "@/lib/contador/documentos/service"
 import { DocumentoValidacaoError } from "@/lib/contador/documentos/validacao"
+import { UploadIntentInvalidoError } from "@/lib/contador/documentos/intent"
 import { StorageError, type StorageDocumentosPort } from "@/lib/contador/documentos/storage-types"
+
+// O `uploadIntent` é assinado com uma chave derivada do segredo do ambiente
+// (GOAL 012E · P1). Sem ele o service falha cerrado — que é o comportamento correto,
+// mas aqui precisamos de um segredo determinístico para exercitar o fluxo.
+process.env.AUTH_SECRET ??= "segredo-de-teste-012e"
 
 const ESCOPO = { storeId: "loja-1", userId: "user-1" }
 
@@ -60,7 +66,14 @@ function fakeStorage(): FakeStorage {
     },
     async criarUploadAssinado(storageRef, expiresInSec = 120) {
       uploads.push(storageRef)
-      return { storageRef, signedUrl: `fake://upload/${storageRef}`, token: "tok", expiresInSec }
+      return {
+        storageRef,
+        signedUrl: `fake://upload/${storageRef}`,
+        token: "tok",
+        expiresInSec,
+        // Criação exclusiva (GOAL 012E · P2) — o fake espelha o contrato do R2.
+        headersObrigatorios: { "If-None-Match": "*" },
+      }
     },
     async obterMetadata(storageRef) {
       const b = objetos.get(storageRef)
@@ -91,6 +104,8 @@ type FakeRepo = DocumentosRepo & {
   _docs: Map<string, DocumentoRow>
   _eventos: { tipo: string; entidadeId: string | null }[]
   _fecharCompetencia(codigo: string): void
+  /** Injeta uma linha já confirmada (para exercitar conflito/idempotência). */
+  _semear(dados: Pick<DocumentoRow, "id" | "storeId" | "storageRef" | "sha256" | "competenciaId">): void
 }
 
 function fakeRepo(): FakeRepo {
@@ -114,6 +129,27 @@ function fakeRepo(): FakeRepo {
     _docs: docs,
     _eventos: eventos,
     _fecharCompetencia: (codigo) => fechadas.add(codigo),
+    _semear: (dados) => {
+      const now = new Date()
+      docs.set(dados.id, {
+        ...dados,
+        categoria: "FISCAL",
+        titulo: "semeado",
+        nomeArquivo: "das.pdf",
+        mime: "application/pdf",
+        bytes: 1,
+        status: "ENVIADO",
+        vencimento: null,
+        enviadoPorTipo: "interno",
+        enviadoPorId: "user-1",
+        versaoDeId: null,
+        excluidoEm: null,
+        excluidoPorId: null,
+        excluidoMotivo: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+    },
     async getOrCreateCompetencia(_storeId, comp) {
       return getOrCreate(comp.ano, comp.mes)
     },
@@ -193,7 +229,7 @@ async function enviar(
   storage._put(intent.storageRef, buf)
   const res = await completarUpload(
     ESCOPO,
-    { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef },
+    { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef },
     { storage, repo },
   )
   return { intent, ...res, buf, base }
@@ -294,7 +330,7 @@ describe("documentos · complete", () => {
     const { intent, base } = await enviar(storage, repo)
     const segunda = await completarUpload(
       ESCOPO,
-      { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef },
+      { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef },
       { storage, repo },
     )
     expect(segunda.criado).toBe(false)
@@ -316,7 +352,7 @@ describe("documentos · complete", () => {
     const intent = await criarUploadIntent(ESCOPO, base, { storage, repo })
     storage._put(intent.storageRef, buf)
     await expect(
-      completarUpload(ESCOPO, { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
+      completarUpload(ESCOPO, { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
     ).rejects.toBeInstanceOf(DocumentoValidacaoError)
     expect(storage._removed).toContain(intent.storageRef)
     expect(repo._docs.size).toBe(0)
@@ -336,7 +372,7 @@ describe("documentos · complete", () => {
     const intent = await criarUploadIntent(ESCOPO, base, { storage, repo })
     storage._put(intent.storageRef, buf)
     await expect(
-      completarUpload(ESCOPO, { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
+      completarUpload(ESCOPO, { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
     ).rejects.toBeInstanceOf(DocumentoValidacaoError)
     expect(storage._removed).toContain(intent.storageRef)
   })
@@ -355,7 +391,7 @@ describe("documentos · complete", () => {
     const intent = await criarUploadIntent(ESCOPO, base, { storage, repo })
     storage._put(intent.storageRef, conteudo)
     await expect(
-      completarUpload(ESCOPO, { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
+      completarUpload(ESCOPO, { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
     ).rejects.toBeInstanceOf(DocumentoValidacaoError)
     expect(storage._removed).toContain(intent.storageRef)
   })
@@ -374,13 +410,13 @@ describe("documentos · complete", () => {
     const intent = await criarUploadIntent(ESCOPO, base, { storage, repo })
     // NÃO faz _put — objeto não existe.
     await expect(
-      completarUpload(ESCOPO, { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
+      completarUpload(ESCOPO, { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef }, { storage, repo }),
     ).rejects.toBeInstanceOf(StorageError)
     expect(storage._removed).toContain(intent.storageRef)
     expect(repo._docs.size).toBe(0)
   })
 
-  it("rejeita storageRef que não pertence à loja/documento", async () => {
+  it("rejeita storageRef adulterado (não é o que o intent vinculou)", async () => {
     const buf = pdf()
     const base = {
       competencia: "2026-07",
@@ -395,18 +431,40 @@ describe("documentos · complete", () => {
     await expect(
       completarUpload(
         ESCOPO,
-        { ...base, documentoId: intent.documentoId, storageRef: "contador/outra-loja/2026-07/doc-x/das.pdf" },
+        { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: "contador/outra-loja/2026-07/doc-x/das.pdf" },
         { storage, repo },
       ),
-    ).rejects.toBeInstanceOf(DocumentoValidacaoError)
+    ).rejects.toBeInstanceOf(UploadIntentInvalidoError)
   })
 
   it("dados divergentes em documentoId já confirmado → conflito", async () => {
-    const { intent, base } = await enviar(storage, repo)
+    // O conflito sobrevive ao intent: a linha persistida é que diverge do que o
+    // intent vinculou (ex.: blob reescrito por outro caminho). Adulterar o corpo
+    // não chega aqui — morre antes, no vínculo do intent.
+    const buf = pdf()
+    const base = {
+      competencia: "2026-07",
+      categoria: "fiscal",
+      titulo: "DAS",
+      nomeArquivo: "das.pdf",
+      mime: "application/pdf",
+      bytes: buf.length,
+      sha256: sha(buf),
+    }
+    const intent = await criarUploadIntent(ESCOPO, base, { storage, repo })
+    storage._put(intent.storageRef, buf)
+    // Documento já confirmado com OUTRO hash, sob o mesmo id.
+    repo._semear({
+      id: intent.documentoId,
+      storeId: ESCOPO.storeId,
+      storageRef: intent.storageRef,
+      sha256: sha(Buffer.from("outro conteudo")),
+      competenciaId: intent.competenciaId,
+    })
     await expect(
       completarUpload(
         ESCOPO,
-        { ...base, documentoId: intent.documentoId, storageRef: intent.storageRef, sha256: sha(Buffer.from("x")) },
+        { ...base, uploadIntent: intent.uploadIntent, documentoId: intent.documentoId, storageRef: intent.storageRef },
         { storage, repo },
       ),
     ).rejects.toBeInstanceOf(DocumentoConflitoError)
