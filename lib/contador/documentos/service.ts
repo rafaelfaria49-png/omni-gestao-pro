@@ -97,6 +97,8 @@ export type FiltrosListagem = Readonly<{
 export interface DocumentosRepo {
   getOrCreateCompetencia(storeId: string, comp: { ano: number; mes: number }): Promise<CompetenciaRef>
   acharCompetencia(storeId: string, comp: { ano: number; mes: number }): Promise<CompetenciaRef | null>
+  /** GOAL 012 — status da competência dona de um documento (congelamento da exclusão). */
+  acharCompetenciaPorId(competenciaId: string, storeId: string): Promise<CompetenciaRef | null>
   acharDocumentoPorId(id: string): Promise<DocumentoRow | null>
   acharDocumentoDaLoja(id: string, storeId: string): Promise<DocumentoRow | null>
   listarDocumentos(args: {
@@ -539,6 +541,11 @@ export async function excluirDocumento(
 
   const doc = await deps.repo.acharDocumentoDaLoja(docId, escopo.storeId)
   if (!doc || doc.excluidoEm) throw new DocumentoNaoEncontradoError()
+
+  // GOAL 012 — congelamento: competência fechada não aceita exclusão lógica.
+  // Reabrir (com motivo) é o caminho auditado para voltar a mexer no acervo.
+  const competenciaDoc = await deps.repo.acharCompetenciaPorId(doc.competenciaId, escopo.storeId)
+  if (competenciaDoc?.status === STATUS_COMPETENCIA_FECHADA) throw new CompetenciaFechadaError()
 
   const atualizado = await deps.repo.softDeleteComEvento({
     id: docId,

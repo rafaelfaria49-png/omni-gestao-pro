@@ -53,6 +53,11 @@ function fakeStorage(): FakeStorage {
     async verificarBucket() {
       return { existe: true, publico: false }
     },
+    // GOAL 012 ampliou a porta com upload server-side (usado só pelo pacote oficial).
+    async enviarConteudoPrivado(storageRef, conteudo) {
+      objetos.set(storageRef, Buffer.from(conteudo))
+      uploads.push(storageRef)
+    },
     async criarUploadAssinado(storageRef, expiresInSec = 120) {
       uploads.push(storageRef)
       return { storageRef, signedUrl: `fake://upload/${storageRef}`, token: "tok", expiresInSec }
@@ -114,6 +119,10 @@ function fakeRepo(): FakeRepo {
     },
     async acharCompetencia(_storeId, comp) {
       return comps.get(chave(comp.ano, comp.mes)) ?? null
+    },
+    // GOAL 012: congelamento da exclusão precisa do status da competência por id.
+    async acharCompetenciaPorId(competenciaId) {
+      return [...comps.values()].find((c) => c.id === competenciaId) ?? null
     },
     async acharDocumentoPorId(id) {
       return docs.get(id) ?? null

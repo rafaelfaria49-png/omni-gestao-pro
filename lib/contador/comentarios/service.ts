@@ -20,7 +20,10 @@ import {
   parseCompetencia,
   type Competencia,
 } from "@/lib/contador/competencia"
-import { DocumentoNaoEncontradoError } from "@/lib/contador/documentos/service"
+import {
+  CompetenciaFechadaError,
+  DocumentoNaoEncontradoError,
+} from "@/lib/contador/documentos/service"
 
 /* ───────────────────────────── constantes de domínio ───────────────────────────── */
 
@@ -36,6 +39,9 @@ export const CONTEXTOS = ["interno", "compartilhado"] as const
 export type ContextoLeitura = (typeof CONTEXTOS)[number]
 
 export const TEXTO_MAX = 4000
+
+/** Competência fechada congela a escrita do domínio contábil (GOAL 012). */
+const STATUS_COMPETENCIA_FECHADA = "FECHADA"
 
 /* ───────────────────────────── erros tipados ───────────────────────────── */
 
@@ -160,6 +166,11 @@ export async function criarComentario(
   const visibilidade = visibilidadeOuErro(entrada.visibilidade)
 
   const competencia = await deps.repo.getOrCreateCompetencia(escopo.storeId, comp)
+
+  // GOAL 012 — congelamento: competência fechada não recebe comentário novo.
+  // (Pendência levantada na revisão do GOAL 011, fechada aqui.) Leitura da trilha
+  // e dos comentários existentes segue permitida — só a ESCRITA congela.
+  if (competencia.status === STATUS_COMPETENCIA_FECHADA) throw new CompetenciaFechadaError()
 
   const documentoId = idOpcional(entrada.documentoId)
   if (documentoId) {

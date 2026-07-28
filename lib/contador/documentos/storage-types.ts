@@ -47,6 +47,15 @@ export interface StorageDocumentosPort {
   verificarBucket(): Promise<BucketEstado>
   /** Cria a autorização assinada de upload direto para `storageRef`. `upsert` desabilitado. */
   criarUploadAssinado(storageRef: string, expiresInSec?: number): Promise<UploadAssinado>
+  /**
+   * Upload SERVER-SIDE de conteúdo já em memória (GOAL 012 — ZIP do pacote oficial).
+   *
+   * Diferente de `criarUploadAssinado`, aqui o binário é produzido no servidor e nunca
+   * passa pelo navegador. `upsert` é habilitado de propósito: o path do pacote é
+   * endereçado por conteúdo (`…/{manifestoHash}.zip`), então reescrever é sempre
+   * reescrever bytes idênticos — o que torna o retry idempotente em vez de conflitar.
+   */
+  enviarConteudoPrivado(storageRef: string, conteudo: Uint8Array, mime: string): Promise<void>
   /** Metadados do objeto, ou `null` se não existir. */
   obterMetadata(storageRef: string): Promise<ObjetoMetadata | null>
   /** Baixa o conteúdo privado inteiro para validação/hash server-side. */
