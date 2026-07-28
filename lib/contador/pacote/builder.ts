@@ -167,6 +167,9 @@ async function gerarPacoteContadorInterno(
     nomeArquivo: conteudo.nomeArquivo,
     bytes,
     manifesto: conteudo.manifesto,
+    // GOAL 012: devolvidos para o fechamento montar o snapshot da MESMA carga.
+    dados,
+    checklist,
     metricas: {
       bytesZip: bytes.byteLength,
       bytesDescompactados,

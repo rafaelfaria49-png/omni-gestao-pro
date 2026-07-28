@@ -77,6 +77,22 @@ export const storageSupabase: StorageDocumentosPort = {
     }
   },
 
+  /** GOAL 012 — sobe o ZIP oficial gerado no servidor. Ver contrato em `storage-types`. */
+  async enviarConteudoPrivado(storageRef, conteudo, mime): Promise<void> {
+    const { client, bucket } = resolverCliente()
+    try {
+      const { error } = await client.storage
+        .from(bucket)
+        // `upsert` seguro: o path carrega o hash do manifesto, então reescrever é
+        // reescrever o mesmo conteúdo (retry idempotente, nunca sobrescrita silenciosa).
+        .upload(storageRef, Buffer.from(conteudo), { contentType: mime, upsert: true })
+      if (error) throw falha("enviarConteudoPrivado")
+    } catch (e) {
+      if (e instanceof StorageError) throw e
+      throw falha("enviarConteudoPrivado")
+    }
+  },
+
   async obterMetadata(storageRef): Promise<ObjetoMetadata | null> {
     const { client, bucket } = resolverCliente()
     const { dir, base } = dividirPath(storageRef)
