@@ -44,9 +44,14 @@ function makeFakeTx(products: FakeProduct[]) {
       // Guard de colisão entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001): fake sem
       // vendas pré-existentes → nenhum `pedidoId` tem dono, o guard passa direto.
       findUnique: async () => null,
-      upsert: async ({ create }: any) => {
-        vendaWrites.push(create)
-        return { id: `venda-${++vendaCounter}` }
+      create: async ({ data }: any) => {
+        vendaWrites.push(data)
+        return {
+          id: `venda-${++vendaCounter}`,
+          ...data,
+          terminalId: data.terminalId ?? null,
+          status: "concluida",
+        }
       },
       update: async () => ({}),
     },
@@ -181,7 +186,7 @@ describe("upsertVendaInTransaction — saneamento de accessorySelection (004B)",
       ],
     }
 
-    await expect(upsertVendaInTransaction(tx, STORE, sale)).resolves.toBeUndefined()
+    await expect(upsertVendaInTransaction(tx, STORE, sale)).resolves.toMatchObject({ replayed: false })
     expect(lastPayload()?.lines?.[0]).not.toHaveProperty("accessorySelection")
     expect(warn).toHaveBeenCalledWith(
       "[upsert-venda] accessory-selection-invalida",
@@ -284,7 +289,7 @@ describe("upsertVendaInTransaction — saneamento de accessorySelection (004B)",
       lines: [{ inventoryId: "prod-1", name: "Produto comum", quantity: 1, unitPrice: 25, lineTotal: 25 }],
     }
 
-    await expect(upsertVendaInTransaction(tx, STORE, sale)).resolves.toBeUndefined()
+    await expect(upsertVendaInTransaction(tx, STORE, sale)).resolves.toMatchObject({ replayed: false })
     expect(lastPayload()?.lines?.[0]).not.toHaveProperty("accessorySelection")
   })
 

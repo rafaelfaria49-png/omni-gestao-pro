@@ -5,6 +5,7 @@ import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 import { sanitizeSaleLinesPayload } from "@/lib/vendas/sanitize-sale-line-payload"
 import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
+import { buildLegacySaleFingerprint } from "@/lib/vendas/legacy-sale-fingerprint"
 
 /**
  * Lançada pela baixa de estoque do PDV quando `enforceStock` está ativo e o saldo
@@ -124,6 +125,45 @@ export class PedidoIdDeOutraLojaError extends Error {
   }
 }
 
+/** Mesmo número e mesma loja, mas os fatos canônicos identificam outra venda. */
+export class PedidoIdConflitoMesmaLojaError extends Error {
+  readonly code = "PEDIDO_ID_CONFLITO_MESMA_LOJA"
+  readonly pedidoId: string
+  readonly incomingFingerprint: string
+  readonly existingFingerprint: string
+  constructor(pedidoId: string, incomingFingerprint: string, existingFingerprint: string) {
+    super("Este número já identifica outra venda nesta loja. Nada foi alterado.")
+    this.name = "PedidoIdConflitoMesmaLojaError"
+    this.pedidoId = pedidoId
+    this.incomingFingerprint = incomingFingerprint
+    this.existingFingerprint = existingFingerprint
+  }
+}
+
+/**
+ * Sinal interno: o `Venda.create` perdeu uma corrida na unique global de `pedidoId`.
+ * A transação já está abortada; o caller deve reler o vencedor fora dela.
+ */
+export class VendaCreateUniqueConflictError extends Error {
+  readonly code = "P2002"
+  readonly pedidoId: string
+  constructor(pedidoId: string, cause: unknown) {
+    super("Conflito concorrente ao criar venda.")
+    this.name = "VendaCreateUniqueConflictError"
+    this.pedidoId = pedidoId
+    ;(this as Error & { cause?: unknown }).cause = cause
+  }
+}
+
+export function isPrismaUniqueConstraintError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  )
+}
+
 export type UpsertVendaOptions = {
   /**
    * Quando `true`, a baixa de estoque bloqueia qualquer decremento que deixaria o saldo
@@ -176,6 +216,8 @@ export type SalePayload = {
    * para a Fase 2 (filtros/relatórios por terminal via SQL).
    */
   terminalId?: string | null
+  /** Vínculo operacional da venda com uma O.S., quando existente. */
+  linkedOsId?: string | null
   /** Formas de pagamento — usado para gerar MovimentacaoFinanceira por forma. */
   paymentBreakdown?: Partial<PaymentBreakdownFull>
   /**
@@ -218,6 +260,102 @@ export type SalePayload = {
 
 type SalePayloadLine = NonNullable<SalePayload["lines"]>[number]
 
+export const VENDA_REPLAY_SELECT = {
+  id: true,
+  storeId: true,
+  pedidoId: true,
+  payload: true,
+  total: true,
+  at: true,
+  clienteNome: true,
+  clienteId: true,
+  terminalId: true,
+  status: true,
+} satisfies Prisma.VendaSelect
+
+export type VendaReplayRecord = Prisma.VendaGetPayload<{ select: typeof VENDA_REPLAY_SELECT }>
+
+export type VendaPersistView = {
+  id: string
+  storeId: string
+  pedidoId: string
+  total: number
+  at: string
+  clienteNome: string | null
+  clienteId: string | null
+  terminalId: string | null
+  status: string
+}
+
+export type UpsertVendaResult = {
+  replayed: boolean
+  fingerprint: string
+  venda: VendaPersistView
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function factsFromExistingVenda(existing: VendaReplayRecord): Record<string, unknown> {
+  const payload = asRecord(existing.payload)
+  return {
+    ...payload,
+    id: existing.pedidoId,
+    at: "at" in payload ? payload.at : null,
+    total: "total" in payload ? payload.total : existing.total,
+    customerName: payload.customerName ?? existing.clienteNome,
+    clienteId: payload.clienteId ?? existing.clienteId,
+    terminalId: payload.terminalId ?? existing.terminalId,
+  }
+}
+
+function vendaPersistView(existing: VendaReplayRecord): VendaPersistView {
+  return {
+    id: existing.id,
+    storeId: existing.storeId,
+    pedidoId: existing.pedidoId,
+    total: existing.total,
+    at: existing.at.toISOString(),
+    clienteNome: existing.clienteNome,
+    clienteId: existing.clienteId,
+    terminalId: existing.terminalId,
+    status: existing.status,
+  }
+}
+
+/**
+ * Classifica uma venda já existente sem executar I/O ou mutações.
+ * Usado tanto no lookup inicial quanto após a transação perdedora de um P2002.
+ */
+export function classifyExistingVendaReplay(
+  lojaId: string,
+  sale: SalePayload,
+  existing: VendaReplayRecord,
+): UpsertVendaResult {
+  if (existing.storeId !== lojaId) {
+    throw new PedidoIdDeOutraLojaError(existing.pedidoId, existing.storeId)
+  }
+
+  const incomingFingerprint = buildLegacySaleFingerprint(sale)
+  const existingFingerprint = buildLegacySaleFingerprint(factsFromExistingVenda(existing))
+  if (incomingFingerprint !== existingFingerprint) {
+    throw new PedidoIdConflitoMesmaLojaError(
+      existing.pedidoId,
+      incomingFingerprint,
+      existingFingerprint,
+    )
+  }
+
+  return {
+    replayed: true,
+    fingerprint: incomingFingerprint,
+    venda: vendaPersistView(existing),
+  }
+}
+
 function asJsonPayload(sale: SalePayload): Prisma.InputJsonValue {
   return sale as unknown as Prisma.InputJsonValue
 }
@@ -248,31 +386,33 @@ async function resolveClienteIdForStore(
   return found.id
 }
 
-/** Upsert de uma venda PDV + itens + ledger de estoque + movimentação financeira. */
+/** Create-only de venda PDV, com replay fail-closed + efeitos na mesma transação. */
 export async function upsertVendaInTransaction(
   tx: Prisma.TransactionClient,
   lojaId: string,
   sale: SalePayload,
   operadorLabel?: string,
   options?: UpsertVendaOptions
-): Promise<void> {
+): Promise<UpsertVendaResult> {
   const enforceStock = options?.enforceStock === true
   const pedidoId = typeof sale.id === "string" && sale.id.trim() ? sale.id.trim() : ""
   if (!pedidoId) throw new Error("sale.id inválido")
 
   // ── GUARD FAIL-CLOSED: `pedidoId` já pertence a OUTRA loja ──────────────────
   // PRIMEIRA coisa depois de validar o id, ANTES de qualquer leitura de negócio,
-  // validação de caixa, upsert, `itemVenda.deleteMany`, baixa de estoque, movimentação
+  // validação de caixa, `Venda.create`, criação de itens, baixa de estoque, movimentação
   // financeira ou título a receber — nada foi escrito quando isto dispara. Rodar antes
   // do gate de caixa também garante que `allowClosedOriginalSession` (ação manual de
   // "Sincronizar retroativo") NUNCA contorne a colisão: o erro de colisão tem
   // precedência sobre `CAIXA_ORIGINAL_FECHADO`.
-  const donoAtual = await tx.venda.findUnique({
+  const vendaExistente = await tx.venda.findUnique({
     where: { pedidoId },
-    select: { id: true, storeId: true, pedidoId: true },
+    select: VENDA_REPLAY_SELECT,
   })
-  if (donoAtual && donoAtual.storeId !== lojaId) {
-    throw new PedidoIdDeOutraLojaError(pedidoId, donoAtual.storeId)
+  if (vendaExistente) {
+    // Replay legítimo retorna antes de caixa, itens, estoque, financeiro, crédito e
+    // títulos. Fatos diferentes ou outra loja falham antes de qualquer escrita.
+    return classifyExistingVendaReplay(lojaId, sale, vendaExistente)
   }
 
   const total = typeof sale.total === "number" && Number.isFinite(sale.total) ? sale.total : 0
@@ -389,44 +529,41 @@ export async function upsertVendaInTransaction(
       : {}),
   }
 
-  // ── 1. Upsert Venda ─────────────────────────────────────────────────────────
+  const fingerprint = buildLegacySaleFingerprint(sale)
+
+  // ── 1. Create Venda ─────────────────────────────────────────────────────────
   // Multi-Terminais Fase 3: também popula a coluna `Venda.terminalId` (além do payload)
   // para permitir filtros SQL por terminal nos relatórios. Tudo nullable —
   // vendas sem terminal selecionado ou anteriores à feature continuam funcionando.
   // `at` continua sendo a data ORIGINAL da venda (nunca "agora") — inclusive no
   // caminho retroativo, para preservar a janela de conferência da sessão original.
-  const v = await tx.venda.upsert({
-    where: { pedidoId },
-    create: {
-      storeId: lojaId,
-      pedidoId,
-      payload: asJsonPayload(salePayloadForStorage),
-      total,
-      at,
-      clienteNome,
-      clienteId,
-      operador,
-      ...(terminalId ? { terminalId } : {}),
-    },
-    // `storeId` NUNCA entra no update: uma `Venda` já existente jamais troca de loja.
-    // O guard fail-closed no topo já barra `pedidoId` de outra loja; manter o campo fora
-    // daqui é a segunda barreira (defesa em profundidade) contra sequestro entre lojas.
-    update: {
-      payload: asJsonPayload(salePayloadForStorage),
-      total,
-      at,
-      clienteNome,
-      ...(clienteId ? { clienteId } : {}),
-      ...(operador ? { operador } : {}),
-      ...(terminalId ? { terminalId } : {}),
-    },
-  })
+  let v: VendaReplayRecord
+  try {
+    v = await tx.venda.create({
+      data: {
+        storeId: lojaId,
+        pedidoId,
+        payload: asJsonPayload(salePayloadForStorage),
+        total,
+        at,
+        clienteNome,
+        clienteId,
+        operador,
+        ...(terminalId ? { terminalId } : {}),
+      },
+      select: VENDA_REPLAY_SELECT,
+    })
+  } catch (error) {
+    if (isPrismaUniqueConstraintError(error)) {
+      // Não consultar nada nesta transação: Postgres/Prisma a considera abortada.
+      throw new VendaCreateUniqueConflictError(pedidoId, error)
+    }
+    throw error
+  }
 
-  // ── 2. ItemVenda (recria para idempotência) + resolução de produto ───────────
+  // ── 2. ItemVenda (somente o criador) + resolução de produto ─────────────────
   // inventoryId vindo do PDV pode ser SKU ou cuid; resolvemos via OR lookup e
   // armazenamos o cuid real em ItemVenda.inventoryId e no cache para o Step 3.
-  await tx.itemVenda.deleteMany({ where: { vendaId: v.id } })
-
   type ResolvedProduct = {
     dbId: string
     stock: number
@@ -757,5 +894,11 @@ export async function upsertVendaInTransaction(
         data: { contaReceberTituloId: firstTituloId },
       })
     }
+  }
+
+  return {
+    replayed: false,
+    fingerprint,
+    venda: vendaPersistView(v),
   }
 }

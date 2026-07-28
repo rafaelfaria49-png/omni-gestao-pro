@@ -32,7 +32,18 @@ type FakeSessao = { id: string; storeId: string; status: "ABERTA" | "FECHADA" }
 
 /** Fake tx com estado persistente entre chamadas — permite testar reenvio/idempotência. */
 function makeStatefulFakeDb(sessoes: FakeSessao[]) {
-  const vendas = new Map<string, { id: string; payload: unknown }>()
+  const vendas = new Map<string, {
+    id: string
+    storeId: string
+    pedidoId: string
+    payload: unknown
+    total: number
+    at: Date
+    clienteNome: string | null
+    clienteId: string | null
+    terminalId: string | null
+    status: string
+  }>()
   const movimentacoesFinanceiras: Array<{ referenciaId: string; valor: number }> = []
   let vendaSeq = 0
 
@@ -45,17 +56,25 @@ function makeStatefulFakeDb(sessoes: FakeSessao[]) {
         // fake single-store, então toda venda existente pertence a `STORE`.
         findUnique: async ({ where }: any) => {
           const existing = vendas.get(where.pedidoId)
-          return existing ? { id: existing.id, storeId: STORE, pedidoId: where.pedidoId } : null
+          return existing ?? null
         },
-        upsert: async ({ where, create }: any) => {
-          const existing = vendas.get(where.pedidoId)
-          if (existing) {
-            existing.payload = create.payload
-            return { id: existing.id }
-          }
+        create: async ({ data }: any) => {
+          if (vendas.has(data.pedidoId)) throw { code: "P2002" }
           const id = `venda-${++vendaSeq}`
-          vendas.set(where.pedidoId, { id, payload: create.payload })
-          return { id }
+          const created = {
+            id,
+            storeId: data.storeId,
+            pedidoId: data.pedidoId,
+            payload: data.payload,
+            total: data.total,
+            at: data.at,
+            clienteNome: data.clienteNome ?? null,
+            clienteId: data.clienteId ?? null,
+            terminalId: data.terminalId ?? null,
+            status: "concluida",
+          }
+          vendas.set(data.pedidoId, created)
+          return created
         },
         update: async () => ({}),
       },
@@ -109,7 +128,7 @@ describe("upsertVendaInTransaction — CAIXA_ORIGINAL_FECHADO (VDA-2026-0406)", 
     const db = makeStatefulFakeDb([{ id: "sess-30-06", storeId: STORE, status: "ABERTA" }])
     await expect(
       upsertVendaInTransaction(db.makeTx(), STORE, vendaPixAntiga(), undefined, LIVE),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ replayed: false })
     expect(db.movimentacoesFinanceiras).toHaveLength(1)
   })
 
@@ -157,10 +176,10 @@ describe("upsertVendaInTransaction — CAIXA_ORIGINAL_FECHADO (VDA-2026-0406)", 
     const db = makeStatefulFakeDb([{ id: "sess-30-06", storeId: STORE, status: "FECHADA" }])
     let capturedAt: Date | undefined
     const tx = db.makeTx()
-    const originalUpsert = tx.venda.upsert
-    tx.venda.upsert = async (args: any) => {
-      capturedAt = args.create.at
-      return originalUpsert(args)
+    const originalCreate = tx.venda.create
+    tx.venda.create = async (args: any) => {
+      capturedAt = args.data.at
+      return originalCreate(args)
     }
     await upsertVendaInTransaction(tx, STORE, vendaPixAntiga(), undefined, {
       ...LIVE,

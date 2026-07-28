@@ -38,7 +38,18 @@ type FakeProduct = {
 /** Fake tx com estado persistente entre chamadas — simula o banco real para testar reenvio. */
 function makeStatefulFakeDb(products: FakeProduct[]) {
   const byId = new Map(products.map((p) => [p.id, p]))
-  const vendas = new Map<string, { id: string; pedidoId: string }>()
+  const vendas = new Map<string, {
+    id: string
+    storeId: string
+    pedidoId: string
+    payload: unknown
+    total: number
+    at: Date
+    clienteNome: string | null
+    clienteId: string | null
+    terminalId: string | null
+    status: string
+  }>()
   const titulos = new Map<string, { id: string; localKey: string; valor: number }>()
   const movimentacoesEstoque: Array<{ documento: string; produtoId: string }> = []
   const movimentacoesFinanceiras: Array<{ referenciaId: string; valor: number }> = []
@@ -54,14 +65,25 @@ function makeStatefulFakeDb(products: FakeProduct[]) {
         // fake single-store, então toda venda existente pertence a `STORE`.
         findUnique: async ({ where }: any) => {
           const existing = vendas.get(where.pedidoId)
-          return existing ? { id: existing.id, storeId: STORE, pedidoId: where.pedidoId } : null
+          return existing ?? null
         },
-        upsert: async ({ where, create }: any) => {
-          const existing = vendas.get(where.pedidoId)
-          if (existing) return { id: existing.id }
+        create: async ({ data }: any) => {
+          if (vendas.has(data.pedidoId)) throw { code: "P2002" }
           const id = `venda-${++vendaSeq}`
-          vendas.set(where.pedidoId, { id, pedidoId: create.pedidoId })
-          return { id }
+          const created = {
+            id,
+            storeId: data.storeId,
+            pedidoId: data.pedidoId,
+            payload: data.payload,
+            total: data.total,
+            at: data.at,
+            clienteNome: data.clienteNome ?? null,
+            clienteId: data.clienteId ?? null,
+            terminalId: data.terminalId ?? null,
+            status: "concluida",
+          }
+          vendas.set(data.pedidoId, created)
+          return created
         },
         update: async () => ({}),
       },

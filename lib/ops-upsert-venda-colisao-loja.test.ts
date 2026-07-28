@@ -33,6 +33,10 @@ type FakeVenda = {
   payload: unknown
   total: number
   at: Date
+  clienteNome?: string | null
+  clienteId?: string | null
+  terminalId?: string | null
+  status?: string
 }
 type FakeSessao = { id: string; storeId: string; status: "ABERTA" | "FECHADA" }
 
@@ -59,28 +63,33 @@ function makeMultiLojaFakeDb(vendasIniciais: FakeVenda[], sessoes: FakeSessao[])
       venda: {
         findUnique: async ({ where }: any) => {
           const v = vendas.get(where.pedidoId)
-          return v ? { id: v.id, storeId: v.storeId, pedidoId: v.pedidoId } : null
+          return v
+            ? {
+                ...v,
+                clienteNome: v.clienteNome ?? null,
+                clienteId: v.clienteId ?? null,
+                terminalId: v.terminalId ?? null,
+                status: v.status ?? "concluida",
+              }
+            : null
         },
-        upsert: async ({ where, create, update }: any) => {
-          const existing = vendas.get(where.pedidoId)
-          if (existing) {
-            // Espelha o Prisma: aplica exatamente os campos presentes no `update`.
-            if ("storeId" in update) existing.storeId = update.storeId
-            if ("payload" in update) existing.payload = update.payload
-            if ("total" in update) existing.total = update.total
-            if ("at" in update) existing.at = update.at
-            return { id: existing.id }
-          }
+        create: async ({ data }: any) => {
+          if (vendas.has(data.pedidoId)) throw { code: "P2002" }
           const id = `venda-${++vendaSeq}`
-          vendas.set(where.pedidoId, {
+          const created = {
             id,
-            pedidoId: where.pedidoId,
-            storeId: create.storeId,
-            payload: create.payload,
-            total: create.total,
-            at: create.at,
-          })
-          return { id }
+            pedidoId: data.pedidoId,
+            storeId: data.storeId,
+            payload: data.payload,
+            total: data.total,
+            at: data.at,
+            clienteNome: data.clienteNome ?? null,
+            clienteId: data.clienteId ?? null,
+            terminalId: data.terminalId ?? null,
+            status: "concluida",
+          }
+          vendas.set(data.pedidoId, created)
+          return created
         },
         update: async () => ({}),
       },
@@ -203,7 +212,7 @@ describe("upsertVendaInTransaction — guard de colisão de pedidoId entre lojas
     const db = makeMultiLojaFakeDb([], [{ id: "sess-loja2-14-06", storeId: LOJA_2, status: "ABERTA" }])
     await expect(
       upsertVendaInTransaction(db.makeTx(), LOJA_2, vendaDaLoja2(), undefined, LIVE),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ replayed: false })
     expect(db.vendas.get("VDA-2026-0046")?.storeId).toBe(LOJA_2)
     expect(db.movimentacoesFinanceiras).toHaveLength(1)
   })

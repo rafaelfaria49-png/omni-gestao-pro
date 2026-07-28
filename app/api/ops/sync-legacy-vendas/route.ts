@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { requireOpsSubscription, opsLojaIdFromRequestForWrite } from "@/lib/ops-api-gate"
-import { upsertVendaInTransaction, type SalePayload } from "@/lib/ops-upsert-venda"
+import {
+  VendaCreateUniqueConflictError,
+  classifyExistingVendaReplay,
+  upsertVendaInTransaction,
+  VENDA_REPLAY_SELECT,
+  type SalePayload,
+} from "@/lib/ops-upsert-venda"
 import { auth } from "@/auth"
 import { canAccessStore } from "@/lib/auth/enterprise-permissions"
 
@@ -57,7 +63,23 @@ export async function POST(req: Request) {
         })
         salesApplied += 1
       } catch (rowErr) {
-        const m = rowErr instanceof Error ? rowErr.message : String(rowErr)
+        let effectiveError: unknown = rowErr
+        if (rowErr instanceof VendaCreateUniqueConflictError) {
+          const winner = await prisma.venda.findUnique({
+            where: { pedidoId: rowErr.pedidoId },
+            select: VENDA_REPLAY_SELECT,
+          })
+          if (winner) {
+            try {
+              classifyExistingVendaReplay(lojaId, sale, winner)
+              salesApplied += 1
+              continue
+            } catch (classificationError) {
+              effectiveError = classificationError
+            }
+          }
+        }
+        const m = effectiveError instanceof Error ? effectiveError.message : String(effectiveError)
         if (saleErrors.length < 12) saleErrors.push(m)
         console.error("[ops/sync-legacy-vendas] falha em uma venda:", m)
       }

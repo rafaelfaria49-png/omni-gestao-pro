@@ -1,5 +1,11 @@
 # Changelog — OmniGestão Pro
 
+## 2026-07-28 — Writer v1 de vendas: replay atômico e conflito fail-closed
+
+- `Venda.upsert` foi substituído por criação exclusiva: uma venda já existente nunca é atualizada pelo writer v1. O servidor compara um fingerprint canônico/versionado dos fatos; replay idêntico retorna a venda existente sem repetir itens, estoque, financeiro, títulos ou crédito-vale, enquanto fatos diferentes retornam `PEDIDO_ID_CONFLITO_MESMA_LOJA` (HTTP 409).
+- Corridas `P2002` revertem a transação perdedora e classificam a venda vencedora fora da transação como replay, conflito same-store ou colisão cross-store. O guard `PEDIDO_ID_DE_OUTRA_LOJA` permanece fail-closed.
+- Os dois conflitos técnicos ficam em quarentena local permanente: sem auto-retry, reenvio manual, sincronização retroativa ou descarte individual/em lote. A UI preserva a cópia local e orienta recuperação administrada.
+
 ## 2026-06-17 — PDV Assistência: migração para o motor de pagamento compartilhado
 
 - **PDV Assistência** passou a reutilizar o **mesmo `PaymentModal` compartilhado** dos demais PDVs (Clássico/Supermercado/Venda Completa/Black) — eliminado o `PaymentModal` local duplicado (~570 linhas; saldo do arquivo: **−590 linhas**). Ganha automaticamente: pagamento misto, **à prazo com entrada + parcelas + vencimento + observação**, à prazo no Múltiplo, sugestão de saldo restante → Conta a Receber, **abertura automática do seletor de cliente** (com cadastro rápido) quando falta cliente, e idempotência por parcela em `ContaReceberTitulo`.

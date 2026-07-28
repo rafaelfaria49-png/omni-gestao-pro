@@ -38,7 +38,12 @@ function makeFakeTx(opts?: { creditos?: Array<{ id: string; saldo: number }>; mo
       // Guard de colisão entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001): fake sem
       // vendas pré-existentes → nenhum `pedidoId` tem dono, o guard passa direto.
       findUnique: async () => null,
-      upsert: async () => ({ id: `venda-${++vendaCounter}` }),
+      create: async ({ data }: any) => ({
+        id: `venda-${++vendaCounter}`,
+        ...data,
+        terminalId: data.terminalId ?? null,
+        status: "concluida",
+      }),
       update: async () => ({}),
     },
     itemVenda: { deleteMany: async () => ({ count: 0 }), create: async () => ({}) },

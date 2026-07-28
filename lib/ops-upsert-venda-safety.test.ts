@@ -67,9 +67,14 @@ function makeFakeTx(opts?: { products?: FakeProduct[]; sessoes?: FakeSessao[] })
       // Guard de colisão entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001): fake sem
       // vendas pré-existentes → nenhum `pedidoId` tem dono, o guard passa direto.
       findUnique: async () => null,
-      upsert: async () => {
+      create: async ({ data }: any) => {
         vendaUpserts += 1
-        return { id: `venda-${++vendaCounter}` }
+        return {
+          id: `venda-${++vendaCounter}`,
+          ...data,
+          terminalId: data.terminalId ?? null,
+          status: "concluida",
+        }
       },
       update: async () => ({}),
     },
@@ -278,7 +283,7 @@ describe("upsertVendaInTransaction — caixa servidor obrigatório (P1)", () => 
     }
     await expect(
       upsertVendaInTransaction(tx, STORE, aprazo, undefined, LIVE),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ replayed: false })
     // Sem entrada no caixa; título a receber criado.
     expect(financeiro).toHaveLength(0)
     expect(titulos).toHaveLength(1)
@@ -337,7 +342,7 @@ describe("upsertVendaInTransaction — produto físico não resolvido (P1)", () 
     }
     await expect(
       upsertVendaInTransaction(tx, STORE, sale, undefined, LIVE),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ replayed: false })
     // Virtual não baixa estoque; entrada à vista no caixa registrada.
     expect(ledger).toHaveLength(0)
     expect(financeiro).toHaveLength(1)
@@ -351,7 +356,7 @@ describe("upsertVendaInTransaction — produto físico não resolvido (P1)", () 
         STORE,
         vendaProduto({ lines: [{ inventoryId: "ghost-1", name: "X", quantity: 1, unitPrice: 100 }] }),
       ),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ replayed: false })
     // Comportamento histórico preservado: venda/financeiro gravados, sem baixa de estoque.
     expect(financeiro).toHaveLength(1)
   })

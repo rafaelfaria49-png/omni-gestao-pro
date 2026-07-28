@@ -353,6 +353,16 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
+**Writer legado v1 — replay atômico e conflito permanente (28/07/2026)**
+- `Venda` passou a ser **create-only**: não existe mais `upsert` permissivo no caminho compartilhado.
+- Reenvio idêntico na mesma loja é replay sem novas escritas; divergência canônica vira
+  `PEDIDO_ID_CONFLITO_MESMA_LOJA`; colisão entre lojas preserva `PEDIDO_ID_DE_OUTRA_LOJA`.
+- Corrida `P2002` é classificada somente após rollback e releitura do vencedor fora da transação abortada.
+- Os dois conflitos de identidade ficam em quarentena permanente no cliente: sem retry automático/manual,
+  reenvio retroativo ou descarte; a recuperação exige ação administrativa explícita.
+- Sem alteração de schema/migration e sem acesso ao Neon. A recuperação administrativa dos registros já
+  conflitantes permanece fora deste escopo.
+
 Última sprint concluída: **PDV_FASE0_IMPL_1** — commit `718591d`
 - Operador real no comprovante (nome da sessão, não UUID)
 - Badge de pendências de sincronização · saneamento do layout legado `"venda-completa"` · aviso de atualização PWA

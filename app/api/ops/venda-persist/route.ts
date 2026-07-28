@@ -11,6 +11,10 @@ import {
   CaixaSessaoInvalidaError,
   CaixaOriginalFechadoError,
   PedidoIdDeOutraLojaError,
+  PedidoIdConflitoMesmaLojaError,
+  VendaCreateUniqueConflictError,
+  classifyExistingVendaReplay,
+  VENDA_REPLAY_SELECT,
   type SalePayload,
 } from "@/lib/ops-upsert-venda"
 
@@ -66,9 +70,9 @@ export async function POST(req: Request) {
 
   try {
     await prismaEnsureConnected()
-    await prisma.$transaction(
+    const result = await prisma.$transaction(
       async (tx) => {
-        await upsertVendaInTransaction(tx, lojaId, sale, operadorLabel, {
+        return upsertVendaInTransaction(tx, lojaId, sale, operadorLabel, {
           enforceStock: true,
           requireCaixaSession: true,
           allowClosedOriginalSession,
@@ -83,84 +87,119 @@ export async function POST(req: Request) {
       { maxWait: 15_000, timeout: 20_000 },
     )
 
-    return NextResponse.json({ ok: true })
+    return NextResponse.json({ ok: true, replayed: result.replayed, venda: result.venda })
   } catch (e) {
+    let error: unknown = e
+
+    // A transação que perdeu a unique de `pedidoId` já foi revertida integralmente.
+    // Releitura obrigatoriamente FORA dela: classifica o vencedor sem tentar update.
+    if (e instanceof VendaCreateUniqueConflictError) {
+      try {
+        const winner = await prisma.venda.findUnique({
+          where: { pedidoId },
+          select: VENDA_REPLAY_SELECT,
+        })
+        if (winner) {
+          try {
+            const replay = classifyExistingVendaReplay(lojaId, sale, winner)
+            return NextResponse.json({ ok: true, replayed: true, venda: replay.venda })
+          } catch (classificationError) {
+            error = classificationError
+          }
+        }
+      } catch (lookupError) {
+        error = lookupError
+      }
+    }
+
     // Colisão de `pedidoId` entre lojas (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001): o
     // número já pertence a uma venda de OUTRA loja. Fail-closed — nada foi gravado e a
     // venda da outra loja permanece intacta. Não é contornável por reenvio nem por
     // sincronização retroativa; a saída é renumeração administrada (GOAL próprio).
     // Log estruturado sem payload nem dados do cliente.
-    if (e instanceof PedidoIdDeOutraLojaError) {
+    if (error instanceof PedidoIdDeOutraLojaError) {
       console.warn(
         "[ops/venda-persist] pedido-id-de-outra-loja",
         JSON.stringify({
           lojaIdSolicitante: lojaId,
           pedidoId,
-          ownerStoreId: e.ownerStoreId,
+          ownerStoreId: error.ownerStoreId,
           terminalId: sale.terminalId ?? null,
           bloqueio: "fail-closed",
         }),
       )
-      return NextResponse.json({ error: e.message, code: e.code }, { status: 409 })
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 })
+    }
+    if (error instanceof PedidoIdConflitoMesmaLojaError) {
+      console.warn(
+        "[ops/venda-persist] pedido-id-conflito-mesma-loja",
+        JSON.stringify({
+          lojaId,
+          pedidoId,
+          terminalId: sale.terminalId ?? null,
+          bloqueio: "fail-closed",
+        }),
+      )
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 })
     }
     // Caixa servidor obrigatório (P1 OPS-SALE-SAFETY-P1-001): venda com entrada no caixa
     // sem `SessaoCaixa` ABERTA válida é falha de negócio (409), não erro de servidor.
     // Nada foi gravado (validação dentro da transação). O PDV mantém `syncPending` e
     // mostra o toast — o operador abre o caixa e usa "Reenviar sync".
-    if (e instanceof CaixaSessaoInvalidaError) {
+    if (error instanceof CaixaSessaoInvalidaError) {
       console.warn(
         "[ops/venda-persist] caixa-fechado",
         JSON.stringify({ lojaId, pedidoId, sessaoId: sale.sessaoId ?? null, terminalId: sale.terminalId ?? null }),
       )
-      return NextResponse.json({ error: e.message, code: e.code }, { status: 409 })
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 })
     }
     // Venda pendente antiga cuja sessão de caixa original existe e é desta loja, mas já
     // foi fechada. Nunca sincroniza sozinha no caixa atual (ver
     // PDV-VENDA-PENDENTE-DIA-ANTERIOR-SYNC-AUDIT-001) — exige `allowClosedOriginalSession`
     // explícito (ação manual do operador/gerente confirmando o lançamento retroativo).
-    if (e instanceof CaixaOriginalFechadoError) {
+    if (error instanceof CaixaOriginalFechadoError) {
       console.warn(
         "[ops/venda-persist] caixa-original-fechado",
         JSON.stringify({ lojaId, pedidoId, sessaoId: sale.sessaoId ?? null, allowClosedOriginalSession }),
       )
-      return NextResponse.json({ error: e.message, code: e.code }, { status: 409 })
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 })
     }
     // Produto físico não resolvido (P1): item sem casamento em `Produto` não pode gerar
     // venda/financeiro sem baixa de estoque. Nada foi gravado (transação revertida).
-    if (e instanceof UnresolvedProductError) {
+    if (error instanceof UnresolvedProductError) {
       console.warn(
         "[ops/venda-persist] produto-nao-resolvido",
-        JSON.stringify({ lojaId, pedidoId, inventoryIds: e.inventoryIds }),
+        JSON.stringify({ lojaId, pedidoId, inventoryIds: error.inventoryIds }),
       )
-      return NextResponse.json({ error: e.message, code: e.code }, { status: 409 })
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409 })
     }
     // Anti-negativo (DT-B): saldo insuficiente é falha de negócio explícita (409),
     // não erro de servidor. O cliente PDV mantém a venda em `syncPending` e mostra o
     // toast com `detail`, permitindo reabrir o caixa/ajustar estoque e reenviar.
-    if (e instanceof InsufficientStockError) {
+    if (error instanceof InsufficientStockError) {
       console.warn(
         "[ops/venda-persist] estoque-insuficiente",
         JSON.stringify({
           lojaId,
           pedidoId,
-          produtoId: e.produtoId,
-          disponivel: e.disponivel,
-          solicitado: e.solicitado,
+          produtoId: error.produtoId,
+          disponivel: error.disponivel,
+          solicitado: error.solicitado,
         }),
       )
       return NextResponse.json(
-        { error: "Estoque insuficiente", detail: e.message, code: e.code },
+        { error: "Estoque insuficiente", detail: error.message, code: error.code },
         { status: 409 },
       )
     }
-    const msg = e instanceof Error ? e.message : String(e)
+    const msg = error instanceof Error ? error.message : String(error)
     // Extrai code do PrismaClientKnownRequestError (P2002 unique, P2003 FK, P2025 not found, etc.)
     const code =
-      e && typeof e === "object" && "code" in e && typeof (e as { code: unknown }).code === "string"
-        ? (e as { code: string }).code
+      error && typeof error === "object" && "code" in error && typeof (error as { code: unknown }).code === "string"
+        ? (error as { code: string }).code
         : undefined
     const meta =
-      e && typeof e === "object" && "meta" in e ? (e as { meta: unknown }).meta : undefined
+      error && typeof error === "object" && "meta" in error ? (error as { meta: unknown }).meta : undefined
     console.error(
       "[ops/venda-persist] erro",
       JSON.stringify({ lojaId, pedidoId, code, msg, meta }),

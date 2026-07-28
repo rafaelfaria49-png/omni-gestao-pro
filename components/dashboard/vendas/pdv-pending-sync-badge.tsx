@@ -5,6 +5,10 @@ import { AlertTriangle, RefreshCw, Loader2 } from "lucide-react"
 import { useOperationsStore } from "@/lib/operations-store"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
+import {
+  isSaleIdentityConflictCode,
+  SALE_IDENTITY_CONFLICT_TITLE,
+} from "@/lib/vendas/sale-identity-conflict"
 
 /**
  * Indicador HONESTO de pendências de sincronização do PDV.
@@ -22,11 +26,20 @@ export function PdvPendingSyncBadge({ className }: { className?: string }) {
   const { toast } = useToast()
   const [resending, setResending] = useState(false)
 
-  const { salesPend, devPend, caixaPend, total } = useMemo(() => {
+  const { salesPend, retryableSales, quarantinedSales, devPend, caixaPend, total } = useMemo(() => {
     const sp = sales.filter((s) => s.syncPending === true)
+    const retryable = sp.filter((s) => !isSaleIdentityConflictCode(s.syncBlockedCode))
+    const quarantined = sp.filter((s) => isSaleIdentityConflictCode(s.syncBlockedCode))
     const dp = devolucoes.filter((d) => d.syncPending === true).length
     const cp = (pendingCaixaOperations ?? []).filter((o) => o.syncPending === true).length
-    return { salesPend: sp, devPend: dp, caixaPend: cp, total: sp.length + dp + cp }
+    return {
+      salesPend: sp,
+      retryableSales: retryable,
+      quarantinedSales: quarantined,
+      devPend: dp,
+      caixaPend: cp,
+      total: sp.length + dp + cp,
+    }
   }, [sales, devolucoes, pendingCaixaOperations])
 
   if (total === 0) return null
@@ -37,28 +50,22 @@ export function PdvPendingSyncBadge({ className }: { className?: string }) {
   if (caixaPend) parts.push(`${caixaPend} caixa`)
 
   const reenviar = async () => {
-    if (resending || salesPend.length === 0) return
+    if (resending || retryableSales.length === 0) return
     setResending(true)
     try {
       let ok = 0
       let fail = 0
-      // Vendas bloqueadas por colisão de número com outra loja não entram no reenvio em
-      // lote: o servidor devolve o mesmo 409 fail-closed em toda tentativa e a saída é
-      // renumeração administrada (ver detalhe da venda no Histórico de Vendas).
-      let bloqueadas = 0
-      for (const s of salesPend) {
+      // Quarentenas técnicas nunca entram no reenvio manual em lote.
+      let bloqueadas = quarantinedSales.length
+      for (const s of retryableSales) {
         if (!s.id) continue
-        if (s.syncBlockedCode === "PEDIDO_ID_DE_OUTRA_LOJA") {
-          bloqueadas += 1
-          continue
-        }
         const r = await retrySyncSale(s.id)
         if (r.ok) ok += 1
-        else if (r.code === "PEDIDO_ID_DE_OUTRA_LOJA") bloqueadas += 1
+        else if (isSaleIdentityConflictCode(r.code)) bloqueadas += 1
         else fail += 1
       }
       const sufixoBloqueadas = bloqueadas
-        ? ` · ${bloqueadas} com número ocupado por outra loja (abra o Histórico de Vendas).`
+        ? ` · ${bloqueadas} em conflito técnico (abra o Histórico de Vendas).`
         : ""
       toast({
         title: fail === 0 && bloqueadas === 0 ? "Sincronização reenviada" : "Reenvio parcial",
@@ -86,8 +93,11 @@ export function PdvPendingSyncBadge({ className }: { className?: string }) {
       <span className="min-w-0">
         <strong>{total}</strong> pendência(s) de sincronização ({parts.join(" · ")}). Sincronize antes de limpar o
         cache ou sair.
+        {quarantinedSales.length > 0 && (
+          <> {SALE_IDENTITY_CONFLICT_TITLE}: {quarantinedSales.length} venda(s) preservada(s) para recuperação administrada.</>
+        )}
       </span>
-      {salesPend.length > 0 && (
+      {retryableSales.length > 0 && (
         <button
           type="button"
           onClick={() => void reenviar()}

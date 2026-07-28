@@ -17,6 +17,12 @@ import { initAutomationEngineClient } from "@/lib/automation/automation-engine"
 import { registrarOperacaoCaixaServer } from "@/lib/pdv-caixa-operacao"
 import { toast } from "@/components/ui/use-toast"
 import type { AccessorySelectionV1, ProdutoAcessoriosMetadataV1 } from "@/lib/acessorios/types"
+import {
+  isSaleIdentityConflictCode,
+  preserveSaleIdentityConflictCodes,
+  SALE_IDENTITY_CONFLICT_GUIDANCE,
+  SALE_IDENTITY_CONFLICT_TITLE,
+} from "@/lib/vendas/sale-identity-conflict"
 
 export type { APrazoConfig, CaixaOperacaoRecord, DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
 
@@ -167,6 +173,27 @@ function extractVendaPersistErrorCode(body: string): string | undefined {
 
 function vendaPersistUrl(lojaId: string): string {
   return `/api/ops/venda-persist?storeId=${encodeURIComponent(lojaId)}`
+}
+
+function persistedSaleIdentityConflictCode(
+  storageKey: string,
+  sale: Pick<SaleRecord, "id" | "syncBlockedCode">,
+): string | undefined {
+  if (isSaleIdentityConflictCode(sale.syncBlockedCode)) return sale.syncBlockedCode
+  if (typeof window === "undefined") return undefined
+  try {
+    const raw = localStorage.getItem(storageKey)
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as { sales?: SaleRecord[] }
+    const persisted = Array.isArray(parsed.sales)
+      ? parsed.sales.find((candidate) => candidate.id === sale.id)
+      : undefined
+    return isSaleIdentityConflictCode(persisted?.syncBlockedCode)
+      ? persisted.syncBlockedCode
+      : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function mergeCustomerCredits(
@@ -537,11 +564,39 @@ export function OperationsProvider({
   useEffect(() => {
     if (!bootstrapDoneRef.current) return
     try {
-      localStorage.setItem(storageKey, JSON.stringify(toPersistedRest(state)))
+      const persisted = toPersistedRest(state)
+      const currentRaw = localStorage.getItem(storageKey)
+      if (currentRaw) {
+        const current = JSON.parse(currentRaw) as { sales?: SaleRecord[] }
+        if (Array.isArray(current.sales)) {
+          persisted.sales = preserveSaleIdentityConflictCodes(persisted.sales, current.sales)
+        }
+      }
+      localStorage.setItem(storageKey, JSON.stringify(persisted))
     } catch {
       // ignore
     }
   }, [state, storageKey])
+
+  // Quarentena é monotônica entre abas: o `storage` event traz o código permanente
+  // descoberto por outra aba, impedindo foco/online/intervalo de reativar a tentativa.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey || !event.newValue) return
+      try {
+        const incoming = JSON.parse(event.newValue) as { sales?: SaleRecord[] }
+        if (!Array.isArray(incoming.sales)) return
+        setState((prev) => ({
+          ...prev,
+          sales: preserveSaleIdentityConflictCodes(prev.sales, incoming.sales ?? []),
+        }))
+      } catch {
+        // Snapshot inválido de outra aba não altera o estado atual.
+      }
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [storageKey])
 
   useEffect(() => {
     if (!bootstrapDoneRef.current) return
@@ -833,6 +888,7 @@ export function OperationsProvider({
     const lj = opsLojaIdFromStorageKey(storageKey)
     const agora = Date.now()
     for (const sale of pending) {
+      if (persistedSaleIdentityConflictCode(storageKey, sale)) continue
       if ((vendaAutoRetryHoldRef.current.get(sale.id) ?? 0) > agora) continue
       void fetch(vendaPersistUrl(lj), {
         method: "POST",
@@ -914,6 +970,14 @@ export function OperationsProvider({
       if (!sale) {
         return { ok: false, reason: "Venda local pendente não encontrada (talvez já tenha sincronizado)." }
       }
+      const permanentCode = persistedSaleIdentityConflictCode(storageKey, sale)
+      if (permanentCode) {
+        return {
+          ok: false,
+          reason: `${SALE_IDENTITY_CONFLICT_TITLE}. ${SALE_IDENTITY_CONFLICT_GUIDANCE}`,
+          code: permanentCode,
+        }
+      }
       const lj = opsLojaIdFromStorageKey(storageKey)
       try {
         const res = await fetch(vendaPersistUrl(lj), {
@@ -945,8 +1009,8 @@ export function OperationsProvider({
             sales: prev.sales.map((s) => (s.id === saleId ? { ...s, syncBlockedCode: code } : s)),
           }))
         }
-        // `code` sobe junto com a razão para a UI orientar por causa (ex.:
-        // `PEDIDO_ID_DE_OUTRA_LOJA` não deve sugerir novo reenvio nem abrir caixa).
+        // `code` sobe junto com a razão para a UI orientar por causa (os conflitos
+        // permanentes de identidade não devem sugerir novo reenvio nem abrir caixa).
         return { ok: false, reason: `HTTP ${res.status} — ${detail}`, ...(code ? { code } : {}) }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -978,6 +1042,12 @@ export function OperationsProvider({
       const sale = stateRef.current.sales.find((s) => s.id === saleId && s.syncPending === true)
       if (!sale) {
         return { ok: false, reason: "Venda local pendente não encontrada." }
+      }
+      if (persistedSaleIdentityConflictCode(storageKey, sale)) {
+        return {
+          ok: false,
+          reason: `${SALE_IDENTITY_CONFLICT_TITLE}. ${SALE_IDENTITY_CONFLICT_GUIDANCE}`,
+        }
       }
       const lj = opsLojaIdFromStorageKey(storageKey)
       try {
@@ -1034,6 +1104,10 @@ export function OperationsProvider({
     const reconciledIds = new Set<string>()
     let conflicts = 0
     for (const sale of pending) {
+      if (persistedSaleIdentityConflictCode(storageKey, sale)) {
+        conflicts += 1
+        continue
+      }
       try {
         const res = await fetch(`/api/vendas/${encodeURIComponent(sale.id)}`, {
           credentials: "include",
@@ -1442,6 +1516,7 @@ export function OperationsProvider({
         cashierId: auditMeta?.cashierId,
         sessaoId: current.caixaSessaoId ?? undefined,
         terminalId: readSelectedTerminal(opsLojaIdFromStorageKey(storageKey))?.id || undefined,
+        linkedOsId: linkedOsId?.trim() || undefined,
         discountAuthorizedByAdminId: auditMeta?.discountAuthorizedByAdminId,
         discountReais: auditMeta?.discountReais,
         discountPercent: auditMeta?.discountPercent,
@@ -1481,12 +1556,21 @@ export function OperationsProvider({
               setState((prev) => ({
                 ...prev,
                 sales: prev.sales.map((s) =>
-                  s.id === saleId ? { ...s, syncPending: false } : s
+                  s.id === saleId ? { ...s, syncPending: false, syncBlockedCode: undefined } : s
                 ),
               }))
             } else {
               const body = await res.text().catch(() => "")
               const detail = formatVendaPersistErrorBody(body, res.status)
+              const code = extractVendaPersistErrorCode(body)
+              if (code) {
+                setState((prev) => ({
+                  ...prev,
+                  sales: prev.sales.map((s) =>
+                    s.id === saleId ? { ...s, syncBlockedCode: code } : s
+                  ),
+                }))
+              }
               console.error(
                 "[venda-persist] HTTP",
                 res.status,
@@ -1500,8 +1584,12 @@ export function OperationsProvider({
               )
               toast({
                 variant: "destructive",
-                title: `Venda ${saleRow.id} ficou pendente (HTTP ${res.status})`,
-                description: `${detail.slice(0, 200)} · Abra "Vendas" e use Reenviar sync para tentar novamente.`,
+                title: isSaleIdentityConflictCode(code)
+                  ? SALE_IDENTITY_CONFLICT_TITLE
+                  : `Venda ${saleRow.id} ficou pendente (HTTP ${res.status})`,
+                description: isSaleIdentityConflictCode(code)
+                  ? SALE_IDENTITY_CONFLICT_GUIDANCE
+                  : `${detail.slice(0, 200)} · Abra "Vendas" e use Reenviar sync para tentar novamente.`,
               })
             }
           })

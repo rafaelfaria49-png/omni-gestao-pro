@@ -69,6 +69,8 @@ export interface SaleRecord {
   sessaoId?: string
   /** Terminal PDV (PDV1, PDV2...) em que a venda foi feita (persiste no payload JSON da Venda). */
   terminalId?: string
+  /** Vínculo operacional com a O.S. que originou a venda, quando existente. */
+  linkedOsId?: string
   /** Auditoria: supervisor/admin que autorizou desconto manual (id local quando disponível). */
   discountAuthorizedByAdminId?: string
   /** Desconto manual no checkout (somente auditoria). */
