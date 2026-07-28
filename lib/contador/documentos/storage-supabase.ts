@@ -1,4 +1,21 @@
 /**
+ * @deprecated Adapter de storage privado (Supabase Storage) — REJEITADO como
+ *   provider produtivo desde a decisão GOAL 012B e substituído por Cloudflare R2
+ *   (`storage-r2.ts`, GOAL 012C). Mantido no tree APENAS como caminho de rollback
+ *   manual (GOAL 012B §7.1). NENHUM import produtivo aponta para este arquivo.
+ *
+ *   Para reverter de intenção, trocar manualmente os 4 imports produtivos
+ *   (`app/api/contador/documentos/{upload-intent,complete,[id]/download}` e
+ *   `lib/contador/documentos/fechamento/portas.ts`) de `storage-r2` para
+ *   `storage-supabase` E cadastrar as três vars Supabase Storage inexistentes
+ *   (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`)
+ *   hoje ausentes da Vercel. Há custo humano real de rollback — intencional.
+ *
+ *   Risco da reativação (motivo da rejeição): `service_role` Supabase é project-wide
+ *   e bypassa RLS — vazamento = acesso a tudo do projeto Supabase, sem isolamento
+ *   Preview × Production nativo; recriaria exatamente o risco que motivou o
+ *   congelamento do Supabase como contingência.
+ *
  * Contador HUB · Documentos — adapter de storage privado (Supabase Storage). GOAL 010.
  *
  * SERVER-ONLY. Usa a `service_role` para operar sobre um bucket PRIVADO. Regras:

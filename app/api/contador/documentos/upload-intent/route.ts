@@ -12,7 +12,7 @@ import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"
 import { criarUploadIntent } from "@/lib/contador/documentos/service"
 import { criarRepoPrisma } from "@/lib/contador/documentos/repo-prisma"
-import { storageSupabase } from "@/lib/contador/documentos/storage-supabase"
+import { storageR2 } from "@/lib/contador/documentos/storage-r2"
 import { logEvento, respostaErro, respostaFalhaEscopo } from "@/lib/contador/documentos/http"
 
 export const runtime = "nodejs"
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
         vencimento: body.vencimento,
         versaoDeId: body.versaoDeId == null ? null : String(body.versaoDeId),
       },
-      { storage: storageSupabase, repo: criarRepoPrisma() },
+      { storage: storageR2, repo: criarRepoPrisma() },
     )
     logEvento("contador_documento_intent", {
       storeId: escopo.storeId,
