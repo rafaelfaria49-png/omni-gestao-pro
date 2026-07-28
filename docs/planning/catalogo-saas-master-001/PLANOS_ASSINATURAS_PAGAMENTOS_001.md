@@ -1,4 +1,4 @@
-# Planos, Assinaturas e Pagamentos — 001
+# Planos, Assinaturas e Pagamentos — OmniCompat — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
 **Data:** 22 de Julho de 2026
@@ -23,20 +23,22 @@ produto (confiança explícita, UX, pedido/PDF integrado)** — nunca guerra de 
 
 | Recurso | **Essencial** | **Loja Pro** |
 | :--- | :--- | :--- |
-| Usuários | 1 | 3 |
-| Dispositivos ativos | 2 | 5 |
-| Lojas (organizações filhas) | 1 | até 3 (Fase 3; no MVP: 1 org com mais usuários/disp.) |
-| Busca + resultados com confiança | ✔ | ✔ |
-| Consultas/dia (limite anti-abuso, invisível no uso normal) | 300 | 1.000 |
-| Favoritos / Histórico | ✔ / 30 dias | ✔ / 12 meses |
-| Lista de compras | 1 ativa | ilimitadas |
-| Pedido em PDF (com watermark) | 10/mês | ilimitado* (soft-cap 100/mês) |
-| Compartilhar WhatsApp | ✔ | ✔ |
-| Solicitação de modelos | ✔ | ✔ prioridade na fila |
-| Exportação CSV da própria lista | — | ✔ (só listas próprias, nunca a base) |
-| Relatórios de uso da equipe | — | Fase 3 |
-| Acesso futuro ao módulo de capinhas | — | prioridade de beta (sem promessa de data) |
-| Suporte | e-mail | e-mail prioritário + WhatsApp |
+| Preço Mensal | R$ 19,90 | R$ 29,90 |
+| Preço Trimestral | R$ 44,90 | R$ 59,90 |
+| Preço Anual (Fundador/Lançamento) | R$ 119,90 | R$ 159,90 |
+| Lojas | 1 loja | até 3 lojas |
+| Usuários | até 2 usuários | até 5 usuários |
+| Dispositivos ativos | até 3 dispositivos | até 8 dispositivos |
+| Busca de películas + Níveis de confiança | ✔ | ✔ |
+| Favoritos / Histórico de buscas | ✔ | ✔ ampliado |
+| Lista de compras de películas | ✔ | ✔ listas e pedidos avançados |
+| Pedido em PDF | PDF simples com watermark | PDF personalizado com nome e logotipo da loja |
+| Compartilhamento WhatsApp | ✔ | ✔ facilitado |
+| Solicitação de modelo ausente | ✔ | ✔ prioridade em solicitações |
+| Relato de incompatibilidade | ✔ | ✔ |
+| Relatórios de modelos pesquisados | — | ✔ |
+| Permissões por funcionário | — | ✔ |
+| Acesso futuro a módulos beta | — | ✔ prioridade quando existirem |
 
 Racional Essencial×Pro: Essencial atende o lojista solo (dor nº 1); Pro vende **equipe +
 volume + operação de compra** — diferenças reais de custo de serviço, não recursos
@@ -80,10 +82,10 @@ pequena — o custo dominante é curadoria, não servidores.
 
 ### 3.3 Tabela recomendada (GATE HUMANO para aprovação final)
 
-| Plano | Mensal | Trimestral | Anual (lista) | Anual (fundador*) |
-| :--- | ---: | ---: | ---: | ---: |
-| Essencial | R$ 19,90 | R$ 44,90 | R$ 149,90 | **R$ 119,90** |
-| Loja Pro | R$ 29,90 | R$ 79,90 | R$ 249,90 | **R$ 199,90** |
+| Plano | Mensal | Trimestral | Anual (Lançamento / Fundador) | Lojas / Usuários / Dispositivos |
+| :--- | ---: | ---: | ---: | :--- |
+| Essencial | R$ 19,90 | R$ 44,90 | **R$ 119,90** | 1 loja / até 2 us / até 3 disp |
+| Loja Pro | R$ 29,90 | R$ 59,90 | **R$ 159,90** | até 3 lojas / até 5 us / até 8 disp |
 
 \* Fundador: primeiras 100 organizações OU 90 dias de lançamento (o que vier primeiro);
 preço **congelado enquanto a assinatura permanecer ativa** (não "vitalício"
@@ -154,11 +156,7 @@ Escala 1–5. Taxas são ordem de grandeza pública — **verificar tabelas vige
 | Confiança do lojista BR na marca | 3 | **5** | 3 | 3 |
 | Lock-in (migração de assinaturas) | médio (cartões tokenizados migráveis com processo) | médio | médio | médio |
 
-**Recomendação MVP: Stripe.** Motivos decisivos: (1) o time já opera Stripe Billing em
-produção — menor risco de erro em código de dinheiro; (2) dunning/portal prontos reduzem
-semanas de trabalho; (3) webhooks maduros. Mitigação da fraqueza PIX: planos trimestral e
-anual vendidos também como **pagamento PIX avulso** (Checkout/Payment Link) que concede
-período fechado com renovação por novo PIX (aviso D-7/D-3/D-0).
+** Gateway de Pagamentos:** Mantido sob a abstração `PaymentProvider`. O gateway definitivo não está escolhido (Stripe, Mercado Pago, Pagar.me e Asaas em avaliação). A escolha depende de pesquisa de tarifas, Pix, cartão recorrente, parcelamento, webhooks, chargeback, prazos de recebimento e suporte a CNPJ BR.
 
 **Evolução (Fase 3+):** se métricas mostrarem perda relevante de conversão por ausência de
 PIX no mensal, adicionar Mercado Pago como segundo provedor atrás da interface
@@ -166,17 +164,22 @@ PIX no mensal, adicionar Mercado Pago como segundo provedor atrás da interface
 **Contingência:** a mesma abstração é o plano de saída em caso de bloqueio/instabilidade
 do provedor primário.
 
-## 6. Teste grátis — decisão
+## 6. Teste grátis — Regra Oficial Aprovada
 
-**Recomendado: 7 dias sem cartão** + demo pública na landing (5 consultas de modelos
-populares, sem login, servida de allowlist estática — não expõe a base).
+- **Duração máxima:** 7 dias;
+- **Sem cartão de crédito** e **sem renovação automática**;
+- **Limite máximo:** 30 pesquisas contabilizadas no backend;
+- **Limites operacionais no trial:** 1 usuário, 1 dispositivo, 1 organização, 1 lista de compras ativa, 1 PDF demonstrativo com indicação discreta de versão de demonstração, favoritos permitidos, acesso apenas às relações consideradas publicáveis;
+- **Encerramento:** ocorre no que for atingido primeiro: (a) 7 dias OU (b) 30 pesquisas contabilizadas;
+- **Pós-encerramento:** conta entra em modo limitado, dados mantidos sem exclusão imediata, buscas/recursos operacionais bloqueados, apresentação de escolha de plano, SEM cobrança automática.
 
-- A favor: público desconfiado de cadastrar cartão; fricção mínima maximiza a métrica
-  crítica (primeira busca com resultado); o líder não oferece trial — diferencial.
-- Riscos e mitigações: scraping em contas trial → limites duros (30 consultas/dia,
-  1 dispositivo, PDF com watermark "AVALIAÇÃO", sem export); contas descartáveis →
-  verificação de e-mail obrigatória + 1 trial por e-mail/dispositivo (fingerprint).
-- Alternativa se conversão vier baixa: trial com cartão (7→14 dias) — decidir com dados.
+### Regra de Contagem de Pesquisas (Backend)
+- A contagem é controlada no backend (nunca confiar no cliente);
+- 1 pesquisa contabilizada = 1 consulta real processada pelo backend;
+- **Janela de deduplicação de 10 minutos:** não consome nova pesquisa se o usuário atualizar a página, reabrir o mesmo resultado, visualizar detalhes, favoritar, adicionar à lista, voltar ou repetir a mesma consulta normalizada dentro de 10 min;
+- **Normalização:** remoção de espaços, conversão maiúsculas/minúsculas, remoção de acentos e formatação (ex: "Galaxy A05" == "galaxy a05");
+- **Buscas sem resultado (0 resultados):** CONTAM como pesquisa (pois consumiram processamento). Nesses casos, oferecer imediatamente o CTA de solicitação de inclusão de modelo (marca, modelo, código técnico, observação);
+- Registro de eventos de uso suficientes para auditoria e antiabuso sem armazenar excesso de dados pessoais.
 
 ## 7. Regras operacionais
 
@@ -200,3 +203,10 @@ limit e allowlist de tipos de evento. Testes de contrato com payloads reais do C
 ## 8. Perguntas em aberto (consolidadas em [OPEN_QUESTIONS](OPEN_QUESTIONS_GATES_HUMANOS_001.md))
 Preço final e coorte fundador; taxas vigentes dos provedores; emissão de NFS-e (município,
 regime tributário, ferramenta); texto jurídico de reembolso; CNPJ/entidade que fatura.
+
+
+## 9. CNPJ e Parte Fiscal (Gate Adiado)
+- Existem dois CNPJs possíveis, mas a decisão final do operador será tomada com o contador;
+- O CNPJ NÃO bloqueia: planejamento, repositório, desenvolvimento, banco de dev, protótipo ou beta gratuito;
+- O CNPJ É BLOQUEADOR antes de: abrir cobrança pública, contratar gateway definitivo, receber assinaturas pagas, emitir NFS-e, publicar dados legais finais, Termos de Uso e Política de Privacidade e lançar comercialmente;
+- Validação com contador incluirá: CNAE, regime tributário, inscrição municipal, NFS-e, titularidade, conta bancária, gateway e tributação das assinaturas.

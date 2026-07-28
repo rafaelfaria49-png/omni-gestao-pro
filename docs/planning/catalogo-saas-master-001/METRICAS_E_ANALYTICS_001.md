@@ -14,7 +14,7 @@ Nenhum número daqui é claim público; claims públicos são SÓ os do
    teatro de dashboard. Após 4 semanas de beta, cada meta é recalibrada com dado real.
 2. **Sem vanity metrics** — pageviews e downloads não pagam curadoria; as métricas
    centrais medem valor entregue no balcão e saúde da base.
-3. **Telemetria própria primeiro** — `SearchHistory` + banco + Stripe respondem 90% das
+3. **Telemetria própria primeiro** — `SearchHistory` + banco + PaymentProvider respondem 90% das
    perguntas; ferramenta externa paga só quando uma pergunta concreta exigir.
 4. **Métrica ruim é sintoma, não vergonha** — zero-results alto = fila de curadoria, não
    número a esconder.
@@ -110,7 +110,7 @@ A taxa de zero-results do beta é o dado que decide o lançamento aberto
 | :--- | :--- |
 | `SearchHistory` | tudo de busca: volume, zero-results, latência, seleção, por org/dispositivo |
 | Banco (entidades de uso) | favoritos, listas, PDFs, solicitações, dispositivos |
-| Stripe | MRR, churn, conversão, inadimplência (verdade financeira) |
+| PaymentProvider | MRR, churn, conversão, inadimplência (verdade financeira) |
 | Vercel Analytics | web vitals e funil da landing (sem cookie invasivo) |
 | Sentry | erros e regressões |
 | Painel admin (tela 3.18 — [UX](UX_DESIGN_SYSTEM_LANDING_001.md)) | KPIs diários agregados: buscas, zero-results, assinaturas, filas |

@@ -12,15 +12,15 @@ mas a decisão é humana e fica registrada aqui quando tomada.
 
 | ID | Decisão | Bloqueia | Recomendação resumida |
 | :--- | :--- | :--- | :--- |
-| OQ-01 | Nome, marca e domínio | G-24 (landing); branding de tudo | 3+ candidatos verificados INPI+domínio antes de decidir |
-| OQ-02 | CNPJ / estrutura que fatura | G-13 (Stripe live) | definir com contador antes do modo live |
-| OQ-03 | Preços finais + coorte fundador | G-13 (seed de planos) | tabela do [PLANOS §3.3](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) |
-| OQ-04 | Gateway final (taxas vigentes) | G-13 | Stripe, após conferir taxas atuais |
+| OQ-01 | Nome, marca e domínio | G-24 (landing); branding de tudo | OmniCompat (provisório com slogan "A compatibilidade certa em segundos."); validar domínio, redes e INPI |
+| OQ-02 | CNPJ / estrutura que fatura | G-13 (billing live) | Gate adiado: não bloqueia dev/beta; bloqueia cobrança pública, gateway e NFS-e |
+| OQ-03 | Preços finais + coorte fundador | G-13 (seed de planos) | Aprovado: Essencial R$ 19,90/44,90/119,90; Loja Pro R$ 29,90/59,90/159,90 |
+| OQ-04 | Gateway final (taxas vigentes) | G-13 | Gateway em aberto via PaymentProvider (Stripe, Mercado Pago, Pagar.me, Asaas em avaliação) |
 | OQ-05 | Termos de uso, privacidade e reembolso (jurídico) | G-24, G-25; beta | rascunho por IA, aprovação jurídica humana |
 | OQ-06 | Texto público de capinhas (FAQ) | G-24 | texto honesto do [MASTER_PLAN §4](CATALOGO_SAAS_MASTER_PLAN_001.md) |
 | OQ-07 | Checklist de claims da landing | G-24 | só os números do [PRD §7](PRD_CATALOGO_SAAS_MVP_001.md) |
 | OQ-08 | Seleção do grupo de beta (15–30 lojas) | G-26 | mix: operação própria + clientes de confiança + 5–10 frios |
-| OQ-09 | Teste grátis (formato final) | G-15 | 7 dias sem cartão ([PLANOS §6](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)) |
+| OQ-09 | Teste grátis (formato final) | G-15 | Aprovado: 7 dias sem cartão ou 30 pesquisas contabilizadas no backend |
 | OQ-10 | Limites de dispositivos/usuários por plano | G-12, G-15 | Essencial 2/1; Pro 5/3 ([PLANOS §2](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)) |
 | OQ-11 | Verba e canais de marketing do lançamento | Fase 2 | orgânico primeiro; verba só com funil medido |
 | OQ-12 | NFS-e (emissão, município, ferramenta) | pós-MVP (recomendado antes do lançamento aberto) | resolver com contador na Fase 2 |
@@ -139,3 +139,21 @@ cortesia associadas.
    ([BACKLOG](BACKLOG_GOALS_INICIAIS_001.md) indica as dependências).
 3. Nenhuma resposta aqui é urgência artificial: o custo de decidir errado é maior que o
    de esperar uma semana.
+
+## 5. Lista Oficial dos 16 Gates Que Permanecem Abertos
+1. Domínio definitivo (.com.br);
+2. Redes sociais (handles oficiais);
+3. Disponibilidade e registro da marca no INPI;
+4. Identidade visual e logotipo definitivos;
+5. CNPJ operador definitivo (decisão com contador entre 2 opções);
+6. Enquadramento CNAE e regime tributário;
+7. Seleção do gateway de pagamento definitivo;
+8. Tabela de tarifas atuais praticadas pelo gateway escolhido;
+9. Política formal de cancelamento;
+10. Política formal de reembolso;
+11. Textos legais finais (Termos de Uso e Política de Privacidade);
+12. Grupo nominal das 15 a 30 lojas parceiras do beta fechado;
+13. Política de uso justo (fair use policy);
+14. Critérios finais de moderação administrativa;
+15. Data pública de lançamento comercial;
+16. Tabela de preços posterior ao período de lançamento/fundador.

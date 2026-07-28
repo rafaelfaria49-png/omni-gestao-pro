@@ -23,18 +23,12 @@ Formato: Contexto → Decisão → Alternativas → Consequências.
   contexto limpo; venda/spin-off futuro simples. (−) correções no engine copiado não
   fluem automaticamente (aceito: o engine é pequeno e estável).
 
-## ADR-002 — Supabase Postgres em projeto NOVO e isolado
+## ADR-002 — Neon PostgreSQL em projeto NOVO e isolado (substituindo Supabase)
 
-- **Contexto:** precisamos de Postgres gerenciado, storage para anexos e backups, com
-  experiência prévia do time; o banco do OmniGestão já roda em Supabase.
-- **Decisão:** projeto Supabase NOVO (credenciais, billing e URLs próprios). Acesso via
-  Prisma (pooler); `DIRECT_URL` só migrations; RLS ativa como defesa em profundidade
-  ([SEGURANCA §9](SEGURANCA_PROTECAO_BASE_001.md)).
-- **Alternativas:** (a) mesmo projeto Supabase do OmniGestão — **proibido** (mistura de
-  dados de produtos distintos, raio de explosão compartilhado); (b) Neon — bom Postgres,
-  sem storage embutido e sem experiência do time; (c) PlanetScale — sem `pg_trgm`/RLS.
-- **Consequências:** (+) isolamento, custo previsível (free → US$ 25), fuzzy nativo.
-  (−) mais um projeto para operar (aceito).
+- **Contexto:** o novo SaaS (OmniCompat) exige banco relacional relacional moderno, isolado do OmniGestão Pro.
+- **Decisão:** Neon PostgreSQL em projeto 100% NOVO e exclusivo do OmniCompat. ORM via Prisma com conexões pooled para a aplicação e direct para migrations (`prisma migrate`). Nenhum compartilhamento de tabelas, credenciais ou ambiente com o OmniGestão Pro. Auth via Auth.js e anexos em Cloudflare R2.
+- **Alternativas:** (a) Supabase — substituído oficialmente nesta atualização; (b) banco do OmniGestão — proibido por acoplamento.
+- **Consequências:** (+) isolamento total de dados, escalabilidade serverless nativa. (−) storage de anexos abstraído no Cloudflare R2.
 
 ## ADR-003 — Monolito modular Next.js na Vercel (sem microserviços/filas)
 
@@ -54,22 +48,19 @@ Formato: Contexto → Decisão → Alternativas → Consequências.
 - **Contexto:** o limite de dispositivos por plano é regra de NEGÓCIO central
   ([PLANOS §7.1](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)) — não pode depender das
   limitações do provedor de auth.
-- **Decisão:** NextAuth v5 (e-mail+senha bcrypt, verificação obrigatória), JWT de vida
+- **Decisão:** Auth.js / NextAuth v5 com contas e sessões no Neon PostgreSQL e DeviceSession própria, JWT de vida
   curta validado contra `DeviceSession` server-side; revogação de dispositivo mata a
   sessão ([SEGURANCA §3](SEGURANCA_PROTECAO_BASE_001.md)). Magic link na Fase 2.
-- **Alternativas:** Supabase Auth — acopla auth ao banco e dificulta o controle fino de
+- **Alternativas:** Supabase Auth — descontinuado do escopo e dificulta o controle fino de
   sessão/dispositivo; Clerk — custo por MAU e lock-in num produto de margem apertada.
 - **Consequências:** (+) controle total do fluxo, zero custo por usuário, experiência já
   operada. (−) recuperação de senha/verificação são responsabilidade nossa (Resend).
 
-## ADR-005 — Stripe primeiro, atrás de interface `PaymentProvider`
+## ADR-005 — Interface `PaymentProvider` para gateway em aberto
 
 - **Contexto:** cobrança recorrente é o código mais perigoso do MVP; o time já opera
   Stripe Billing em produção; PIX é forte no público-alvo.
-- **Decisão:** Stripe no MVP (cartão recorrente + Checkout/Payment Link PIX para
-  tri/anual pré-pago). Domínio agnóstico (`Subscription/Payment/PaymentEvent`) atrás de
-  interface fina `PaymentProvider` ([PLANOS §5](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)).
-  Taxas vigentes = gate humano.
+- **Decisão:** Abstração total de cobrança atrás da interface `PaymentProvider`. O gateway definitivo permanece em aberto (Stripe, Mercado Pago, Pagar.me e Asaas em avaliação técnica de taxas, Pix, cartão recorrente, parcelamento, webhooks e suporte CNPJ BR).
 - **Alternativas:** Mercado Pago primeiro — PIX nativo e marca forte no lojista, mas
   DX/portal/dunning inferiores e zero experiência do time em código de dinheiro novo;
   dois provedores no MVP — dobra a superfície de erro.

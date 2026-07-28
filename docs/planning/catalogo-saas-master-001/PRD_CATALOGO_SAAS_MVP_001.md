@@ -1,4 +1,4 @@
-# PRD — SaaS de Consulta de Películas Compatíveis — MVP — 001
+# PRD — OmniCompat (SaaS de Consulta de Películas Compatíveis) — MVP — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
 **Data:** 22 de Julho de 2026
@@ -93,7 +93,7 @@ sensibilidade a preço na faixa de R$ 20–30/mês (referência: concorrente lí
 | Compartilhar WhatsApp | Link/texto do resultado ou da lista | — |
 | Solicitação de modelo | "Não achei meu aparelho" → fila de curadoria | alimenta `ModelRequest` |
 | Conta e dispositivos | Perfil, troca de senha, gestão de dispositivos ativos | — |
-| Assinatura | Checkout, upgrade/downgrade, portal de cobrança | Stripe |
+| Assinatura | Checkout, upgrade/downgrade, portal de cobrança | PaymentProvider (Gateway em aberto) |
 | Admin mínimo | CRUD de modelos/aliases/grupos/relações + evidências + solicitações | — |
 | PWA | Instalável, ícone, splash, funciona como app | — |
 
@@ -130,8 +130,7 @@ sensibilidade a preço na faixa de R$ 20–30/mês (referência: concorrente lí
 3. **Modelo ausente:** busca "moto g85" → sem resultado → CTA "Solicitar este modelo" →
    preenche marca/modelo (pré-preenchido pela busca) → recebe notificação quando entrar na
    base.
-4. **Assinatura:** landing → demo (5 consultas) → cria conta → 7 dias de teste → paywall
-   suave → escolhe plano → checkout Stripe → webhook ativa → segue usando sem fricção.
+4. **Assinatura:** landing → demo → cria conta → trial de 7 dias ou 30 pesquisas contabilizadas → paywall suave → escolhe plano → checkout via PaymentProvider → webhook ativa → segue usando.
 
 ---
 

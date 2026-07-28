@@ -49,10 +49,9 @@ Justificativa dominante: o time já opera Next.js 16 + React 19 + TS strict em p
 | Storage p/ anexos (fotos de contribuição) | 5 (embutido) | 2 | 2 | 2 |
 | Backup/PITR gerenciado | 4 | 4 | 4 | 3 |
 | `pg_trgm` p/ fuzzy search | 5 | 5 | 1 | 2 |
-| **Decisão** | **✔ Supabase, projeto NOVO e isolado** | | | |
+| **Decisão** | | **✔ Neon PostgreSQL (projeto NOVO e isolado)** | | |
 
-Regra inegociável: **nunca o projeto Supabase do OmniGestão**. Projeto novo, credenciais
-novas, billing separado.
+Regra inegociável: **nunca o banco do OmniGestão Pro**. Projeto Neon PostgreSQL novo, exclusivo do OmniCompat, credenciais próprias, sem compartilhamento de tabelas ou ambiente.
 
 ### 2.3 ORM e acesso a dados
 
@@ -68,7 +67,7 @@ mode) para serverless; `DIRECT_URL` só para migrations — mesmo padrão já op
 | Controle do fluxo de dispositivos/sessões | 5 (JWT + tabela própria) | 3 | 3 |
 | Magic link | 4 (via provider e-mail) | 5 | 5 |
 | Lock-in | 5 (nenhum) | 3 | 1 |
-| **Decisão** | **✔ NextAuth v5**: e-mail+senha (bcrypt) no MVP; magic link opcional na Fase 2 via Resend | | |
+| **Decisão** | **✔ Auth.js / NextAuth v5**: e-mail+senha (bcrypt) com contas e sessões persistidas no Neon PostgreSQL; controle de dispositivos via camada de aplicação propia | | |
 
 Sessões JWT + tabela `DeviceSession` própria para o limite de dispositivos (o controle de
 dispositivo é regra de negócio central — precisa ser nosso, não do provedor).
@@ -76,9 +75,7 @@ dispositivo é regra de negócio central — precisa ser nosso, não do provedor
 ### 2.5 Pagamentos
 
 Comparativo completo e ciclo de vida em [PLANOS_ASSINATURAS_PAGAMENTOS_001.md](PLANOS_ASSINATURAS_PAGAMENTOS_001.md).
-Resumo: **Stripe no MVP** (cartão recorrente + PIX avulso para períodos pré-pagos), com
-abstração fina (`PaymentProvider` interface) para permitir Mercado Pago depois sem
-reescrever o domínio. Gate humano sobre taxas vigentes.
+Resumo: Cobrança mantida atrás de uma interface `PaymentProvider`. Gateway definitivo em aberto (Stripe, Mercado Pago, Pagar.me, Asaas em avaliação técnica e de taxas).
 
 ### 2.6 Busca
 
@@ -99,19 +96,21 @@ flowchart LR
     App[Next.js App Router<br/>Server Actions + API Routes]
     Cron[Vercel Cron<br/>jobs diários]
   end
-  subgraph Supabase["Supabase (projeto novo, isolado)"]
-    PG[(Postgres<br/>Prisma + RLS)]
-    ST[(Storage<br/>anexos moderados)]
+  subgraph Neon["Neon PostgreSQL (projeto novo, isolado)"]
+    PG[(Postgres<br/>Prisma ORM)]
   end
-  Stripe[Stripe Billing]
+  subgraph Cloudflare["Cloudflare R2"]
+    ST[(R2 Storage<br/>anexos/fotos)]
+  end
+  PaymentProvider[PaymentProvider Gateway]
   Resend[Resend e-mails]
   Sentry[Sentry + Vercel Analytics]
 
   PWA -->|HTTPS| App
   App --> PG
   App --> ST
-  App <-->|checkout/portal| Stripe
-  Stripe -->|webhooks assinados| App
+  App <-->|checkout/portal| PaymentProvider
+  PaymentProvider -->|webhooks assinados| App
   App --> Resend
   Cron --> PG
   App --> Sentry
@@ -128,14 +127,14 @@ storage, Stripe, Resend, Sentry. Nada mais no MVP.
 | :--- | :--- | :--- |
 | **Frontend** | Next.js App Router, React Server Components onde possível, shadcn/ui (tokens semânticos, sem cor hardcoded), Tailwind 4 | Design system próprio ([UX](UX_DESIGN_SYSTEM_LANDING_001.md)) |
 | **Backend** | Server Actions p/ mutações do app; Route Handlers p/ busca (GET cacheável), webhooks e admin | Serviços puros em `lib/` (padrão que já funciona no OmniGestão) |
-| **Banco** | Postgres (Supabase novo), Prisma 6, migrations versionadas desde o dia 1 (`prisma migrate`, nunca só `db push` em produção) | Multi-tenant por `organizationId` em TODA query |
-| **Autenticação** | NextAuth v5, e-mail+senha bcrypt; verificação de e-mail obrigatória; magic link Fase 2 | Roles: `OWNER`, `MEMBER` (org) + `PLATFORM_ADMIN`, `CURATOR` (plataforma) |
-| **Pagamentos** | Stripe Billing (subscriptions cartão) + Payment Links/Checkout PIX p/ tri/anual pré-pago | Acesso ativado SOMENTE por webhook validado |
-| **Armazenamento** | Supabase Storage, bucket privado, URLs assinadas curtas | Só anexos de contribuição/bancada (Fase 2+) |
+| **Banco** | Neon PostgreSQL exclusivo, Prisma ORM, conexões pooled p/ app e direct p/ migrations (`prisma migrate`) | Multi-tenant por `organizationId` em TODA query |
+| **Autenticação** | Auth.js / NextAuth v5, persistência em Neon PostgreSQL, e-mail+senha bcrypt; dispositivo controlado no app | Roles: `OWNER`, `MEMBER` (org) + `PLATFORM_ADMIN`, `CURATOR` (plataforma) |
+| **Pagamentos** | Abstração PaymentProvider (gateway definitivo em aberto para avaliação de taxas e Pix) | Acesso ativado SOMENTE por webhook validado |
+| **Armazenamento** | Cloudflare R2 (camada S3-compatible) | Logotipos, anexos de solicitações, fotos de testes e PDFs mantidos |
 | **Logs** | Vercel logs (runtime) + `AuditLog` no banco (negócio) + Sentry (erros) | Retenção `AuditLog`: 24 meses |
 | **Monitoramento** | Sentry (erros), Vercel Analytics (web vitals), healthcheck `/api/health` + alerta de cron | Dashboards simples primeiro |
 | **Deploy** | Vercel, preview por PR, produção só via merge na main | Env por ambiente; secrets nunca no repo |
-| **Backup** | Supabase backups diários + export semanal (pg_dump) p/ storage externo + snapshots de catálogo versionados ([IMPORTACAO §7](IMPORTACAO_DADOS_EXISTENTES_001.md)) | Teste de restore trimestral |
+| **Backup** | Neon PostgreSQL backups diários + export semanal pg_dump + snapshots de catálogo versionados ([IMPORTACAO §7](IMPORTACAO_DADOS_EXISTENTES_001.md)) | Teste de restore trimestral |
 | **Filas** | Nenhuma no MVP. Vercel Cron p/ jobs (digest de solicitações, verificação de assinaturas órfãs, limpeza de sessões) | Reavaliar só se webhooks exigirem retry além do nativo do Stripe |
 | **E-mails** | Resend + React Email: verificação, recuperação de senha, recibo, aviso de falha de cobrança, notificação de modelo adicionado | Domínio próprio com SPF/DKIM |
 | **PDF** | Geração server-side com `@react-pdf/renderer` (serverless-friendly), watermark obrigatório (org + usuário + data + id do documento) | Sem HTML→headless-Chrome (peso/frio em serverless) |
@@ -163,12 +162,12 @@ banco compartilhado.
 
 | Ambiente | Banco | Stripe | Observações |
 | :--- | :--- | :--- | :--- |
-| `dev` local | Supabase projeto dev (ou local) | test mode | seeds de exemplo, nunca dados de assinantes |
+| `dev` local | Neon PostgreSQL dev (projeto separado) | test mode | seeds de exemplo, nunca dados de assinantes |
 | `preview` (PR) | banco dev | test mode | protegido por senha básica |
-| `production` | Supabase prod | live mode | webhooks com secret próprio |
+| `production` | Neon PostgreSQL prod (projeto separado) | live mode | webhooks com secret próprio |
 
 Variáveis mínimas: `DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`, `NEXTAUTH_URL`,
-`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_*`, `RESEND_API_KEY`,
+`PAYMENT_PROVIDER_SECRET`, `PAYMENT_WEBHOOK_SECRET`, `RESEND_API_KEY`,
 `SENTRY_DSN`, `NEXT_PUBLIC_APP_URL`. Sem `NEXT_PUBLIC_` para qualquer segredo (lição já
 aprendida no OmniGestão).
 

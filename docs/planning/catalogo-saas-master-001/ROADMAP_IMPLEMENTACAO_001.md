@@ -29,7 +29,7 @@ de 30 itens/semana ([PAINEL_ADMIN §5](PAINEL_ADMIN_MODERACAO_001.md)).
 
 **Entregas** ([BACKLOG G-01, G-02](BACKLOG_GOALS_INICIAIS_001.md)):
 
-- Repositório novo, projeto Vercel novo, projeto Supabase novo (isolado —
+- Repositório novo, projeto Vercel novo, projeto Neon PostgreSQL novo e isolado (isolado —
   [ADR-001/ADR-002](ADR_DECISOES_ARQUITETURA_001.md)); ambientes dev/preview/prod com
   envs separadas ([ARQUITETURA §6](ARQUITETURA_CATALOGO_SAAS_001.md)).
 - Next.js + TS strict + Tailwind/shadcn + tokens semânticos (incl. tokens de confiança —
@@ -55,7 +55,7 @@ Ordem de implementação (a mesma da resposta 20 do
 | 3 | Motor de busca + fuzzy + ambiguidade | G-06, G-07 | o coração do produto, testável sem UI |
 | 4 | API de consulta + testes de vazamento/golden set | G-08, G-09 | trava a política de visibilidade ANTES da UI |
 | 5 | Auth + organizações + dispositivos | G-10, G-11, G-12 | identidade antes de cobrança |
-| 6 | Billing Stripe + webhooks + trial/paywall | G-13, G-14, G-15 | dinheiro com calma e testes de contrato |
+| 6 | Billing PaymentProvider + webhooks + trial/paywall | G-13, G-14, G-15 | dinheiro com calma e testes de contrato |
 | 7 | UI de consulta (busca/resultado) + favoritos/histórico | G-16, G-17 | agora a UI consome API estável |
 | 8 | Lista de compras + PDF + WhatsApp | G-18, G-19 | o funil busca→pedido do [PRD §6](PRD_CATALOGO_SAAS_MVP_001.md) |
 | 9 | Solicitação de modelo + notificações | G-20 | motor de crescimento da base |

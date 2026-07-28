@@ -61,7 +61,7 @@ erDiagram
 ### Organization
 - **Finalidade:** a loja/empresa assinante — unidade de cobrança e isolamento (tenant).
 - **Campos:** `name`, `slug` (único), `whatsapp`, `city`/`uf` (opcionais), `status`
-  (`trial | active | past_due | suspended | canceled`), `trialEndsAt`, `settings` (JSONB:
+  (`trial | active | past_due | suspended | canceled`), `trialEndsAt`, `trialSearchesCount`, `settings` (JSONB:
   preferências de exibição, fornecedor padrão do PDF).
 - **Relacionamentos:** 1:N OrganizationMember, Favorite, SearchHistory, ShoppingList,
   PurchaseOrder, ModelRequest; 1:1 Subscription ativa.
@@ -100,7 +100,7 @@ erDiagram
   dinheiro sempre em centavos), `currency` (`BRL`), `limits` (JSONB: `maxDevices`,
   `maxMembers`, `maxDailySearches`, `pdfWatermark`), `stripePriceId`, `isFounder` (bool),
   `active`.
-- **Índices:** unique(`code`); unique(`stripePriceId`).
+- **Índices:** unique(`code`); unique(`providerPriceId`).
 - **Regras:** preço nunca é editado — novo plano versionado; assinaturas antigas mantêm o
   plano contratado (preço fundador congelado = plano `isFounder` que nunca é desativado
   para quem já está nele).

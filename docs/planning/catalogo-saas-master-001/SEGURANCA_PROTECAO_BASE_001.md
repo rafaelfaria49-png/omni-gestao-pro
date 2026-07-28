@@ -77,7 +77,7 @@ Camadas, na ordem em que um scraper as encontra:
    | Por minuto / IP (burst) | 120 buscas | proteção contra distribuição por contas |
    | Por dia / organização Essencial | 300 consultas | limite de plano ([PLANOS §2](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)) |
    | Por dia / organização Pro | 1.000 consultas | idem |
-   | Por dia / conta trial | 30 consultas | [PLANOS §6](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) |
+   | Por dia / conta trial | 30 pesquisas (limite total do trial) | [PLANOS §6](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) |
 
    Implementação MVP: janela deslizante em memória por instância + contadores diários no
    banco (`SearchHistory` agregado). Redis/Upstash só se o modelo em memória se provar
@@ -157,7 +157,7 @@ Equilíbrio (referenciado por [UX §4.3](UX_DESIGN_SYSTEM_LANDING_001.md)):
 | Consentimento | Explícito no cadastro (tela 3.4 do [UX](UX_DESIGN_SYSTEM_LANDING_001.md)); marketing opt-in separado |
 | Direitos do titular | Exportar meus dados, corrigir, excluir conta — self-service na tela Conta (3.15) |
 | Exclusão | Anonimização irreversível do e-mail; trilhas financeiras mantidas 5 anos (obrigação fiscal) |
-| Operadores | Vercel, Supabase, Stripe, Resend — todos com DPA; inventário mantido na doc do repo |
+| Operadores | Vercel, Neon PostgreSQL, Cloudflare R2, PaymentProvider, Resend, Sentry — todos com DPA; inventário mantido na doc do repo |
 | Encarregado | O proprietário, no MVP (formalizar no gate jurídico) |
 | Incidente | Playbook: conter → avaliar dados afetados → comunicar ANPD/titulares quando exigível → post-mortem no AuditLog |
 | Retenções | Conforme [MODELO_DADOS](MODELO_DADOS_CONCEITUAL_001.md) (SearchHistory 6 meses, AuditLog 24 meses/5 anos financeiro, org cancelada 12 meses) |

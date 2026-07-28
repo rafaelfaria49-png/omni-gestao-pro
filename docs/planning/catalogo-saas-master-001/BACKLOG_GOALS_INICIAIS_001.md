@@ -16,7 +16,7 @@ com CI verde e o relatório padrão ([MATRIZ_IAS §4](MATRIZ_IAS_POR_ETAPA_001.m
 
 ### G-01 — Fundação do repositório e infraestrutura
 **Objetivo:** repo novo deployando vazio em produção.
-**Entregas:** Next.js + TS strict + Tailwind/shadcn; projetos Vercel/Supabase novos;
+**Entregas:** Next.js + TS strict + Tailwind/shadcn; projetos Vercel/Neon PostgreSQL novos, Auth.js e Cloudflare R2;
 envs dev/preview/prod; CI (typecheck, lint, test, build); headers de segurança.
 **Aceite:** deploy de produção acessível; CI bloqueia merge em falha; zero referência ao
 OmniGestão em código/env ([ADR-001/002](ADR_DECISOES_ARQUITETURA_001.md)).
@@ -115,7 +115,7 @@ detecção de rotação (> 4/24h → sinal).
 silenciosa ([PLANOS §7.1](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)).
 **Dep:** G-11. **IA:** Sonnet/Fable.
 
-### G-13 — Planos e checkout Stripe
+### G-13 — Planos e checkout via PaymentProvider
 **Objetivo:** dinheiro entrando com segurança ([ADR-005](ADR_DECISOES_ARQUITETURA_001.md)).
 **Entregas:** seed de `Plan` (preços do gate); checkout cartão + Payment Link PIX
 tri/anual; portal do assinante; telas 3.5/3.6.
@@ -134,7 +134,7 @@ todos os eventos mínimos tratados.
 
 ### G-15 — Trial e paywall
 **Objetivo:** 7 dias sem cartão com limites antiabuso.
-**Entregas:** trial no cadastro verificado; limites (30 consultas/dia, 1 dispositivo,
+**Entregas:** trial no cadastro verificado; limites (7 dias ou 30 pesquisas contabilizadas no backend, 1 dispositivo,
 PDF "AVALIAÇÃO"); 1 trial por e-mail/fingerprint; paywall suave; banners de estado.
 **Aceite:** limites aplicados no servidor; expiração correta via cron; UX de conversão
 sem dark pattern.

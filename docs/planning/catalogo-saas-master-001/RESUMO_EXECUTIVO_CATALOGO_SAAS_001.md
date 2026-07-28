@@ -1,4 +1,4 @@
-# Resumo Executivo — SaaS de Consulta de Películas Compatíveis — 001
+# Resumo Executivo — OmniCompat (SaaS de Consulta de Películas Compatíveis) — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
 **Data:** 22 de Julho de 2026
@@ -10,9 +10,7 @@ críticas aguardam gates humanos.
 
 ## O produto
 
-Um SaaS por assinatura, **independente do OmniGestão Pro**, que responde no balcão da
-loja de celulares: **"qual película serve neste aparelho?" — em segundos, com nível de
-confiança explícito**. Busca por nome, apelido ou código técnico; variantes 4G/5G e
+O **OmniCompat** (slogan: *"A compatibilidade certa em segundos."*) é um SaaS operacional por assinatura, **independente do OmniGestão Pro**, para lojas de celulares, assistências técnicas e vendedores de acessórios. Busca por nome, apelido ou código técnico; variantes 4G/5G e
 Pro/Max nunca misturadas; lista de compras e pedido em PDF para o fornecedor; PWA
 instalável. **Capinhas ficam fora do lançamento** (0 dados físicos validados) — menção
 honesta apenas em FAQ, sem data prometida.
@@ -44,11 +42,8 @@ honesta apenas em FAQ, sem data prometida.
 
 - **MVP:** apenas películas; beta fechado (15–30 lojas) antes de cobrar de estranhos;
   lançamento aberto com preço fundador.
-- **Preços recomendados (gate):** Essencial R$ 19,90/mês · 44,90/tri · 119,90/ano
-  fundador (149,90 lista); Pro R$ 29,90/mês · 79,90/tri · 199,90/ano fundador (249,90
-  lista). Trial 7 dias sem cartão.
-- **Stack:** Next.js + TS + Prisma + Postgres (Supabase, projeto NOVO) + Vercel + PWA +
-  Stripe + Resend + Sentry. Monolito modular; motor de busca em memória (engine já
+- **Preços aprovados:** Essencial R$ 19,90/mês · R$ 44,90/tri · R$ 119,90/ano (1 loja, 2 us, 3 disp); Loja Pro R$ 29,90/mês · R$ 59,90/tri · R$ 159,90/ano (até 3 lojas, 5 us, 8 disp). Trial oficial: 7 dias sem cartão ou 30 pesquisas contabilizadas.
+- **Stack:** Next.js + TS + Prisma + Neon PostgreSQL (projeto NOVO e isolado) + Auth.js + Cloudflare R2 + Vercel + Resend + Sentry + PWA. Gateway de pagamentos em aberto via interface PaymentProvider. CNPJ mantido como gate futuro. Monolito modular; motor de busca em memória (engine já
   auditado, vendorizado) + `pg_trgm`. Repo e banco 100% separados do OmniGestão.
 - **Confiança fail-closed:** status derivado de evidência, nunca promovido
   automaticamente; pares ocultos jamais expostos; "confirmado em bancada" só existirá

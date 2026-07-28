@@ -155,6 +155,16 @@ Avisos fixos de domínio (mantidos do contrato atual da API):
 2. "Confirme fisicamente antes de vender quando o selo pedir teste."
 
 ## 6. Requisitos não funcionais da busca
+### 6.1 Regra Oficial de Contagem de Pesquisas no Trial
+- Duração máxima: 7 dias sem cartão, sem renovação automática.
+- Limite máximo: 30 pesquisas contabilizadas no backend.
+- A contagem é feita EXCLUSIVAMENTE no backend (não confiar em contador do navegador).
+- Uma pesquisa contabilizada representa uma consulta real processada pelo backend.
+- **Deduplicação (janela de 10 minutos):** Não consome nova pesquisa por atualizar página, reabrir mesmo resultado, ver detalhes, favoritar, adicionar à lista, voltar ou repetir a mesma consulta normalizada dentro de 10 minutos.
+- **Normalização pré-deduplicação:** Remoção de espaços extras, conversão maiúsculas/minúsculas, remoção de acentos e formatação. (Ex.: "Galaxy A05", "galaxy a05" e "  GALAXY A05  " na janela de 10 min contam como 1 consulta).
+- Pesquisas sem resultado (0 resultados) DOAM contagem pois o serviço processou a consulta. Ao retornar 0 resultados, oferecer imediatamente CTA de solicitação de inclusão de modelo.
+- Encerramento do trial no primeiro que atingir: 7 dias OU 30 pesquisas. Após encerramento, conta entra em modo limitado (sem cobrança automática).
+
 
 | Requisito | Alvo | Mecanismo |
 | :--- | :--- | :--- |

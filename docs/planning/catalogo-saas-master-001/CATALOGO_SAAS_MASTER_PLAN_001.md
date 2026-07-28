@@ -1,4 +1,4 @@
-# PLANEJAMENTO MESTRE — SaaS de Consulta de Películas Compatíveis — 001
+# PLANEJAMENTO MESTRE — OmniCompat (SaaS de Consulta de Películas Compatíveis) — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
 **Data:** 22 de Julho de 2026
@@ -12,21 +12,27 @@
 
 ## 1. Visão do produto
 
-Um **SaaS independente do OmniGestão Pro**, vendido por assinatura, que resolve um problema
-concreto do balcão de lojas de celulares e assistências técnicas:
+O **OmniCompat** (nome provisório até verificação de domínio, redes sociais e INPI) é um **SaaS independente do OmniGestão Pro**, vendido por assinatura, posicionado como uma plataforma operacional para lojas de celulares, assistências técnicas e vendedores de acessórios.
 
-> **"Qual película serve neste aparelho?" — respondido em segundos, com nível de confiança
-> explícito, sem testar película por película.**
+> **"A compatibilidade certa em segundos."**
 
 O produto NÃO é "acesso a uma tabela". É uma **ferramenta operacional de consulta e compra**:
 
-- busca por nome oficial, apelido, sigla ou código técnico (1.751 aliases mapeados);
-- resposta com **nível de confiança honesto** (confirmado por fornecedor / provável / em teste);
-- separação explícita de variantes (4G/5G, Pro/Plus/Max/Ultra/Lite);
-- lista de compras e pedido em PDF para o fornecedor;
-- compartilhamento por WhatsApp;
-- solicitação de modelos ausentes (que alimenta a curadoria);
-- PWA instalável no celular do balcão.
+O MVP do OmniCompat inclui 14 recursos operacionais essenciais:
+1. Busca inteligente de películas por marca, modelo, nome popular, código técnico, alias, variação de fornecedor e tolerância a erros de escrita;
+2. Resultados de compatibilidade com grupo físico, aparelhos compatíveis, fonte, evidência, nível de confiança, avisos de teste seco e separação explícita entre 4G, 5G, Pro, Plus, Max, Ultra e Lite;
+3. Favoritos de modelos e grupos;
+4. Histórico de pesquisas;
+5. Lista de compras de películas;
+6. Agrupamento de itens equivalentes para evitar compra duplicada;
+7. Geração de pedido em PDF;
+8. Compartilhamento de pedido pelo WhatsApp;
+9. Consulta a pedidos e listas anteriores;
+10. Solicitação de inclusão de modelo ausente;
+11. Relato de erro ou incompatibilidade;
+12. Painel administrativo de catálogo e moderação;
+13. Controle de usuários, lojas, dispositivos e sessões;
+14. Instalação como PWA (sem base completa offline).
 
 **Capinhas NÃO fazem parte do lançamento** (0 relações físicas na base — ver §4 e
 [OPEN_QUESTIONS_GATES_HUMANOS_001.md](OPEN_QUESTIONS_GATES_HUMANOS_001.md)).
@@ -75,15 +81,15 @@ confirmados + classificação de confiança honesta**. Todo o discurso comercial
 | D-01 | Lançar só películas? | **SIM** — beta fechado → lançamento com preço fundador | [PRD](PRD_CATALOGO_SAAS_MVP_001.md) | Não |
 | D-02 | Capinhas na comunicação | **Não anunciar no lançamento**; menção honesta só em FAQ/roadmap ("em construção com validação física, sem data") | [PRD §9](PRD_CATALOGO_SAAS_MVP_001.md) | Sim (tom) |
 | D-03 | Repositório | Projeto novo, repo próprio, zero dependência runtime do OmniGestão | [ADR-001](ADR_DECISOES_ARQUITETURA_001.md) | Não |
-| D-04 | Stack | Next.js + TS + Tailwind/shadcn + Prisma + Postgres (Supabase, projeto NOVO) + Vercel + PWA | [ARQUITETURA](ARQUITETURA_CATALOGO_SAAS_001.md) | Não |
-| D-05 | Pagamentos | **Stripe no MVP** (cartão recorrente + PIX avulso p/ períodos pré-pagos); Mercado Pago como evolução se dados mostrarem perda por PIX | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | **Sim** |
-| D-06 | Preços | Essencial R$ 19,90/mês · R$ 44,90/tri · R$ 119,90/ano (fundador); Pro R$ 29,90/mês · R$ 79,90/tri · R$ 199,90/ano (fundador) | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | **Sim** |
-| D-07 | Teste grátis | 7 dias sem cartão, com limites anti-scraping + demo pública de 5 consultas na landing | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | Sim |
+| D-04 | Stack | Next.js + TS + Tailwind/shadcn + Prisma + Neon PostgreSQL (projeto NOVO e isolado) + Auth.js + Cloudflare R2 + Vercel + Resend + Sentry + PWA | [ARQUITETURA](ARQUITETURA_CATALOGO_SAAS_001.md) | Não |
+| D-05 | Pagamentos | **Interface PaymentProvider** (gateway em aberto; Stripe, Mercado Pago, Pagar.me e Asaas em avaliação por taxas, Pix, cartão recorrente, parcelamento, webhooks, chargeback, prazo e CNPJ BR) | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | **Sim** |
+| D-06 | Preços | Essencial R$ 19,90/mês · R$ 44,90/tri · R$ 119,90/ano (1 loja, 2 us, 3 disp); Pro R$ 29,90/mês · R$ 59,90/tri · R$ 159,90/ano (até 3 lojas, 5 us, 8 disp) | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | **Sim** |
+| D-07 | Teste grátis | 7 dias sem cartão ou 30 pesquisas contabilizadas no backend (o que ocorrer 1º), 1 us, 1 disp, 1 org, 1 lista ativa, 1 PDF demo com marca d'água | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | Sim |
 | D-08 | Busca | Motor em memória derivado do engine já auditado (`lib/catalogo-aparelhos/`) + `pg_trgm` p/ fuzzy; sem Elasticsearch | [BUSCA](BUSCA_E_COMPATIBILIDADE_001.md) | Não |
 | D-09 | Evidência | Taxonomia fail-closed; agregação sempre pelo PIOR status (regra já existente no engine); `confirmado_bancada` só nasce com bancada real | [BUSCA §5](BUSCA_E_COMPATIBILIDADE_001.md) | Não |
 | D-10 | Dados | ETL snapshot dos CSVs auditados → banco novo, com IDs estáveis, staging, dry-run e rollback | [IMPORTACAO](IMPORTACAO_DADOS_EXISTENTES_001.md) | Não |
 | D-11 | Proteção da base | Sem endpoint de exportação total; paginação + rate limit por conta/IP/dispositivo; watermark em PDF; detecção de scraping | [SEGURANCA](SEGURANCA_PROTECAO_BASE_001.md) | Não |
-| D-12 | Dispositivos | Essencial: 2 ativos / 1 usuário; Pro: 5 ativos / 3 usuários + multi-loja; troca self-service sem punição | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | Sim |
+| D-12 | Dispositivos | Essencial: 1 loja, até 2 usuários, até 3 dispositivos; Pro: até 3 lojas, até 5 usuários, até 8 dispositivos; troca self-service sem punição | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | Sim |
 | D-13 | Marca/domínio | Não decidido — nomes candidatos exigem verificação INPI/domínio | [OPEN_QUESTIONS](OPEN_QUESTIONS_GATES_HUMANOS_001.md) | **Sim** |
 | D-14 | Divisão de IAs | Fable ≈ 20–25% (arquitetura/segurança/billing/importador/reviews); Sonnet ≈ 50% (implementação); modelos baratos ≈ 25% (conteúdo/pesquisa/curadoria em lote) | [MATRIZ_IAS](MATRIZ_IAS_POR_ETAPA_001.md) | Não |
 
@@ -154,31 +160,13 @@ compatibilidade de capinha automaticamente por dimensões.
    físicos mapeados, mais de 900 pares em curadoria — exibimos somente o que tem
    confirmação de fornecedor, com nível de confiança em cada resposta". Nunca somar linhas
    técnicas como compatibilidades. Linguagem proibida no [PRD §8](PRD_CATALOGO_SAAS_MVP_001.md).
-4. **Teste grátis?** Sim: 7 dias sem cartão + demo pública limitada na landing (5 consultas
-   de modelos populares). Limites anti-abuso no trial (30 consultas/dia, 1 dispositivo, PDF
-   com watermark "AVALIAÇÃO"). Justificativa e riscos em [PLANOS §6](PLANOS_ASSINATURAS_PAGAMENTOS_001.md).
-5. **Qual preço lançar?** Recomendação (gate humano): Essencial 19,90/44,90/119,90 (fundador);
-   Pro 29,90/79,90/199,90 (fundador). Ajustes sobre a proposta preliminar justificados em
-   [PLANOS §3–5](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) (o tri de R$ 39,90 e o anual Pro de
-   R$ 159,90 comprimem margem e upsell).
-6. **Diferenças reais Essencial × Pro?** Essencial = 1 usuário/2 dispositivos/consulta+
-   favoritos+histórico+lista+PDF. Pro = 3 usuários/5 dispositivos/multi-loja/pedidos
-   avançados/exportação controlada/relatórios/prioridade em solicitações. Detalhe em
-   [PLANOS §2](PLANOS_ASSINATURAS_PAGAMENTOS_001.md).
-7. **Limite de dispositivos?** Essencial 2 ativos, Pro 5 ativos, com troca self-service
-   ilimitada (revoga o antigo, ativa o novo) e detecção de rotação abusiva — nunca punição
-   silenciosa. [PLANOS §7](PLANOS_ASSINATURAS_PAGAMENTOS_001.md).
-8. **Qual processador de pagamento?** Stripe no MVP (experiência prévia do time em produção
-   no OmniGestão, billing completo, dunning, portal); PIX avulso para tri/anual. Reavaliar
-   Mercado Pago se conversão PIX-recorrente se mostrar decisiva. Taxas vigentes exigem
-   verificação (gate humano). [PLANOS §8–9](PLANOS_ASSINATURAS_PAGAMENTOS_001.md).
-9. **Qual arquitetura?** Next.js App Router + TypeScript + Tailwind/shadcn + Prisma +
-   Postgres (Supabase) + Vercel + PWA + Resend (e-mail) + Sentry. Monolito modular; sem
-   microserviços; sem filas no MVP. [ARQUITETURA](ARQUITETURA_CATALOGO_SAAS_001.md).
-10. **Supabase é adequado?** Sim, como **projeto NOVO e isolado** (nunca o banco do
-    OmniGestão): Postgres gerenciado + backups + RLS opcional + storage p/ anexos de
-    contribuição. O app acessa via Prisma (pooler); RLS como defesa em profundidade.
-    [ADR-002](ADR_DECISOES_ARQUITETURA_001.md).
+4. **Teste grátis?** Sim: regra oficial de trial com duração máxima de 7 dias sem cartão e limite máximo de 30 pesquisas contabilizadas no backend (encerra no que ocorrer 1º). Inclui 1 usuário, 1 dispositivo, 1 organização, 1 lista ativa, 1 PDF demonstrativo com indicação de demonstração e favoritos. Pesquisas contabilizadas no backend com deduplicação de 10 min por query normalizada. Após encerramento, a conta entra em modo limitado sem cobrança automática.
+5. **Qual preço lançar?** Planos aprovados de lançamento: Essencial mensal R$ 19,90, trimestral R$ 44,90, anual R$ 119,90; Loja Pro mensal R$ 29,90, trimestral R$ 59,90, anual R$ 159,90.
+6. **Diferenças reais Essencial × Pro?** Essencial = 1 loja, até 2 usuários, até 3 dispositivos, consulta, confiança, favoritos, histórico, lista, PDF simples, solicitações e relatos. Loja Pro = até 3 lojas, até 5 usuários, até 8 dispositivos, PDF personalizado com marca da loja, compartilhamento facilitado WhatsApp, histórico ampliado, relatórios de buscas, permissões e prioridade em solicitações.
+7. **Limite de dispositivos?** Essencial até 3 dispositivos (2 usuários / 1 loja); Pro até 8 dispositivos (5 usuários / 3 lojas), com troca self-service.
+8. **Qual processador de pagamento?** Abstração via interface PaymentProvider. Gateway definitivo em aberto para avaliação entre Stripe, Mercado Pago, Pagar.me e Asaas com base em pesquisa atualizada de taxas, Pix, cartão recorrente, parcelamento, webhooks, chargeback, prazos e suporte a CNPJ BR.
+9. **Qual arquitetura?** Next.js App Router + TypeScript + Tailwind/shadcn + Prisma + Neon PostgreSQL (projeto isolado) + Auth.js + Cloudflare R2 + Vercel + Resend + Sentry + PWA.
+10. **Banco de dados e infraestrutura?** O Supabase foi substituído oficialmente pelo Neon PostgreSQL em projeto 100% NOVO e isolado do OmniGestão (Prisma ORM, conexões pooled e direct). Autenticação via Auth.js / NextAuth v5 com persistência no Neon. Armazenamento de arquivos via Cloudflare R2.
 11. **Como proteger a base?** Defesa em camadas: sem endpoint de export total; respostas
     mínimas paginadas; rate limit conta/IP/dispositivo; telemetria de consulta anômala;
     watermark identificando o assinante em todo PDF; suspensão gradual; termos de licença.

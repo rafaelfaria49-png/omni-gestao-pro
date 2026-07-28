@@ -145,7 +145,7 @@ Referenciado por [ARQUITETURA §4 — Backup](ARQUITETURA_CATALOGO_SAAS_001.md):
 
 - **Snapshot lógico por publicação:** export dos dados de catálogo da versão (JSON/CSV +
   manifesto de hashes) para storage — restauração independente de backup físico.
-- **Backups gerenciados** Supabase diários + export semanal `pg_dump` para storage externo.
+- **Backups gerenciados** Neon PostgreSQL diários + export semanal `pg_dump` para storage externo.
 - **Teste de restore trimestral** documentado (backup não testado não é backup).
 - Retenção de snapshots de catálogo: todas as versões (são pequenos e são a história da base).
 

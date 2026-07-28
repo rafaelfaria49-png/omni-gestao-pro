@@ -26,7 +26,7 @@ proprietário, salvo indicação.
 | R-12 | Pressão comercial por capinhas sem base | A | M | política firme |
 | R-13 | Preço fundador anual comprime margem além do previsto | M | M | limitar coorte |
 | R-14 | Incidente LGPD/vazamento de dados pessoais | B | A | prevenir + playbook |
-| R-15 | Lock-in Stripe dificulta migração futura | M | M | abstração + export |
+| R-15 | Lock-in de Gateway dificulta migração futura | M | M | abstração + export |
 | R-16 | SEO programático expõe a base | B | A | prevenir (gate) |
 | R-17 | Gap de lançamentos 2024–2026 frustra early adopters | A | M | mitigar (curadoria) |
 | R-18 | Marca/domínio indisponível ou colidente (INPI) | M | M | resolver antes do código |
@@ -162,7 +162,7 @@ proprietário, salvo indicação.
   barato, pós-lançamento é caro.
 
 ### R-19 — Acoplamento acidental ao OmniGestão
-- **Mitigação:** repo/Vercel/Supabase novos ([ADR-001/002](ADR_DECISOES_ARQUITETURA_001.md));
+- **Mitigação:** repo/Vercel/Neon PostgreSQL novos, Cloudflare R2 e Auth.js ([ADR-001/002](ADR_DECISOES_ARQUITETURA_001.md));
   reaproveitamento SÓ por cópia vendorizada ([ARQUITETURA §5](ARQUITETURA_CATALOGO_SAAS_001.md));
   revisão de PR checa imports.
 - **Contingência:** qualquer dependência descoberta é tratada como bug P0.

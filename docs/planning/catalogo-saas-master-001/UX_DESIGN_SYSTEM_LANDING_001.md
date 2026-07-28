@@ -1,4 +1,4 @@
-# UX, Design System e Landing Page — 001
+# UX, Design System e Landing Page — OmniCompat — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
 **Data:** 22 de Julho de 2026
