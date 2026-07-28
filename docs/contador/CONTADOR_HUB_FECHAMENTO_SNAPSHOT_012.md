@@ -2,11 +2,11 @@
 
 | Campo | Valor |
 |---|---|
-| GOAL | `CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012` |
+| GOAL | `CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012` + `012A-CLOSURE` |
 | Data | 2026-07-28 |
-| Base | `origin/main = e8946c2` |
-| Branch | `goal/contador-012-fechamento-snapshot` |
-| Worktree | `C:\Projetos\omni-gestao-contador-012` |
+| Base | 012: `origin/main = e8946c2` · 012A: `origin/main = 3bcaf83` |
+| Branch | 012: `goal/contador-012-fechamento-snapshot` · 012A: `goal/contador-012a-fechamento-closure` |
+| Worktree | `C:\Projetos\omni-gestao-contador-012a` |
 | Schema | **não alterado** (usa a migration 0014 do GOAL 009) |
 | Banco acessado | **nenhum** — validação por testes in-memory e storage fake |
 | Depende de | GOAL 008 (builder do pacote) · GOAL 009 (núcleo) · GOAL 010 (storage) · GOAL 011 (status/comentários) |
@@ -25,19 +25,59 @@
 | Alteração pós-fechamento | inexistente | diff determinístico + `diffHash` + evento idempotente |
 | Comparar versões | inexistente | diff de manifestos por `sha256`, sem baixar ZIP |
 
-## 2. Formato do snapshot
+## 2. Formato do snapshot (v2 — GOAL 012A)
 
-`lib/contador/fechamento/snapshot.ts` — schema `omni.contador.fechamento.snapshot/v1`.
+`lib/contador/fechamento/snapshot.ts` — schema `omni.contador.fechamento.snapshot/v2`.
 
 ```
-schemaVersion · competencia{storeId,ano,mes,codigo} · versao · fechadaEm
+schemaVersion · competencia{ano,mes,codigo} · versao · fechadaEm
 responsavel{tipo,id}        ← pseudônimo (sha256 do userId, 16 hex)
 totais{...}                 ← 21 métricas agregadas {valor, disponibilidade}
 checklist{contagem, itens[{id,estado}]}   ← ordenado por id
 pendenciasAssumidas[]       ← ordenado e deduplicado
 documentos{total, porCategoria{}, porStatus{}}
-pacote{versao, manifestoHash, bytes, arquivos}
 ```
+
+Duas remoções em relação à v1, ambas estruturais:
+
+- **saiu o bloco `pacote`** (versão, manifestoHash, bytes, arquivos) → quebra o ciclo de
+  hashes descrito em §2.1. Esses metadados vivem no `ContadorPacote` e no evento;
+- **saiu `competencia.storeId`** → `assertPacoteSeguro` proíbe o storeId em qualquer
+  arquivo do pacote que não seja o `manifest.json` (regra do 008B). É redundante: já
+  está no manifesto e na própria linha `ContadorCompetencia`.
+
+### 2.1 Retenção reconstruível por versão (GAP 1 fechado)
+
+Cada versão do pacote carrega o **seu** snapshot em `00-FECHAMENTO/snapshot.json`.
+O conteúdo do arquivo é **exatamente** o JSON canônico — sem indentação e sem quebra de
+linha final. Disso decorre a igualdade que torna a verificação trivial:
+
+```
+sha256(bytes do arquivo no ZIP) === snapshotHash === ContadorPacoteItem.sha256
+```
+
+Ou seja: o hash do snapshot de **cada** versão fica persistido no banco (na linha de
+item daquele pacote) e os bytes ficam no ZIP imutável. `verificarSnapshotDoPacote()`
+reconstrói e valida; um único byte alterado devolve `null`.
+
+Isso fecha o gap sem schema: v1, v2 e futuras permanecem reconstruíveis, e nenhuma
+versão anterior é sobrescrita. `ContadorCompetencia.snapshot` continua guardando o
+snapshot da versão **vigente** — agora como cache da linha de base da divergência, não
+mais como cópia única.
+
+### 2.2 Ausência de ciclo entre os hashes
+
+A cadeia é estritamente unidirecional:
+
+```
+dados/checklist → snapshot → snapshot.json → manifesto → manifestoHash
+```
+
+O manifesto **cita** o snapshot (lista o hash do arquivo e ainda repete `snapshotHash`
+como campo próprio); o snapshot **nunca** cita o manifesto. Se o snapshot voltasse a
+conter `manifestoHash`, nenhum dos dois hashes seria calculável — cada um dependeria do
+outro. Há teste dedicado provando que nem `manifestoHash`, nem `pacote`, nem
+`storageRef` aparecem no snapshot.
 
 **Nunca entra:** linha operacional (venda/item/título/movimento), PII, `storageRef`, URL
 assinada, token, secret, nem coleção cuja ordem dependa do banco.
@@ -117,6 +157,31 @@ ordenados por chave, `natureza` (`valor`/`disponibilidade`/`ambos`), `delta` e u
   `(competenciaId, versao, diffHash)`: repetir o POST **não** cria segundo evento.
 - Aviso único: *"Dados operacionais mudaram após o fechamento. Considere reabrir a competência."*
 
+### 7.1 Dedupe forte sob concorrência (GAP 2 fechado)
+
+"Consultar e depois criar" não basta: em `READ COMMITTED`, dois POSTs simultâneos leem
+"não existe" ao mesmo tempo e **ambos** criam. Sem poder adicionar índice único (schema
+fora do escopo), a serialização vem de um **lock de linha** na competência, adquirido
+dentro da mesma transação, antes da verificação:
+
+```sql
+SELECT id FROM contador_competencias
+WHERE id = $1 AND "storeId" = $2
+FOR UPDATE
+```
+
+- **Parametrizado por construção** (tagged template do Prisma) — nenhum valor é
+  concatenado na string SQL;
+- **escopado por `(competenciaId, storeId)`** — competência de outra loja nunca é travada;
+- a segunda transação **bloqueia** no `FOR UPDATE` até a primeira commitar e, aí, enxerga
+  o evento já criado → responde idempotente (`registrado: false`);
+- o lock é liberado no commit **e** no rollback, então falha não deixa deadlock;
+- **`GET` não foi tocado** — a avaliação continua sem lock e sem escrita.
+
+O teste de concorrência usa um fake com mutex por competência (liberado no fim da
+transação), não uma fila de transações: 2 e 5 POSTs simultâneos do mesmo diff produzem
+**exatamente um** evento.
+
 ## 8. APIs
 
 | Rota | Verbo | Função |
@@ -191,27 +256,55 @@ commitada pela vencedora, cenário que o banco jamais produz.
 
 ## 12. Pendências
 
-1. **Snapshots de versões superadas não são retidos em JSON.** `competencia.snapshot`
-   guarda o snapshot da versão vigente; ao refechar, ele é substituído. O que resta da
-   versão anterior é o `snapshotHash` no evento `competencia_fechada` e o **pacote
-   imutável** (com todos os CSVs e o manifesto). Isso permite *verificar* um snapshot
-   apresentado, mas não *reconstruí-lo*. Reter o histórico completo exigiria coluna nova
-   ou tabela de snapshots — **schema está fora do escopo deste GOAL**.
-2. **Dedupe do evento de divergência é best-effort sob concorrência.** A checagem
-   "existe evento com este `diffHash`?" roda dentro da transação, mas sem índice único
-   dois POSTs simultâneos podem criar dois eventos. Um `@@unique` parcial resolveria —
-   novamente, schema fora do escopo.
-3. **Limpeza de blobs órfãos** (upload bem-sucedido + transação falha) não tem job.
+**Fechadas no GOAL 012A** (eram os itens 1 e 2 desta lista):
+
+- ✅ *Snapshots de versões superadas* — cada versão agora carrega o seu
+  `00-FECHAMENTO/snapshot.json` reconstruível e verificável (§2.1). Sem schema.
+- ✅ *Dedupe best-effort* — substituído por lock de linha `FOR UPDATE` (§7.1). Sem schema.
+
+**Em aberto:**
+
+1. **Limpeza de blobs órfãos** (upload bem-sucedido + transação falha) não tem job.
    Estratégia registrada em §4; implementação é trabalho de infraestrutura.
-4. **`FECHAR_COMPETENCIA_TITLE`** (`contador-fechamento-checklist.tsx`) ficou exportado
+2. **`FECHAR_COMPETENCIA_TITLE`** (`contador-fechamento-checklist.tsx`) ficou exportado
    sem consumidor após a realificação. Remoção é limpeza trivial, deixada fora para não
    misturar com o escopo.
-5. **Congelamento cobre o domínio contábil, não o operacional.** Vendas, caixa e
+3. **Congelamento cobre o domínio contábil, não o operacional.** Vendas, caixa e
    financeiro continuam livres após o fechamento — é exatamente por isso que existe a
    detecção de divergência (§7).
+4. **Risco residual do lock (§7.1):** a garantia depende de o `FOR UPDATE` rodar no mesmo
+   Postgres da escrita. É verdade na arquitetura atual (Prisma + Neon, uma conexão por
+   transação). Se algum dia o registro do evento migrar para outro store, a garantia
+   precisa ser reavaliada — um `@@unique` parcial em `(competenciaId, tipo, metadata)`
+   seria a proteção independente de topologia, e exige schema.
+
+## 12.1 Validação manual no Preview — BLOQUEADA por credencial
+
+O ciclo de 13 passos do GOAL 012A **não foi executado**. Motivo objetivo e verificado:
+
+`lib/contador/documentos/config.ts` exige três variáveis para o storage privado —
+`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_STORAGE_BUCKET`. Consulta a
+`vercel env ls` (somente **nomes**, nunca valores) mostra que **nenhuma das três existe
+em nenhum ambiente** do projeto — nem Preview, nem Production. É a mesma pendência já
+registrada no GOAL 010C ("provisionamento do storage — credencial necessária").
+
+Consequência: o passo 3 (fechar e gerar pacote v1) falharia com `STORAGE_CONFIG_INDISPONIVEL`
+(503) antes de qualquer escrita, e os passos 4, 10, 11, 12 e 13 dependem dele.
+
+Nenhum banco foi acessado nesta rodada. O valor de `DATABASE_URL` do Preview **não foi
+lido** — sem escrita a fazer, ler o secret seria risco sem contrapartida.
+
+**Para destravar** (ação humana, fora do que um agente deve fazer): criar/confirmar o
+bucket privado `contador-documentos` no projeto Supabase e cadastrar as três variáveis no
+ambiente **Preview** da Vercel. Feito isso, o ciclo roda inteiro sem mudança de código.
 
 ## 13. Classificação final
 
-**Classe A — pronto para revisão humana.** Escopo fechado, sem alteração de schema, sem
-acesso a banco, congelamento completo, atomicidade provada contra o repositório real com
-rollback e serialização, e trilha append-only preservada.
+**Classe B — ressalva residual.** Os dois gaps técnicos do 012 estão fechados sem schema
+(§2.1 e §7.1), com prova automatizada. Escopo fechado, sem alteração de schema, sem acesso
+a banco, congelamento completo, atomicidade provada contra o repositório real.
+
+A ressalva é única e externa ao código: **a validação manual no Preview segue bloqueada
+por credenciais de storage inexistentes** (§12.1). Enquanto o bucket e as três variáveis
+não forem provisionados, o fechamento não consegue materializar o pacote em nenhum
+ambiente — e essa é a única prova que os testes automatizados não conseguem substituir.

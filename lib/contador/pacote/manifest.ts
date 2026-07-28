@@ -85,6 +85,8 @@ export function montarManifesto(input: {
   pendencias: readonly string[]
   itensNaoDisponiveis: readonly string[]
   avisos: readonly string[]
+  /** GOAL 012A — referência ao snapshot do fechamento (dependência unidirecional). */
+  snapshotHash?: string
 }): ManifestoPacoteContadorV1 {
   return {
     schema: "omni.contador.pacote.manifest/v1",
@@ -106,6 +108,7 @@ export function montarManifesto(input: {
     pendencias: input.pendencias,
     itensNaoDisponiveis: input.itensNaoDisponiveis,
     avisos: input.avisos,
+    ...(input.snapshotHash ? { snapshotHash: input.snapshotHash } : {}),
   }
 }
 
