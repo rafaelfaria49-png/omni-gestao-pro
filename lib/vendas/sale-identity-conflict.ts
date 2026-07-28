@@ -32,19 +32,18 @@ export function saleSyncActionsForCode(code: unknown) {
  * Uma aba com estado antigo não pode apagar o bloqueio permanente gravado por outra.
  */
 export function preserveSaleIdentityConflictCodes<
-  T extends { id: string; syncBlockedCode?: string },
+  T extends { id: string; syncPending?: boolean; syncBlockedCode?: string },
 >(target: readonly T[], source: readonly T[]): T[] {
   const protectedById = new Map(
     source
       .filter((sale) => isSaleIdentityConflictCode(sale.syncBlockedCode))
       .map((sale) => [sale.id, sale.syncBlockedCode] as const),
   )
-  if (protectedById.size === 0) return [...target]
-
   return target.map((sale) => {
-    const code = protectedById.get(sale.id)
-    return code && !isSaleIdentityConflictCode(sale.syncBlockedCode)
-      ? { ...sale, syncBlockedCode: code }
-      : sale
+    const code = isSaleIdentityConflictCode(sale.syncBlockedCode)
+      ? sale.syncBlockedCode
+      : protectedById.get(sale.id)
+    if (!code || (sale.syncBlockedCode === code && sale.syncPending === true)) return sale
+    return { ...sale, syncPending: true, syncBlockedCode: code }
   })
 }

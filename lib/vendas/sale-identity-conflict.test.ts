@@ -31,7 +31,7 @@ describe("sale-identity-conflict", () => {
   })
 
   it("propaga a quarentena entre snapshots sem reativá-la", () => {
-    const stale = [{ id: "VDA-1", syncPending: true }]
+    const stale = [{ id: "VDA-1", syncPending: false }]
     const protectedSnapshot = [
       {
         id: "VDA-1",
@@ -40,5 +40,22 @@ describe("sale-identity-conflict", () => {
       },
     ]
     expect(preserveSaleIdentityConflictCodes(stale, protectedSnapshot)).toEqual(protectedSnapshot)
+  })
+
+  it("autorrecupera syncPending quando o próprio snapshot ainda tem o código permanente", () => {
+    const stale = [
+      {
+        id: "VDA-1",
+        syncPending: false,
+        syncBlockedCode: "PEDIDO_ID_DE_OUTRA_LOJA",
+      },
+    ]
+    expect(preserveSaleIdentityConflictCodes(stale, [])).toEqual([
+      {
+        id: "VDA-1",
+        syncPending: true,
+        syncBlockedCode: "PEDIDO_ID_DE_OUTRA_LOJA",
+      },
+    ])
   })
 })

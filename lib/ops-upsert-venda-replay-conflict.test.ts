@@ -231,10 +231,35 @@ describe("upsertVendaInTransaction — replay e conflito fail-closed", () => {
     expect(db.credit).toEqual({ saldo: 80, updates: 1 })
   })
 
+  it("reconstrói fatos redundantes das colunas em registro legado sem fingerprint persistido", async () => {
+    const db = makeDb()
+    const request = sale()
+    await upsertVendaInTransaction(db.makeTx(), STORE, request, undefined, LIVE)
+    const existing = db.vendas.get("VDA-2026-0900")!
+    const legacyPayload = { ...(existing.payload as SalePayload) }
+    delete legacyPayload.total
+    delete legacyPayload.customerName
+    delete legacyPayload.clienteId
+    delete legacyPayload.terminalId
+    existing.payload = legacyPayload
+
+    const replay = await upsertVendaInTransaction(db.makeTx(), STORE, request, undefined, LIVE)
+
+    expect(replay.replayed).toBe(true)
+    expect(db.vendas).toHaveLength(1)
+    expect(db.items).toHaveLength(1)
+    expect(db.stock.updates).toBe(1)
+    expect(db.financeiro).toHaveLength(1)
+    expect(db.titulos).toHaveLength(1)
+    expect(db.usosCredito).toHaveLength(1)
+  })
+
   it.each([
     ["total", { total: 101 }],
     ["linhas", { lines: [{ inventoryId: "SKU-1", name: "Produto", quantity: 1, unitPrice: 100 }] }],
     ["pagamento", { paymentBreakdown: { pix: 60, aPrazo: 20, creditoVale: 20 } }],
+    ["sessão", { sessaoId: "sessao-2" }],
+    ["terminal", { terminalId: "PDV2" }],
   ])("mesmo pedidoId com %s diferente falha sem escrever", async (_label, change) => {
     const db = makeDb()
     await upsertVendaInTransaction(db.makeTx(), STORE, sale(), undefined, LIVE)
@@ -262,6 +287,52 @@ describe("upsertVendaInTransaction — replay e conflito fail-closed", () => {
     expect(error.message).toBe("Este número já identifica outra venda nesta loja. Nada foi alterado.")
     expect(JSON.stringify({
       venda: [...db.vendas.values()][0],
+      items: db.items,
+      stock: db.stock,
+      estoque: db.estoque,
+      financeiro: db.financeiro,
+      titulos: db.titulos,
+      credit: db.credit,
+      usos: db.usosCredito,
+    })).toBe(snapshot)
+  })
+
+  it.each([
+    ["sem linhas", { lines: undefined }],
+    ["linha inválida", { lines: [{}] }],
+    ["pagamento inválido", { paymentBreakdown: { pix: Number.NaN } }],
+    ["pagamento desconhecido", { paymentBreakdown: { cripto: 100 } }],
+    ["data inválida", { at: "não-data" }],
+  ])("payload legado %s falha fechado mesmo quando os defaults canônicos coincidem", async (
+    _label,
+    incomplete,
+  ) => {
+    const db = makeDb()
+    await upsertVendaInTransaction(db.makeTx(), STORE, sale(), undefined, LIVE)
+    const existing = db.vendas.get("VDA-2026-0900")!
+    existing.payload = { ...sale(), ...incomplete }
+    const snapshot = JSON.stringify({
+      venda: existing,
+      items: db.items,
+      stock: db.stock,
+      estoque: db.estoque,
+      financeiro: db.financeiro,
+      titulos: db.titulos,
+      credit: db.credit,
+      usos: db.usosCredito,
+    })
+
+    await expect(
+      upsertVendaInTransaction(
+        db.makeTx(),
+        STORE,
+        sale(incomplete as Partial<SalePayload>),
+        undefined,
+        LIVE,
+      ),
+    ).rejects.toBeInstanceOf(PedidoIdConflitoMesmaLojaError)
+    expect(JSON.stringify({
+      venda: existing,
       items: db.items,
       stock: db.stock,
       estoque: db.estoque,

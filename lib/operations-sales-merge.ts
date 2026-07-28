@@ -1,4 +1,5 @@
 import type { SaleRecord } from "@/lib/operations-sale-types"
+import { isSaleIdentityConflictCode } from "@/lib/vendas/sale-identity-conflict"
 import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
 
 /**
@@ -9,11 +10,11 @@ import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
  * caixa/fechamento. Apenas `status` (e a baixa dos marcadores de sync) é sincronizado —
  * `lines`/`qtyReturned` permanecem locais para não descartar devolução offline pendente.
  *
- * Estar no `remote` significa estar no banco, ou seja, CONFIRMADA: os marcadores locais
- * (`syncPending`/`syncBlockedCode`) são zerados nas vendas que casam e nunca são
- * reinjetados pelas vendas remotas extras — mesmo que um payload legado ainda os traga
- * (PDV-PEDIDO-ID-COLISAO-MULTILOJA-FIX-001; o reader já sanea, isto é defesa em
- * profundidade para respostas legadas/cacheadas).
+ * Estar no `remote` normalmente significa estar no banco, ou seja, CONFIRMADA. A exceção
+ * é uma cópia local em quarentena por colisão de `pedidoId`: a venda remota de mesmo id
+ * pode ser justamente a venda diferente que causou o conflito e não confirma a cópia
+ * local. Nesse caso o bloqueio e `syncPending` são monotônicos. Para pendências comuns,
+ * os marcadores locais são zerados e nunca reinjetados por vendas remotas extras.
  *
  * Função PURA (sem React) para ser testável de forma isolada.
  */
@@ -26,6 +27,11 @@ export function mergeSalesById(local: SaleRecord[], remote: SaleRecord[]): SaleR
   const mergedLocal = local.map((s) => {
     const r = s.id ? remoteById.get(s.id) : undefined
     if (!r) return s
+    if (isSaleIdentityConflictCode(s.syncBlockedCode)) {
+      if (s.syncPending === true) return s
+      changed = true
+      return { ...s, syncPending: true }
+    }
     // Nunca apaga um status local com `undefined` remoto (legado): só sobrescreve quando
     // o servidor tem um status concreto.
     const nextStatus = r.status ?? s.status

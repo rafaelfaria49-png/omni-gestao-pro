@@ -139,4 +139,22 @@ describe("mergeSalesById — marcadores client-only nunca voltam do servidor", (
     expect(merged[0]!.syncBlockedCode).toBe("PEDIDO_ID_DE_OUTRA_LOJA")
     expect(merged[0]!.syncPending).toBe(true)
   })
+
+  it.each([
+    "PEDIDO_ID_DE_OUTRA_LOJA",
+    "PEDIDO_ID_CONFLITO_MESMA_LOJA",
+  ])("preserva quarentena %s mesmo quando o servidor tem o mesmo pedidoId", (code) => {
+    const local = [venda({ id: "VDA-2026-0046", syncPending: false, syncBlockedCode: code })]
+    const remote = [venda({ id: "VDA-2026-0046", status: "cancelada", total: 999 })]
+
+    const merged = mergeSalesById(local, remote)
+
+    expect(merged[0]).toMatchObject({
+      id: "VDA-2026-0046",
+      total: 24,
+      syncPending: true,
+      syncBlockedCode: code,
+    })
+    expect(merged[0]!.status).toBeUndefined()
+  })
 })

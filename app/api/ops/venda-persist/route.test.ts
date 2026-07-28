@@ -75,6 +75,45 @@ beforeEach(() => {
 })
 
 describe("POST /api/ops/venda-persist — recuperação concorrente P2002", () => {
+  it("mantém a resposta legada ok=true na criação e adiciona replayed/venda", async () => {
+    h.transaction.mockResolvedValue({
+      replayed: false,
+      fingerprint: "legacy-sale-facts-v1:sha256:hash",
+      venda: {
+        id: "venda-criada",
+        storeId: STORE,
+        pedidoId: "VDA-2026-0901",
+        total: 100,
+        at: "2026-07-28T14:00:00.000Z",
+        clienteNome: null,
+        clienteId: null,
+        terminalId: "PDV1",
+        status: "concluida",
+      },
+    })
+
+    const response = await POST(req({ sale: requestSale() }))
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({
+      ok: true,
+      replayed: false,
+      venda: {
+        id: "venda-criada",
+        storeId: STORE,
+        pedidoId: "VDA-2026-0901",
+        total: 100,
+        at: "2026-07-28T14:00:00.000Z",
+        clienteNome: null,
+        clienteId: null,
+        terminalId: "PDV1",
+        status: "concluida",
+      },
+    })
+    expect(h.findUnique).not.toHaveBeenCalled()
+  })
+
   it("releitura fora da transação converge para replay quando os fatos são iguais", async () => {
     const response = await POST(req({ sale: requestSale() }))
     const body = await response.json()

@@ -5,7 +5,10 @@ import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 import { sanitizeSaleLinesPayload } from "@/lib/vendas/sanitize-sale-line-payload"
 import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
-import { buildLegacySaleFingerprint } from "@/lib/vendas/legacy-sale-fingerprint"
+import {
+  buildLegacySaleFingerprint,
+  isLegacySaleFactsComparable,
+} from "@/lib/vendas/legacy-sale-fingerprint"
 
 /**
  * Lançada pela baixa de estoque do PDV quando `enforceStock` está ativo e o saldo
@@ -340,8 +343,13 @@ export function classifyExistingVendaReplay(
   }
 
   const incomingFingerprint = buildLegacySaleFingerprint(sale)
-  const existingFingerprint = buildLegacySaleFingerprint(factsFromExistingVenda(existing))
-  if (incomingFingerprint !== existingFingerprint) {
+  const existingFacts = factsFromExistingVenda(existing)
+  const existingFingerprint = buildLegacySaleFingerprint(existingFacts)
+  if (
+    !isLegacySaleFactsComparable(sale) ||
+    !isLegacySaleFactsComparable(existingFacts) ||
+    incomingFingerprint !== existingFingerprint
+  ) {
     throw new PedidoIdConflitoMesmaLojaError(
       existing.pedidoId,
       incomingFingerprint,

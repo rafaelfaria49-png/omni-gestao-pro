@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   buildLegacySaleFingerprint,
   canonicalizeLegacySaleFacts,
+  isLegacySaleFactsComparable,
   LEGACY_SALE_FINGERPRINT_VERSION,
 } from "./legacy-sale-fingerprint"
 
@@ -98,6 +99,7 @@ describe("legacy-sale-fingerprint", () => {
     ["linhas", { lines: [{ inventoryId: "SKU-A", name: "Capa", quantity: 1, unitPrice: 150 }] }],
     ["pagamento", { paymentBreakdown: { dinheiro: 150 } }],
     ["sessão", { sessaoId: "sessao-2" }],
+    ["terminal", { terminalId: "PDV2" }],
     ["cliente", { clienteId: "cliente-2" }],
     ["desconto", { discountReais: 11 }],
     ["parcelamento", { paymentBreakdown: { aPrazo: 150 }, aPrazoConfig: { parcelas: 3 } }],
@@ -114,5 +116,57 @@ describe("legacy-sale-fingerprint", () => {
     expect(serialized).not.toContain("cartLineKey")
     expect(serialized).not.toContain("qtyReturned")
     expect(serialized).toContain("accessorySelection")
+  })
+
+  it("trata opcionais de desconto ausentes e explicitamente zerados como equivalentes", () => {
+    const absent = {
+      ...baseSale(),
+      discountTotal: undefined,
+      discountReais: undefined,
+      discountPercent: undefined,
+      discountAuthorizedByAdminId: undefined,
+    }
+    const explicitZero = {
+      ...absent,
+      discountTotal: 0,
+      discountReais: 0,
+      discountPercent: 0,
+      discountAuthorizedByAdminId: "admin-ignorado-sem-desconto",
+    }
+    expect(buildLegacySaleFingerprint(explicitZero)).toBe(buildLegacySaleFingerprint(absent))
+  })
+
+  it.each([
+    ["data inválida", { at: "não-data" }],
+    ["sem linhas", { lines: undefined }],
+    ["linha vazia", { lines: [{}] }],
+    ["pagamento inválido", { paymentBreakdown: { pix: Number.NaN } }],
+    ["pagamento desconhecido", { paymentBreakdown: { cripto: 150 } }],
+    ["total inválido", { total: Number.NaN }],
+  ])("marca fatos incompletos/inválidos como não comparáveis: %s", (_label, change) => {
+    expect(isLegacySaleFactsComparable({ ...baseSale(), ...change })).toBe(false)
+  })
+
+  it("aceita fatos completos e acessório complementar inválido descartável", () => {
+    const complete = {
+      ...baseSale(),
+      lines: [
+        {
+          ...baseSale().lines[0],
+          accessorySelection: { corLivre: "legado" },
+        },
+      ],
+    }
+    expect(isLegacySaleFactsComparable(complete)).toBe(true)
+  })
+
+  it("aceita data e breakdown ausentes porque o contrato os trata como opcionais", () => {
+    expect(
+      isLegacySaleFactsComparable({
+        ...baseSale(),
+        at: undefined,
+        paymentBreakdown: undefined,
+      }),
+    ).toBe(true)
   })
 })
