@@ -97,6 +97,17 @@ export function criarRepoPrisma(): DocumentosRepo {
       return c ? { id: c.id, status: c.status, ano: c.ano, mes: c.mes } : null
     },
 
+    // GOAL 012: o congelamento da exclusão precisa do status da competência DONA do
+    // documento, e ali só existe `competenciaId` (sem ano/mês). Leitura pura.
+    async acharCompetenciaPorId(competenciaId, storeId): Promise<CompetenciaRef | null> {
+      await prismaEnsureConnected()
+      const c = await prisma.contadorCompetencia.findFirst({
+        where: { id: competenciaId, storeId },
+        select: { id: true, status: true, ano: true, mes: true },
+      })
+      return c ? { id: c.id, status: c.status, ano: c.ano, mes: c.mes } : null
+    },
+
     async acharDocumentoPorId(id): Promise<DocumentoRow | null> {
       await prismaEnsureConnected()
       const d = await prisma.contadorDocumento.findUnique({ where: { id }, select: DOC_SELECT })

@@ -129,17 +129,70 @@ describe("Contador HUB — valores sensíveis do preview seguem marcados como il
     expect(dataSrc).toMatch(/name: "Honorários do contador"[\s\S]*?preview: true/)
   })
 
-  it("Visão geral e Fechamento têm PreviewBanner próprio; Documentos agora é REAL (GOAL 010)", () => {
+  it("Visão geral segue preview; Documentos (010) e Fechamento (012) são REAIS", () => {
     const renderVisaoIdx = hubSrc.indexOf("const renderVisao = ()")
     const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
     const renderDocumentosIdx = hubSrc.indexOf("const renderDocumentos = ()")
     const renderObrigacoesIdx = hubSrc.indexOf("const renderObrigacoes = ()")
     expect(hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)).toContain("<PreviewBanner")
-    expect(hubSrc.slice(renderFechamentoIdx, renderDocumentosIdx)).toContain("<PreviewBanner")
+    // GOAL 012: Fechamento deixou de ser preview — sem PreviewBanner, com componente real.
+    const fechamento = hubSrc.slice(renderFechamentoIdx, renderDocumentosIdx)
+    expect(fechamento).toContain("<ContadorFechamentoReal")
+    expect(fechamento).not.toContain("<PreviewBanner")
     // A seção Documentos deixou de ser preview: renderiza o componente real, sem PreviewBanner.
     const documentos = hubSrc.slice(renderDocumentosIdx, renderObrigacoesIdx)
     expect(documentos).toContain("<ContadorDocumentosReal")
     expect(documentos).not.toContain("<PreviewBanner")
+  })
+})
+
+/* ────────── GOAL 012 — Fechamento com snapshot e pacote versionado ────────── */
+
+describe("Contador HUB — Fechamento REAL (GOAL 012)", () => {
+  const fechamentoSrc = readFileSync(join(DIR, "fechamento/contador-fechamento-real.tsx"), "utf8")
+
+  it("fechar e reabrir passam por modal com confirmação textual da competência", () => {
+    expect(fechamentoSrc).toContain("function FecharModal(")
+    expect(fechamentoSrc).toContain("function ReabrirModal(")
+    expect(fechamentoSrc).toContain("para confirmar")
+    // O botão só habilita com pendências assumidas E confirmação digitada.
+    expect(fechamentoSrc).toContain("todasAssumidas && confirmado && !ocupado")
+  })
+
+  it("reabertura exige motivo não vazio", () => {
+    expect(fechamentoSrc).toContain("Motivo da reabertura (obrigatório)")
+    expect(fechamentoSrc).toContain("motivo.trim().length > 0")
+  })
+
+  it("as capacidades vêm do servidor — a UI não infere papel", () => {
+    expect(fechamentoSrc).toContain("estado?.podeFechar")
+    expect(fechamentoSrc).toContain("estado.podeReabrir")
+    expect(fechamentoSrc).not.toMatch(/\b(masterConsole|financeiro\.edit)\b/)
+  })
+
+  it("nunca envia loja, autor ou papel pelo cliente", () => {
+    expect(fechamentoSrc).not.toMatch(/\b(storeId|lojaId)\b/)
+    const corpos = fechamentoSrc.match(/JSON\.stringify\(\{[\s\S]*?\}\)/g) ?? []
+    for (const corpo of corpos) {
+      expect(corpo).not.toMatch(/\b(autorId|atorId|storeId|lojaId|papel|role|userId)\b/)
+    }
+  })
+
+  it("o alerta de divergência é o texto único do domínio e só grava por ação explícita", () => {
+    expect(fechamentoSrc).toContain("divergencia.aviso")
+    expect(fechamentoSrc).toContain("Registrar divergência na trilha")
+    // A avaliação é GET; a persistência do evento é POST disparado por clique.
+    expect(fechamentoSrc).toMatch(/method:\s*"POST"[\s\S]{0,200}fechamento\/divergencia|divergencia[\s\S]{0,200}method:\s*"POST"/)
+  })
+
+  it("estado vazio de versões é honesto — não promete pacote inexistente", () => {
+    expect(fechamentoSrc).toContain("Nenhuma versão oficial ainda")
+    expect(fechamentoSrc).toContain("Competência fechada — oficial v")
+  })
+
+  it("o download usa URL assinada de curta duração e nunca expõe storageRef", () => {
+    expect(fechamentoSrc).toContain("/api/contador/pacote/download")
+    expect(fechamentoSrc).not.toContain("storageRef")
   })
 })
 
@@ -200,13 +253,16 @@ describe("Contador HUB — checklist de fechamento derivado (GOAL 007)", () => {
     expect(hubSrc).not.toContain("FECHAMENTO_CHECKLIST")
   })
 
-  it("CTA Fechar competência aponta para GOAL 012 e permanece disabled", () => {
+  it("o CTA desabilitado «Fechar competência · GOAL 012» deu lugar ao fechamento real", () => {
     const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
     const renderDocsIdx = hubSrc.indexOf("const renderDocumentos = ()")
     const body = hubSrc.slice(renderFechamentoIdx, renderDocsIdx)
-    expect(body).toContain("FECHAR_COMPETENCIA_TITLE")
-    expect(body).toContain("disabled")
-    expect(body).toContain("GOAL 012")
+    // O placeholder do GOAL 007 não pode sobreviver ao GOAL 012.
+    expect(body).not.toContain("FECHAR_COMPETENCIA_TITLE")
+    expect(body).not.toContain("Fechar competência · GOAL 012")
+    expect(body).toContain("<ContadorFechamentoReal")
+    // O checklist derivado (GOAL 007) continua read-only ao lado do fechamento real.
+    expect(body).toContain("ContadorFechamentoChecklist")
     expect(body).not.toContain("ProgressRing")
     expect(body).not.toContain("3 de 9")
   })
