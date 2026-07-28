@@ -10,6 +10,9 @@
 
 A partir de 2026-05-27 o projeto passou a operar sob um **Sistema Operacional de Desenvolvimento** persistido em `docs/`. **Toda IA/humano que entra no projeto deve seguir esta ordem de leitura:**
 
+0. **Entrada obrigatória de novos chats/agentes:** [`docs/ai/START_HERE.md`](../ai/START_HERE.md) —
+   checklist curto de leitura + política do Neon (produção vs `omnigestao_prod_candidate`)
+   centralizada lá, não duplicada aqui.
 1. **Entrada universal:** [`docs/skills/INDEX.md`](../skills/INDEX.md) — lista todos os documentos da governança e seus papéis.
 2. **Regras inegociáveis (versão de bolso):** [`docs/governance/GOVERNANCA.md`](../governance/GOVERNANCA.md) — leitura < 2 min antes de tocar qualquer arquivo.
 3. **Estado real:** [`docs/ai/CURRENT_STATUS_OVERVIEW.md`](../ai/CURRENT_STATUS_OVERVIEW.md) — overview enxuto (< 200 linhas). Histórico completo continua em [`CURRENT_STATUS.md`](../ai/CURRENT_STATUS.md).
