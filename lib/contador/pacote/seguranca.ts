@@ -20,7 +20,8 @@ import type { ArquivoPacote } from "./tipos"
 export const MAX_REGISTROS_POR_FONTE = 50_000
 export const MAX_BYTES_DESCOMPACTADO = 25 * 1024 * 1024 // 25 MB
 export const MAX_BYTES_ZIP = 10 * 1024 * 1024 // 10 MB
-export const MAX_ARQUIVOS_PACOTE = 14 // estrutura fixa do 008B
+/** 14 da estrutura fixa do 008B + `00-FECHAMENTO/snapshot.json` do fechamento (012A). */
+export const MAX_ARQUIVOS_PACOTE = 15
 /** Teto lógico de duração (informativo; aplicado por quem orquestra a geração). */
 export const TIMEOUT_LOGICO_MS = 30_000
 

@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto"
 import { formatCompetencia, type Competencia } from "@/lib/contador/competencia"
 import { serializarManifesto } from "@/lib/contador/pacote/manifest"
 import { sha256Hex } from "@/lib/contador/pacote/seguranca"
+import type { MontarExtras } from "@/lib/contador/pacote/builder"
 import type { PacoteContador } from "@/lib/contador/pacote/tipos"
 import type { ContadorScopeInterno } from "@/lib/contador/scope-core"
 import type { CapacidadesContador } from "@/lib/contador/status/permissoes"
@@ -31,6 +32,8 @@ import {
   extrairTotais,
   hashSnapshot,
   montarSnapshot,
+  serializarSnapshotParaPacote,
+  SNAPSHOT_CAMINHO_PACOTE,
   type DocumentoParaSnapshot,
   type SnapshotFechamentoV1,
   type TotaisSnapshot,
@@ -255,6 +258,8 @@ export interface PacotePort {
     scope: ContadorScopeInterno
     competencia: Competencia
     agora: Date
+    /** GOAL 012A — injeta `00-FECHAMENTO/snapshot.json` antes do manifesto. */
+    montarExtras?: MontarExtras
   }): Promise<PacoteContador>
 }
 
@@ -402,41 +407,61 @@ export async function fecharCompetencia(
     throw new FechamentoConcorrenteError()
   }
 
-  // Pacote gerado ANTES de qualquer escrita: se o builder estourar limite/timeout,
-  // a competência continua aberta e nada foi persistido.
-  const pacote = await deps.pacote.gerar({ scope, competencia: comp, agora })
-
+  const versao = competencia.versao
   const assumidas = normalizarPendencias(entrada.pendenciasAssumidas)
-  validarPendencias(pacote.checklist, assumidas)
+  // Acervo lido ANTES da geração: o snapshot precisa entrar DENTRO do pacote.
+  const documentos = await deps.repo.listarDocumentosParaSnapshot(competencia.id, scope.storeId)
+
+  // O snapshot é montado por callback, a partir da MESMA carga do pacote, e devolvido
+  // como `00-FECHAMENTO/snapshot.json`. Ordem das dependências (acíclica):
+  //   dados/checklist → snapshot → snapshot.json → manifesto → manifestoHash
+  // O snapshot NUNCA lê o manifesto; por isso perdeu o bloco `pacote` da v1.
+  let snapshot: SnapshotFechamentoV1 | null = null
+  let snapshotHash = ""
+
+  const pacote = await deps.pacote.gerar({
+    scope,
+    competencia: comp,
+    agora,
+    montarExtras: ({ dados, checklist }) => {
+      // Recusa cedo: aborta antes de compactar, sem escrita nenhuma.
+      validarPendencias(checklist, assumidas)
+      snapshot = montarSnapshot({
+        competencia: comp,
+        versao,
+        fechadaEm: agora,
+        userId: scope.userId,
+        dados,
+        checklist,
+        pendenciasAssumidas: assumidas,
+        documentos,
+      })
+      snapshotHash = hashSnapshot(snapshot)
+      return {
+        arquivos: [
+          {
+            caminho: SNAPSHOT_CAMINHO_PACOTE,
+            categoria: "snapshot",
+            fonte: "fechamento",
+            descricao: "Snapshot canônico e imutável desta versão do fechamento.",
+            // Bytes EXATOS do JSON canônico: sha256(arquivo) === snapshotHash.
+            conteudo: serializarSnapshotParaPacote(snapshot),
+          },
+        ],
+        snapshotHash,
+      }
+    },
+  })
+
+  if (!snapshot) throw new FechamentoConcorrenteError()
 
   const manifestoSerializado = serializarManifesto(pacote.manifesto)
   const manifestoHash = sha256Hex(manifestoSerializado)
-  const versao = competencia.versao
   const storageRef = montarStorageRefPacote(scope.storeId, codigo, versao, manifestoHash)
 
   // Upload ANTES da transação (storage não é transacional). Path endereçado por
   // conteúdo ⇒ retry idempotente; blob órfão de transação falha fica inalcançável.
   await deps.storage.enviarPacote(storageRef, pacote.bytes)
-
-  const documentos = await deps.repo.listarDocumentosParaSnapshot(competencia.id, scope.storeId)
-  const snapshot = montarSnapshot({
-    storeId: scope.storeId,
-    competencia: comp,
-    versao,
-    fechadaEm: agora,
-    userId: scope.userId,
-    dados: pacote.dados,
-    checklist: pacote.checklist,
-    pendenciasAssumidas: assumidas,
-    documentos,
-    pacote: {
-      versao,
-      manifestoHash,
-      bytes: pacote.bytes.byteLength,
-      arquivos: pacote.manifesto.arquivos.length,
-    },
-  })
-  const snapshotHash = hashSnapshot(snapshot)
 
   const atualizada = await deps.repo.aplicarFechamento({
     competenciaId: competencia.id,
