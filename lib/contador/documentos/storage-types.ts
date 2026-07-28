@@ -1,9 +1,12 @@
 /**
- * Contador HUB · Documentos — contrato (porta) do adapter de storage privado (GOAL 010).
+ * Contador HUB · Documentos — contrato (porta) do adapter de storage privado.
  *
- * O service depende SOMENTE desta porta; o adapter real (Supabase) e o fake de teste
- * a implementam. Nenhum método devolve URL pública permanente: uploads e downloads
- * usam URLs assinadas de curta duração, e `storageRef` é sempre o path privado.
+ * O service depende SOMENTE desta porta; o adapter real produzivo Cloudflare R2
+ * (`storage-r2.ts`, GOAL 012C), o adapter legado Supabase (`storage-supabase.ts`,
+ * `@deprecated` — caminho de rollback manual, GOAL 012B §7.1) e o fake de teste
+ * a implementam. Nenhum método devolve URL pública permanente: uploads e
+ * downloads usam URLs assinadas de curta duração, e `storageRef` é sempre o path
+ * privado. Provider-agnostic desde o desenho do GOAL 010.
  */
 
 /** URL assinada de upload direto do navegador ao storage (o binário não passa pela API). */
@@ -12,7 +15,12 @@ export type UploadAssinado = Readonly<{
   storageRef: string
   /** URL assinada para o PUT direto do navegador. */
   signedUrl: string
-  /** Token de upload (Supabase `createSignedUploadUrl`). */
+  /**
+   * Token de upload. Legado Supabase o devolvia preenchido (`createSignedUploadUrl`).
+   * No adapter R2 (S3-compatible) o URL presigned é auto-contido — devolvemos `""`.
+   * O frontend faz PUT cru à `signedUrl` e descarta este campo (GOAL 012B §1.7);
+   * mantido no contrato para NÃO quebrar a API estável.
+   */
   token: string
   /** Validade da autorização de upload, em segundos. */
   expiresInSec: number
@@ -39,8 +47,10 @@ export type BucketEstado = Readonly<{
 }>
 
 /**
- * Porta de storage privado. Implementada pelo adapter Supabase (server-only) e por
- * um fake in-memory nos testes. Erros externos são convertidos em `StorageError`.
+ * Porta de storage privado. Implementada pelo adapter Cloudflare R2 (server-only,
+ * `storage-r2.ts`, GOAL 012C); o adapter Supabase (`storage-supabase.ts`) está
+ * `@deprecated` e por um fake in-memory nos testes. Erros externos são convertidos
+ * em `StorageError`.
  */
 export interface StorageDocumentosPort {
   /** Verifica existência e visibilidade do bucket (nunca cria). */
