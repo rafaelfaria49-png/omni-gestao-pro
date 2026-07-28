@@ -120,6 +120,13 @@ export type PacoteContador = Readonly<{
   /** Bytes do ZIP. */
   bytes: Uint8Array
   manifesto: ManifestoPacoteContadorV1
+  /**
+   * GOAL 012 (integração): agregado e checklist da MESMA carga que gerou o pacote.
+   * Expostos para o fechamento montar o snapshot sem repetir as consultas — o pacote
+   * oficial e o snapshot precisam descrever exatamente o mesmo instante.
+   */
+  dados: import("@/lib/contador/readers/tipos").ContadorDadosReais
+  checklist: import("@/lib/contador/fechamento/tipos").ChecklistFechamento
   /** Métricas para log estruturado (nunca vão ao ZIP). */
   metricas: Readonly<{
     bytesZip: number
