@@ -72,6 +72,11 @@ export interface FechamentoTxClient {
     create(args: { data: Record<string, unknown> }): Promise<{ id: string }>
     findFirst(args: { where: Record<string, unknown> }): Promise<{ id: string } | null>
   }
+  /**
+   * GOAL 012A — usado SOMENTE para o lock de linha do dedupe (`SELECT … FOR UPDATE`).
+   * Tagged template: cada `${}` vira placeholder do driver, nunca concatenação.
+   */
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>
 }
 
 export interface FechamentoDbClient extends FechamentoTxClient {
@@ -282,9 +287,23 @@ export function criarRepoFechamento(client?: FechamentoDbClient): FechamentoRepo
     async registrarEventoUnico(evento, dedupe): Promise<{ criado: boolean }> {
       const db = await obter()
       return db.$transaction(async (tx) => {
-        // Dedupe por conteúdo da metadata: mesma competência + versão + diffHash.
-        // Sem unique index (schema é fora do escopo deste GOAL), a garantia é
-        // best-effort sob concorrência — ver "Pendências" no doc de encerramento.
+        // GOAL 012A — DEDUPE FORTE.
+        //
+        // "Consultar e depois criar" não basta: em READ COMMITTED, dois POSTs
+        // simultâneos leem "não existe" ao mesmo tempo e ambos criam. Sem poder
+        // adicionar índice único (schema fora do escopo), a serialização vem de um
+        // LOCK DE LINHA na competência: a segunda transação bloqueia no `FOR UPDATE`
+        // até a primeira commitar, e só então enxerga o evento já criado.
+        //
+        // O lock é escopado por (id, storeId) — competência de outra loja nunca é
+        // travada — e os valores viajam como parâmetros do driver (tagged template),
+        // jamais concatenados na string SQL.
+        await tx.$queryRaw`
+          SELECT id FROM contador_competencias
+          WHERE id = ${dedupe.competenciaId} AND "storeId" = ${evento.storeId}
+          FOR UPDATE
+        `
+
         const existente = await tx.contadorEvento.findFirst({
           where: {
             competenciaId: dedupe.competenciaId,

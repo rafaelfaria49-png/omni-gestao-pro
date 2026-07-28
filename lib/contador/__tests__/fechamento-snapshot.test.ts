@@ -11,6 +11,7 @@ import {
   normalizarDecimal,
   ordenarPorChave,
   serializarCanonico,
+  sha256Texto,
   ValorNaoCanonicoError,
 } from "@/lib/contador/fechamento/canonico"
 import {
@@ -18,7 +19,9 @@ import {
   extrairTotais,
   hashSnapshot,
   montarSnapshot,
+  serializarSnapshotParaPacote,
   SNAPSHOT_SCHEMA,
+  verificarSnapshotDoPacote,
 } from "@/lib/contador/fechamento/snapshot"
 import { compararTotais } from "@/lib/contador/fechamento/divergencia"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
@@ -97,7 +100,6 @@ function checklist(itens: { id: string; estado: string }[]): ChecklistFechamento
 
 function montar(over: Partial<Parameters<typeof montarSnapshot>[0]> = {}) {
   return montarSnapshot({
-    storeId: "loja-1",
     competencia: COMP,
     versao: 1,
     fechadaEm: AGORA,
@@ -106,7 +108,6 @@ function montar(over: Partial<Parameters<typeof montarSnapshot>[0]> = {}) {
     checklist: checklist([{ id: "vendas", estado: "ok" }]),
     pendenciasAssumidas: [],
     documentos: [],
-    pacote: { versao: 1, manifestoHash: "h".repeat(64), bytes: 1024, arquivos: 14 },
     ...over,
   })
 }
@@ -196,11 +197,18 @@ describe("snapshot · determinismo", () => {
     expect(hashSnapshot(a)).not.toBe(hashSnapshot(b))
   })
 
-  it("mudança de versão ou de manifestoHash altera o hash", () => {
+  it("mudança de versão altera o hash", () => {
     expect(hashSnapshot(montar())).not.toBe(hashSnapshot(montar({ versao: 2 })))
-    expect(hashSnapshot(montar())).not.toBe(
-      hashSnapshot(montar({ pacote: { versao: 1, manifestoHash: "z".repeat(64), bytes: 1024, arquivos: 14 } })),
-    )
+  })
+
+  it("SEM CICLO: o snapshot não referencia nada do manifesto/pacote", () => {
+    const s = montar()
+    const serializado = JSON.stringify(s)
+    // Se qualquer um destes aparecesse, o snapshot dependeria do manifesto — que por
+    // sua vez lista o hash do snapshot. Nenhum dos dois hashes seria calculável.
+    for (const proibido of ["manifestoHash", "pacote", "arquivos", "bytes"]) {
+      expect(serializado, proibido).not.toContain(proibido)
+    }
   })
 })
 
@@ -218,21 +226,50 @@ describe("snapshot · conteúdo seguro (ADR-001 · G2-05)", () => {
     }
   })
 
-  it("tem schemaVersion e só chaves agregadas de topo", () => {
+  it("tem schemaVersion v2 e só chaves agregadas de topo", () => {
     const s = montar()
     expect(s.schemaVersion).toBe(SNAPSHOT_SCHEMA)
+    expect(SNAPSHOT_SCHEMA).toContain("/v2")
     expect(Object.keys(s).sort()).toEqual([
       "checklist",
       "competencia",
       "documentos",
       "fechadaEm",
-      "pacote",
       "pendenciasAssumidas",
       "responsavel",
       "schemaVersion",
       "totais",
       "versao",
     ])
+  })
+
+  it("não carrega storeId — o pacote só admite storeId no manifest.json", () => {
+    const s = montar()
+    expect(Object.keys(s.competencia).sort()).toEqual(["ano", "codigo", "mes"])
+    expect(JSON.stringify(s)).not.toContain("loja-1")
+  })
+
+  it("os bytes gravados no pacote são exatamente o JSON canônico e batem com o hash", () => {
+    const s = montar()
+    const conteudo = serializarSnapshotParaPacote(s)
+    // Sem indentação e sem quebra de linha final: sha256(arquivo) === snapshotHash.
+    expect(conteudo).toBe(serializarCanonico(s))
+    expect(conteudo.endsWith("\n")).toBe(false)
+    expect(sha256Texto(conteudo)).toBe(hashSnapshot(s))
+  })
+
+  it("verificarSnapshotDoPacote reconstrói o snapshot e recusa conteúdo adulterado", () => {
+    const s = montar()
+    const conteudo = serializarSnapshotParaPacote(s)
+    const hash = hashSnapshot(s)
+
+    const reconstruido = verificarSnapshotDoPacote(conteudo, hash)
+    expect(reconstruido).not.toBeNull()
+    expect(reconstruido).toEqual(JSON.parse(conteudo))
+
+    // Um byte alterado quebra a verificação.
+    expect(verificarSnapshotDoPacote(conteudo.replace("2026", "2027"), hash)).toBeNull()
+    expect(verificarSnapshotDoPacote(conteudo, "0".repeat(64))).toBeNull()
   })
 
   it("totais guardam valor + disponibilidade, sem texto de fonte/observação", () => {

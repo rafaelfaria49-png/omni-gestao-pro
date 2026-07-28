@@ -51,6 +51,14 @@ export type MontarConteudoPacoteInput = Readonly<{
   agora: Date
   storeId: string
   userId: string
+  /**
+   * GOAL 012A — arquivos extra injetados ANTES do manifesto (hoje: o snapshot do
+   * fechamento). Entram no `descreverArquivos`, portanto o manifesto lista o hash deles.
+   * A dependência é unidirecional: manifesto → extras; extras nunca leem o manifesto.
+   */
+  arquivosExtra?: readonly ArquivoPacote[]
+  /** Referência opcional de integridade citada no manifesto (ex.: `snapshotHash`). */
+  snapshotHash?: string
 }>
 
 /** Monta o conteúdo completo (14 arquivos) com hashes e guardas. Puro/determinístico. */
@@ -59,7 +67,9 @@ export function montarConteudoPacote(input: MontarConteudoPacoteInput): Conteudo
   const periodo = resolvePeriodoUtc(competencia)
   const entrada = { detalhadas, dados, checklist, competencia, periodo, agora }
 
-  const conteudo = montarArquivosConteudo(entrada)
+  // Extras entram junto do conteúdo: aparecem no índice e no manifesto como qualquer
+  // outro arquivo, e o manifesto passa a ser a raiz de integridade também deles.
+  const conteudo = [...montarArquivosConteudo(entrada), ...(input.arquivosExtra ?? [])]
   const descritoresConteudo = descreverArquivos(conteudo)
 
   const fontes = montarFontesManifesto(detalhadas)
@@ -87,6 +97,7 @@ export function montarConteudoPacote(input: MontarConteudoPacoteInput): Conteudo
     pendencias: montarPendencias(entrada),
     itensNaoDisponiveis: montarItensNaoDisponiveis(entrada),
     avisos: montarAvisos(),
+    ...(input.snapshotHash ? { snapshotHash: input.snapshotHash } : {}),
   })
 
   const manifestoArquivo: ArquivoPacote = {
@@ -108,10 +119,21 @@ export function montarConteudoPacote(input: MontarConteudoPacoteInput): Conteudo
   }
 }
 
+/**
+ * GOAL 012A — produz arquivos extra a partir da MESMA carga que gerou o pacote.
+ * Roda depois de `dados`/`checklist` e ANTES da montagem do manifesto e do ZIP, então
+ * lançar aqui aborta a geração cedo (sem custo de compactação).
+ */
+export type MontarExtras = (entrada: {
+  dados: ContadorDadosReais
+  checklist: ChecklistFechamento
+}) => { arquivos: readonly ArquivoPacote[]; snapshotHash?: string }
+
 export type GerarPacoteContadorInput = Readonly<{
   scope: ContadorScopeInterno
   competencia: Competencia
   agora: Date
+  montarExtras?: MontarExtras
 }>
 
 /**
@@ -140,6 +162,8 @@ async function gerarPacoteContadorInterno(
     agora: input.agora,
   })
 
+  const extras = input.montarExtras?.({ dados, checklist })
+
   const conteudo = montarConteudoPacote({
     detalhadas,
     dados,
@@ -148,6 +172,7 @@ async function gerarPacoteContadorInterno(
     agora: input.agora,
     storeId: input.scope.storeId,
     userId: input.scope.userId,
+    ...(extras ? { arquivosExtra: extras.arquivos, snapshotHash: extras.snapshotHash } : {}),
   })
 
   const bytesDescompactados = conteudo.arquivos.reduce(

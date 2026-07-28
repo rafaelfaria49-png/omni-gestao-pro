@@ -20,6 +20,8 @@ export type CategoriaArquivoPacote =
   | "pendencias"
   | "manifesto"
   | "placeholder"
+  /** GOAL 012A — snapshot canônico do fechamento embutido no pacote versionado. */
+  | "snapshot"
 
 /** Estado honesto de uma fonte de dados no pacote. */
 export type EstadoFonte = "real" | "parcial" | "indisponivel"
@@ -103,6 +105,13 @@ export type ManifestoPacoteContadorV1 = Readonly<{
   pendencias: readonly string[]
   itensNaoDisponiveis: readonly string[]
   avisos: readonly string[]
+  /**
+   * GOAL 012A — hash do `00-FECHAMENTO/snapshot.json` desta versão, quando o pacote
+   * nasce de um fechamento. Presente só nesse caso; o pacote sob demanda (GOAL 008)
+   * não tem snapshot. Dependência UNIDIRECIONAL: o manifesto cita o snapshot, e o
+   * snapshot nunca cita o manifesto (do contrário nenhum hash seria calculável).
+   */
+  snapshotHash?: string
 }>
 
 /** Conteúdo montado do pacote antes da compactação (puro, testável sem ZIP/DB). */
