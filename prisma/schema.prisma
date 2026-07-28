@@ -48,6 +48,13 @@ model Store {
    * Plano SaaS oficial por unidade (first-class).
    */
   subscriptionPlan SubscriptionPlan @default(BRONZE) @map("subscriptionPlan")
+  /**
+   * Código estável de numeração comercial de venda (GOAL 002B — aditivo/dormente).
+   * 2–8 caracteres A-Z0-9, único entre lojas, atribuído por configuração explícita —
+   * NUNCA derivado de `name`, `cnpj` ou do id `loja-N`. NULL = loja sem numeração
+   * server-side configurada; a alocação falha fechada (SALE_NUMBERING_NOT_CONFIGURED).
+   */
+  codigoNumeracaoVenda String?     @unique @map("codigoNumeracaoVenda") @db.VarChar(8)
   createdAt        DateTime         @default(now()) @map("createdAt")
   updatedAt        DateTime         @updatedAt @map("updatedAt")
 
@@ -118,6 +125,8 @@ model Store {
   contadorCompetencias     ContadorCompetencia[]
   contadorDocumentos       ContadorDocumento[]
   contadorEventos          ContadorEvento[]
+  // ─── Numeração server-side de venda (GOAL 002B — aditivo/dormente) ──
+  seriesVenda              SerieVenda[]
 
   @@index([profile])
   @@map("stores")
@@ -1368,6 +1377,47 @@ model MovimentacaoFinanceira {
 }
 
 /**
+ * Origem do número comercial da venda (GOAL 002B — aditivo/dormente).
+ * LEGACY_CLIENT = `pedidoId` escolhido pelo cliente (todo o histórico e o writer v1 atual).
+ * SERVER_V1     = número alocado pelo servidor via `SerieVenda` (ainda sem writer).
+ * IMPORTED      = número trazido por importação de sistema externo.
+ */
+enum VendaNumeracaoOrigem {
+  LEGACY_CLIENT
+  SERVER_V1
+  IMPORTED
+}
+
+/**
+ * Série + contador atômico da numeração comercial de venda por (loja, ano) — GOAL 002B.
+ * DORMENTE: nenhum writer produtivo aloca número por aqui; a infraestrutura existe para
+ * a API v2 (GOAL 002C). O terminal NÃO participa do contador (auditado à parte em
+ * `Venda.terminalId`). `prefixo` é o `Store.codigoNumeracaoVenda` congelado na criação
+ * da série — renomear a loja não muda número já emitido.
+ */
+model SerieVenda {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Ano civil de aceitação no servidor (timezone America/Sao_Paulo). */
+  ano           Int      @map("ano")
+  prefixo       String   @map("prefixo") @db.VarChar(8)
+  /** Próximo número a emitir. Faixa válida 1..1000000 (1000000 = série esgotada). */
+  proximoNumero Int      @default(1) @map("proximoNumero")
+  ativo         Boolean  @default(true) @map("ativo")
+  createdAt     DateTime @default(now()) @map("createdAt")
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+  vendas        Venda[]
+
+  @@unique([storeId, ano])
+  @@unique([prefixo, ano])
+  // Alvo da FK composta de `Venda` — impede série de outra loja.
+  @@unique([id, storeId])
+  @@index([storeId, ativo])
+  @@map("series_venda")
+}
+
+/**
  * Venda (PDV ou importada) opcionalmente ligada a um título em aberto.
  */
 model Venda {
@@ -1378,6 +1428,29 @@ model Venda {
    * Ex.: VDA-2026-0001 — chave de negócio
    */
   pedidoId             String              @unique @map("pedidoId")
+  // ─── Idempotência e numeração server-side (GOAL 002B — aditivo/dormente) ─────────────
+  /**
+   * Identidade da TENTATIVA gerada pelo cliente antes do primeiro POST (GOAL 002C).
+   * Única por loja; a mesma chave pode existir em lojas diferentes. NULL em todo o
+   * histórico e em toda venda criada pelo writer v1.
+   */
+  clientSaleId           String?              @map("clientSaleId") @db.VarChar(128)
+  /** Hash canônico do payload da tentativa (sha-256 hex) — detecta reuso de chave. */
+  idempotencyHash        String?              @map("idempotencyHash") @db.Char(64)
+  /** Versão do canonicalizador que produziu `idempotencyHash`. */
+  idempotencyHashVersion Int?                 @map("idempotencyHashVersion")
+  /**
+   * Série (loja, ano) que alocou o número. FK COMPOSTA com `storeId`: impede no banco
+   * que uma venda da Loja 2 aponte para o contador da Loja 1.
+   */
+  serieVendaId           String?              @map("serieVendaId")
+  serieVenda             SerieVenda?          @relation(fields: [serieVendaId, storeId], references: [id, storeId], onDelete: Restrict)
+  /** Ano da série que numerou a venda (redundante e auditável). */
+  anoNumero              Int?                 @map("anoNumero")
+  /** Componente numérico dentro da série; 1..999999. */
+  numeroSequencial       Int?                 @map("numeroSequencial")
+  numeradaEm             DateTime?            @map("numeradaEm")
+  numeracaoOrigem        VendaNumeracaoOrigem @default(LEGACY_CLIENT) @map("numeracaoOrigem")
   /**
    * Snapshot JSON da venda (formas de pagamento, linhas, etc.) para recuperação fiel.
    */
@@ -1418,12 +1491,15 @@ model Venda {
   fiscalStatus         FiscalStatusVenda   @default(NAO_FISCAL) @map("fiscalStatus")
   notasFiscais         NotaFiscal[]
 
+  @@unique([storeId, clientSaleId])
+  @@unique([serieVendaId, numeroSequencial])
   @@index([storeId])
   @@index([storeId, status])
   @@index([clienteId])
   @@index([contaReceberTituloId])
   @@index([storeId, terminalId])
   @@index([storeId, fiscalStatus])
+  @@index([storeId, anoNumero, numeroSequencial])
   @@map("vendas")
 }
 
