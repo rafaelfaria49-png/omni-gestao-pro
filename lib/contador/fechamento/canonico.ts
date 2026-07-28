@@ -86,9 +86,14 @@ export function serializarCanonico(valor: unknown): string {
   return JSON.stringify(canonizar(valor))
 }
 
+/** SHA-256 (hex) de uma string já serializada — usado para VERIFICAR bytes preservados. */
+export function sha256Texto(texto: string): string {
+  return createHash("sha256").update(texto, "utf8").digest("hex")
+}
+
 /** SHA-256 (hex) da forma canônica. Mesma informação ⇒ mesmo hash, sempre. */
 export function hashCanonico(valor: unknown): string {
-  return createHash("sha256").update(serializarCanonico(valor), "utf8").digest("hex")
+  return sha256Texto(serializarCanonico(valor))
 }
 
 /**

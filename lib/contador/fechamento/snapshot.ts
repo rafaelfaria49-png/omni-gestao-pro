@@ -25,9 +25,33 @@
 import { formatCompetencia, type Competencia } from "@/lib/contador/competencia"
 import type { ContadorDadosReais, DisponibilidadeDado } from "@/lib/contador/readers/tipos"
 import type { ChecklistFechamento } from "./tipos"
-import { hashCanonico, normalizarDecimal, ordenarPorChave, pseudonimoAtor } from "./canonico"
+import {
+  hashCanonico,
+  normalizarDecimal,
+  ordenarPorChave,
+  pseudonimoAtor,
+  serializarCanonico,
+  sha256Texto,
+} from "./canonico"
 
-export const SNAPSHOT_SCHEMA = "omni.contador.fechamento.snapshot/v1" as const
+/**
+ * v2 (GOAL 012A) — mudou por DUAS razões estruturais, não cosméticas:
+ *
+ *  1. **Quebra do ciclo de hashes.** Na v1 o snapshot continha `pacote.manifestoHash`.
+ *     Como o snapshot agora vive DENTRO do pacote (`00-FECHAMENTO/snapshot.json`), o
+ *     manifesto passa a listar o hash do snapshot — se o snapshot também dependesse do
+ *     manifesto, nenhum dos dois poderia ser calculado. O snapshot ficou com os FATOS
+ *     CONTÁBEIS; os metadados do pacote (versão, manifestoHash, bytes, arquivos) vivem
+ *     no `ContadorPacote` e no evento. Dependência é unidirecional: manifesto → snapshot.
+ *  2. **Privacidade do pacote.** `assertPacoteSeguro` proíbe o `storeId` em qualquer
+ *     arquivo que não seja o `manifest.json` (regra do 008B). O snapshot perdeu
+ *     `competencia.storeId` — que já é redundante: está no manifesto e na própria linha
+ *     `ContadorCompetencia`.
+ */
+export const SNAPSHOT_SCHEMA = "omni.contador.fechamento.snapshot/v2" as const
+
+/** Caminho canônico do snapshot dentro do pacote versionado. */
+export const SNAPSHOT_CAMINHO_PACOTE = "00-FECHAMENTO/snapshot.json" as const
 
 /* ───────────────────────────── formato ───────────────────────────── */
 
@@ -53,7 +77,8 @@ export type ContagemDocumentosSnapshot = Readonly<{
 
 export type SnapshotFechamentoV1 = Readonly<{
   schemaVersion: typeof SNAPSHOT_SCHEMA
-  competencia: Readonly<{ storeId: string; ano: number; mes: number; codigo: string }>
+  /** Sem `storeId`: o pacote só admite storeId no `manifest.json` (regra do 008B). */
+  competencia: Readonly<{ ano: number; mes: number; codigo: string }>
   versao: number
   fechadaEm: string
   /** Pseudônimo do responsável — nunca nome/e-mail (G2-05). */
@@ -67,8 +92,6 @@ export type SnapshotFechamentoV1 = Readonly<{
   /** Ids das pendências assumidas, ordenados e deduplicados. */
   pendenciasAssumidas: readonly string[]
   documentos: ContagemDocumentosSnapshot
-  /** Integridade do pacote oficial desta versão. Sem storageRef, sem URL. */
-  pacote: Readonly<{ versao: number; manifestoHash: string; bytes: number; arquivos: number }>
 }>
 
 /* ───────────────────────────── totais ───────────────────────────── */
@@ -144,7 +167,6 @@ function ordenarChaves(r: Record<string, number>): Record<string, number> {
 /* ───────────────────────────── montagem ───────────────────────────── */
 
 export type MontarSnapshotInput = Readonly<{
-  storeId: string
   competencia: Competencia
   versao: number
   fechadaEm: Date
@@ -153,7 +175,6 @@ export type MontarSnapshotInput = Readonly<{
   checklist: ChecklistFechamento
   pendenciasAssumidas: readonly string[]
   documentos: readonly DocumentoParaSnapshot[]
-  pacote: Readonly<{ versao: number; manifestoHash: string; bytes: number; arquivos: number }>
 }>
 
 /** Monta o snapshot v1. Determinístico: mesma entrada ⇒ mesmo objeto ⇒ mesmo hash. */
@@ -166,7 +187,6 @@ export function montarSnapshot(input: MontarSnapshotInput): SnapshotFechamentoV1
   return Object.freeze({
     schemaVersion: SNAPSHOT_SCHEMA,
     competencia: Object.freeze({
-      storeId: input.storeId,
       ano: input.competencia.ano,
       mes: input.competencia.mes,
       codigo: formatCompetencia(input.competencia),
@@ -181,11 +201,43 @@ export function montarSnapshot(input: MontarSnapshotInput): SnapshotFechamentoV1
     }),
     pendenciasAssumidas: Object.freeze(pendencias),
     documentos: contarDocumentos(input.documentos),
-    pacote: Object.freeze({ ...input.pacote }),
   })
 }
 
-/** Hash oficial do snapshot — SHA-256 do JSON canônico. */
+/**
+ * Bytes EXATOS do `00-FECHAMENTO/snapshot.json` dentro do pacote.
+ *
+ * É o JSON canônico puro — **sem** quebra de linha final e **sem** indentação. Essa
+ * escolha é o que torna a verificação trivial e à prova de ambiguidade:
+ *
+ *     sha256(bytes do arquivo no ZIP) === snapshotHash === ContadorPacoteItem.sha256
+ *
+ * Qualquer "embelezamento" (indentar, acrescentar `\n`) quebraria essa igualdade e
+ * transformaria a verificação num exercício de adivinhar a serialização original.
+ */
+export function serializarSnapshotParaPacote(snapshot: SnapshotFechamentoV1): string {
+  return serializarCanonico(snapshot)
+}
+
+/** Hash oficial do snapshot — SHA-256 do JSON canônico (= sha256 do arquivo no pacote). */
 export function hashSnapshot(snapshot: SnapshotFechamentoV1): string {
   return hashCanonico(snapshot)
+}
+
+/**
+ * Reconstrói e VERIFICA um snapshot a partir dos bytes preservados no pacote.
+ * Devolve `null` quando o conteúdo não corresponde ao hash esperado — prova de
+ * adulteração ou de versão de serialização divergente.
+ */
+export function verificarSnapshotDoPacote(
+  conteudo: string,
+  hashEsperado: string,
+): SnapshotFechamentoV1 | null {
+  const bruto = sha256Texto(conteudo)
+  if (bruto !== hashEsperado) return null
+  try {
+    return JSON.parse(conteudo) as SnapshotFechamentoV1
+  } catch {
+    return null
+  }
 }

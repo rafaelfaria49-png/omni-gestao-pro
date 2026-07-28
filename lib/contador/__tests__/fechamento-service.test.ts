@@ -31,10 +31,15 @@ import {
   type StoragePacotePort,
 } from "@/lib/contador/fechamento/service"
 import { autorizarDownloadPacote, compararVersoes } from "@/lib/contador/pacote/versoes"
+import { sha256Texto } from "@/lib/contador/fechamento/canonico"
+import {
+  SNAPSHOT_CAMINHO_PACOTE,
+  verificarSnapshotDoPacote,
+} from "@/lib/contador/fechamento/snapshot"
 import type { ContadorScopeInterno } from "@/lib/contador/scope-core"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
 import type { ChecklistFechamento } from "@/lib/contador/fechamento/tipos"
-import type { PacoteContador } from "@/lib/contador/pacote/tipos"
+import type { ArquivoPacote, PacoteContador } from "@/lib/contador/pacote/tipos"
 
 /* ─────────────────────────── fixtures de domínio ─────────────────────────── */
 
@@ -118,15 +123,37 @@ type OpcoesPacote = {
   falhar?: boolean
 }
 
-function fakePacotePort(opts: OpcoesPacote = {}): PacotePort & { chamadas: number } {
+function fakePacotePort(
+  opts: OpcoesPacote = {},
+): PacotePort & { chamadas: number; ultimoConteudo: Map<string, string> } {
   const port = {
     chamadas: 0,
-    async gerar(): Promise<PacoteContador> {
+    ultimoConteudo: new Map<string, string>(),
+    async gerar(input: Parameters<PacotePort["gerar"]>[0]): Promise<PacoteContador> {
       port.chamadas += 1
       if (opts.falhar) throw new Error("falha simulada ao gerar o pacote")
-      const arquivos = opts.arquivos ?? [
-        { caminho: "01-VENDAS/vendas.csv", bytes: 100, sha256: "a".repeat(64), fonte: "vendas" },
-        { caminho: "00-LEIA-ME/indice.md", bytes: 50, sha256: "b".repeat(64), fonte: "indice" },
+      const dadosGerados = dados(opts.vendasTotal)
+      const checklistGerado = checklist(opts.checklistItens ?? [{ id: "vendas", estado: "ok" }])
+
+      // Espelha o builder real: os extras entram ANTES do manifesto e são descritos
+      // nele (caminho + sha256 dos bytes), fechando a cadeia acíclica.
+      const extras = input.montarExtras?.({ dados: dadosGerados, checklist: checklistGerado })
+      const arquivosExtra: readonly ArquivoPacote[] = extras?.arquivos ?? []
+      const extrasDescritos = arquivosExtra.map((a) => ({
+        caminho: a.caminho,
+        bytes: Buffer.byteLength(a.conteudo, "utf8"),
+        sha256: sha256Texto(a.conteudo),
+        fonte: a.fonte,
+      }))
+      // Guardado para o teste inspecionar os bytes preservados no "ZIP".
+      port.ultimoConteudo = new Map(arquivosExtra.map((a) => [a.caminho, a.conteudo]))
+
+      const arquivos = [
+        ...(opts.arquivos ?? [
+          { caminho: "01-VENDAS/vendas.csv", bytes: 100, sha256: "a".repeat(64), fonte: "vendas" },
+          { caminho: "00-LEIA-ME/indice.md", bytes: 50, sha256: "b".repeat(64), fonte: "indice" },
+        ]),
+        ...extrasDescritos,
       ]
       return {
         nomeArquivo: "pacote.zip",
@@ -148,9 +175,10 @@ function fakePacotePort(opts: OpcoesPacote = {}): PacotePort & { chamadas: numbe
           pendencias: [],
           itensNaoDisponiveis: [],
           avisos: [],
+          ...(extras?.snapshotHash ? { snapshotHash: extras.snapshotHash } : {}),
         },
-        dados: dados(opts.vendasTotal),
-        checklist: checklist(opts.checklistItens ?? [{ id: "vendas", estado: "ok" }]),
+        dados: dadosGerados,
+        checklist: checklistGerado,
         metricas: {
           bytesZip: 4,
           bytesDescompactados: 150,
@@ -219,6 +247,8 @@ type FakeDb = FechamentoDbClient & {
   transacoes: number
   falharEvento: boolean
   falharPacote: boolean
+  /** Parâmetros de cada `SELECT … FOR UPDATE` pedido (prova do lock). */
+  locks: string[]
 }
 
 function clonar(e: Estado): Estado {
@@ -272,7 +302,9 @@ function fakeDb(estadoInicial: Partial<Estado> = {}): FakeDb {
     transacoes: 0,
     falharEvento: false,
     falharPacote: false,
-  } as FakeDb
+    locks: [],
+    // Os métodos do cliente são acoplados logo abaixo (Object.assign(db, ops)).
+  } as unknown as FakeDb
 
   let seq = 0
   const ops: FechamentoTxClient = {
@@ -367,6 +399,15 @@ function fakeDb(estadoInicial: Partial<Estado> = {}): FakeDb {
         return achado ? { id: "ev-existente" } : null
       },
     },
+    // Lock de linha do dedupe. No fake, a serialização das transações (fila abaixo) já
+    // é o equivalente ao `FOR UPDATE`; aqui só registramos que o lock foi pedido, para
+    // o teste provar que o caminho passa por ele.
+    async $queryRaw(query: TemplateStringsArray, ...values: unknown[]) {
+      db.locks.push(values.map(String).join("|"))
+      const sql = query.join("?")
+      if (!/FOR UPDATE/i.test(sql)) throw new Error("lock esperado com FOR UPDATE")
+      return [] as unknown as never
+    },
   }
 
   Object.assign(db, ops)
@@ -441,8 +482,11 @@ describe("fechamento · caminho oficial", () => {
     const { db, deps } = montar({}, { arquivos })
     await fecharCompetencia(SCOPE_A, ELEVADO, COMP, { confirmacao: CODIGO }, deps, AGORA)
 
-    expect(db.estado.itens).toHaveLength(3)
-    expect(db.estado.itens.map((i) => i.caminho).sort()).toEqual(arquivos.map((a) => a.caminho).sort())
+    // 3 arquivos do pacote + o snapshot do fechamento (GOAL 012A).
+    expect(db.estado.itens).toHaveLength(4)
+    expect(db.estado.itens.map((i) => i.caminho).sort()).toEqual(
+      [...arquivos.map((a) => a.caminho), SNAPSHOT_CAMINHO_PACOTE].sort(),
+    )
     expect(db.estado.itens.every((i) => i.pacoteId === db.estado.pacotes[0].id)).toBe(true)
   })
 
@@ -746,8 +790,13 @@ describe("refechamento", () => {
     expect(diff.resumo.identicos).toBe(false)
     expect(diff.adicionados.map((a) => a.caminho)).toEqual(["so-na-v2.csv"])
     expect(diff.removidos.map((a) => a.caminho)).toEqual(["so-na-v1.csv"])
-    expect(diff.alterados.map((a) => a.caminho)).toEqual(["01-VENDAS/vendas.csv"])
-    expect(diff.alterados[0].deltaBytes).toBe(2)
+    // O snapshot também muda entre versões — é justamente o que prova que cada versão
+    // carrega o SEU próprio snapshot, e não uma cópia da anterior.
+    expect(diff.alterados.map((a) => a.caminho).sort()).toEqual([
+      SNAPSHOT_CAMINHO_PACOTE,
+      "01-VENDAS/vendas.csv",
+    ])
+    expect(diff.alterados.find((a) => a.caminho === "01-VENDAS/vendas.csv")!.deltaBytes).toBe(2)
   })
 })
 
