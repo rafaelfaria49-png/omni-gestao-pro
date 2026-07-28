@@ -208,6 +208,46 @@ Nenhuma linha de competência real foi tocada — antes do teste o domínio Cont
 5. **Paginação da timeline.** Limite de 200 (máx. 500) por competência, sem cursor. Suficiente para o volume mensal esperado; revisar se alguma loja passar disso.
 6. **ADR-005.** A pendência "quem marca `conferido`" está resolvida aqui (§3). A outra — critério de "enviar" a competência inteira — continua aberta e pertence ao GOAL 012.
 
-## 14. Classificação final
+## 14. Pendências da revisão
+
+Levantadas na auditoria read-only do commit `1f1190a` (veredito **APROVADO COM RESSALVAS**).
+Nenhuma foi corrigida neste GOAL — escopo fechado.
+
+### Bloqueante do portal externo
+
+1. **Filtrar também os eventos da timeline no contexto `compartilhado`.**
+   `montarTimeline` (`lib/contador/timeline/projecao.ts`) corta por visibilidade apenas os
+   **comentários**; os `ContadorEvento` são projetados integralmente em qualquer contexto. Hoje o
+   impacto é nulo — o único consumidor é o HUB interno atrás de `requireContadorScope`, e
+   `contexto` só reduz o que o próprio usuário autorizado já pode ver. Mas a projeção é o contrato
+   declarado do portal externo; **este item bloqueia a integração do GOAL 015**, sob pena de expor
+   ao contador externo a trilha interna completa (`documento_excluido`,
+   `documento_download_autorizado`, `status_alterado`, `atorId` de usuários internos).
+
+### Para o GOAL 012 (fechamento)
+
+2. **Impedir criação de comentários quando a competência estiver `FECHADA`.**
+   `criarComentario` (`lib/contador/comentarios/service.ts`) lê `competencia.status` e nunca o
+   compara com `FECHADA`, enquanto a transição de status e o upload/substituição de documento já
+   bloqueiam com 409. Sem impacto hoje (nada marca `FECHADA` ainda); vira real quando o GOAL 012
+   introduzir o fechamento.
+
+### Melhorias não bloqueantes
+
+3. **Validar o documento antes de materializar a competência.** `criarComentario` chama
+   `getOrCreateCompetencia` antes de checar a posse de `documentoId`: uma requisição que termina
+   em 404 já gravou competência + evento `competencia_criada`.
+4. **Não truncar o motivo silenciosamente.** `normalizarMotivo` corta a rejeição em 2.000
+   caracteres sem avisar, enquanto `textoOuErro` recusa com 422 acima de 4.000.
+5. **Centralizar chaves proibidas e normalizadores duplicados.** As três rotas declaram listas
+   `CHAVES_PROIBIDAS` divergentes (defesa em profundidade — nenhuma dessas chaves é lida pelos
+   serviços); `normalizarVisibilidade` e `normalizarLimite` existem em duas cópias cada.
+6. **Atualizar as contagens de testes documentadas.** O §9 registra 478 testes na suíte do
+   Contador (real: **488**) e atribui a instabilidade da suíte completa a um único arquivo — na
+   verificação independente, **3** arquivos de guarda estouraram o timeout padrão de 5 s sob carga
+   paralela (mesma causa: varredura síncrona do repositório). Com `--testTimeout=60000` a suíte
+   completa fica **100% verde** (235 arquivos, 3.369 testes).
+
+## 15. Classificação final
 
 **Classe A — pronto para revisão humana e fast-forward.** Escopo fechado, sem alteração de schema, sem acesso a produção, verificações completas (TS, ESLint, build, 478 testes do Contador, validação manual em banco não produtivo) e trilha append-only preservada.

@@ -8,7 +8,7 @@
 
 ---
 
-## Contador HUB — Gate G2 APROVADO · Fase 0–1 concluída (GOALs 001–008 em main) · 19/07/2026
+## Contador HUB — Gate G2 APROVADO · Fase 0–2 (GOALs 001–011 em main) · 28/07/2026
 
 > **Gate G2 aprovado por Rafael em 2026-07-19.** ADRs 001, 003, 004, 005, 006 marcadas como **Accepted** em [`CONTADOR_HUB_ADRS_PROPOSTOS_001.md`](../contador/CONTADOR_HUB_ADRS_PROPOSTOS_001.md) com data e emendas. Ajuste **G2-05 (PII)**: CPF, nome, telefone, e-mail, endereço, IMEI e observações **não incluídos por padrão** no domínio/eventos/pacote; **sem toggle automático no GOAL 009**; inclusão futura exige decisão explícita + permissão `p.hubs.contador` + justificativa + auditoria. Storage principal: **Supabase Storage** (alternativa: Vercel Blob; escolha física final no GOAL 010). Permissão dedicada `p.hubs.contador` aprovada para criação futura (antes do GOAL 010). **GOAL 009 somente após publicação validada deste fechamento em main.**
 
@@ -22,10 +22,13 @@
 | Checklist de fechamento derivado · "Fechar" desabilitado | ✅ real (RO) | `lib/contador/fechamento/montar-checklist.ts` (GOAL 007) |
 | Pacote MVP sob demanda (ZIP + CSVs + manifesto v1 + sha256) · sem persistência | ✅ real (MVP) | `app/api/contador/pacote/route.ts` (GOAL 008) |
 | Documentos reais · upload privado Supabase (intent→PUT assinado→complete) · SHA-256 server · download assinado ≤300s · substituição versionada · soft delete · eventos | ✅ real | `lib/contador/documentos/*`, `app/api/contador/documentos/*`, `components/dashboard/contador/documentos/*` (GOAL 010) · permissão `hubs.contador` · requer bucket+secrets externos (`scripts/contador/setup-storage.mjs`) |
-| Domínio persistido (Competencia, Documento, Pacote, Comentario, Evento) | ❌ não existe | nenhum model `Contador*` no schema — GOAL 009 pendente |
-| Fechamento oficial com snapshot + versão | ❌ não existe | GOAL 012 pendente |
-| Portal externo v2 | ❌ não existe | GOALs 013–015 pendentes (G3) |
-| Obrigações, Guias, Timeline, Permissões (UI) | 🟡 preview | aguardam GOALs 011–016 |
+| Domínio persistido (Competencia, Documento, Comentario, Evento) | ✅ real | models `Contador*` no schema · **migration 0014** aplicada (GOAL 009) |
+| Status do documento · máquina persistida com 5 transições · `conferido`/`resolvido` exigem papel financeiro ou administrador · rejeição com motivo obrigatório · `vencido` **derivado** (nunca persistido) | ✅ real | `lib/contador/status/*`, `app/api/contador/status` (GOAL 011) |
+| Comentários `interna` × `compartilhada` por competência e por documento · corte de visibilidade na consulta e na projeção | ✅ real | `lib/contador/comentarios/*`, `app/api/contador/comentarios` (GOAL 011) |
+| Timeline / atividade · projeção read-only de `ContadorEvento` + `ContadorComentario` · DTO com allowlist de metadata | ✅ real | `lib/contador/timeline/*`, `app/api/contador/timeline`, `components/dashboard/contador/timeline/*` (GOAL 011) |
+| Fechamento oficial com snapshot + versão | ❌ não existe | GOAL 012 pendente — competência `FECHADA` já bloqueia transição de status (409) |
+| Portal externo v2 | ❌ não existe | GOALs 013–015 pendentes (G3) — comentários `compartilhada` prontos, **sem consumidor externo** |
+| Obrigações, Dossiês, Folha, Portal, Permissões, Configurações (UI) + cartões ilustrativos da Visão Geral | 🟡 preview | seguem rotuladas como Preview — aguardam GOALs 012–016 |
 
 ### Planejamento (série 001 — publicada em `docs/contador/`)
 
@@ -34,8 +37,11 @@
 - [`CONTADOR_HUB_COMMANDS_001.md`](../contador/CONTADOR_HUB_COMMANDS_001.md) — comandos prontos (1 por GOAL).
 - [`CONTADOR_HUB_ADRS_PROPOSTOS_001.md`](../contador/CONTADOR_HUB_ADRS_PROPOSTOS_001.md) — 8 ADRs (001/003/004/005/006 Accepted; 002/007/008 Proposed).
 - [`CONTADOR_HUB_DADOS_REAIS_READONLY_006.md`](../contador/CONTADOR_HUB_DADOS_REAIS_READONLY_006.md) — closure do GOAL 006.
+- [`CONTADOR_HUB_STATUS_COMENTARIOS_011.md`](../contador/CONTADOR_HUB_STATUS_COMENTARIOS_011.md) — closure do GOAL 011 (inclui **Pendências da revisão**).
 
-**Próximo:** GOAL 009 (migration núcleo aditiva) após publicação validada deste PR. Gates seguintes: **G3** após GOAL 013 (portal v2 + ADRs 002/008); **G4** antes do GOAL 019 (retirada do legado); ADR-007 antes do GOAL 018 (fiscal).
+**Próximo:** GOAL 012 (fechamento com snapshot); «Fechar competência» segue desabilitado. Gates seguintes: **G3** após GOAL 013 (portal v2 + ADRs 002/008); **G4** antes do GOAL 019 (retirada do legado); ADR-007 antes do GOAL 018 (fiscal).
+
+> **Ressalva de revisão (GOAL 011):** antes de integrar o portal externo (GOAL 015) é obrigatório filtrar também os **eventos** da timeline no contexto `compartilhado` — hoje só os comentários são cortados. Detalhe e demais pendências no documento de closure do GOAL 011.
 
 ---
 
