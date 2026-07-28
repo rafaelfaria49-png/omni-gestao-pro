@@ -52,16 +52,16 @@ import {
   RelatoriosReal,
   ContadorRealIndisponivel,
 } from "./contador-dados-reais"
-import {
-  ContadorFechamentoChecklist,
-  FECHAR_COMPETENCIA_TITLE,
-} from "./contador-fechamento-checklist"
+// GOAL 012: `FECHAR_COMPETENCIA_TITLE` (título do CTA desabilitado do GOAL 007) deixou
+// de ser importado — o fechamento agora é real e o botão vive em ContadorFechamentoReal.
+import { ContadorFechamentoChecklist } from "./contador-fechamento-checklist"
 import {
   ContadorPacoteDownload,
   PACOTE_INDISPONIVEL_TITLE,
   usePacoteDownload,
 } from "./contador-pacote-download"
 import { ContadorDocumentosReal } from "./documentos/contador-documentos-real"
+import { ContadorFechamentoReal } from "./fechamento/contador-fechamento-real"
 import { ContadorTimelineReal } from "./timeline/contador-timeline-real"
 import {
   CONTADOR_SECTIONS,
@@ -496,29 +496,10 @@ export function ContadorHubPreview({
   )
 
   /* ── seção: Fechamento (GOAL 007 — checklist derivado, somente leitura) ── */
+  /* ── seção: Fechamento (REAL — GOAL 012: snapshot, pacote versionado, reabertura) ── */
   const renderFechamento = () => (
     <>
-      <SectionHeader
-        title="Fechamento mensal"
-        desc={
-          <>
-            Sinais reais da competência de <b className="text-foreground">{compShort}</b>, derivados
-            do DTO já carregado.{" "}
-            <span className="text-amber-600 dark:text-amber-400">
-              Não é fechamento oficial — sem snapshot e sem trava.
-            </span>
-          </>
-        }
-        actions={
-          <Btn disabled title={FECHAR_COMPETENCIA_TITLE} onClick={() => noop("Fechar competência")}>
-            Fechar competência · GOAL 012
-          </Btn>
-        }
-      />
-      <PreviewBanner
-        title="Checklist derivado — o fechamento não é executado pelo sistema."
-        text="Cada item reflete um sinal real da competência (ou a ausência honesta de evidência). O botão «Fechar competência» permanece desabilitado: o fechamento real com snapshot será o GOAL 012."
-      />
+      <ContadorFechamentoReal competencia={competencia} checklist={checklistFechamento} />
       <div className="mt-4">
         <ContadorFechamentoChecklist checklist={checklistFechamento} />
       </div>
