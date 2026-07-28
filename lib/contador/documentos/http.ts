@@ -7,8 +7,9 @@
  */
 import { NextResponse } from "next/server"
 import type { FalhaEscopoContador } from "@/lib/contador/scope-core"
-import { StorageConfigError } from "./config"
+import { StorageConfigError, StorageProviderError } from "./config"
 import { StorageError } from "./storage-types"
+import { UploadIntentInvalidoError, UploadIntentSegredoError } from "./intent"
 import { DocumentoValidacaoError } from "./validacao"
 import {
   CompetenciaFechadaError,
@@ -52,7 +53,18 @@ export function respostaErro(e: unknown): NextResponse {
   if (e instanceof DocumentoNaoEncontradoError) {
     return NextResponse.json({ ok: false, mensagem: e.message }, { status: 404 })
   }
-  if (e instanceof StorageConfigError) {
+  // Autorização de upload ausente/adulterada/expirada: 403. `motivo` é um rótulo
+  // curto e não-sensível (nunca ecoa o token nem o path pretendido).
+  if (e instanceof UploadIntentInvalidoError) {
+    return NextResponse.json({ ok: false, motivo: e.motivo, mensagem: e.message }, { status: 403 })
+  }
+  // Provider não declarado/indevido e segredo de assinatura ausente são falhas de
+  // configuração do servidor — mesma classe do StorageConfigError, nunca 500 mudo.
+  if (
+    e instanceof StorageConfigError ||
+    e instanceof StorageProviderError ||
+    e instanceof UploadIntentSegredoError
+  ) {
     return NextResponse.json(
       { ok: false, mensagem: "Armazenamento de documentos indisponível. Configuração externa pendente." },
       { status: 503 },

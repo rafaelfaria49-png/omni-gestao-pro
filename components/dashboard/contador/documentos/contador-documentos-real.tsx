@@ -129,19 +129,33 @@ function putComProgresso(
   url: string,
   file: File,
   mime: string,
+  headersObrigatorios: Record<string, string>,
   onProgress: (frac: number) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open("PUT", url)
     xhr.setRequestHeader("content-type", mime)
+    // Headers que fazem parte da ASSINATURA da URL (ex.: `If-None-Match: *`, que dá
+    // criação exclusiva). Omitir qualquer um deles quebra a SigV4 e o storage responde
+    // 403 — por isso são repassados verbatim, sem o cliente reinterpretar.
+    for (const [nome, valor] of Object.entries(headersObrigatorios ?? {})) {
+      xhr.setRequestHeader(nome, valor)
+    }
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total)
     }
-    xhr.onload = () =>
-      xhr.status >= 200 && xhr.status < 300
-        ? resolve()
-        : reject(new Error(`Falha no envio ao storage (${xhr.status}).`))
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve()
+      // 412 = o objeto já existe. A URL assinada é de criação exclusiva, então este
+      // é o caso "reenvio do mesmo intent", não uma falha de rede genérica.
+      if (xhr.status === 412) {
+        return reject(
+          new Error("Este arquivo já foi enviado para esta autorização. Reinicie o envio."),
+        )
+      }
+      reject(new Error(`Falha no envio ao storage (${xhr.status}).`))
+    }
     xhr.onerror = () => reject(new Error("Falha de rede no envio ao storage."))
     xhr.send(file)
   })
@@ -437,19 +451,40 @@ function UploadModal({
         documentoId: string
         storageRef: string
         signedUrl: string
+        uploadIntent: string
+        headersObrigatorios?: Record<string, string>
+        nomeSanitizado: string
       }
 
       setFase("enviando")
-      await putComProgresso(intent.signedUrl, file, mime, setProgresso)
+      await putComProgresso(
+        intent.signedUrl,
+        file,
+        mime,
+        intent.headersObrigatorios ?? {},
+        setProgresso,
+      )
 
       setFase("confirmando")
       const completeRes = await fetch("/api/contador/documentos/complete", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          ...corpoIntent,
+          // A autorização assinada é o que o servidor usa; os campos vinculados vão
+          // junto só para serem CONFERIDOS contra ela. `titulo`/`vencimento` seguem
+          // editáveis até a confirmação.
+          uploadIntent: intent.uploadIntent,
+          titulo: corpoIntent.titulo,
+          vencimento: corpoIntent.vencimento,
           documentoId: intent.documentoId,
           storageRef: intent.storageRef,
+          competencia: corpoIntent.competencia,
+          categoria: corpoIntent.categoria,
+          nomeArquivo: intent.nomeSanitizado,
+          mime: corpoIntent.mime,
+          bytes: corpoIntent.bytes,
+          sha256: corpoIntent.sha256,
+          versaoDeId: corpoIntent.versaoDeId,
         }),
       })
       if (!completeRes.ok) throw new Error(await lerErro(completeRes))

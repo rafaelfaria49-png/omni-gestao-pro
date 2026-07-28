@@ -24,6 +24,15 @@ export type UploadAssinado = Readonly<{
   token: string
   /** Validade da autorização de upload, em segundos. */
   expiresInSec: number
+  /**
+   * Headers que o cliente é OBRIGADO a enviar no PUT (GOAL 012E · P2).
+   *
+   * Estes headers entram no `X-Amz-SignedHeaders` da URL assinada — eles fazem parte
+   * do que foi assinado. Omitir, acrescentar ou alterar qualquer um deles quebra a
+   * verificação SigV4 e o storage responde 403. Não é uma convenção que o cliente
+   * possa ignorar: é criptograficamente exigido.
+   */
+  headersObrigatorios: Readonly<Record<string, string>>
 }>
 
 /** URL assinada de download (attachment) de curta duração. */
@@ -55,7 +64,19 @@ export type BucketEstado = Readonly<{
 export interface StorageDocumentosPort {
   /** Verifica existência e visibilidade do bucket (nunca cria). */
   verificarBucket(): Promise<BucketEstado>
-  /** Cria a autorização assinada de upload direto para `storageRef`. `upsert` desabilitado. */
+  /**
+   * Cria a autorização assinada de upload direto para `storageRef`, com CRIAÇÃO
+   * EXCLUSIVA (GOAL 012E · P2).
+   *
+   * O adapter deve garantir — pelo protocolo, não por convenção — que a URL grave o
+   * objeto no máximo UMA vez: o primeiro PUT cria, qualquer PUT seguinte no mesmo path
+   * é recusado pelo storage, mesmo que a URL ainda esteja dentro da validade. No R2
+   * isso é `If-None-Match: *` (escrita condicional da API S3-compatible), devolvido em
+   * `headersObrigatorios` e coberto pela assinatura; a violação vira 412.
+   *
+   * O contrato NÃO se apoia em "upsert desabilitado" como afirmação — a garantia é
+   * verificável no header assinado.
+   */
   criarUploadAssinado(storageRef: string, expiresInSec?: number): Promise<UploadAssinado>
   /**
    * Upload SERVER-SIDE de conteúdo já em memória (GOAL 012 — ZIP do pacote oficial).

@@ -75,6 +75,13 @@ export const storageSupabase: StorageDocumentosPort = {
     }
   },
 
+  /**
+   * Criação exclusiva no legado: `upsert: false` faz o próprio Supabase recusar o
+   * upload quando o objeto já existe — a exclusividade está amarrada ao TOKEN emitido,
+   * não a um header que o cliente precise repetir. Por isso `headersObrigatorios` é
+   * vazio aqui, e isso NÃO é "sem proteção": é a mesma garantia obtida por outro
+   * mecanismo (no R2 ela vem de `If-None-Match: *` assinado — ver `storage-r2.ts`).
+   */
   async criarUploadAssinado(storageRef, expiresInSec = UPLOAD_EXPIRACAO_SEG): Promise<UploadAssinado> {
     const { client, bucket } = resolverCliente()
     try {
@@ -87,6 +94,7 @@ export const storageSupabase: StorageDocumentosPort = {
         signedUrl: data.signedUrl,
         token: data.token,
         expiresInSec,
+        headersObrigatorios: Object.freeze({}),
       })
     } catch (e) {
       if (e instanceof StorageError) throw e

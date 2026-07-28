@@ -75,7 +75,7 @@ export type ContagemDocumentosSnapshot = Readonly<{
   porStatus: Readonly<Record<string, number>>
 }>
 
-export type SnapshotFechamentoV1 = Readonly<{
+export type SnapshotFechamentoV2 = Readonly<{
   schemaVersion: typeof SNAPSHOT_SCHEMA
   /** Sem `storeId`: o pacote só admite storeId no `manifest.json` (regra do 008B). */
   competencia: Readonly<{ ano: number; mes: number; codigo: string }>
@@ -177,8 +177,8 @@ export type MontarSnapshotInput = Readonly<{
   documentos: readonly DocumentoParaSnapshot[]
 }>
 
-/** Monta o snapshot v1. Determinístico: mesma entrada ⇒ mesmo objeto ⇒ mesmo hash. */
-export function montarSnapshot(input: MontarSnapshotInput): SnapshotFechamentoV1 {
+/** Monta o snapshot v2. Determinístico: mesma entrada ⇒ mesmo objeto ⇒ mesmo hash. */
+export function montarSnapshot(input: MontarSnapshotInput): SnapshotFechamentoV2 {
   const itens = ordenarPorChave(input.checklist.itens, (i) => i.id).map((i) =>
     Object.freeze({ id: i.id, estado: i.estado }),
   )
@@ -215,12 +215,12 @@ export function montarSnapshot(input: MontarSnapshotInput): SnapshotFechamentoV1
  * Qualquer "embelezamento" (indentar, acrescentar `\n`) quebraria essa igualdade e
  * transformaria a verificação num exercício de adivinhar a serialização original.
  */
-export function serializarSnapshotParaPacote(snapshot: SnapshotFechamentoV1): string {
+export function serializarSnapshotParaPacote(snapshot: SnapshotFechamentoV2): string {
   return serializarCanonico(snapshot)
 }
 
 /** Hash oficial do snapshot — SHA-256 do JSON canônico (= sha256 do arquivo no pacote). */
-export function hashSnapshot(snapshot: SnapshotFechamentoV1): string {
+export function hashSnapshot(snapshot: SnapshotFechamentoV2): string {
   return hashCanonico(snapshot)
 }
 
@@ -232,11 +232,11 @@ export function hashSnapshot(snapshot: SnapshotFechamentoV1): string {
 export function verificarSnapshotDoPacote(
   conteudo: string,
   hashEsperado: string,
-): SnapshotFechamentoV1 | null {
+): SnapshotFechamentoV2 | null {
   const bruto = sha256Texto(conteudo)
   if (bruto !== hashEsperado) return null
   try {
-    return JSON.parse(conteudo) as SnapshotFechamentoV1
+    return JSON.parse(conteudo) as SnapshotFechamentoV2
   } catch {
     return null
   }

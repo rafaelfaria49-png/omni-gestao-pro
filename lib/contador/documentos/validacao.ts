@@ -291,15 +291,32 @@ export function montarStorageRef(params: {
 }
 
 /**
- * Confere que um `storageRef` recebido do cliente pertence a este storeId e
- * documentoId (defesa contra adulteração no passo de `complete`).
+ * Confere que um `storageRef` é EXATAMENTE o path canônico dos parâmetros dados.
+ *
+ * Substitui (GOAL 012E · P1) a checagem anterior por `startsWith`/`includes`, que era
+ * insegura: qualquer path que começasse com o prefixo da loja e contivesse o
+ * `documentoId` como segmento passava — inclusive o path de OUTRO documento, bastando
+ * escolher um `documentoId` que casasse com um segmento alheio (ex.: `2026-06`).
+ * Isso dava ao `complete` um alvo arbitrário para abrir e remover.
+ *
+ * Aqui não há prefixo nem substring: reconstrói-se o path canônico e compara-se por
+ * IGUALDADE ESTRITA. Um `storageRef` que não seja byte-a-byte o path esperado é falso.
  */
-export function storageRefPertence(
+export function storageRefCanonicoConfere(
   storageRef: string,
-  storeId: string,
-  documentoId: string,
+  params: {
+    storeId: string
+    aaaaMm: string
+    documentoId: string
+    nomeSanitizado: string
+  },
 ): boolean {
-  const storeSeg = sanitizarSegmentoPath(storeId, "storeId")
-  const docSeg = sanitizarSegmentoPath(documentoId, "documentoId")
-  return storageRef.startsWith(`contador/${storeSeg}/`) && storageRef.includes(`/${docSeg}/`)
+  let canonico: string
+  try {
+    canonico = montarStorageRef(params)
+  } catch {
+    // Parâmetros que nem montam path canônico jamais autorizam um ref.
+    return false
+  }
+  return storageRef === canonico
 }

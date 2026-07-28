@@ -2,7 +2,8 @@
  * Contador HUB · fechamento, reabertura e divergência (GOAL 012 · ADR-004/ADR-005).
  *
  * PURO em relação a IO: depende de três portas injetadas (`repo`, `pacote`, `storage`).
- * A implementação Prisma/Supabase vive em `repo-prisma.ts`; os testes injetam fakes com
+ * A implementação Prisma vive em `repo-prisma.ts` e o storage real é resolvido pelo
+ * gate de provider (`portas.ts`); os testes injetam fakes com
  * semântica real de transação e um storage in-memory — a atomicidade verificada é a do
  * código que vai para produção.
  *
@@ -22,6 +23,7 @@ import { randomUUID } from "node:crypto"
 import { formatCompetencia, type Competencia } from "@/lib/contador/competencia"
 import { serializarManifesto } from "@/lib/contador/pacote/manifest"
 import { sha256Hex } from "@/lib/contador/pacote/seguranca"
+import { sanitizarSegmentoPath } from "@/lib/contador/documentos/validacao"
 import type { MontarExtras } from "@/lib/contador/pacote/builder"
 import type { PacoteContador } from "@/lib/contador/pacote/tipos"
 import type { ContadorScopeInterno } from "@/lib/contador/scope-core"
@@ -35,7 +37,7 @@ import {
   serializarSnapshotParaPacote,
   SNAPSHOT_CAMINHO_PACOTE,
   type DocumentoParaSnapshot,
-  type SnapshotFechamentoV1,
+  type SnapshotFechamentoV2,
   type TotaisSnapshot,
 } from "./snapshot"
 import type { ChecklistFechamento } from "./tipos"
@@ -200,7 +202,7 @@ export type AplicarFechamentoArgs = Readonly<{
   /** Trava otimista: estado e versão esperados no momento da escrita. */
   statusEsperados: readonly string[]
   versaoEsperada: number
-  snapshot: SnapshotFechamentoV1
+  snapshot: SnapshotFechamentoV2
   snapshotHash: string
   fechadaEm: Date
   fechadaPorId: string
@@ -416,7 +418,7 @@ export async function fecharCompetencia(
   // como `00-FECHAMENTO/snapshot.json`. Ordem das dependências (acíclica):
   //   dados/checklist → snapshot → snapshot.json → manifesto → manifestoHash
   // O snapshot NUNCA lê o manifesto; por isso perdeu o bloco `pacote` da v1.
-  let snapshot: SnapshotFechamentoV1 | null = null
+  let snapshot: SnapshotFechamentoV2 | null = null
   let snapshotHash = ""
 
   const pacote = await deps.pacote.gerar({
@@ -638,7 +640,7 @@ export function avaliarDivergencia(
   totaisVivos: TotaisSnapshot,
 ): Divergencia | null {
   if (competencia.status !== STATUS_FECHADA) return null
-  const snap = competencia.snapshot as SnapshotFechamentoV1 | null
+  const snap = competencia.snapshot as SnapshotFechamentoV2 | null
   if (!snap || typeof snap !== "object" || !snap.totais) return null
   return compararTotais(snap.totais, totaisVivos)
 }
@@ -698,7 +700,12 @@ export function montarStorageRefPacote(
   versao: number,
   manifestoHash: string,
 ): string {
-  return `contador/${storeId}/${codigoCompetencia}/pacotes/v${versao}/${manifestoHash}.zip`
+  // `storeId` passa pelo MESMO saneamento do path de documento (GOAL 012E · P3).
+  // Antes ele era interpolado cru: um storeId com `/` ou `..` reposicionaria o pacote
+  // fora do namespace da loja — o caminho de documento já se defendia disso, o de
+  // pacote não. Agora as duas famílias de path usam a mesma regra.
+  const storeSeg = sanitizarSegmentoPath(storeId, "storeId")
+  return `contador/${storeSeg}/${codigoCompetencia}/pacotes/v${versao}/${manifestoHash}.zip`
 }
 
 function exigirConfirmacao(valor: unknown, esperado: string): void {

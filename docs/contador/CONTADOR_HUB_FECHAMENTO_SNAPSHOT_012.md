@@ -389,3 +389,40 @@ A ressalva é única e externa ao código: **a validação manual no Preview seg
 por credenciais de storage inexistentes** (§12.1). Enquanto o bucket e as três variáveis
 não forem provisionados, o fechamento não consegue materializar o pacote em nenhum
 ambiente — e essa é a única prova que os testes automatizados não conseguem substituir.
+
+---
+
+## 14. Correções de segurança pós-auditoria (GOAL 012E)
+
+Reaplicação da entrega 012/012A/012B/012C sobre a `origin/main` atual, com as
+correções P1/P2/P3 da auditoria independente. Detalhe completo do P1/P2 em
+`CONTADOR_HUB_STORAGE_PROVIDER_DECISION_012B.md` §13.
+
+### 14.1 O que mudou neste documento
+
+- **`SnapshotFechamentoV1` → `SnapshotFechamentoV2`** (P3). O tipo carregava `V1` no
+  nome enquanto `SNAPSHOT_SCHEMA` já era `omni.contador.fechamento.snapshot/v2` desde
+  o 012A. Renomeação pura, sem mudança de formato, hash ou bytes no pacote.
+- **`montarStorageRefPacote` sanea o `storeId`** (P3). O path do pacote interpolava o
+  `storeId` cru, enquanto o path de documento já passava por `sanitizarSegmentoPath`.
+  Um `storeId` com `/` ou `..` reposicionaria o ZIP fora do namespace da loja. As duas
+  famílias de path usam agora a mesma regra.
+- **Portas do fechamento passam pelo gate do provider** (P2). `portas.ts` não importa
+  mais `storage-r2` direto — resolve via `resolverStorageDocumentos()` a cada operação.
+  Provider ausente/inválido falha cerrado também no fechamento e no pacote.
+- **Campos errados em log** (P3): `pacote/download` gravava o **nome do arquivo** no
+  campo `competencia`; `fechamento/divergencia` gravava o valor **cru do cliente**.
+  Ambos passam a gravar a competência canônica já validada.
+
+### 14.2 O que NÃO mudou
+
+Formato do snapshot, serialização canônica, `snapshotHash`, manifesto, atomicidade
+`storage × transação`, congelamento e regra de reabertura seguem idênticos. Nenhuma
+mudança de schema Prisma, nenhum acesso a banco.
+
+### 14.3 Estado do provisionamento
+
+A ressalva de §13 continua valendo e ficou **mais restritiva**: além do bucket e das
+credenciais R2, `CONTADOR_STORAGE_PROVIDER=r2` passou a ser obrigatória (sem default).
+**O provisionamento do R2 segue bloqueado até a revisão deste patch** — nenhum bucket
+criado, nenhuma variável cadastrada, nenhum smoke externo executado.

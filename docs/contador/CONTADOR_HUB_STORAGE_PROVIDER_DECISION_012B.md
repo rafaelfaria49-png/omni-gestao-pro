@@ -721,3 +721,68 @@ Recomendação única e oficial: **Cloudflare R2** (S3-compatible).
 Próximo GOAL (implementação): `CONTADOR-HUB-STORAGE-R2-ADAPTER-013`.
 Próximo ponto de parada: **aprovação humana desta decisão** antes de qualquer
 linha de implementação.
+---
+
+## 13. Endurecimento pós-auditoria (GOAL 012E)
+
+Auditoria independente do 012C apontou P1/P2 antes do provisionamento do R2. As
+correções abaixo **alteram o contrato** descrito nas seções anteriores.
+
+### 13.1 P1 — o `complete` passou a exigir autorização assinada
+
+Até o 012C o `complete` confiava em `documentoId`, `storageRef` e metadados
+reenviados pelo cliente, e provava posse com `startsWith`/`includes`. Isso permitia
+apontar a confirmação para o blob de **outro documento** (bastava escolher um
+`documentoId` que casasse com qualquer segmento do path alheio, ex.: `2026-06`),
+fazendo o servidor **abrir** e — na falha de validação — **remover** esse blob.
+
+Agora o `upload-intent` emite um token HMAC-SHA256 expirado
+(`lib/contador/documentos/intent.ts`) que vincula no servidor: `storeId`, `userId`,
+`competencia`, `competenciaId`, `documentoId`, `storageRef`, nome sanitizado, MIME,
+bytes, SHA-256, categoria, `versaoDeId` e `exp`. O `complete`:
+
+- exige o intent e o valida (assinatura, schema, expiração, formato);
+- amarra `storeId`/`userId` do intent à sessão corrente;
+- **recusa** qualquer campo vinculado reenviado com valor diferente (não corrige);
+- reconstrói o path canônico e compara por **igualdade estrita** — `startsWith` e
+  `includes` deixaram de ser prova de posse (`storageRefPertence` foi substituída por
+  `storageRefCanonicoConfere`);
+- resolve idempotência apenas no repo, **sem tocar o storage**;
+- só então abre o conteúdo e, em falha, remove **somente** o objeto do intent.
+
+Token, URL assinada e segredo não são persistidos. A chave é derivada de
+`AUTH_SECRET` (ou de `CONTADOR_UPLOAD_INTENT_SECRET`, opcional) com separação de
+domínio por HMAC — nenhuma variável nova precisa ser provisionada.
+
+### 13.2 P2 — o PUT assinado não sobrescreve mais
+
+A afirmação "upsert desabilitado" do 012C não tinha lastro no R2: a URL presigned
+gravava quantas vezes fosse chamada dentro da validade. A escrita condicional da API
+S3-compatible do R2 (`If-None-Match: *` em `PutObject`, documentada como suportada;
+violação = `412 PreconditionFailed`) passou a ser emitida na assinatura.
+
+O que torna isso garantia e não convenção: o header entra no `X-Amz-SignedHeaders`
+da URL e **não** é hasteado para query string (verificado empiricamente —
+`host;if-none-match`). O cliente é obrigado a enviá-lo com o valor exato; omitir ou
+alterar quebra a SigV4 e o storage responde 403. O contrato devolve
+`headersObrigatorios` e o frontend o repassa verbatim.
+
+`enviarConteudoPrivado` (ZIP do pacote) **continua** sobrescrevendo de propósito: o
+path é endereçado por conteúdo (`…/{manifestoHash}.zip`), então reescrever é reescrever
+bytes idênticos — retry idempotente, não sobrescrita silenciosa.
+
+### 13.3 P2 — o gate do provider passou a ser produtivo
+
+`lerStorageProvider()` existia mas era decorativo: as rotas importavam `storageR2`
+direto, então declarar outro provider não mudava nada. Agora
+`lib/contador/documentos/storage.ts` (`resolverStorageDocumentos`) é o único ponto
+autorizado a devolver um adapter concreto, e nenhuma rota produtiva importa
+`storage-r2`/`storage-supabase`.
+
+`CONTADOR_STORAGE_PROVIDER` deixou de ter default: **ausente ou vazia falha**, igual a
+um valor inválido. Sem fallback automático para Supabase em nenhum caminho.
+
+### 13.4 Estado do provisionamento
+
+**O provisionamento do R2 segue BLOQUEADO até a revisão deste patch.** Nada foi
+provisionado, nenhuma variável cadastrada e nenhum smoke externo executado neste GOAL.

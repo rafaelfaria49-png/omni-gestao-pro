@@ -145,6 +145,37 @@ describe("storage-r2 · criarUploadAssinado (signed PUT para o navegador)", () =
     expect(input.Key).toBe("contador/loja-1/2026-07/doc-x/FATURA.pdf")
   })
 
+  /* ── criação exclusiva: o 2º PUT no mesmo path não pode passar (GOAL 012E · P2) ── */
+
+  it("assina o PUT com If-None-Match:* — escrita condicional, não upsert", async () => {
+    mocks.getSignedUrl.mockResolvedValueOnce("https://r2-fake/put")
+    const out = await storageR2.criarUploadAssinado("contador/loja-1/2026-07/doc-x/a.pdf")
+    const [, cmd, opts] = mocks.getSignedUrl.mock.calls[0] as [
+      unknown,
+      { input: { IfNoneMatch?: string } },
+      { signableHeaders?: Set<string> },
+    ]
+    // É o R2 que recusa o segundo PUT (412 PreconditionFailed): o objeto só é
+    // gravado se ainda não existir. Sem este header a URL seria upsert.
+    expect(cmd.input.IfNoneMatch).toBe("*")
+    // E o header precisa estar ASSINADO, senão o navegador poderia simplesmente
+    // não enviá-lo e recuperar o upsert.
+    expect(opts.signableHeaders).toBeInstanceOf(Set)
+    expect([...(opts.signableHeaders as Set<string>)]).toContain("if-none-match")
+    // O contrato devolve o header ao chamador: é obrigação do cliente reenviá-lo.
+    expect(out.headersObrigatorios).toEqual({ "If-None-Match": "*" })
+  })
+
+  it("headersObrigatorios é a prova do contrato — sem ele o PUT não fecha assinatura", async () => {
+    mocks.getSignedUrl.mockResolvedValueOnce("https://r2-fake/put")
+    const out = await storageR2.criarUploadAssinado("a/b.pdf")
+    // Um cliente que ignore `headersObrigatorios` envia um PUT sem `If-None-Match`;
+    // o conjunto de SignedHeaders da URL não bate e o storage devolve 403. Ou seja:
+    // não existe caminho em que a URL ainda válida sobrescreva bytes já gravados —
+    // nem após o `complete`, porque o objeto passa a existir.
+    expect(Object.keys(out.headersObrigatorios)).toEqual(["If-None-Match"])
+  })
+
   it("capa TTL em 120s mesmo que caller peça maior (assinatura nunca ultrapassa teto)", async () => {
     mocks.getSignedUrl.mockResolvedValue("https://r2-fake/put")
     await storageR2.criarUploadAssinado("a/b.pdf", 9999)

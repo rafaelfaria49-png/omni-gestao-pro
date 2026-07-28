@@ -9,6 +9,7 @@
  */
 import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"
+import { formatCompetencia } from "@/lib/contador/competencia"
 import { logEvento, respostaFalhaEscopo } from "@/lib/contador/documentos/http"
 import { competenciaOuErro } from "@/lib/contador/comentarios/service"
 import { respostaErroFechamento } from "@/lib/contador/fechamento/http"
@@ -44,7 +45,9 @@ export async function POST(req: Request) {
     logEvento("contador_pacote_download", {
       storeId: escopo.storeId,
       userId: escopo.userId,
-      competencia: dto.nomeArquivo,
+      // Era `dto.nomeArquivo` — o log gravava o nome do ZIP no campo `competencia`
+      // e o HUB não tinha como filtrar por competência (GOAL 012E · P3).
+      competencia: formatCompetencia(comp),
       versao: dto.versao,
       expiresInSec: dto.expiresInSec,
     })
