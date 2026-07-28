@@ -15,6 +15,7 @@ import {
   SALE_NUMBER_MAX,
   allocateSaleNumber,
   isSaleNumberingError,
+  saleNumberingAdvisoryKey,
 } from "./server-sale-numbering"
 
 const rawUrl = process.env.SALE_NUMBERING_TEST_DATABASE_URL
@@ -34,7 +35,9 @@ function assertLocalTestUrl(url: string): string {
     )
   }
   // Concorrência real precisa de pool folgado; sem isso o teste mede o pool, não o lock.
-  parsed.searchParams.set("connection_limit", "32")
+  // O pool tem de superar a maior rajada da suíte (50) — com 32 as 18 últimas ficariam
+  // enfileiradas no cliente e a prova viraria "o pool serializa", não "o banco serializa".
+  parsed.searchParams.set("connection_limit", "64")
   parsed.searchParams.set("pool_timeout", "30")
   return parsed.toString()
 }
@@ -108,9 +111,9 @@ integration("numeração server-side em PostgreSQL real", () => {
     expect(new Set(resultados.map((r) => r.serieVendaId)).size).toBe(1)
   })
 
-  it("24 alocações concorrentes não duplicam número e não deixam lacuna", async () => {
+  it("50 alocações concorrentes não duplicam número e não deixam lacuna", async () => {
     const loja = await criarLoja(codigo("D"))
-    const total = 24
+    const total = 50
 
     const resultados = await Promise.all(
       Array.from({ length: total }, () =>
@@ -166,6 +169,51 @@ integration("numeração server-side em PostgreSQL real", () => {
     expect(a.serieVendaId).toBe(b.serieVendaId)
     expect([a.numeroSequencial, b.numeroSequencial].sort((x, y) => x - y)).toEqual([1, 2])
     expect(await prisma.serieVenda.count({ where: { storeId: loja, ano: anoNovo } })).toBe(1)
+  })
+
+  it("o lock consultivo usa (hash(storeId), ano) e não bloqueia outra loja", async () => {
+    const lojaA = await criarLoja(codigo("R"))
+    const lojaB = await criarLoja(codigo("S"))
+    // Ano ainda sem série nas duas lojas: força o caminho que ADQUIRE o lock consultivo.
+    const anoNovo = ANO + 2
+    expect(saleNumberingAdvisoryKey(lojaA)).not.toBe(saleNumberingAdvisoryKey(lojaB))
+
+    let locksDuranteA: Array<{ key1: bigint; key2: bigint; objsubid: number }> = []
+    let concluiuB = 0
+    let liberouA = 0
+
+    await prisma.$transaction(async (tx) => {
+      const a = await allocateSaleNumber(tx, { storeId: lojaA, ano: anoNovo })
+      expect(a.numeroSequencial).toBe(1)
+
+      // A transação de A segue ABERTA, logo o lock consultivo de A continua retido.
+      locksDuranteA = await prisma.$queryRaw<Array<{ key1: bigint; key2: bigint; objsubid: number }>>`
+        SELECT classid::bigint AS key1, objid::bigint AS key2, objsubid::int AS objsubid
+        FROM pg_locks WHERE locktype = 'advisory'`
+
+      // Loja B numera com A ainda aberta. Se o lock fosse compartilhado entre lojas,
+      // B esperaria o commit de A — que só ocorre depois de B — e a suíte travaria.
+      const b = await prisma.$transaction(
+        (txB) => allocateSaleNumber(txB, { storeId: lojaB, ano: anoNovo }),
+        TX_OPTS,
+      )
+      concluiuB = Date.now()
+      expect(b.numeroSequencial).toBe(1)
+      expect(b.serieVendaId).not.toBe(a.serieVendaId)
+
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      liberouA = Date.now()
+    }, TX_OPTS)
+
+    // B terminou ANTES de A soltar o lock ⇒ não houve serialização entre lojas.
+    expect(concluiuB).toBeLessThan(liberouA)
+
+    // Evidência direta da derivação: uma única chave dupla, (hash(storeId), ano).
+    // objsubid = 2 é a forma de DOIS int4 do pg_advisory_xact_lock (1 seria bigint único).
+    expect(locksDuranteA).toHaveLength(1)
+    expect(Number(locksDuranteA[0].key1)).toBe(saleNumberingAdvisoryKey(lojaA) >>> 0)
+    expect(Number(locksDuranteA[0].key2)).toBe(anoNovo)
+    expect(locksDuranteA[0].objsubid).toBe(2)
   })
 
   it("o mesmo clientSaleId não se repete na mesma loja, mas existe em lojas diferentes", async () => {

@@ -20,6 +20,13 @@
 -- no ambiente onde a trava estrutural for desejada; a garantia primaria e o adapter
 -- `lib/vendas/server-sale-numbering.ts` (faixa revalidada dentro do proprio UPDATE atomico).
 --
+-- Opcao B (medida no GOAL 002B readiness, PostgreSQL 17.10 local): `prisma migrate deploy`
+-- aplica este arquivo INTEIRO — os 4 CHECKs incluidos — e depois `migrate diff` acusa
+-- "No difference detected" nos dois sentidos. Exige o banco baselinado antes
+-- (`prisma migrate resolve --applied 0001..0014`), porque a cadeia de `prisma/migrations`
+-- NAO e bootstrap-complete: em banco vazio ela quebra na 0005, divida PREEXISTENTE a esta
+-- migration. Enquanto o baseline nao existir no ambiente alvo, a Opcao A segue valendo.
+--
 -- Rollback logico (nada existente foi tocado; so remove o que esta migration criou):
 --   ALTER TABLE "vendas" DROP CONSTRAINT IF EXISTS "vendas_serieVendaId_storeId_fkey";
 --   ALTER TABLE "vendas" DROP CONSTRAINT IF EXISTS "vendas_numeroSequencial_faixa_check";

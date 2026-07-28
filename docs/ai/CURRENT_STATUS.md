@@ -364,7 +364,11 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 - **Nada foi ativado:** nenhum writer produtivo chama o adapter, nenhuma loja tem código de numeração
   configurado, `pedidoId` continua vindo do cliente no v1 e o contrato das APIs não mudou.
 - Concorrência provada contra PostgreSQL real (`npm run test:vendas-numeracao:integration`, opt-in via
-  `SALE_NUMBERING_TEST_DATABASE_URL`): 24 alocações simultâneas sem duplicata nem lacuna.
+  `SALE_NUMBERING_TEST_DATABASE_URL`): 50 alocações simultâneas sem duplicata nem lacuna, e o lock
+  consultivo de uma loja não bloqueia outra (evidência direta em `pg_locks`).
+- Convergência da série **exige `READ COMMITTED`** (padrão do Prisma). Medido em PostgreSQL 17: com o
+  chamador em `RepeatableRead`/`Serializable` o perdedor recebe `P2002`/`P2034` cru, fora do contrato
+  de erro do adapter — restrição a tratar no GOAL 002C, antes de ligar o writer.
 
 **Writer legado v1 — replay atômico e conflito permanente (28/07/2026)**
 - `Venda` passou a ser **create-only**: não existe mais `upsert` permissivo no caminho compartilhado.

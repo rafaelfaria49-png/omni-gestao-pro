@@ -247,6 +247,13 @@ export function saleNumberingAdvisoryKey(storeId: string): number {
  * segundo índice e abortava a transação do chamador. Com o lock, o segundo a chegar espera
  * o commit do primeiro e apenas relê a série.
  *
+ * EXIGE `READ COMMITTED` (padrão do Prisma/PostgreSQL): a releitura pós-lock só enxerga a
+ * série do vencedor porque cada statement abre um snapshot novo. Medido em PostgreSQL 17
+ * com o chamador em `RepeatableRead`/`Serializable`, o snapshot da transação é anterior ao
+ * commit do vencedor, o perdedor tenta criar de novo e o erro que escapa é `P2002`/`P2034`
+ * CRU — não um `SaleNumberingError`. Quem for ligar o writer (GOAL 002C) não pode elevar o
+ * isolamento desta transação sem antes tratar esse contrato de erro.
+ *
  * O lock é transacional: fora de uma transação ele é liberado no fim do próprio SELECT e
  * não protege nada — o provisionamento avulso da série deve ser feito por um chamador único.
  */
