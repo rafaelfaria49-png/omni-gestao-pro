@@ -15,10 +15,63 @@
 | Branches do GOAL 012A tocadas | **nenhuma** (`goal/contador-012a-fechamento-closure` permanece intacta, commits não publicados) |
 | Push para `main` | não realizado (somente push da branch declarada) |
 | PR aberta/mesclada | nenhuma |
-| Próximo GOAL (implementação) | `CONTADOR-HUB-STORAGE-R2-ADAPTER-013` (proposto) |
+| Próximo GOAL (implementação) | ~~`CONTADOR-HUB-STORAGE-R2-ADAPTER-013` (proposto)~~ → **executado como `CONTADOR-HUB-STORAGE-R2-ADAPTER-012C`** (número `013` reservado ao Portal Externo Audit do roadmap canônico) |
+| Implementação | ✅ Entregue no GOAL 012C (ver Apêndice A abaixo) |
 
 > Este documento é **somente decisão**. Não contém código, não provisiona nada, não
 > altera credenciais. é o gate antes do GOAL de implementação do adapter R2.
+
+---
+
+## Apêndice A — Decisão executada (GOAL 012C)
+
+A presente decisão foi **concretizada** no GOAL `CONTADOR-HUB-STORAGE-R2-ADAPTER-012C`
+(branch `goal/contador-012c-storage-r2-adapter`). Sumário do que foi implementado:
+
+- **Adapter R2**: `lib/contador/documentos/storage-r2.ts` implements
+  `StorageDocumentosPort` (o **mesmo** contrato do GOAL 010/012, sem quebras) sobre
+  `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner`.
+- **Variáveis confirmadas** (somente nomes): `CONTADOR_STORAGE_PROVIDER` (default
+  `"r2"`), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`,
+  `R2_SIGNED_URL_TTL_SECONDS` (opcional, capado nos tetes upload 120s / download 300s).
+- **Provider gate**: `CONTADOR_STORAGE_PROVIDER` ≠ `"r2"` → `StorageProviderError`
+  (nenhum fallback automático para o adapter Supabase descontinuado).
+- **Fail-closed**: vars R2 ausentes → `StorageConfigError` (somente nomes, sem valores).
+- **Hard guard**: `NEXT_PUBLIC_*` casando com `/SERVICE_ROLE|SECRET|ACCESS_KEY|PRIVATE_KEY|TOKEN/i`
+  → `StorageConfigError` (valido tanto p/ adapter R2 quanto p/ legado Supabase).
+- **4 imports produtivos trocados** de `storage-supabase` para `storage-r2`:
+  `app/api/contador/documentos/upload-intent/route.ts`,
+  `app/api/contador/documentos/complete/route.ts`,
+  `app/api/contador/documentos/[id]/download/route.ts`,
+  `lib/contador/fechamento/portas.ts`.
+- **`storage-supabase.ts` `@deprecated`**, sem apagar, sem import produtivo (`grep`
+  confirma zero usos produtivos).
+- **.env.example**: seção R2 + legado Supabase deprecated.
+- **Dependências adicionadas** (server-only): `@aws-sdk/client-s3@^3.700.0` +
+  `@aws-sdk/s3-request-presigner@^3.700.0` (`@aws-sdk/client-s3@3.1096.0` instalado).
+- **Testes focados**: `lib/contador/__tests__/storage-r2-config.test.ts` (20 tests)
+  + `lib/contador/__tests__/storage-r2-adapter.test.ts` (25 tests); **suíte Contador
+  572 passando**, **suíte projeto 3534 passando/+2 expected fail fiscal**, **`tsc
+  --noEmit` exit 0**, **`eslint` exit 0**, **`next build --webpack` Compiled
+  successfully em 3.1min**.
+
+### A.1 Smoke Preview — bloqueado por credenciais
+
+A decisão estava condicionada a provisionamento humano do R2 Preview + Vercel Preview
+env vars (ver §6 desta decisão). O agente do GOAL 012C tentou (`wrangler` ausente
+por `MODULE_NOT_FOUND`, Vercel CLI retornou `No existing credentials found`), identificou
+que login exigiria ação interativa humana (escapa do escopo do agente) e emitiu o gate
+exato conforme a seção §6 deste documento (tela a abrir, nome do bucket, permissões
+mínimas do token, nomes das variáveis). **Nenhum valor de credencial foi lido/escrito/
+impresso.** O smoke dos 13 passos do GOAL 012A permanece pendente do provisionamento
+humano — exatamente o ponto-de-parada previsto aqui.
+
+A classificação do GOAL 012C reflete isso: implementação + testes locais + build
+passando (CLASSE B), aguardando smoke Preview após gate humano.
+
+> Documento original abaixo — o texto da decisão aprovada permanece íntegro.
+
+---
 
 ---
 

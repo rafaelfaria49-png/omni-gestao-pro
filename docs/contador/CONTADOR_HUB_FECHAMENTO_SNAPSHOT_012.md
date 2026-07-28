@@ -2,14 +2,15 @@
 
 | Campo | Valor |
 |---|---|
-| GOAL | `CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012` + `012A-CLOSURE` |
-| Data | 2026-07-28 |
-| Base | 012: `origin/main = e8946c2` · 012A: `origin/main = 3bcaf83` |
-| Branch | 012: `goal/contador-012-fechamento-snapshot` · 012A: `goal/contador-012a-fechamento-closure` |
-| Worktree | `C:\Projetos\omni-gestao-contador-012a` |
+| GOAL | `CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012` + `012A-CLOSURE` + `012C-ADAPTER-R2` |
+| Data | 012/012A: 2026-07-28 · 012C: 2026-07-28 |
+| Base | 012: `origin/main = e8946c2` · 012A: `origin/main = 3bcaf83` · 012C: `origin/main = 3bcaf83` |
+| Branch | 012: `goal/contador-012-fechamento-snapshot` · 012A: `goal/contador-012a-fechamento-closure` · 012C: `goal/contador-012c-storage-r2-adapter` |
+| Worktree | 012A: `C:\Projetos\omni-gestao-contador-012a` · 012C: `C:\Projetos\omni-gestao-contador-012c` |
 | Schema | **não alterado** (usa a migration 0014 do GOAL 009) |
 | Banco acessado | **nenhum** — validação por testes in-memory e storage fake |
 | Depende de | GOAL 008 (builder do pacote) · GOAL 009 (núcleo) · GOAL 010 (storage) · GOAL 011 (status/comentários) |
+| Storage provider | ✅ **Cloudflare R2** integrado no GOAL 012C (decisão GOAL 012B). Supabase `@deprecated`. |
 
 ---
 
@@ -297,6 +298,86 @@ lido** — sem escrita a fazer, ler o secret seria risco sem contrapartida.
 **Para destravar** (ação humana, fora do que um agente deve fazer): criar/confirmar o
 bucket privado `contador-documentos` no projeto Supabase e cadastrar as três variáveis no
 ambiente **Preview** da Vercel. Feito isso, o ciclo roda inteiro sem mudança de código.
+
+> **§12.1 em revisão pelo GOAL 012C:** o trecho acima foi escrito quando o adapter
+> vigente era Supabase Storage. O GOAL 012C substituiu o adapter produtivo por
+> **Cloudflare R2** (decisão GOAL 012B) e trocou as três vars Supabase Storage por
+> `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (+ opcional
+> `R2_SIGNED_URL_TTL_SECONDS` e `CONTADOR_STORAGE_PROVIDER=r2`). Ver §12.2 — a pendência
+> de credencial persiste, agora no provider R2.
+
+## 12.2 GOAL 012C — Adapter R2 (atualização)
+
+O GOAL `CONTADOR-HUB-STORAGE-R2-ADAPTER-012C` reaplicou este doc + os commits do GOAL
+012A sobre `origin/main = 3bcaf83` (worktree `C:\Projetos\omni-gestao-contador-012c`) e
+integrou o Cloudflare R2 como storage oficial:
+
+- `lib/contador/documentos/storage-r2.ts` — adapter S3-compatible via
+  `@aws-sdk/client-s3` + `@aws-sdk/s3-request-presigner` (`^3.700.0`;
+  `@aws-sdk/client-s3@3.1096.0` instalado).
+- `lib/contador/documentos/config.ts` — `lerStorageR2Config`, `lerStorageProvider`
+  (default `r2`, sem fallback), `StorageProviderError`, `StorageConfigError`,
+  hard guard `NEXT_PUBLIC_*`.
+- 4 imports produtivos trocados de `storage-supabase` para `storage-r2`
+  (`3 routes de documentos` + `fechamento/portas.ts`).
+- `lib/contador/documentos/storage-supabase.ts` — **`@deprecated`** (mantido para
+  rollback manual SEM import produtivo — confirmado por `grep`).
+- `.env.example` — seção R2 + legado Supabase deprecated.
+- **Testes focados**: `lib/contador/__tests__/storage-r2-config.test.ts` (20 tests) +
+  `lib/contador/__tests__/storage-r2-adapter.test.ts` (25 tests, com mocks do SDK S3):
+  config ausente → `StorageConfigError`; hard guard `NEXT_PUBLIC_*`; provider gate
+  rejeita `supabase` (sem fallback); signed PUT/GET com cap TTL 120s/300s;
+  `PutObject` server-side do ZIP; `Content-Disposition` attachment nunca inline;
+  `storageRef` passado verbatim ao Key (traversal defendido no service); `StorageError`
+  sem vazar secret/URL/token.
+- **Verificação**: `vitest run lib/contador` ✅ **572 passando**; `vitest run` (projeto)
+  ✅ **3534 passando | 2 expected fail | 46 skipped**; `tsc --noEmit` ✅ exit 0;
+  `eslint` focado ✅ exit 0; `npm run build` ✅ **"Compiled successfully in 3.1min"**
+  (103 páginas, rota `/dashboard/contador` listada); `git diff --check` ✅ exit 0.
+
+### 12.2.1 Smoke Preview — BLOQUEADO por credencial (R2)
+
+A pendência de credencial do §12.1 persiste — agora no provider R2. O agente do GOAL
+012C tentou provisionar via fluxo Cloudflare autenticado, mas identificou: `wrangler`
+não instalado neste agente (`MODULE_NOT_FOUND`); CLI Vercel sem credenciais
+(`No existing credentials found`); nenhuma var `CF_*` / `CLOUDFLARE_*` no ambiente.
+Login/criação de API token exigem **ação interativa humana**, fora do escopo do
+agente. Gate emitido conforme GOAL 012B §6:
+
+- **Tela a abrir**: Cloudflare Dashboard → R2 Object Storage → habilitar R2 (cartão
+  exigido pela Cloudflare para ativar R2; sem cobrança até uso real).
+- **Nome do bucket Preview**: `omni-contador-documentos-preview` (`public_access = OFF`).
+- **Permissões mínimas do token R2**: Object Read & Write, bucket-scoped em
+  `omni-contador-documentos-preview` (não Account-wide, não Admin).
+- **Variáveis a cadastrar na Vercel Preview** (somente nomes, valores são segredo):
+  `CONTADOR_STORAGE_PROVIDER=r2`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
+  `R2_SECRET_ACCESS_KEY`, `R2_BUCKET=omni-contador-documentos-preview`,
+  `R2_SIGNED_URL_TTL_SECONDS=120` (opcional, sempre capado).
+
+> **Branch-scoped Preview env vars**: a Vercel não isola nativamente env vars por
+> branch via `vercel env` (apenas Preview/Production/Development do projeto inteiro).
+> O GOAL recomenda usar Preview-scoped para todo o projeto durante a janela do GOAL
+> e deletar as vars após a revisão. **Não compartilhar valores entre ambientes** —
+> Production exigirá bucket separado `omni-contador-documentos-prod` + token próprio.
+
+Após o provisionamento humano, o ciclo dos 13 passos do GOAL 012A roda sem mudança
+adicional de código (o adapter R2 já está mergedado neste branch).
+
+### 12.2.2 Isolamento de Preview × Production
+
+- **Buckets separados**: `…-preview` (este GOAL) e `…-prod` (não provisionado aqui).
+- **Token bucket-scoped**: o Access Key ID/Secret do Preview só autoriza operações no
+  bucket Preview; vazamento não expõe Production.
+- **Nenhum fallback automático para Supabase**: `ContadorStorageProvider=s3-generico`
+  ou `supabase` lança `StorageProviderError` (fail-closed). O adapter Supabase só
+  retorna via rollback **manual** (trocar os 4 imports + cadastrar vars Supabase).
+
+### 12.2.3 Pendências R2 específicas (além das já listadas em §12)
+
+Nenhuma nova pendência introduzida pelo GOAL 012C — o adapter respeita todos os
+tetos do contrato (`UPLOAD_EXPIRACAO_SEG` 120s, `DOWNLOAD_EXPIRACAO_SEG` 300s,
+`MAX_BYTES_DOCUMENTO` 25MB; validação MIME/magic-bytes/hash stays no service
+`validacao.ts` que é provider-agnostic).
 
 ## 13. Classificação final
 
