@@ -423,15 +423,11 @@ export const PERMISSOES_ROWS: PermissaoRow[] = [
 ]
 
 /* ─────────────────────────── TIMELINE ─────────────────────────── */
-
-export type TimelineItem = { who: "voce" | "contador"; what: string; at: string }
-export const TIMELINE_ITEMS: TimelineItem[] = [
-  { who: "contador", what: "baixou o Pacote do Contador de Maio/2026", at: "28/06 · 09:14" },
-  { who: "contador", what: "solicitou: “Extrato bancário de Junho”", at: "27/06 · 16:02" },
-  { who: "voce", what: "enviou “NF-e de compra 5678”", at: "26/06 · 11:30" },
-  { who: "voce", what: "fechou a competência de Maio/2026", at: "20/06 · 18:05" },
-  { who: "contador", what: "comentou em “Despesas do mês”", at: "18/06 · 14:22" },
-]
+//
+// GOAL 011: a seção Timeline passou a ler `ContadorEvento` + `ContadorComentario`
+// reais (`timeline/contador-timeline-real.tsx`). O array ilustrativo `TIMELINE_ITEMS`
+// e a "conversa com o contador" mockada foram REMOVIDOS — não existe mais atividade
+// fictícia no HUB.
 
 /* ─────────────────────────── COMPETÊNCIA ─────────────────────────── */
 

@@ -380,3 +380,87 @@ describe("Contador HUB — Pacote do Contador com download GET direto (GOAL 008B
     expect(usos).toBe(2)
   })
 })
+
+/* ────────── GOAL 011 — Timeline, status e comentários deixaram de ser mock ────────── */
+
+describe("Contador HUB — Timeline REAL (GOAL 011)", () => {
+  const timelineSrc = readFileSync(join(DIR, "timeline/contador-timeline-real.tsx"), "utf8")
+  const comentariosSrc = readFileSync(join(DIR, "timeline/contador-comentarios.tsx"), "utf8")
+  const documentosSrc = readFileSync(join(DIR, "documentos/contador-documentos-real.tsx"), "utf8")
+
+  it("a seção Timeline renderiza o componente real, sem PreviewBanner", () => {
+    const inicio = hubSrc.indexOf("const renderTimeline = ()")
+    const fim = hubSrc.indexOf("const renderConfig = ()")
+    expect(inicio).toBeGreaterThan(-1)
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).toContain("<ContadorTimelineReal")
+    expect(secao).not.toContain("<PreviewBanner")
+    expect(secao).not.toContain("CTA_INDISPONIVEL_TITLE")
+  })
+
+  it("a conversa mockada e o array TIMELINE_ITEMS foram removidos do HUB e dos dados", () => {
+    expect(hubSrc).not.toContain("TIMELINE_ITEMS")
+    expect(hubSrc).not.toContain("Conversa com o contador")
+    expect(hubSrc).not.toContain("Enviar observação")
+    expect(dataSrc).not.toContain("export const TIMELINE_ITEMS")
+    expect(dataSrc).not.toContain("Pode anexar o extrato do Banco principal")
+  })
+
+  it("a timeline lê o endpoint real e é somente leitura (sem POST/PUT/DELETE)", () => {
+    expect(timelineSrc).toContain("/api/contador/timeline")
+    expect(timelineSrc).not.toMatch(/method:\s*"(POST|PUT|PATCH|DELETE)"/)
+  })
+
+  it("timeline e comentários nunca enviam loja nem autor pelo cliente", () => {
+    for (const src of [timelineSrc, comentariosSrc, documentosSrc]) {
+      // Loja jamais aparece — nem como tipo, nem como valor.
+      expect(src).not.toMatch(/\b(storeId|lojaId)\b/)
+      // `autorId`/`atorId` só podem existir como campo de DTO LIDO do servidor;
+      // nunca dentro de um corpo de requisição.
+      const corpos = src.match(/JSON\.stringify\(\{[\s\S]*?\}\)/g) ?? []
+      for (const corpo of corpos) {
+        expect(corpo).not.toMatch(/\b(autorId|atorId|storeId|lojaId|papel|role)\b/)
+      }
+    }
+  })
+
+  it("estado vazio é honesto: não inventa atividade de exemplo", () => {
+    expect(timelineSrc).toContain("Nenhuma atividade nesta competência")
+    expect(comentariosSrc).toContain("Nenhum comentário")
+  })
+
+  it("a caixa de comentários distingue interno de compartilhado antes do envio", () => {
+    expect(comentariosSrc).toContain("Interno — só a sua equipe")
+    expect(comentariosSrc).toContain("Compartilhado — visível ao contador")
+    expect(comentariosSrc).toContain("nunca sai para o contador externo")
+    // O portal externo ainda não existe — a UI diz isso em vez de prometer.
+    expect(comentariosSrc).toContain("GOAL 015")
+  })
+
+  it("as transições oferecidas vêm da matriz do domínio, não de uma lista solta na UI", () => {
+    expect(documentosSrc).toContain("transicoesDisponiveis")
+    expect(documentosSrc).toContain("@/lib/contador/status/matriz")
+    // Nenhum status hardcoded como botão fixo.
+    expect(documentosSrc).not.toMatch(/Marcar como conferido"/)
+  })
+
+  it("rejeição sempre passa por modal com motivo obrigatório", () => {
+    expect(documentosSrc).toContain("function RejeitarModal(")
+    expect(documentosSrc).toContain("Motivo da rejeição (obrigatório)")
+    expect(documentosSrc).toContain("disabled={ocupado || vazio}")
+  })
+
+  it("capacidade de conferir nasce fail-closed e vem do servidor", () => {
+    expect(documentosSrc).toContain('useState<Capacidades>({ podeConferir: false })')
+    expect(documentosSrc).toContain('fetch("/api/contador/status"')
+    expect(documentosSrc).toContain("Conferir e resolver exigem papel financeiro ou administrador.")
+  })
+
+  it("`vencido` aparece como flag derivada, nunca como status", () => {
+    expect(documentosSrc).toContain("<VencidoChip")
+    const uiSrc = readFileSync(join(DIR, "contador-ui.tsx"), "utf8")
+    expect(uiSrc).toContain("Derivado do vencimento — não é um status gravado.")
+    // O chip de status só conhece os 4 estados persistidos.
+    expect(uiSrc).not.toMatch(/STATUS_CHIP[\s\S]{0,200}VENCIDO/)
+  })
+})

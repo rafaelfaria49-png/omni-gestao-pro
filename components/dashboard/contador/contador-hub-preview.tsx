@@ -62,6 +62,7 @@ import {
   usePacoteDownload,
 } from "./contador-pacote-download"
 import { ContadorDocumentosReal } from "./documentos/contador-documentos-real"
+import { ContadorTimelineReal } from "./timeline/contador-timeline-real"
 import {
   CONTADOR_SECTIONS,
   DOSSIES,
@@ -74,7 +75,6 @@ import {
   RADAR_CNPJ,
   RELATORIO_CARDS,
   RESUMO_FINANCEIRO,
-  TIMELINE_ITEMS,
   VISAO_ALERTAS,
   VISAO_DOSSIE_PROGRESS,
   VISAO_KPIS,
@@ -978,68 +978,9 @@ export function ContadorHubPreview({
     </>
   )
 
-  /* ── seção: Timeline ── */
-  const renderTimeline = () => (
-    <>
-      <SectionHeader title="Timeline / atividade" desc="Histórico de envios, downloads, solicitações e comentários." />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
-          <ul className="m-0 list-none p-0">
-            {TIMELINE_ITEMS.map((t, i) => (
-              <li key={i} className="relative pb-4 pl-7 last:pb-0">
-                {i < TIMELINE_ITEMS.length - 1 ? (
-                  <span className="absolute bottom-0 left-[7px] top-4 w-0.5 bg-border" />
-                ) : null}
-                <span
-                  className={cn(
-                    "absolute left-0 top-1 grid h-4 w-4 place-items-center rounded-full border-2 bg-card",
-                    t.who === "contador" ? "border-sky-500" : "border-primary",
-                  )}
-                >
-                  <span className={cn("h-1 w-1 rounded-full", t.who === "contador" ? "bg-sky-500" : "bg-primary")} />
-                </span>
-                <div className="text-[13px] font-semibold text-foreground">{t.who === "contador" ? "Contador" : "Você"}</div>
-                <div className="text-[13px] text-foreground/80">{t.what}</div>
-                <div className="font-mono text-[11px] text-muted-foreground">{t.at}</div>
-              </li>
-            ))}
-          </ul>
-        </Card>
-        <Card>
-          <CardHead title="Conversa com o contador" />
-          <div className="p-4">
-            <div className="mb-2.5 rounded-lg border border-border/60 bg-muted/40 p-3 text-[12.5px] text-foreground/90">
-              <div className="mb-1 text-xs font-semibold text-foreground">
-                Contador <span className="font-mono text-[11px] font-normal text-muted-foreground">· 27/06</span>
-              </div>
-              Pode anexar o extrato do Banco principal até sexta? Preciso para fechar Junho.
-            </div>
-            <div className="mb-2.5 rounded-lg border border-primary/20 bg-primary/5 p-3 text-[12.5px] text-foreground/90">
-              <div className="mb-1 text-xs font-semibold text-foreground">
-                Você <span className="font-mono text-[11px] font-normal text-muted-foreground">· 27/06</span>
-              </div>
-              Anexo amanhã de manhã.
-            </div>
-            <textarea
-              rows={2}
-              placeholder="Escrever uma observação…"
-              className="mt-3 w-full resize-y rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[13px] text-foreground outline-none focus:border-primary focus:bg-card"
-            />
-            <Btn
-              variant="primary"
-              size="sm"
-              className="mt-2"
-              disabled
-              title={CTA_INDISPONIVEL_TITLE}
-              onClick={() => noop("Enviar observação")}
-            >
-              Enviar observação
-            </Btn>
-          </div>
-        </Card>
-      </div>
-    </>
-  )
+  /* ── seção: Timeline (REAL — GOAL 011) ── */
+  const renderTimeline = () => <ContadorTimelineReal competencia={competencia} />
+
 
   /* ── seção: Configurações ── */
   const renderConfig = () => (

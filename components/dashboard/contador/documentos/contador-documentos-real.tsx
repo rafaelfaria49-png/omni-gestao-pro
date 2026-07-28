@@ -1,14 +1,17 @@
 "use client"
 
 /**
- * Contador HUB · seção Documentos REAL (GOAL 010 · Etapa 11).
+ * Contador HUB · seção Documentos REAL (GOAL 010 · Etapa 11 + GOAL 011).
  *
  * Substitui o preview estático da aba Documentos por fluxo real:
  *  - listagem por competência (GET /api/contador/documentos);
  *  - upload DIRETO ao storage (intent → PUT assinado → complete), com SHA-256
  *    calculado no navegador e progresso real;
  *  - download autenticado (URL assinada curta), substituição versionada e
- *    exclusão soft com motivo.
+ *    exclusão soft com motivo;
+ *  - GOAL 011: máquina de status real (só as transições que o papel autenticado
+ *    pode executar), rejeição com motivo obrigatório em modal, `vencido` como flag
+ *    derivada e comentários por documento.
  *
  * Quando o storage/env está indisponível o componente NÃO finge upload: mostra
  * estado de configuração indisponível. Tokens semânticos apenas.
@@ -28,6 +31,21 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatCompetencia, type Competencia } from "@/lib/contador/competencia"
+import {
+  normalizarStatus,
+  transicoesDisponiveis,
+  type StatusItem,
+  type Transicao,
+} from "@/lib/contador/status/matriz"
+import {
+  Botao,
+  Overlay,
+  StatusChip,
+  VencidoChip,
+  formatarDataHora,
+  lerErroResposta,
+} from "../contador-ui"
+import { ContadorComentarios } from "../timeline/contador-comentarios"
 
 /* ─────────────────────────── contratos de UI ─────────────────────────── */
 
@@ -41,6 +59,8 @@ type DocumentoDto = {
   bytes: number
   sha256: string
   status: string
+  /** Derivado no servidor (GOAL 011) — nunca é um status gravado. */
+  vencido: boolean
   vencimento: string | null
   enviadoPorTipo: string
   enviadoPorId: string
@@ -48,6 +68,9 @@ type DocumentoDto = {
   createdAt: string
   updatedAt: string
 }
+
+/** Capacidades do papel autenticado (GET /api/contador/status). Fail-closed. */
+type Capacidades = { podeConferir: boolean }
 
 type CategoriaId = "fiscal" | "financeiro" | "folha" | "juridico" | "outro"
 
@@ -124,66 +147,8 @@ function putComProgresso(
   })
 }
 
-async function lerErro(res: Response): Promise<string> {
-  try {
-    const j = (await res.json()) as { mensagem?: string }
-    return j?.mensagem || `Erro ${res.status}.`
-  } catch {
-    return `Erro ${res.status}.`
-  }
-}
-
-/* ─────────────────────────── blocos visuais ─────────────────────────── */
-
-const STATUS_CHIP: Record<string, string> = {
-  PENDENTE: "border-border bg-muted text-muted-foreground",
-  ENVIADO: "border-sky-500/30 bg-sky-500/10 text-sky-500",
-  CONFERIDO: "border-violet-500/30 bg-violet-500/10 text-violet-500",
-  RESOLVIDO: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-}
-
-function StatusChip({ status }: { status: string }) {
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold",
-        STATUS_CHIP[status] ?? STATUS_CHIP.PENDENTE,
-      )}
-    >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-      {status.toLowerCase()}
-    </span>
-  )
-}
-
-function Botao({
-  variant = "default",
-  size = "md",
-  className,
-  children,
-  ...rest
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "default" | "primary" | "ghost" | "danger"
-  size?: "sm" | "md"
-}) {
-  return (
-    <button
-      type="button"
-      className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-lg border font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-        size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2 text-[13px]",
-        variant === "primary" && "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
-        variant === "ghost" && "border-transparent bg-transparent text-primary hover:bg-primary/10",
-        variant === "danger" && "border-rose-500/40 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20",
-        variant === "default" && "border-border bg-card text-foreground hover:bg-muted/60",
-        className,
-      )}
-      {...rest}
-    >
-      {children}
-    </button>
-  )
-}
+/** Alias local mantido para não reescrever os call sites do GOAL 010. */
+const lerErro = lerErroResposta
 
 /* ─────────────────────────── componente principal ─────────────────────────── */
 
@@ -196,6 +161,25 @@ export function ContadorDocumentosReal({ competencia }: { competencia: Competenc
   const [uploadOpen, setUploadOpen] = useState(false)
   const [substituirDe, setSubstituirDe] = useState<DocumentoDto | null>(null)
   const [detalhe, setDetalhe] = useState<DocumentoDto | null>(null)
+  // Fail-closed: até o servidor responder, nenhuma transição elevada é oferecida.
+  const [capacidades, setCapacidades] = useState<Capacidades>({ podeConferir: false })
+
+  useEffect(() => {
+    let vivo = true
+    void (async () => {
+      try {
+        const res = await fetch("/api/contador/status", { cache: "no-store" })
+        if (!res.ok) return
+        const j = (await res.json()) as { capacidades?: Capacidades }
+        if (vivo && j.capacidades) setCapacidades({ podeConferir: !!j.capacidades.podeConferir })
+      } catch {
+        // Sem capacidades → só transições básicas. O servidor decide de qualquer forma.
+      }
+    })()
+    return () => {
+      vivo = false
+    }
+  }, [])
 
   const carregar = useCallback(async () => {
     setCarregando(true)
@@ -318,7 +302,10 @@ export function ContadorDocumentosReal({ competencia }: { competencia: Competenc
                     <td className="px-4 py-3 capitalize">{d.categoria.toLowerCase()}</td>
                     <td className="px-4 py-3 font-mono text-xs">{formatBytes(d.bytes)}</td>
                     <td className="px-4 py-3">
-                      <StatusChip status={d.status} />
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <StatusChip status={d.status} />
+                        {d.vencido ? <VencidoChip /> : null}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
@@ -350,6 +337,8 @@ export function ContadorDocumentosReal({ competencia }: { competencia: Competenc
       {detalhe ? (
         <DetalheDrawer
           doc={detalhe}
+          competencia={compCodigo}
+          capacidades={capacidades}
           onClose={() => setDetalhe(null)}
           onSubstituir={(d) => {
             setDetalhe(null)
@@ -357,6 +346,10 @@ export function ContadorDocumentosReal({ competencia }: { competencia: Competenc
           }}
           onExcluido={() => {
             setDetalhe(null)
+            void carregar()
+          }}
+          onStatusAlterado={(atualizado) => {
+            setDetalhe((atual) => (atual && atual.id === atualizado.id ? atualizado : atual))
             void carregar()
           }}
         />
@@ -597,20 +590,74 @@ function UploadModal({
 
 function DetalheDrawer({
   doc,
+  competencia,
+  capacidades,
   onClose,
   onSubstituir,
   onExcluido,
+  onStatusAlterado,
 }: {
   doc: DocumentoDto
+  competencia: string
+  capacidades: Capacidades
   onClose: () => void
   onSubstituir: (d: DocumentoDto) => void
   onExcluido: () => void
+  onStatusAlterado: (d: DocumentoDto) => void
 }) {
   const [baixando, setBaixando] = useState(false)
   const [confirmarExcluir, setConfirmarExcluir] = useState(false)
   const [motivo, setMotivo] = useState("")
   const [excluindo, setExcluindo] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
+  const [transicionando, setTransicionando] = useState<string | null>(null)
+  const [rejeitarAberto, setRejeitarAberto] = useState<Transicao | null>(null)
+  const [recarregarComentarios, setRecarregarComentarios] = useState(0)
+
+  /**
+   * A UI só oferece o que o servidor aceitaria: matriz + capacidade do papel.
+   * Status desconhecido (dado legado) → nenhuma transição, em vez de adivinhar.
+   */
+  const transicoes = useMemo<readonly Transicao[]>(() => {
+    let status: StatusItem
+    try {
+      status = normalizarStatus(doc.status)
+    } catch {
+      return []
+    }
+    return transicoesDisponiveis(status, capacidades)
+  }, [doc.status, capacidades])
+
+  const aplicarTransicao = async (t: Transicao, motivoTexto?: string) => {
+    setTransicionando(t.para)
+    setErro(null)
+    try {
+      const res = await fetch("/api/contador/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          documentoId: doc.id,
+          para: t.para,
+          ...(t.exigeMotivo ? { motivo: motivoTexto ?? "" } : {}),
+        }),
+      })
+      if (!res.ok) throw new Error(await lerErro(res))
+      const j = (await res.json()) as { documento: { status: string; vencido: boolean; atualizadoEm: string } }
+      setRejeitarAberto(null)
+      // Rejeição grava o motivo como comentário interno — recarrega a lista.
+      if (t.exigeMotivo) setRecarregarComentarios((n) => n + 1)
+      onStatusAlterado({
+        ...doc,
+        status: j.documento.status,
+        vencido: j.documento.vencido,
+        updatedAt: j.documento.atualizadoEm,
+      })
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Falha ao alterar o status.")
+    } finally {
+      setTransicionando(null)
+    }
+  }
 
   const baixar = async () => {
     setBaixando(true)
@@ -671,14 +718,51 @@ function DetalheDrawer({
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
+          {/* ── status atual + transições permitidas a ESTE papel (GOAL 011) ── */}
+          <section className="mb-4 rounded-lg border border-border bg-muted/30 p-3">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Status atual</span>
+              <StatusChip status={doc.status} />
+              {doc.vencido ? <VencidoChip /> : null}
+            </div>
+            {transicoes.length === 0 ? (
+              <p className="text-[12px] text-muted-foreground">
+                {doc.status.toUpperCase() === "RESOLVIDO"
+                  ? "Estado final — não há próxima transição."
+                  : "Nenhuma transição disponível para o seu papel neste status."}
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {transicoes.map((t) => (
+                  <Botao
+                    key={`${t.de}-${t.para}`}
+                    size="sm"
+                    variant={t.acao === "rejeitar" ? "danger" : "primary"}
+                    disabled={transicionando !== null}
+                    onClick={() =>
+                      t.exigeMotivo ? setRejeitarAberto(t) : void aplicarTransicao(t)
+                    }
+                  >
+                    {transicionando === t.para ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                    {t.rotulo}
+                  </Botao>
+                ))}
+              </div>
+            )}
+            {!capacidades.podeConferir ? (
+              <p className="mt-2 text-[11.5px] text-muted-foreground">
+                Conferir e resolver exigem papel financeiro ou administrador.
+              </p>
+            ) : null}
+          </section>
+
           <dl className="grid gap-3 text-[13px]">
             <Kv label="Arquivo" value={doc.nomeArquivo} />
             <Kv label="Categoria" value={doc.categoria.toLowerCase()} capitalize />
             <Kv label="Tamanho" value={formatBytes(doc.bytes)} mono />
             <Kv label="Tipo (MIME)" value={doc.mime} mono />
-            <Kv label="Status" value={doc.status.toLowerCase()} capitalize />
             <Kv label="Vencimento" value={doc.vencimento ? doc.vencimento.slice(0, 10) : "—"} mono />
-            <Kv label="Enviado em" value={doc.createdAt.slice(0, 19).replace("T", " ")} mono />
+            <Kv label="Enviado em" value={formatarDataHora(doc.createdAt)} mono />
             {doc.versaoDeId ? <Kv label="Substitui" value={doc.versaoDeId} mono /> : null}
             <div>
               <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">SHA-256</dt>
@@ -707,6 +791,15 @@ function DetalheDrawer({
               />
             </div>
           ) : null}
+
+          <div className="mt-5 border-t border-border pt-4">
+            <ContadorComentarios
+              key={recarregarComentarios}
+              competencia={competencia}
+              documentoId={doc.id}
+              titulo="Comentários deste documento"
+            />
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-4">
@@ -729,6 +822,75 @@ function DetalheDrawer({
               Excluir
             </Botao>
           )}
+        </div>
+      </div>
+
+      {rejeitarAberto ? (
+        <RejeitarModal
+          transicao={rejeitarAberto}
+          ocupado={transicionando !== null}
+          onCancelar={() => setRejeitarAberto(null)}
+          onConfirmar={(texto) => void aplicarTransicao(rejeitarAberto, texto)}
+        />
+      ) : null}
+    </Overlay>
+  )
+}
+
+/* ─────────────────────────── modal de rejeição ─────────────────────────── */
+
+/**
+ * Rejeição SEMPRE passa por aqui: o motivo é obrigatório e vira um comentário
+ * interno imutável, referenciado pelo evento `status_alterado`. O botão só habilita
+ * com texto — e o servidor recusa de novo se vier vazio (422).
+ */
+function RejeitarModal({
+  transicao,
+  ocupado,
+  onCancelar,
+  onConfirmar,
+}: {
+  transicao: Transicao
+  ocupado: boolean
+  onCancelar: () => void
+  onConfirmar: (motivo: string) => void
+}) {
+  const [texto, setTexto] = useState("")
+  const vazio = !texto.trim()
+
+  return (
+    <Overlay onClose={ocupado ? undefined : onCancelar}>
+      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-xl">
+        <h3 className="mb-1 text-[16px] font-bold text-foreground">Rejeitar documento</h3>
+        <p className="mb-3 text-[12.5px] text-muted-foreground">
+          O documento volta para <b className="text-foreground">pendente</b>. O motivo é obrigatório
+          e fica registrado como comentário interno na trilha da competência.
+        </p>
+        <label className="mb-1 block text-xs font-semibold text-foreground/80" htmlFor="motivo-rejeicao">
+          Motivo da rejeição (obrigatório)
+        </label>
+        <textarea
+          id="motivo-rejeicao"
+          rows={3}
+          value={texto}
+          disabled={ocupado}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Ex.: extrato incompleto — faltam os dias 20 a 30."
+          className="w-full resize-y rounded-lg border border-border bg-muted/40 px-3 py-2 text-[13px] text-foreground outline-none focus:border-rose-500 focus:bg-card"
+        />
+        <div className="mt-3 flex justify-end gap-2.5">
+          <Botao onClick={onCancelar} disabled={ocupado}>
+            Cancelar
+          </Botao>
+          <Botao
+            variant="danger"
+            disabled={ocupado || vazio}
+            title={vazio ? "Informe o motivo para rejeitar." : undefined}
+            onClick={() => onConfirmar(texto.trim())}
+          >
+            {ocupado ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+            {transicao.rotulo}
+          </Botao>
         </div>
       </div>
     </Overlay>
@@ -758,30 +920,6 @@ function Kv({
       >
         {value}
       </dd>
-    </div>
-  )
-}
-
-function Overlay({
-  children,
-  onClose,
-  alinhar = "center",
-}: {
-  children: React.ReactNode
-  onClose?: () => void
-  alinhar?: "center" | "right"
-}) {
-  return (
-    <div
-      className={cn(
-        "fixed inset-0 z-50 flex bg-black/40 p-0 backdrop-blur-sm",
-        alinhar === "center" ? "items-center justify-center p-4" : "items-stretch justify-end",
-      )}
-      onClick={onClose}
-    >
-      <div className="contents" onClick={(e) => e.stopPropagation()}>
-        {children}
-      </div>
     </div>
   )
 }

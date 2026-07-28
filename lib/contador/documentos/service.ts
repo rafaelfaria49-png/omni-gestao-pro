@@ -16,6 +16,7 @@ import {
   parseCompetencia,
   type Competencia,
 } from "@/lib/contador/competencia"
+import { estaVencido } from "@/lib/contador/status/vencido"
 import { normalizarSha256, sha256HexDeBuffer, hashesIguais } from "./hash"
 import {
   DocumentoValidacaoError,
@@ -430,6 +431,11 @@ export type DocumentoDto = Readonly<{
   bytes: number
   sha256: string
   status: string
+  /**
+   * Flag DERIVADA (GOAL 011 · ADR-005) — nunca persistida, nunca um status.
+   * Calculada no servidor para que a UI não precise inferir fuso/regra.
+   */
+  vencido: boolean
   vencimento: string | null
   enviadoPorTipo: string
   enviadoPorId: string
@@ -438,7 +444,7 @@ export type DocumentoDto = Readonly<{
   updatedAt: string
 }>
 
-export function toDto(row: DocumentoRow): DocumentoDto {
+export function toDto(row: DocumentoRow, agora: Date = new Date()): DocumentoDto {
   return Object.freeze({
     id: row.id,
     competenciaId: row.competenciaId,
@@ -449,6 +455,7 @@ export function toDto(row: DocumentoRow): DocumentoDto {
     bytes: row.bytes,
     sha256: row.sha256,
     status: row.status,
+    vencido: estaVencido({ status: row.status, vencimento: row.vencimento }, agora),
     vencimento: row.vencimento ? row.vencimento.toISOString() : null,
     enviadoPorTipo: row.enviadoPorTipo,
     enviadoPorId: row.enviadoPorId,
@@ -464,6 +471,7 @@ export async function listarDocumentos(
   competenciaCodigo: string,
   filtros: FiltrosListagem,
   deps: Pick<Deps, "repo">,
+  agora: Date = new Date(),
 ): Promise<DocumentoDto[]> {
   const comp = competenciaOuErro(competenciaCodigo)
   const competencia = await deps.repo.acharCompetencia(escopo.storeId, comp)
@@ -474,7 +482,7 @@ export async function listarDocumentos(
     incluirExcluidos: false,
     filtros,
   })
-  return rows.map(toDto)
+  return rows.map((r) => toDto(r, agora))
 }
 
 /* ───────────────────────────── ETAPA 8 — download ───────────────────────────── */
