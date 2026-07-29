@@ -65,6 +65,71 @@ export type PreviewSheet = {
   observacao?: string | null
 }
 
+/** Contexto humano do lote de produtos (Parte 7). Todos os campos são opcionais. */
+export type ContextoProdutosForm = {
+  fornecedorNome: string
+  fornecedorDocumento: string
+  documentoTipo: "nfe" | "outro"
+  documentoNumero: string
+  documentoSerie: string
+  documentoChave: string
+  documentoDataEmissao: string
+  observacao: string
+  /** Padrão seguro: cadastra sem tocar em saldo. */
+  politicaEstoque: "nao_movimentar" | "planilha_somente_novos"
+}
+
+export const CONTEXTO_PRODUTOS_INICIAL: ContextoProdutosForm = {
+  fornecedorNome: "",
+  fornecedorDocumento: "",
+  documentoTipo: "nfe",
+  documentoNumero: "",
+  documentoSerie: "",
+  documentoChave: "",
+  documentoDataEmissao: "",
+  observacao: "",
+  politicaEstoque: "nao_movimentar",
+}
+
+/** Alerta de uma linha do preview de produtos (espelha lib/cadastros/importacao-produtos). */
+export type AlertaPreviewProduto = {
+  codigo: string
+  severidade: "erro" | "aviso"
+  mensagem: string
+}
+
+/** Linha do preview de produtos devolvida pelo backend (Parte 8). */
+export type PreviewLinhaProduto = {
+  linhaOrigem: number
+  produto: string
+  barcode: string
+  sku: string
+  categoria: string
+  marca: string
+  fornecedor: string
+  custo: number
+  preco: number
+  estoque: number | null
+  ncm: string
+  cest: string
+  resultado: "criar" | "atualizar" | "ignorar" | "conflito"
+  matchPor: string | null
+  motivo: string
+  camposAlterados: string[]
+  camposPreservados: string[]
+  alertas: AlertaPreviewProduto[]
+}
+
+export type PreviewProdutos = {
+  linhas: PreviewLinhaProduto[]
+  totalCriar: number
+  totalAtualizar: number
+  totalIgnorar: number
+  totalConflito: number
+  /** `true` trava o botão Importar até o operador resolver o conflito. */
+  bloqueado: boolean
+}
+
 export type PreviewResult = {
   ok: boolean
   modo: "preview"
@@ -80,6 +145,8 @@ export type PreviewResult = {
   dominiosParaImportar?: string[]
   /** Erros globais de parsing/leitura (ZIP corrompido, formato inválido, etc.). */
   erros?: string[]
+  /** Preview linha a linha quando o lote tem domínio `produtos`. */
+  previewProdutos?: PreviewProdutos | null
 }
 
 /** Contadores globais agregados (modo=importar). */
@@ -111,6 +178,17 @@ export type ErroDetalhado = {
   detalhe: string
 }
 
+/** Uma linha de produto após a persistência — alimenta o CTA de conferência. */
+export type ResumoLinhaProduto = {
+  chave: string
+  linhaOrigem: number
+  nome: string
+  acao: "criado" | "atualizado" | "ignorado" | "conflito" | "erro"
+  matchPor: string | null
+  motivo: string
+  produtoId: string | null
+}
+
 export type ImportarResult = {
   ok: boolean
   modo: "importar"
@@ -120,6 +198,8 @@ export type ImportarResult = {
   totais: ImportTotais
   porDominio: ImportPorDominio
   errosDetalhados: ErroDetalhado[]
+  /** Vazio quando o lote não tinha produtos. */
+  resumoProdutos: ResumoLinhaProduto[]
 }
 
 /** Falha total (catch do servidor). */
@@ -148,7 +228,21 @@ export function useImportadorAvancado() {
 
   const [arquivos, setArquivos] = useState<File[]>([])
   const [estado, setEstado] = useState<EstadoImportador>({ fase: "idle" })
+  const [contextoProdutos, setContextoProdutos] = useState<ContextoProdutosForm>(
+    CONTEXTO_PRODUTOS_INICIAL,
+  )
   const abortRef = useRef<AbortController | null>(null)
+
+  const atualizarContextoProdutos = useCallback(
+    (patch: Partial<ContextoProdutosForm>) => {
+      setContextoProdutos((prev) => ({ ...prev, ...patch }))
+    },
+    [],
+  )
+
+  const limparContextoProdutos = useCallback(() => {
+    setContextoProdutos(CONTEXTO_PRODUTOS_INICIAL)
+  }, [])
 
   // ---- Manipulação de arquivos ----
 
@@ -198,9 +292,12 @@ export function useImportadorAvancado() {
           fd.append("dominios[]", d)
         }
       }
+      // Contexto do lote de produtos. O backend sanea tudo e usa
+      // `politicaEstoque: "nao_movimentar"` quando o campo não vem.
+      fd.append("contextoProdutos", JSON.stringify(contextoProdutos))
       return fd
     },
-    [],
+    [contextoProdutos],
   )
 
   // ---- Parsing defensivo da resposta ----
@@ -267,6 +364,8 @@ export function useImportadorAvancado() {
           grupos: j.grupos && typeof j.grupos === "object" ? j.grupos as Record<string, number> : undefined,
           dominiosParaImportar: Array.isArray(j.dominiosParaImportar) ? j.dominiosParaImportar : undefined,
           erros: Array.isArray(j.erros) ? j.erros : undefined,
+          previewProdutos:
+            j.previewProdutos && Array.isArray(j.previewProdutos.linhas) ? j.previewProdutos : null,
         }
         setEstado({ fase: "preview-ok", preview: safe })
         return safe
@@ -347,6 +446,7 @@ export function useImportadorAvancado() {
           },
           porDominio: j.porDominio && typeof j.porDominio === "object" ? j.porDominio : {},
           errosDetalhados: Array.isArray(j.errosDetalhados) ? j.errosDetalhados : [],
+          resumoProdutos: Array.isArray(j.resumoProdutos) ? j.resumoProdutos : [],
         }
         setEstado({ fase: "import-ok", result: safe })
         return safe
@@ -377,6 +477,7 @@ export function useImportadorAvancado() {
     tamanhoTotalBytes,
     lojaHeader,
     temLojaObrigatoria,
+    contextoProdutos,
 
     // ações
     adicionarArquivos,
@@ -385,6 +486,8 @@ export function useImportadorAvancado() {
     limparEstado,
     rodarPreview,
     rodarImport,
+    atualizarContextoProdutos,
+    limparContextoProdutos,
   }
 }
 

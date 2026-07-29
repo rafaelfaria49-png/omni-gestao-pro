@@ -326,10 +326,21 @@ export type LogAuditoriaProps = {
   result: ImportarResult
   /** Acionado pelo botão "Nova importação" — devolve ao estado idle. */
   onReiniciar?: () => void
+  /**
+   * Acionado pelo CTA "Revisar produtos desta importação" (Parte 9).
+   * Sem callback, o CTA mostra o batchId para consulta manual na aba Histórico.
+   */
+  onRevisarLoteProdutos?: (batchId: string) => void
 }
 
-export function LogAuditoria({ result, onReiniciar }: LogAuditoriaProps) {
+export function LogAuditoria({ result, onReiniciar, onRevisarLoteProdutos }: LogAuditoriaProps) {
   const entradas = useMemo(() => normalizarPorDominio(result.porDominio), [result.porDominio])
+
+  // Produtos efetivamente gravados neste lote — base do CTA de conferência.
+  const produtosDoLote = useMemo(
+    () => result.resumoProdutos.filter((r) => r.acao === "criado" || r.acao === "atualizado"),
+    [result.resumoProdutos],
+  )
 
   /** Agrupa errosDetalhados por dominio para entregar ao SecaoDominio. */
   const errosPorDominio = useMemo(() => {
@@ -367,6 +378,36 @@ export function LogAuditoria({ result, onReiniciar }: LogAuditoriaProps) {
               erros={errosPorDominio.get(entrada.dominio) ?? []}
             />
           ))}
+        </div>
+      )}
+
+      {/* CTA principal: conferência do lote de produtos (Parte 9) */}
+      {produtosDoLote.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-foreground">
+              {produtosDoLote.length} produto(s) neste lote aguardam conferência
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Defina preço de venda, confira código de barras e fiscal, marque como revisado e ative
+              os produtos aptos. Produtos sem preço ficaram inativos e não aparecem no PDV.
+            </p>
+          </div>
+          {onRevisarLoteProdutos ? (
+            <Button
+              type="button"
+              onClick={() => onRevisarLoteProdutos(result.batchId)}
+              className="shrink-0 gap-2"
+            >
+              <Sparkles className="h-4 w-4" />
+              Revisar produtos desta importação
+            </Button>
+          ) : (
+            <p className="shrink-0 text-xs text-muted-foreground">
+              Abra <span className="font-medium text-foreground">Importação → Histórico</span> e use o
+              lote <span className="font-mono">{result.batchId}</span>.
+            </p>
+          )}
         </div>
       )}
 

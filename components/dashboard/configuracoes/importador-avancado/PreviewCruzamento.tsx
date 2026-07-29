@@ -228,10 +228,20 @@ export type PreviewCruzamentoProps = {
   preview: PreviewResult
   /** Verdadeiro durante import-loading; desabilita o botão de importar. */
   importando?: boolean
+  /** `true` trava o botão Importar (ex.: conflito de duplicidade em produtos). */
+  bloqueado?: boolean
+  /** Texto mostrado no lugar da confirmação quando `bloqueado`. */
+  motivoBloqueio?: string
   onImportar: () => void
 }
 
-export function PreviewCruzamento({ preview, importando = false, onImportar }: PreviewCruzamentoProps) {
+export function PreviewCruzamento({
+  preview,
+  importando = false,
+  bloqueado = false,
+  motivoBloqueio,
+  onImportar,
+}: PreviewCruzamentoProps) {
   const { planilhas, erros } = preview
   const [clicked, setClicked] = useState(false)
 
@@ -292,17 +302,24 @@ export function PreviewCruzamento({ preview, importando = false, onImportar }: P
       {/* Rodapé com ação */}
       {!semConteudo && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4 text-primary" />
-            Revisado o cruzamento — tudo certo para importar?
-          </div>
+          {bloqueado ? (
+            <div className="flex items-center gap-2 text-xs text-destructive">
+              <AlertCircle className="h-4 w-4" />
+              {motivoBloqueio ?? "Importação bloqueada — resolva os conflitos acima."}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <CheckCircle2 className="h-4 w-4 text-primary" />
+              Revisado o cruzamento — tudo certo para importar?
+            </div>
+          )}
           <Button
             type="button"
             onClick={() => {
               setClicked(true)
               onImportar()
             }}
-            disabled={importando || clicked}
+            disabled={importando || clicked || bloqueado}
             className="gap-2"
           >
             {importando || clicked ? (
