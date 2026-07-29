@@ -1,12 +1,5 @@
 # Changelog — OmniGestão Pro
 
-## 2026-07-28 — Numeração server-side de venda: infraestrutura dormente
-
-- Schema aditivo (migration `0015_add_sale_numbering_infrastructure`): enum `VendaNumeracaoOrigem`, tabela `series_venda` (contador por loja/ano), `Store.codigoNumeracaoVenda` (único, nullable) e 8 colunas nullable em `vendas` (`clientSaleId`, `idempotencyHash`, `idempotencyHashVersion`, `serieVendaId`, `anoNumero`, `numeroSequencial`, `numeradaEm`, `numeracaoOrigem`). `pedidoId` continua `@unique` global; nenhuma venda histórica foi renumerada ou backfillada.
-- Constraints: unique `(storeId, clientSaleId)` — a mesma chave de tentativa pode existir em lojas diferentes —, unique `(serieVendaId, numeroSequencial)` e FK **composta** `(serieVendaId, storeId) → series_venda(id, storeId)`, que impede no banco uma venda de uma loja usar o contador de outra. CHECKs de faixa (`proximoNumero` 1..1000000, `numeroSequencial` 1..999999) e de formato do prefixo `^[A-Z0-9]{2,8}$` — esses CHECKs não são gerenciados por `db:push` e estão documentados no cabeçalho da migration.
-- Adapter `lib/vendas/server-sale-numbering.ts`: formata `VDA-{CODIGO_LOJA}-{ANO}-{NNNNNN}`, resolve o ano em `America/Sao_Paulo`, obtém/cria a série anual de forma idempotente e reserva o número num único `UPDATE` atômico dentro da transação **do chamador**. Erros fail-closed `SALE_NUMBERING_NOT_CONFIGURED`, `SALE_SEQUENCE_EXHAUSTED` e `SALE_NUMBERING_INVARIANT_BROKEN`; `storeId` é sempre explícito, sem fallback `loja-1`.
-- **Dormente e desligado:** nenhum PDV, O.S., importador ou rota chama o adapter; nenhuma loja recebeu código de numeração; o writer v1 e o contrato atual das APIs permanecem intactos. A configuração real das lojas é um gate administrado posterior (GOAL 002C).
-
 ## 2026-07-28 — Writer v1 de vendas: replay atômico e conflito fail-closed
 
 - `Venda.upsert` foi substituído por criação exclusiva: uma venda já existente nunca é atualizada pelo writer v1. O servidor compara um fingerprint canônico/versionado dos fatos; replay idêntico retorna a venda existente sem repetir itens, estoque, financeiro, títulos ou crédito-vale, enquanto fatos diferentes retornam `PEDIDO_ID_CONFLITO_MESMA_LOJA` (HTTP 409).

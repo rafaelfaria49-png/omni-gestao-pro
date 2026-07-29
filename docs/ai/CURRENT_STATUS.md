@@ -353,23 +353,6 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
-**Numeração server-side de venda — infraestrutura DORMENTE (28/07/2026)**
-- Schema aditivo aplicado **apenas em PostgreSQL local de teste** (migration `0015_add_sale_numbering_infrastructure`):
-  `series_venda` (contador por loja/ano), `Store.codigoNumeracaoVenda` e 8 colunas nullable em `vendas`.
-  Produção (Neon) **não** foi acessada; `db:push`/`migrate deploy` não foram executados.
-- Constraints estruturais: unique `(storeId, clientSaleId)`, unique `(serieVendaId, numeroSequencial)` e
-  **FK composta** `(serieVendaId, storeId)` — uma venda não pode usar a série de outra loja.
-- Adapter `lib/vendas/server-sale-numbering.ts` reserva o número em `UPDATE` atômico dentro da transação
-  do chamador (rollback não consome número), com erros fail-closed e sem fallback `loja-1`.
-- **Nada foi ativado:** nenhum writer produtivo chama o adapter, nenhuma loja tem código de numeração
-  configurado, `pedidoId` continua vindo do cliente no v1 e o contrato das APIs não mudou.
-- Concorrência provada contra PostgreSQL real (`npm run test:vendas-numeracao:integration`, opt-in via
-  `SALE_NUMBERING_TEST_DATABASE_URL`): 50 alocações simultâneas sem duplicata nem lacuna, e o lock
-  consultivo de uma loja não bloqueia outra (evidência direta em `pg_locks`).
-- Convergência da série **exige `READ COMMITTED`** (padrão do Prisma). Medido em PostgreSQL 17: com o
-  chamador em `RepeatableRead`/`Serializable` o perdedor recebe `P2002`/`P2034` cru, fora do contrato
-  de erro do adapter — restrição a tratar no GOAL 002C, antes de ligar o writer.
-
 **Writer legado v1 — replay atômico e conflito permanente (28/07/2026)**
 - `Venda` passou a ser **create-only**: não existe mais `upsert` permissivo no caminho compartilhado.
 - Reenvio idêntico na mesma loja é replay sem novas escritas; divergência canônica vira
