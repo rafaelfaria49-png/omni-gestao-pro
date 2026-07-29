@@ -38,7 +38,7 @@ Sonnet ≈ 50%, modelos baratos ≈ 25%.
 | Motor de busca + ambiguidade (G-06, G-07) | **Fable** | Sonnet (testes) | portar o engine sem regressão de política |
 | API de consulta + visibilidade (G-08) | **Fable** | humano | é a rota que pode vazar os 765 ocultos |
 | Testes golden set / vazamento (G-09) | Sonnet | Fable | volume de casos; a política já veio decidida |
-| Auth + orgs + dispositivos (G-10–G-12) | Sonnet | **Fable** | padrão NextAuth conhecido; sessões/limites são segurança |
+| Auth + orgs + dispositivos (G-10–G-12) | Sonnet | **Fable** | padrão Supabase Auth + DeviceSession próprio; sessões/limites são segurança |
 | Billing + webhooks + trial (G-13–G-15) | **Fable** | humano | código de dinheiro; idempotência e conciliação |
 | UI de consulta e resultado (G-16, G-17) | Sonnet | humano (visual) | telas do [UX §3](UX_DESIGN_SYSTEM_LANDING_001.md) |
 | Listas + PDF + WhatsApp (G-18, G-19) | Sonnet | Fable (watermark) | UI padrão; watermark/fingerprint é segurança |

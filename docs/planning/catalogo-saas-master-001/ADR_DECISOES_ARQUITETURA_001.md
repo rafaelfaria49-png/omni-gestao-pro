@@ -1,9 +1,13 @@
 # ADRs — Decisões de Arquitetura — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
-**Data:** 22 de Julho de 2026
-**Status:** Todos os ADRs estão **PROPOSTOS** (aceitos no plano; ratificação final do
+**Data:** 22 de Julho de 2026 (atualizado em 28 de Julho de 2026 — `CATALOGO-SAAS-INFRA-SUPABASE-DEDICADO-003`)
+**Status:** ADRs de produto seguem **PROPOSTOS** (aceitos no plano; ratificação final do
 proprietário junto aos gates de [OPEN_QUESTIONS](OPEN_QUESTIONS_GATES_HUMANOS_001.md)).
+[ADR-011](#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos) é
+**APROVADA** (decisão de infraestrutura já ratificada pelo proprietário), supersedendo
+[ADR-002](#adr-002--neon-postgresql-em-projeto-novo-e-isolado-substituindo-supabase-supersedida-por-adr-011)
+e [ADR-004](#adr-004--nextauth-v5-com-sessões-amarradas-a-devicesession-própria-supersedida-por-adr-011).
 Formato: Contexto → Decisão → Alternativas → Consequências.
 
 ---
@@ -23,11 +27,16 @@ Formato: Contexto → Decisão → Alternativas → Consequências.
   contexto limpo; venda/spin-off futuro simples. (−) correções no engine copiado não
   fluem automaticamente (aceito: o engine é pequeno e estável).
 
-## ADR-002 — Neon PostgreSQL em projeto NOVO e isolado (substituindo Supabase)
+## ADR-002 — Neon PostgreSQL em projeto NOVO e isolado (substituindo Supabase) — SUPERSEDIDA por ADR-011
+
+> **SUPERSEDIDA em 28 de Julho de 2026.** Ver
+> [ADR-011](#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos).
+> O banco do OmniCompat passou a ser **Supabase Database (PostgreSQL)**, em projeto
+> exclusivo. O texto abaixo é mantido como **registro histórico** da decisão anterior.
 
 - **Contexto:** o novo SaaS (OmniCompat) exige banco relacional relacional moderno, isolado do OmniGestão Pro.
-- **Decisão:** Neon PostgreSQL em projeto 100% NOVO e exclusivo do OmniCompat. ORM via Prisma com conexões pooled para a aplicação e direct para migrations (`prisma migrate`). Nenhum compartilhamento de tabelas, credenciais ou ambiente com o OmniGestão Pro. Auth via Auth.js e anexos em Cloudflare R2.
-- **Alternativas:** (a) Supabase — substituído oficialmente nesta atualização; (b) banco do OmniGestão — proibido por acoplamento.
+- **Decisão (histórica, supersedida):** Neon PostgreSQL em projeto 100% NOVO e exclusivo do OmniCompat. ORM via Prisma com conexões pooled para a aplicação e direct para migrations (`prisma migrate`). Nenhum compartilhamento de tabelas, credenciais ou ambiente com o OmniGestão Pro. Auth via Auth.js e anexos em Cloudflare R2.
+- **Alternativas:** (a) Supabase — à época, substituído por Neon; reintroduzido pela ADR-011 como plataforma dedicada e isolada; (b) banco do OmniGestão — proibido por acoplamento.
 - **Consequências:** (+) isolamento total de dados, escalabilidade serverless nativa. (−) storage de anexos abstraído no Cloudflare R2.
 
 ## ADR-003 — Monolito modular Next.js na Vercel (sem microserviços/filas)
@@ -43,16 +52,23 @@ Formato: Contexto → Decisão → Alternativas → Consequências.
   opera. (−) escala vertical limitada — suficiente até ~1.000 assinantes por projeção;
   reavaliar depois.
 
-## ADR-004 — NextAuth v5 com sessões amarradas a DeviceSession própria
+## ADR-004 — NextAuth v5 com sessões amarradas a DeviceSession própria — SUPERSEDIDA por ADR-011
+
+> **SUPERSEDIDA em 28 de Julho de 2026.** Ver
+> [ADR-011](#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos).
+> A autenticação do OmniCompat passou a ser **Supabase Auth**, com o controle de
+> dispositivos (`DeviceSession`) preservado como regra de negócio na camada de aplicação.
+> O texto abaixo é mantido como **registro histórico** da decisão anterior.
 
 - **Contexto:** o limite de dispositivos por plano é regra de NEGÓCIO central
   ([PLANOS §7.1](PLANOS_ASSINATURAS_PAGAMENTOS_001.md)) — não pode depender das
   limitações do provedor de auth.
-- **Decisão:** Auth.js / NextAuth v5 com contas e sessões no Neon PostgreSQL e DeviceSession própria, JWT de vida
+- **Decisão (histórica, supersedida):** Auth.js / NextAuth v5 com contas e sessões no Neon PostgreSQL e DeviceSession própria, JWT de vida
   curta validado contra `DeviceSession` server-side; revogação de dispositivo mata a
   sessão ([SEGURANCA §3](SEGURANCA_PROTECAO_BASE_001.md)). Magic link na Fase 2.
-- **Alternativas:** Supabase Auth — descontinuado do escopo e dificulta o controle fino de
-  sessão/dispositivo; Clerk — custo por MAU e lock-in num produto de margem apertada.
+- **Alternativas:** Supabase Auth — à época, descontinuado do escopo; readotado pela ADR-011
+  com DeviceSession própria preservada por cima do Supabase Auth; Clerk — custo por MAU e
+  lock-in num produto de margem apertada.
 - **Consequências:** (+) controle total do fluxo, zero custo por usuário, experiência já
   operada. (−) recuperação de senha/verificação são responsabilidade nossa (Resend).
 
@@ -136,3 +152,63 @@ Formato: Contexto → Decisão → Alternativas → Consequências.
   expiração curta (fica FORA do MVP); app nativo — custo sem ganho para o caso de uso.
 - **Consequências:** (+) proteção da base preservada; PWA continua instalável e rápido.
   (−) sem consulta em queda de internet — limitação comunicada com honestidade.
+
+## ADR-011 — Supabase dedicado como plataforma de dados, autenticação e arquivos
+
+- **Contexto:** o GOAL `CATALOGO-SAAS-INFRA-SUPABASE-DEDICADO-003` revisita a escolha de
+  infraestrutura registrada em ADR-002/ADR-004. Operar banco, autenticação e storage em
+  três produtos separados (Neon + Auth.js + Cloudflare R2) multiplica contas, credenciais
+  e superfícies de configuração para um MVP tocado por 1 dev + IAs.
+- **Decisão anterior:** Neon PostgreSQL (banco) + Auth.js/NextAuth v5 (autenticação) +
+  Cloudflare R2 (storage), registradas em
+  [ADR-002](#adr-002--neon-postgresql-em-projeto-novo-e-isolado-substituindo-supabase-supersedida-por-adr-011)
+  e [ADR-004](#adr-004--nextauth-v5-com-sessões-amarradas-a-devicesession-própria-supersedida-por-adr-011).
+  Ambas ficam **SUPERSEDIDAS** por esta ADR.
+- **Decisão nova:** adotar **Supabase Database (PostgreSQL) + Supabase Auth + Supabase
+  Storage** como plataforma de dados, autenticação e arquivos do OmniCompat, em conta,
+  organização e projeto **exclusivos e isolados** do OmniGestão Pro — nunca a conta
+  Supabase hoje usada pelo OmniGestão Pro (capacidade já comprometida) e sem qualquer
+  compartilhamento de tabelas, Auth, buckets, credenciais ou ambiente. Prisma continua
+  como ORM das tabelas de domínio do OmniCompat, conectado ao Postgres do Supabase
+  (conexão pooled para runtime da aplicação, conexão direct para migrations e tarefas
+  administrativas); o schema interno de Auth/Storage do Supabase não é recriado nem
+  gerenciado pelo Prisma, e nenhuma migration do Prisma pode ser destrutiva sobre esses
+  schemas.
+- **Motivos:** reunir banco + autenticação + storage numa única plataforma reduz o número
+  de contas/credenciais/serviços operados no MVP; simplifica desenvolvimento e
+  administração por um único operador; mantém isolamento total do OmniGestão Pro através
+  de projeto próprio, sem reutilizar a conta Supabase comprometida nem a infraestrutura
+  Neon usada por outro projeto.
+- **Alternativas consideradas:** (a) manter Neon + Auth.js + Cloudflare R2 — descartada:
+  três contas/credenciais separadas para o mesmo problema que o Supabase resolve
+  unificado; (b) reaproveitar o projeto/conta Supabase atual do OmniGestão — **proibida**:
+  capacidade já comprometida e quebraria o isolamento entre produtos (ADR-001); (c)
+  Clerk/PlanetScale/outros — mesmas objeções de custo e lock-in já registradas em
+  ADR-002/ADR-004.
+- **Benefícios:** menos serviços e credenciais no MVP; RLS nativo como defesa em
+  profundidade ([SEGURANCA](SEGURANCA_PROTECAO_BASE_001.md)); Storage integrado dispensa
+  configuração S3-compatible separada; Auth com helpers SSR para Next.js reduz código
+  próprio de sessão (o controle de dispositivos via `DeviceSession` continua sendo regra
+  de negócio da aplicação, não do provedor).
+- **Riscos:** dependência de uma única plataforma para banco+auth+storage (menor
+  redundância de fornecedor); conta nova, sem histórico, exige governança cuidadosa;
+  limites do plano gratuito podem não sustentar produção.
+- **Mitigadores:** MFA obrigatório e recuperação segura na conta nova; avaliação de plano
+  pago e de backups ANTES do lançamento comercial; chave privilegiada (service-role) só no
+  servidor, nunca em `NEXT_PUBLIC_*`, nunca commitada; abstrações próprias de storage e
+  autorização na aplicação para permitir migração futura se necessário.
+- **Impacto no roadmap:** nenhuma mudança nas fases ou prazos-hipótese do
+  [ROADMAP](ROADMAP_IMPLEMENTACAO_001.md) — é troca de infraestrutura, não de escopo de
+  produto.
+- **Impacto no G-01:** [BACKLOG G-01](BACKLOG_GOALS_INICIAIS_001.md) passa a prever
+  Supabase (Database/Auth/Storage) como plataforma planejada, com `.env.example` de
+  placeholders Supabase; a fundação continua sem criar conta, projeto, banco real ou
+  autenticação real.
+- **Estado:** **APROVADO** pelo proprietário — GOAL `CATALOGO-SAAS-INFRA-SUPABASE-DEDICADO-003`.
+- **Neon PostgreSQL, Auth.js/NextAuth v5 e Cloudflare R2 estão SUPERSEDIDOS** como
+  arquitetura vigente do OmniCompat; permanecem apenas como registro histórico em
+  ADR-002/ADR-004.
+- **Data da decisão:** 28 de Julho de 2026.
+- **Reavaliação:** esta escolha pode ser revista se custos, limites de plano ou riscos do
+  Supabase mudarem materialmente antes do lançamento em produção — nenhuma decisão de
+  infraestrutura deste plano é permanente por padrão.

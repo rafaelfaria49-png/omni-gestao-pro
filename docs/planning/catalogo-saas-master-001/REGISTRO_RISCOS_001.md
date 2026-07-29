@@ -162,7 +162,8 @@ proprietário, salvo indicação.
   barato, pós-lançamento é caro.
 
 ### R-19 — Acoplamento acidental ao OmniGestão
-- **Mitigação:** repo/Vercel/Neon PostgreSQL novos, Cloudflare R2 e Auth.js ([ADR-001/002](ADR_DECISOES_ARQUITETURA_001.md));
+- **Mitigação:** repo/Vercel novos + projeto Supabase (Database/Auth/Storage) exclusivo e
+  isolado ([ADR-001/ADR-011](ADR_DECISOES_ARQUITETURA_001.md));
   reaproveitamento SÓ por cópia vendorizada ([ARQUITETURA §5](ARQUITETURA_CATALOGO_SAAS_001.md));
   revisão de PR checa imports.
 - **Contingência:** qualquer dependência descoberta é tratada como bug P0.

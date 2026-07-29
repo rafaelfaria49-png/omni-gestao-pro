@@ -47,8 +47,8 @@ Papéis (definidos em [MODELO_DADOS — User/OrganizationMember](MODELO_DADOS_CO
 
 Regras:
 
-- **Autenticação:** NextAuth v5, e-mail + senha bcrypt (custo ≥ 12), verificação de
-  e-mail obrigatória antes do trial contar consulta.
+- **Autenticação:** Supabase Auth, e-mail + senha (hashing gerenciado pelo Supabase Auth),
+  verificação de e-mail obrigatória antes do trial contar consulta.
 - **Anti-enumeração:** login e recuperação nunca revelam se o e-mail existe
   (copy da tela 3.3 do [UX](UX_DESIGN_SYSTEM_LANDING_001.md)).
 - **Recuperação de senha:** token de uso único, expiração 30 min, invalida sessões ativas.
@@ -157,7 +157,7 @@ Equilíbrio (referenciado por [UX §4.3](UX_DESIGN_SYSTEM_LANDING_001.md)):
 | Consentimento | Explícito no cadastro (tela 3.4 do [UX](UX_DESIGN_SYSTEM_LANDING_001.md)); marketing opt-in separado |
 | Direitos do titular | Exportar meus dados, corrigir, excluir conta — self-service na tela Conta (3.15) |
 | Exclusão | Anonimização irreversível do e-mail; trilhas financeiras mantidas 5 anos (obrigação fiscal) |
-| Operadores | Vercel, Neon PostgreSQL, Cloudflare R2, PaymentProvider, Resend, Sentry — todos com DPA; inventário mantido na doc do repo |
+| Operadores | Vercel, Supabase (Database/Auth/Storage), PaymentProvider, Resend, Sentry — todos com DPA; inventário mantido na doc do repo |
 | Encarregado | O proprietário, no MVP (formalizar no gate jurídico) |
 | Incidente | Playbook: conter → avaliar dados afetados → comunicar ANPD/titulares quando exigível → post-mortem no AuditLog |
 | Retenções | Conforme [MODELO_DADOS](MODELO_DADOS_CONCEITUAL_001.md) (SearchHistory 6 meses, AuditLog 24 meses/5 anos financeiro, org cancelada 12 meses) |
@@ -188,7 +188,8 @@ Equilíbrio (referenciado por [UX §4.3](UX_DESIGN_SYSTEM_LANDING_001.md)):
 - **RLS (defesa em profundidade):** o app acessa via Prisma (role da aplicação), mas RLS
   fica ATIVA nas tabelas com policies por organização para as roles públicas do Supabase —
   um vazamento de `anon key` não expõe nada. RLS complementa, não substitui, o filtro por
-  `organizationId` na aplicação ([ADR-002](ADR_DECISOES_ARQUITETURA_001.md)).
+  `organizationId` na aplicação
+  ([ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos)).
 - **Dependências:** lockfile fixo, `npm audit` em CI, atualização mensal deliberada.
 
 ## 10. Checklist de segurança do lançamento (gate do beta)

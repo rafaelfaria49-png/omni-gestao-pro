@@ -29,9 +29,10 @@ de 30 itens/semana ([PAINEL_ADMIN §5](PAINEL_ADMIN_MODERACAO_001.md)).
 
 **Entregas** ([BACKLOG G-01, G-02](BACKLOG_GOALS_INICIAIS_001.md)):
 
-- Repositório novo, projeto Vercel novo, projeto Neon PostgreSQL novo e isolado (isolado —
-  [ADR-001/ADR-002](ADR_DECISOES_ARQUITETURA_001.md)); ambientes dev/preview/prod com
-  envs separadas ([ARQUITETURA §6](ARQUITETURA_CATALOGO_SAAS_001.md)).
+- Repositório novo, projeto Vercel novo, projeto Supabase novo, exclusivo e isolado
+  (Database + Auth + Storage — [ADR-001/ADR-011](ADR_DECISOES_ARQUITETURA_001.md));
+  ambientes dev/preview/prod com envs separadas
+  ([ARQUITETURA §6](ARQUITETURA_CATALOGO_SAAS_001.md)).
 - Next.js + TS strict + Tailwind/shadcn + tokens semânticos (incl. tokens de confiança —
   [UX §1](UX_DESIGN_SYSTEM_LANDING_001.md)) + shell PWA instalável.
 - CI: typecheck, lint, testes, build; deploy preview por PR; headers de segurança.

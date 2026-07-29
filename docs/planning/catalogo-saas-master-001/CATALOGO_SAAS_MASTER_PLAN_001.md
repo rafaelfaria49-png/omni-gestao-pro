@@ -81,7 +81,7 @@ confirmados + classificação de confiança honesta**. Todo o discurso comercial
 | D-01 | Lançar só películas? | **SIM** — beta fechado → lançamento com preço fundador | [PRD](PRD_CATALOGO_SAAS_MVP_001.md) | Não |
 | D-02 | Capinhas na comunicação | **Não anunciar no lançamento**; menção honesta só em FAQ/roadmap ("em construção com validação física, sem data") | [PRD §9](PRD_CATALOGO_SAAS_MVP_001.md) | Sim (tom) |
 | D-03 | Repositório | Projeto novo, repo próprio, zero dependência runtime do OmniGestão | [ADR-001](ADR_DECISOES_ARQUITETURA_001.md) | Não |
-| D-04 | Stack | Next.js + TS + Tailwind/shadcn + Prisma + Neon PostgreSQL (projeto NOVO e isolado) + Auth.js + Cloudflare R2 + Vercel + Resend + Sentry + PWA | [ARQUITETURA](ARQUITETURA_CATALOGO_SAAS_001.md) | Não |
+| D-04 | Stack | Next.js + TS + Tailwind/shadcn + Prisma + Supabase Database + Supabase Auth + Supabase Storage (projeto NOVO, exclusivo e isolado) + Vercel + Resend + Sentry + PWA | [ARQUITETURA](ARQUITETURA_CATALOGO_SAAS_001.md), [ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos) | Não |
 | D-05 | Pagamentos | **Interface PaymentProvider** (gateway em aberto; Stripe, Mercado Pago, Pagar.me e Asaas em avaliação por taxas, Pix, cartão recorrente, parcelamento, webhooks, chargeback, prazo e CNPJ BR) | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | **Sim** |
 | D-06 | Preços | Essencial R$ 19,90/mês · R$ 44,90/tri · R$ 119,90/ano (1 loja, 2 us, 3 disp); Pro R$ 29,90/mês · R$ 59,90/tri · R$ 159,90/ano (até 3 lojas, 5 us, 8 disp) | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | **Sim** |
 | D-07 | Teste grátis | 7 dias sem cartão ou 30 pesquisas contabilizadas no backend (o que ocorrer 1º), 1 us, 1 disp, 1 org, 1 lista ativa, 1 PDF demo com marca d'água | [PLANOS](PLANOS_ASSINATURAS_PAGAMENTOS_001.md) | Sim |
@@ -136,7 +136,7 @@ compatibilidade de capinha automaticamente por dimensões.
 | [MATRIZ_IAS_POR_ETAPA_001.md](MATRIZ_IAS_POR_ETAPA_001.md) | Qual IA em cada etapa e por quê |
 | [METRICAS_E_ANALYTICS_001.md](METRICAS_E_ANALYTICS_001.md) | Métricas de produto com metas-hipótese |
 | [REGISTRO_RISCOS_001.md](REGISTRO_RISCOS_001.md) | 20 riscos com mitigação e contingência |
-| [ADR_DECISOES_ARQUITETURA_001.md](ADR_DECISOES_ARQUITETURA_001.md) | 10 ADRs formais |
+| [ADR_DECISOES_ARQUITETURA_001.md](ADR_DECISOES_ARQUITETURA_001.md) | 11 ADRs formais (ADR-002/ADR-004 supersedidas por ADR-011 — Supabase) |
 | [BACKLOG_GOALS_INICIAIS_001.md](BACKLOG_GOALS_INICIAIS_001.md) | 26 GOALs executáveis com critérios de aceite |
 | [OPEN_QUESTIONS_GATES_HUMANOS_001.md](OPEN_QUESTIONS_GATES_HUMANOS_001.md) | Decisões que exigem o proprietário |
 | [RESUMO_EXECUTIVO_CATALOGO_SAAS_001.md](RESUMO_EXECUTIVO_CATALOGO_SAAS_001.md) | Síntese de 2 páginas |
@@ -165,8 +165,17 @@ compatibilidade de capinha automaticamente por dimensões.
 6. **Diferenças reais Essencial × Pro?** Essencial = 1 loja, até 2 usuários, até 3 dispositivos, consulta, confiança, favoritos, histórico, lista, PDF simples, solicitações e relatos. Loja Pro = até 3 lojas, até 5 usuários, até 8 dispositivos, PDF personalizado com marca da loja, compartilhamento facilitado WhatsApp, histórico ampliado, relatórios de buscas, permissões e prioridade em solicitações.
 7. **Limite de dispositivos?** Essencial até 3 dispositivos (2 usuários / 1 loja); Pro até 8 dispositivos (5 usuários / 3 lojas), com troca self-service.
 8. **Qual processador de pagamento?** Abstração via interface PaymentProvider. Gateway definitivo em aberto para avaliação entre Stripe, Mercado Pago, Pagar.me e Asaas com base em pesquisa atualizada de taxas, Pix, cartão recorrente, parcelamento, webhooks, chargeback, prazos e suporte a CNPJ BR.
-9. **Qual arquitetura?** Next.js App Router + TypeScript + Tailwind/shadcn + Prisma + Neon PostgreSQL (projeto isolado) + Auth.js + Cloudflare R2 + Vercel + Resend + Sentry + PWA.
-10. **Banco de dados e infraestrutura?** O Supabase foi substituído oficialmente pelo Neon PostgreSQL em projeto 100% NOVO e isolado do OmniGestão (Prisma ORM, conexões pooled e direct). Autenticação via Auth.js / NextAuth v5 com persistência no Neon. Armazenamento de arquivos via Cloudflare R2.
+9. **Qual arquitetura?** Next.js App Router + TypeScript + Tailwind/shadcn + Prisma +
+   Supabase Database + Supabase Auth + Supabase Storage (projeto isolado) + Vercel +
+   Resend + Sentry + PWA.
+10. **Banco de dados e infraestrutura?** O OmniCompat usa **Supabase Database (PostgreSQL)
+    + Supabase Auth + Supabase Storage** em conta, organização e projeto 100% NOVOS,
+    exclusivos e isolados — nunca a conta Supabase hoje usada pelo OmniGestão Pro
+    (capacidade comprometida) nem a infraestrutura Neon de outro projeto. Prisma ORM
+    gerencia só as tabelas de domínio (conexões pooled para app, direct para migrations);
+    o schema interno de Auth/Storage é do Supabase, não do Prisma. Decisão anterior (Neon
+    PostgreSQL + Auth.js/NextAuth v5 + Cloudflare R2) supersedida em 28/07/2026 —
+    [ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos).
 11. **Como proteger a base?** Defesa em camadas: sem endpoint de export total; respostas
     mínimas paginadas; rate limit conta/IP/dispositivo; telemetria de consulta anômala;
     watermark identificando o assinante em todo PDF; suspensão gradual; termos de licença.

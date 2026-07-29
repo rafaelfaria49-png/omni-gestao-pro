@@ -1,7 +1,8 @@
 # Arquitetura — SaaS de Consulta de Películas — 001
 
 **GOAL:** `CATALOGO-SAAS-MASTER-PLAN-001`
-**Data:** 22 de Julho de 2026
+**Data:** 22 de Julho de 2026 (banco/auth/storage atualizados em 28 de Julho de 2026 —
+`CATALOGO-SAAS-INFRA-SUPABASE-DEDICADO-003`, [ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos))
 **Status:** PROPOSTA (ADRs formais em [ADR_DECISOES_ARQUITETURA_001.md](ADR_DECISOES_ARQUITETURA_001.md))
 
 ---
@@ -41,6 +42,12 @@ Justificativa dominante: o time já opera Next.js 16 + React 19 + TS strict em p
 
 ### 2.2 Banco e plataforma de dados
 
+> **Atualizado por [ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos)
+> (28/07/2026):** a comparação abaixo é o registro histórico que sustentou a escolha
+> original por Neon. A decisão vigente é **Supabase Database (PostgreSQL)**, em projeto
+> exclusivo do OmniCompat, justamente pelos critérios de Storage embutido e RLS que a
+> tabela já apontava a favor do Supabase.
+
 | Critério | Supabase (Postgres) | Neon (Postgres) | PlanetScale (MySQL) | SQLite/Turso |
 | :--- | :---: | :---: | :---: | :---: |
 | Custo inicial | 5 (free→US$25) | 5 | 3 | 5 |
@@ -49,16 +56,28 @@ Justificativa dominante: o time já opera Next.js 16 + React 19 + TS strict em p
 | Storage p/ anexos (fotos de contribuição) | 5 (embutido) | 2 | 2 | 2 |
 | Backup/PITR gerenciado | 4 | 4 | 4 | 3 |
 | `pg_trgm` p/ fuzzy search | 5 | 5 | 1 | 2 |
-| **Decisão** | | **✔ Neon PostgreSQL (projeto NOVO e isolado)** | | |
+| **Decisão** | **✔ Supabase Database (projeto NOVO, exclusivo e isolado)** | | | |
 
-Regra inegociável: **nunca o banco do OmniGestão Pro**. Projeto Neon PostgreSQL novo, exclusivo do OmniCompat, credenciais próprias, sem compartilhamento de tabelas ou ambiente.
+Regra inegociável: **nunca o banco do OmniGestão Pro** e **nunca a conta/projeto Supabase
+já usado pelo OmniGestão Pro** (capacidade comprometida). Conta, organização e projeto
+Supabase 100% novos e exclusivos do OmniCompat, credenciais próprias, sem compartilhamento
+de tabelas, Auth, Storage ou ambiente ([ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos)).
 
 ### 2.3 ORM e acesso a dados
 
-Prisma 6 (experiência do time, migrations versionadas). Conexão via pooler (transaction
-mode) para serverless; `DIRECT_URL` só para migrations — mesmo padrão já operado.
+Prisma 6 (experiência do time, migrations versionadas), conectado ao PostgreSQL do
+Supabase. Conexão via pooler (transaction mode) para runtime serverless da aplicação;
+conexão direct só para migrations e tarefas administrativas (`prisma migrate`). Prisma
+gerencia exclusivamente as tabelas de domínio do OmniCompat — o schema interno de Auth e
+Storage do Supabase não é recriado nem migrado pelo Prisma, e nenhuma migration pode ser
+destrutiva sobre esses schemas.
 
 ### 2.4 Autenticação
+
+> **Atualizado por [ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos)
+> (28/07/2026):** a comparação abaixo é o registro histórico que sustentou a escolha
+> original por NextAuth v5. A decisão vigente é **Supabase Auth**, com o controle de
+> dispositivos (`DeviceSession`) preservado como regra de negócio própria da aplicação.
 
 | Critério | NextAuth v5 (Credentials + e-mail) | Supabase Auth | Clerk |
 | :--- | :---: | :---: | :---: |
@@ -67,10 +86,12 @@ mode) para serverless; `DIRECT_URL` só para migrations — mesmo padrão já op
 | Controle do fluxo de dispositivos/sessões | 5 (JWT + tabela própria) | 3 | 3 |
 | Magic link | 4 (via provider e-mail) | 5 | 5 |
 | Lock-in | 5 (nenhum) | 3 | 1 |
-| **Decisão** | **✔ Auth.js / NextAuth v5**: e-mail+senha (bcrypt) com contas e sessões persistidas no Neon PostgreSQL; controle de dispositivos via camada de aplicação propia | | |
+| **Decisão** | | **✔ Supabase Auth**: e-mail+senha, sessão segura com integração SSR ao Next.js; controle de dispositivos via camada de aplicação própria | |
 
-Sessões JWT + tabela `DeviceSession` própria para o limite de dispositivos (o controle de
-dispositivo é regra de negócio central — precisa ser nosso, não do provedor).
+Supabase Auth cuida de conta/sessão/cookies; tabela `DeviceSession` própria continua sendo
+a fonte de verdade do limite de dispositivos por plano (regra de negócio central — precisa
+ser nossa, não do provedor). Autorização de negócio (organização, loja, papel,
+entitlement) é sempre validada no servidor pela aplicação, nunca só pelo Supabase Auth.
 
 ### 2.5 Pagamentos
 
@@ -96,11 +117,10 @@ flowchart LR
     App[Next.js App Router<br/>Server Actions + API Routes]
     Cron[Vercel Cron<br/>jobs diários]
   end
-  subgraph Neon["Neon PostgreSQL (projeto novo, isolado)"]
-    PG[(Postgres<br/>Prisma ORM)]
-  end
-  subgraph Cloudflare["Cloudflare R2"]
-    ST[(R2 Storage<br/>anexos/fotos)]
+  subgraph Supabase["Supabase (projeto novo, isolado e exclusivo do OmniCompat)"]
+    PG[(Supabase Database<br/>Postgres + Prisma ORM)]
+    Auth[(Supabase Auth)]
+    ST[(Supabase Storage<br/>anexos/fotos)]
   end
   PaymentProvider[PaymentProvider Gateway]
   Resend[Resend e-mails]
@@ -108,6 +128,7 @@ flowchart LR
 
   PWA -->|HTTPS| App
   App --> PG
+  App --> Auth
   App --> ST
   App <-->|checkout/portal| PaymentProvider
   PaymentProvider -->|webhooks assinados| App
@@ -116,8 +137,8 @@ flowchart LR
   App --> Sentry
 ```
 
-Componentes: **um** app Next.js (site público + app autenticado + admin), um Postgres, um
-storage, Stripe, Resend, Sentry. Nada mais no MVP.
+Componentes: **um** app Next.js (site público + app autenticado + admin), um projeto
+Supabase (Postgres + Auth + Storage), Stripe/gateway, Resend, Sentry. Nada mais no MVP.
 
 ---
 
@@ -127,14 +148,14 @@ storage, Stripe, Resend, Sentry. Nada mais no MVP.
 | :--- | :--- | :--- |
 | **Frontend** | Next.js App Router, React Server Components onde possível, shadcn/ui (tokens semânticos, sem cor hardcoded), Tailwind 4 | Design system próprio ([UX](UX_DESIGN_SYSTEM_LANDING_001.md)) |
 | **Backend** | Server Actions p/ mutações do app; Route Handlers p/ busca (GET cacheável), webhooks e admin | Serviços puros em `lib/` (padrão que já funciona no OmniGestão) |
-| **Banco** | Neon PostgreSQL exclusivo, Prisma ORM, conexões pooled p/ app e direct p/ migrations (`prisma migrate`) | Multi-tenant por `organizationId` em TODA query |
-| **Autenticação** | Auth.js / NextAuth v5, persistência em Neon PostgreSQL, e-mail+senha bcrypt; dispositivo controlado no app | Roles: `OWNER`, `MEMBER` (org) + `PLATFORM_ADMIN`, `CURATOR` (plataforma) |
+| **Banco** | Supabase Database (PostgreSQL) exclusivo, Prisma ORM, conexões pooled p/ app e direct p/ migrations (`prisma migrate`) | Multi-tenant por `organizationId` em TODA query; schema de Auth/Storage do Supabase não é gerenciado pelo Prisma |
+| **Autenticação** | Supabase Auth, e-mail+senha, sessão segura com integração SSR ao Next.js; dispositivo controlado no app | Roles: `OWNER`, `MEMBER` (org) + `PLATFORM_ADMIN`, `CURATOR` (plataforma) |
 | **Pagamentos** | Abstração PaymentProvider (gateway definitivo em aberto para avaliação de taxas e Pix) | Acesso ativado SOMENTE por webhook validado |
-| **Armazenamento** | Cloudflare R2 (camada S3-compatible) | Logotipos, anexos de solicitações, fotos de testes e PDFs mantidos |
+| **Armazenamento** | Supabase Storage | Logotipos, anexos de solicitações, fotos de testes e PDFs mantidos; buckets privados, URLs assinadas quando necessário |
 | **Logs** | Vercel logs (runtime) + `AuditLog` no banco (negócio) + Sentry (erros) | Retenção `AuditLog`: 24 meses |
 | **Monitoramento** | Sentry (erros), Vercel Analytics (web vitals), healthcheck `/api/health` + alerta de cron | Dashboards simples primeiro |
 | **Deploy** | Vercel, preview por PR, produção só via merge na main | Env por ambiente; secrets nunca no repo |
-| **Backup** | Neon PostgreSQL backups diários + export semanal pg_dump + snapshots de catálogo versionados ([IMPORTACAO §7](IMPORTACAO_DADOS_EXISTENTES_001.md)) | Teste de restore trimestral |
+| **Backup** | Backups gerenciados do Supabase + export semanal pg_dump + snapshots de catálogo versionados ([IMPORTACAO §7](IMPORTACAO_DADOS_EXISTENTES_001.md)) | Teste de restore trimestral; plano de backup avaliado antes do lançamento pago |
 | **Filas** | Nenhuma no MVP. Vercel Cron p/ jobs (digest de solicitações, verificação de assinaturas órfãs, limpeza de sessões) | Reavaliar só se webhooks exigirem retry além do nativo do Stripe |
 | **E-mails** | Resend + React Email: verificação, recuperação de senha, recibo, aviso de falha de cobrança, notificação de modelo adicionado | Domínio próprio com SPF/DKIM |
 | **PDF** | Geração server-side com `@react-pdf/renderer` (serverless-friendly), watermark obrigatório (org + usuário + data + id do documento) | Sem HTML→headless-Chrome (peso/frio em serverless) |
@@ -151,7 +172,8 @@ storage, Stripe, Resend, Sentry. Nada mais no MVP.
 | `lib/catalogo-aparelhos/*.ts` (engine puro, sem deps de banco) | **Copiar** (vendorizar) para o novo repo como ponto de partida do motor; adaptar a fonte de CSV→DB | Importar por path/pacote do repo OmniGestão |
 | Seeds CSV auditados (`docs/catalogo/seeds/`) + artefatos da auditoria | Snapshot com hash conferido vira insumo do ETL | Ler em runtime do repo antigo |
 | Padrões operacionais (Server Actions, tokens visuais, localKey/idempotência, auditoria via histórico) | Reaplicar como convenção | Compartilhar schema/tabelas |
-| Conta Vercel/Supabase | Mesma organização de billing é aceitável | Mesmo projeto/banco/env |
+| Conta Vercel | Mesma organização de billing é aceitável | Mesmo projeto/env |
+| Conta/organização/projeto Supabase | **Nada** — Supabase do OmniCompat é conta, organização e projeto 100% novos e exclusivos | Compartilhar banco, Auth, Storage, buckets, credenciais, service-role ou ambiente com o OmniGestão Pro ([ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos)) |
 
 Integração futura OmniGestão↔SaaS (Fase 5) será **por API pública autenticada**, nunca por
 banco compartilhado.
@@ -162,14 +184,17 @@ banco compartilhado.
 
 | Ambiente | Banco | Stripe | Observações |
 | :--- | :--- | :--- | :--- |
-| `dev` local | Neon PostgreSQL dev (projeto separado) | test mode | seeds de exemplo, nunca dados de assinantes |
+| `dev` local | Supabase Database dev (projeto Supabase separado, ou schema/branch de dev do mesmo projeto exclusivo) | test mode | seeds de exemplo, nunca dados de assinantes |
 | `preview` (PR) | banco dev | test mode | protegido por senha básica |
-| `production` | Neon PostgreSQL prod (projeto separado) | live mode | webhooks com secret próprio |
+| `production` | Supabase Database prod (projeto próprio, decidido antes do lançamento comercial) | live mode | webhooks com secret próprio |
 
-Variáveis mínimas: `DATABASE_URL`, `DIRECT_URL`, `AUTH_SECRET`, `NEXTAUTH_URL`,
-`PAYMENT_PROVIDER_SECRET`, `PAYMENT_WEBHOOK_SECRET`, `RESEND_API_KEY`,
-`SENTRY_DSN`, `NEXT_PUBLIC_APP_URL`. Sem `NEXT_PUBLIC_` para qualquer segredo (lição já
-aprendida no OmniGestão).
+Variáveis mínimas: `DATABASE_URL`, `DIRECT_URL` (Prisma, apontando ao Postgres do
+Supabase), URL pública do projeto Supabase + chave pública/anon ou publishable key
+(navegador), chave privilegiada/service-role (servidor, nunca `NEXT_PUBLIC_*`),
+`PAYMENT_PROVIDER_SECRET`, `PAYMENT_WEBHOOK_SECRET`, `RESEND_API_KEY`, `SENTRY_DSN`,
+`NEXT_PUBLIC_APP_URL`. Sem `NEXT_PUBLIC_` para qualquer segredo (lição já aprendida no
+OmniGestão); nomes exatos das variáveis Supabase e valores reais ficam para o GOAL de
+provisionamento — nesta fase só placeholders.
 
 ---
 

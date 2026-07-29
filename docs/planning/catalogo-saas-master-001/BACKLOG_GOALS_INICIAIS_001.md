@@ -16,10 +16,16 @@ com CI verde e o relatório padrão ([MATRIZ_IAS §4](MATRIZ_IAS_POR_ETAPA_001.m
 
 ### G-01 — Fundação do repositório e infraestrutura
 **Objetivo:** repo novo deployando vazio em produção.
-**Entregas:** Next.js + TS strict + Tailwind/shadcn; projetos Vercel/Neon PostgreSQL novos, Auth.js e Cloudflare R2;
-envs dev/preview/prod; CI (typecheck, lint, test, build); headers de segurança.
+**Entregas:** Next.js + TS strict + Tailwind/shadcn; projeto Vercel novo; Prisma
+configurado para o futuro Supabase Database (sem conexão real); Supabase Auth e Supabase
+Storage previstos na arquitetura; `.env.example` com placeholders Supabase (URL pública,
+chave pública/anon ou publishable, nome da variável da chave privilegiada/service-role —
+sem valores reais); SDKs Supabase instalados só quando necessários e validados; envs
+dev/preview/prod; CI (typecheck, lint, test, build); headers de segurança. **Nenhuma
+conta, organização ou projeto Supabase é criado nesta fase; nenhum banco real; nenhuma
+autenticação real; build inicial não exige credenciais reais.**
 **Aceite:** deploy de produção acessível; CI bloqueia merge em falha; zero referência ao
-OmniGestão em código/env ([ADR-001/002](ADR_DECISOES_ARQUITETURA_001.md)).
+OmniGestão em código/env ([ADR-001/ADR-011](ADR_DECISOES_ARQUITETURA_001.md)).
 **Dep:** gates de marca (codinome neutro aceito). **IA:** Sonnet/Fable.
 
 ### G-02 — Design tokens e shell PWA
@@ -92,10 +98,11 @@ públicas com a matriz de pares como oráculo ([BUSCA §7](BUSCA_E_COMPATIBILIDA
 
 ## Fase 1 — Identidade e cobrança
 
-### G-10 — Autenticação (NextAuth v5)
-**Objetivo:** cadastro/login/verificação/recuperação ([ADR-004](ADR_DECISOES_ARQUITETURA_001.md)).
-**Entregas:** e-mail+senha bcrypt (custo ≥ 12); verificação obrigatória; recuperação com
-token de 30 min; anti-enumeração; e-mails via Resend.
+### G-10 — Autenticação (Supabase Auth)
+**Objetivo:** cadastro/login/verificação/recuperação ([ADR-011](ADR_DECISOES_ARQUITETURA_001.md#adr-011--supabase-dedicado-como-plataforma-de-dados-autenticação-e-arquivos)).
+**Entregas:** e-mail+senha via Supabase Auth com sessão integrada SSR ao Next.js;
+verificação obrigatória; recuperação com token de 30 min; anti-enumeração; e-mails via
+Resend.
 **Aceite:** fluxos das telas 3.3/3.4 ([UX](UX_DESIGN_SYSTEM_LANDING_001.md)) completos;
 teste de anti-enumeração.
 **Dep:** G-02, G-03. **IA:** Sonnet/Fable.

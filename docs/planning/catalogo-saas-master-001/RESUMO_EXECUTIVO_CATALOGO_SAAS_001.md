@@ -43,8 +43,12 @@ honesta apenas em FAQ, sem data prometida.
 - **MVP:** apenas películas; beta fechado (15–30 lojas) antes de cobrar de estranhos;
   lançamento aberto com preço fundador.
 - **Preços aprovados:** Essencial R$ 19,90/mês · R$ 44,90/tri · R$ 119,90/ano (1 loja, 2 us, 3 disp); Loja Pro R$ 29,90/mês · R$ 59,90/tri · R$ 159,90/ano (até 3 lojas, 5 us, 8 disp). Trial oficial: 7 dias sem cartão ou 30 pesquisas contabilizadas.
-- **Stack:** Next.js + TS + Prisma + Neon PostgreSQL (projeto NOVO e isolado) + Auth.js + Cloudflare R2 + Vercel + Resend + Sentry + PWA. Gateway de pagamentos em aberto via interface PaymentProvider. CNPJ mantido como gate futuro. Monolito modular; motor de busca em memória (engine já
-  auditado, vendorizado) + `pg_trgm`. Repo e banco 100% separados do OmniGestão.
+- **Stack:** Next.js + TS + Prisma + Supabase Database + Supabase Auth + Supabase Storage
+  (conta, organização e projeto NOVOS, exclusivos e isolados) + Vercel + Resend + Sentry +
+  PWA. Gateway de pagamentos em aberto via interface PaymentProvider. CNPJ mantido como
+  gate futuro. Monolito modular; motor de busca em memória (engine já auditado,
+  vendorizado) + `pg_trgm`. Repo, banco, Auth e Storage 100% separados do OmniGestão (e da
+  conta Supabase já usada por ele).
 - **Confiança fail-closed:** status derivado de evidência, nunca promovido
   automaticamente; pares ocultos jamais expostos; "confirmado em bancada" só existirá
   com bancada real.
