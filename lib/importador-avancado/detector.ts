@@ -263,6 +263,103 @@ export const DICIONARIO_SEMANTICO: Record<string, string> = {
   "entidade tipo": "financeiro.entidadeTipo",
 }
 
+// ── Dicionário do domínio PRODUTOS (sobrepõe o genérico) ──────
+// O dicionário genérico foi calibrado para OS/clientes: "Código" resolve como
+// código de CLIENTE e "Marca" como marca de EQUIPAMENTO. Em planilha de produtos
+// (NF-e de fornecedor, catálogo, backup de ERP) isso descarta identidade real —
+// foi assim que os 13 itens da NF-e Martins 5.380.135 entraram sem barcode, sem
+// fornecedor e com a categoria copiada para a marca.
+//
+// A resolução semântica passa a considerar o domínio: este mapa só vale quando a
+// planilha foi detectada como `produtos`.
+export const DICIONARIO_PRODUTOS: Record<string, string> = {
+  // ── Identificação ──
+  "codigo": "produto.sku",
+  "código": "produto.sku",
+  "cod": "produto.sku",
+  "sku": "produto.sku",
+  "referencia": "produto.sku",
+  "codigo interno": "produto.sku",
+  "codigo do produto": "produto.sku",
+  "codigo produto": "produto.sku",
+
+  // ── Código de barras / GTIN ──
+  "codigo de barras": "produto.barcode",
+  "codigo de barra": "produto.barcode",
+  "codigo barras": "produto.barcode",
+  "codigo barra": "produto.barcode",
+  "cod barras": "produto.barcode",
+  "cod de barras": "produto.barcode",
+  "barras": "produto.barcode",
+  "ean": "produto.barcode",
+  "gtin": "produto.barcode",
+  "gtin ean": "produto.barcode",
+  "ean gtin": "produto.barcode",
+  "codigo usado na importacao": "produto.barcode",
+  "ean comercial": "produto.gtinComercial",
+  "gtin comercial": "produto.gtinComercial",
+  "ean tributavel": "produto.gtinTributavel",
+  "gtin tributavel": "produto.gtinTributavel",
+
+  // ── Descrição / classificação ──
+  "produto": "produto.nome",
+  "descricao": "produto.nome",
+  "descricao do produto": "produto.nome",
+  "descricao produto": "produto.nome",
+  "nome": "produto.nome",
+  "nome do produto": "produto.nome",
+  "nome produto": "produto.nome",
+  "categoria": "produto.categoria",
+  "grupo": "produto.categoria",
+  "marca": "produto.marca",
+  "fabricante": "produto.marca",
+
+  // ── Fornecedor ──
+  "fornecedor": "produto.fornecedor",
+  "nome do fornecedor": "produto.fornecedor",
+  "razao social do fornecedor": "produto.fornecedor",
+  "codigo do fornecedor": "produto.codigoFornecedor",
+  "cod do fornecedor": "produto.codigoFornecedor",
+  "referencia do fornecedor": "produto.codigoFornecedor",
+  "referencia fornecedor": "produto.codigoFornecedor",
+
+  // ── Fiscal ──
+  "ncm": "produto.ncm",
+  "codigo ncm": "produto.ncm",
+  "ncm sh": "produto.ncm",
+  "cest": "produto.cest",
+  "codigo cest": "produto.cest",
+
+  // ── Unidades ──
+  "unidade": "produto.unidadeComercial",
+  "un": "produto.unidadeComercial",
+  "unidade comercial": "produto.unidadeComercial",
+  "unidade de venda": "produto.unidadeComercial",
+  "unidade de saida": "produto.unidadeComercial",
+  "unidade de compra": "produto.unidadeComercial",
+  "unidade tributavel": "produto.unidadeTributavel",
+  "unidade tributaria": "produto.unidadeTributavel",
+
+  // ── Valores / estoque ──
+  "custo": "financeiro.custo",
+  "valor de custo": "financeiro.custo",
+  "preco de custo": "financeiro.custo",
+  "custo unitario": "financeiro.custo",
+  "valor unitario": "financeiro.custo",
+  "preco": "financeiro.precoVenda",
+  "preco de venda": "financeiro.precoVenda",
+  "preco venda": "financeiro.precoVenda",
+  "valor de venda": "financeiro.precoVenda",
+  "valor varejo": "financeiro.precoVenda",
+  "estoque": "produto.estoque",
+  "estoque atual": "produto.estoque",
+  "quantidade": "produto.estoque",
+  "qtd": "produto.estoque",
+  "garantia": "produto.garantiaDias",
+  "garantia dias": "produto.garantiaDias",
+  "dias de garantia": "produto.garantiaDias",
+}
+
 // ── GestaoClick — Mapa explícito filename → domínio ───────────
 // Aplicado ANTES do scoring semântico. Resolve o caso em que
 // a planilha tem "Código" (não "Nº da OS") como coluna chave, fazendo
@@ -436,7 +533,14 @@ const ASSINATURAS: AssinaturaDominio[] = [
     dominio: "produtos",
     label: "Produtos / Estoque",
     obrigatorios: ["produto.nome"],
-    opcionais: ["produto.sku", "financeiro.precoVenda", "financeiro.custo", "produto.estoque"],
+    opcionais: [
+      "produto.sku",
+      "produto.barcode",
+      "produto.ncm",
+      "financeiro.precoVenda",
+      "financeiro.custo",
+      "produto.estoque",
+    ],
     nomesArquivo: ["produto", "produtos", "estoque", "catalogo"],
   },
   {
@@ -462,17 +566,28 @@ export function normHeader(h: unknown): string {
   return norm(h)
 }
 
-/** Resolve um header para o campo semântico canônico */
-export function resolverCampoSemantico(header: string): string | null {
+/**
+ * Resolve um header para o campo semântico canônico.
+ *
+ * `dominio` é opcional para preservar o comportamento de todos os callers antigos
+ * (OS, vendas, clientes, financeiro). Quando vale `"produtos"`, o dicionário de
+ * produtos tem precedência: é o que impede "Código" de virar código de cliente e
+ * "Marca" de virar marca de equipamento numa planilha de catálogo.
+ */
+export function resolverCampoSemantico(header: string, dominio?: DominioImport): string | null {
   const n = norm(header)
+  if (dominio === "produtos") {
+    const especifico = DICIONARIO_PRODUTOS[n]
+    if (especifico) return especifico
+  }
   return DICIONARIO_SEMANTICO[n] ?? null
 }
 
 /** Mapeia todos os headers de uma planilha para campos semânticos */
-export function mapearHeaders(headers: string[]): Record<string, string> {
+export function mapearHeaders(headers: string[], dominio?: DominioImport): Record<string, string> {
   const mapa: Record<string, string> = {}
   for (const h of headers) {
-    const campo = resolverCampoSemantico(h)
+    const campo = resolverCampoSemantico(h, dominio)
     if (campo) mapa[h] = campo
   }
   return mapa
@@ -499,21 +614,29 @@ export function detectarDominio(
   }
 
   const camposSemanticos = new Set(headers.map((h) => resolverCampoSemantico(h)).filter(Boolean) as string[])
+  // Segundo conjunto, resolvido com o dicionário de produtos. Usado APENAS para
+  // pontuar a assinatura `produtos` — as demais continuam vendo o mapa genérico,
+  // então nenhuma planilha de OS/venda/cliente muda de classificação.
+  const camposProdutos = new Set(
+    headers.map((h) => resolverCampoSemantico(h, "produtos")).filter(Boolean) as string[],
+  )
 
   let melhorScore = 0
   let melhorDominio: DominioImport = "desconhecido"
 
   for (const sig of ASSINATURAS) {
+    const campos = sig.dominio === "produtos" ? camposProdutos : camposSemanticos
+
     // Bônus por nome de arquivo
     const bonusNome = sig.nomesArquivo.some((n) => nomeNorm.includes(norm(n))) ? 0.2 : 0
 
     // Score por campos obrigatórios
-    const obrigPresentes = sig.obrigatorios.filter((c) => camposSemanticos.has(c)).length
+    const obrigPresentes = sig.obrigatorios.filter((c) => campos.has(c)).length
     const obrigTotal = sig.obrigatorios.length
     const scoreObrig = obrigTotal > 0 ? obrigPresentes / obrigTotal : 0
 
     // Score por campos opcionais
-    const opcionaisPresentes = sig.opcionais.filter((c) => camposSemanticos.has(c)).length
+    const opcionaisPresentes = sig.opcionais.filter((c) => campos.has(c)).length
     const opcionaisTotal = sig.opcionais.length
     const scoreOpcional = opcionaisTotal > 0 ? opcionaisPresentes / opcionaisTotal : 0
 
@@ -552,7 +675,8 @@ function determinarChaveJoin(dominio: DominioImport, headers: string[]): string 
     clientes_enderecos: ["cliente.codigo", "cliente.cpf", "cliente.documento"],
     fornecedores: ["cliente.nome"],
     fornecedores_enderecos: ["cliente.nome"],
-    produtos: ["produto.sku", "produto.barcode", "produto.nome"],
+    // Produtos: o código de barras é a chave mais estável de uma NF-e/catálogo.
+    produtos: ["produto.barcode", "produto.sku", "produto.nome"],
     servicos_catalogo: ["servico.nome", "servico.sku"],
     contas_pagar: ["financeiro.descricao"],
     contas_receber: ["financeiro.descricao"],
@@ -561,7 +685,7 @@ function determinarChaveJoin(dominio: DominioImport, headers: string[]): string 
   const camposChave = chavesPorDominio[dominio] ?? []
   for (const campoChave of camposChave) {
     for (const h of headers) {
-      if (resolverCampoSemantico(h) === campoChave) return h
+      if (resolverCampoSemantico(h, dominio) === campoChave) return h
     }
   }
 
