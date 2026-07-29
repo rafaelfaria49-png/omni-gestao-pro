@@ -1,0 +1,43 @@
+{
+  "_aviso": [
+    "Tabela SUBSTITUÍVEL e FORA DO NÚCLEO do protocolo. O núcleo é Git + testes + Node +",
+    "arquivos estruturados; nada aqui é pré-requisito para o protocolo funcionar.",
+    "O campo `verificado` é CONSULTIVO: `open` NÃO bloqueia tarefa comum por executor não",
+    "verificado — apenas avisa. Tarefas de risco ALTO ou CRÍTICO continuam exigindo gate",
+    "humano ou revisão independente (papel R), independentemente desta tabela.",
+    "Todos marcados como false: nenhuma verificação empírica foi conduzida neste bootstrap."
+  ],
+  "aep": "1.0-R2",
+  "executores": [
+    {
+      "slug": "claude-code",
+      "familia": "anthropic",
+      "classes": ["C1", "C2", "C3", "C4"],
+      "verificado": false
+    },
+    {
+      "slug": "codex",
+      "familia": "openai",
+      "classes": ["C1", "C2", "C3"],
+      "verificado": false
+    },
+    {
+      "slug": "gemini-antigravity",
+      "familia": "google",
+      "classes": ["C1", "C2"],
+      "verificado": false
+    },
+    {
+      "slug": "cursor",
+      "familia": "multi",
+      "classes": ["C1", "C2"],
+      "verificado": false
+    },
+    {
+      "slug": "humano",
+      "familia": "humano",
+      "classes": ["C1", "C2", "C3", "C4", "R"],
+      "verificado": false
+    }
+  ]
+}

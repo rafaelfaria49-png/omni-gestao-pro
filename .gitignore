@@ -46,3 +46,7 @@ public/fallback-*.js
 # Dados reais de cliente - NUNCA versionar (LGPD)
 *.csv
 components/pdv-github-original/
+
+# AEP/1.0-R2 — Agent Execution Protocol
+.aep-active
+import/

@@ -1,0 +1,106 @@
+{
+  "aep": "1.0-R2",
+  "default_branch": "main",
+  "tracks_dir": "docs/execution-tracks",
+  "test_runner": "node --test \"scripts/*.test.mjs\"",
+  "_test_runner_nota": "A partir do Node 23 os argumentos posicionais de `node --test` são interpretados como GLOB, não como diretório a percorrer. Por isso `node --test scripts/` não encontra nada e `node --test scripts/**` varre arquivos que não são teste. O padrão acima é o equivalente correto e funciona também no Node 20/22.",
+  "max_attempts": 3,
+  "max_hot_goals": 3,
+  "gates": [
+    {
+      "id": "G-DADOS-SCHEMA",
+      "tipo": "caminho",
+      "autorizacao": "humana explícita",
+      "paths": [
+        "prisma/schema.prisma",
+        "prisma/migrations/**"
+      ],
+      "motivo": "Alteração de schema ou migration atinge dados reais de produção e é irreversível na prática."
+    },
+    {
+      "id": "G-DADOS-SEED",
+      "tipo": "caminho",
+      "autorizacao": "humana explícita",
+      "paths": [
+        "prisma/seed.ts",
+        "prisma/seeds/**",
+        "scripts/seed/**",
+        "data/**"
+      ],
+      "motivo": "Seeds escrevem no banco. Gate de CAMINHO, não varredura de conteúdo do diff."
+    },
+    {
+      "id": "G-AUTH",
+      "tipo": "caminho",
+      "autorizacao": "humana explícita",
+      "paths": [
+        "auth.ts",
+        "auth.config.ts",
+        "proxy.ts"
+      ],
+      "motivo": "Camada de autenticação e proteção de rotas. Regra de ouro do repositório."
+    },
+    {
+      "id": "G-CI",
+      "tipo": "caminho",
+      "autorizacao": "humana explícita",
+      "paths": [
+        ".github/workflows/**"
+      ],
+      "motivo": "CI é a camada remota do protocolo; alterá-la muda quem valida o quê."
+    },
+    {
+      "id": "G-CONFIG-DEPLOY",
+      "tipo": "caminho",
+      "autorizacao": "humana explícita",
+      "paths": [
+        "next.config.mjs",
+        "vercel.json",
+        ".env.example",
+        "package.json"
+      ],
+      "motivo": "Configuração de build e deploy afeta produção fora do escopo de qualquer GOAL."
+    },
+    {
+      "id": "G-AEP-CORE",
+      "tipo": "caminho",
+      "autorizacao": "humana explícita",
+      "paths": [
+        "scripts/track.mjs",
+        "scripts/track.test.mjs",
+        ".githooks/**",
+        "docs/ai-execution/protocol.json"
+      ],
+      "motivo": "O próprio núcleo do protocolo. Um GOAL não reescreve as regras que o julgam."
+    }
+  ],
+  "adapters": [
+    {
+      "slug": "agents",
+      "file": "AGENTS.md",
+      "linha_final": "Adaptador: AGENTS.md — executor genérico (qualquer agente que leia AGENTS.md)."
+    },
+    {
+      "slug": "claude",
+      "file": "CLAUDE.md",
+      "linha_final": "Adaptador: CLAUDE.md — Claude Code. A governança do repositório acima deste bloco continua valendo."
+    },
+    {
+      "slug": "gemini",
+      "file": "GEMINI.md",
+      "linha_final": "Adaptador: GEMINI.md — Gemini / Antigravity."
+    }
+  ],
+  "tracks": {
+    "contador": {
+      "dir": "contador",
+      "risk_tier": "MEDIO",
+      "titulo": "<PREENCHER>"
+    }
+  },
+  "remote_layer": {
+    "ci_verify": false,
+    "branch_protection_confirmada_por": null,
+    "branch_protection_confirmada_em": null
+  }
+}
