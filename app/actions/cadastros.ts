@@ -22,6 +22,14 @@ import {
 } from "@/lib/produtos/duplicate-product";
 import { validarGtin, type GtinFormato } from "@/lib/cadastros/gtin";
 import {
+  consultarProdutosSql,
+  MENSAGEM_ERRO_FILTROS_PRODUTOS,
+  normalizarFiltroImportacao,
+  resolverUltimoBatchProdutos,
+  type ErroFiltrosProdutos,
+  type ProdutosListagemFiltros,
+} from "@/lib/cadastros/produtos-listagem-sql";
+import {
   avaliarAptidaoAtivacao,
   estadoConferencia,
   getImportacaoMetadata,
@@ -1183,74 +1191,37 @@ export async function listProdutos(storeId: string, opts?: { q?: string }): Prom
   }
 }
 /**
- * ORDER BY do caminho raw quando não há ranking de relevância.
- * Só colunas de allowlist entram — nada vem interpolado do cliente.
- */
-function ordenacaoSqlProdutos(orderBy?: { field: string; direction: "asc" | "desc" }): Prisma.Sql {
-  const dir = orderBy?.direction === "asc" ? Prisma.sql`ASC` : Prisma.sql`DESC`;
-  switch (orderBy?.field) {
-    case "nome":
-      return Prisma.sql`p."name" ${dir}`;
-    case "sku":
-      return Prisma.sql`p."sku" ${dir}`;
-    case "estoque":
-      return Prisma.sql`p."stock" ${dir}`;
-    case "preco":
-      return Prisma.sql`p."price" ${dir}`;
-    case "status":
-      return Prisma.sql`p."active" ${dir}`;
-    case "categoria":
-      return Prisma.sql`p."category" ${dir}`;
-    case "updatedAt":
-      return Prisma.sql`p."updatedAt" ${dir}`;
-    default:
-      return Prisma.sql`p."updatedAt" DESC`;
-  }
-}
-
-/**
  * `batchId` do lote de produtos mais recente da loja. Base do filtro
  * "Última importação" e do destaque na listagem. `null` quando a loja nunca
  * importou produtos por planilha.
+ *
+ * Delega para a camada única de SQL. O fallback anterior (varrer os 200 produtos
+ * mais recentes via Prisma) foi removido: ele podia devolver um lote DIFERENTE do
+ * mais recente e o filtro "Última importação" mentia sem avisar. Falha aqui é
+ * propagada para o chamador decidir — ver `listProdutosPaginado`.
  */
 export async function getUltimoBatchProdutos(storeId: string): Promise<string | null> {
-  const sid = (storeId ?? "").trim();
-  if (!sid) return null;
-  try {
-    const rows = await prisma.$queryRaw<Array<{ batchId: string | null }>>`
-      SELECT p."metadata"->'importacao'->'ultimoLote'->>'batchId' AS "batchId"
-      FROM "estoque_produtos" p
-      WHERE p."storeId" = ${sid}
-        AND p."metadata"->'importacao'->'ultimoLote'->>'batchId' IS NOT NULL
-      ORDER BY p."metadata"->'importacao'->'ultimoLote'->>'importadoEm' DESC
-      LIMIT 1
-    `;
-    return rows[0]?.batchId ?? null;
-  } catch (e) {
-    console.error("[cadastros:getUltimoBatchProdutos]", e instanceof Error ? e.message : String(e));
-    // Fallback sem JSONB: o produto mais recentemente atualizado que tenha proveniência.
-    const recentes = await withPrismaSafe(
-      (db) =>
-        db.produto.findMany({
-          where: { storeId: sid },
-          orderBy: { updatedAt: "desc" },
-          take: 200,
-          select: { metadata: true },
-        }),
-      [] as Array<{ metadata: unknown }>,
-    );
-    for (const r of recentes) {
-      const imp = getImportacaoMetadata({ metadata: r.metadata });
-      if (imp) return imp.ultimoLote.batchId;
-    }
-    return null;
-  }
+  return resolverUltimoBatchProdutos(storeId);
 }
+
+/**
+ * Resultado da listagem paginada.
+ *
+ * `erroFiltros` presente = a consulta NÃO pôde ser respondida. Nesse caso `produtos` é
+ * vazio e `total` é 0 de propósito: a UI mostra o erro e mantém os filtros selecionados,
+ * em vez de exibir o catálogo inteiro como se o filtro tivesse sido aplicado (F-02).
+ */
+export type ListagemProdutosResultado = {
+  produtos: ProdutoDTO[];
+  total: number;
+  erroFiltros?: ErroFiltrosProdutos;
+};
 
 // ─── Listagem paginada (CadastrosHub → ProdutosPanel) ───────────────────────
 // Os demais callers (osStore, executor, api/estoque) continuam usando
 // `listProdutos` (retorna ProdutoDTO[]) e não foram alterados.
-// Esta função usa count + findMany em paralelo e suporta 5000+ produtos.
+// Consulta ÚNICA em `lib/cadastros/produtos-listagem-sql` (página + total no mesmo
+// WHERE) e suporta 5000+ produtos.
 export async function listProdutosPaginado(
   storeId: string,
   opts?: {
@@ -1282,153 +1253,32 @@ export async function listProdutosPaginado(
       direction: "asc" | "desc";
     };
   },
-): Promise<{ produtos: ProdutoDTO[]; total: number }> {
-  const q = opts?.q?.trim() || undefined;
-  const pageSize = Math.min(200, Math.max(10, opts?.pageSize ?? 100));
-  const page = Math.max(1, opts?.page ?? 1);
-  const skip = (page - 1) * pageSize;
+): Promise<ListagemProdutosResultado> {
+  const filtros: ProdutosListagemFiltros = opts?.filters ?? {};
+  const importacao = normalizarFiltroImportacao(filtros.importacao);
 
-  // ── Filtros de importação (Parte 11) ──────────────────────────────────────
-  // Vivem em `Produto.metadata.importacao` / `metadata.fiscal`. Expressá-los em
-  // JSONB puro exige SQL, então quando algum deles está ativo a consulta passa
-  // obrigatoriamente pelo caminho raw (que também já servia à busca por relevância).
-  const filtroImportacao = (opts?.filters?.importacao ?? "").trim();
-  const filtroBatchIdBruto = (opts?.filters?.batchId ?? "").trim();
-  const filtroFornecedorNome = (opts?.filters?.fornecedorNome ?? "").trim();
-
-  // "Última importação" = o lote mais recente desta loja. Resolvido antes da
-  // consulta principal para virar um filtro exato por `batchId`.
-  let batchIdAlvo = filtroBatchIdBruto;
-  if (filtroImportacao === "ultimoLote" && !batchIdAlvo) {
-    batchIdAlvo = (await getUltimoBatchProdutos(storeId)) ?? "__sem_lote__";
-  }
-
-  const temFiltroImportacaoRaw =
-    Boolean(filtroImportacao) || Boolean(batchIdAlvo) || Boolean(filtroFornecedorNome);
-
-  // Construção das cláusulas de filtro
-  const filterClauses: Prisma.ProdutoWhereInput[] = [];
-
-  if (opts?.filters) {
-    const f = opts.filters;
-    if (f.status && f.status !== "todos") {
-      if (f.status === "Ativo") {
-        filterClauses.push({ active: true, name: { not: "" }, price: { gt: 0 }, category: { not: null } });
-      } else if (f.status === "Inativo") {
-        filterClauses.push({ active: false, name: { not: "" }, price: { gt: 0 }, category: { not: null } });
-      } else if (f.status === "Incompleto") {
-        filterClauses.push({
-          OR: [
-            { name: "" },
-            { category: "" },
-            { category: null },
-            { price: { lte: 0 } }
-          ]
-        });
-      }
-    }
-
-    if (f.estoque && f.estoque !== "todos") {
-      if (f.estoque === "com") {
-        filterClauses.push({ stock: { gt: 0 } });
-      } else if (f.estoque === "sem") {
-        filterClauses.push({ stock: { lte: 0 } });
-      } else if (f.estoque === "baixo") {
-        filterClauses.push({ stock: { gt: 0, lt: 6 } });
-      }
-    }
-
-    if (f.preco === "semPreco") {
-      filterClauses.push({ price: { lte: 0 } });
-    }
-
-    if (f.fornecedor === "semFornecedor") {
-      filterClauses.push({ supplierName: "" });
-    }
-
-    if (f.categoria && f.categoria !== "todos") {
-      filterClauses.push({ category: f.categoria });
-    }
-
-    if (f.marca && f.marca !== "todos") {
-      filterClauses.push({ brand: f.marca });
-    }
-  }
-
-  // Equivalentes Prisma dos filtros de importação — usados apenas no fallback,
-  // quando o caminho raw falha. `semNcm`/`semCest` não têm equivalente confiável
-  // e são registrados como descartados em vez de silenciosamente ignorados.
-  const filtrosImportacaoDescartadosNoFallback: string[] = [];
-  if (temFiltroImportacaoRaw) {
-    if (batchIdAlvo) {
-      filterClauses.push({
-        metadata: { path: ["importacao", "ultimoLote", "batchId"], equals: batchIdAlvo },
-      });
-    }
-    if (filtroFornecedorNome) {
-      filterClauses.push({ supplierName: { equals: filtroFornecedorNome, mode: "insensitive" as const } });
-    }
-    if (filtroImportacao === "pendenteRevisao" || filtroImportacao === "revisado") {
-      filterClauses.push({
-        metadata: {
-          path: ["importacao", "ultimoLote", "statusRevisao"],
-          equals: filtroImportacao === "revisado" ? "revisado" : "pendente",
+  // "Última importação" vira um recorte exato por `batchId`, resolvido antes da consulta
+  // principal. Se a resolução falhar o filtro NÃO pode ser aplicado — devolver a listagem
+  // sem ele mostraria o catálogo inteiro como se o recorte tivesse funcionado.
+  let batchIdResolvido: string | null = null;
+  if (importacao === "ultimoLote" && !(filtros.batchId ?? "").trim()) {
+    try {
+      batchIdResolvido = (await resolverUltimoBatchProdutos(storeId)) ?? "__sem_lote__";
+    } catch (e) {
+      console.error(
+        "[cadastros:listProdutosPaginado] FILTROS_PRODUTOS_SQL_FALHOU (ultimoLote)",
+        e instanceof Error ? e.message : String(e),
+      );
+      return {
+        produtos: [],
+        total: 0,
+        erroFiltros: {
+          codigo: "FILTROS_PRODUTOS_SQL_FALHOU",
+          filtrosSolicitados: ["importacao:ultimoLote"],
+          sqlState: null,
+          mensagem: MENSAGEM_ERRO_FILTROS_PRODUTOS,
         },
-      });
-    } else if (filtroImportacao === "semBarcode") {
-      filterClauses.push({ OR: [{ barcode: null }, { barcode: "" }] });
-    } else if (filtroImportacao === "skuSintetico") {
-      // Aproximação do fallback: superset de `isSyntheticImportSku` (pode incluir
-      // um `IMP-4471` legítimo). O badge da linha usa o helper exato.
-      filterClauses.push({
-        OR: [
-          { sku: { startsWith: "linha-", mode: "insensitive" as const } },
-          { sku: { startsWith: "gc-linha-", mode: "insensitive" as const } },
-          { sku: { startsWith: "IMP-", mode: "insensitive" as const } },
-        ],
-      });
-    } else if (filtroImportacao === "semNcm" || filtroImportacao === "semCest" || filtroImportacao === "hoje") {
-      filtrosImportacaoDescartadosNoFallback.push(filtroImportacao);
-    }
-  }
-
-  const where: Prisma.ProdutoWhereInput = {
-    storeId,
-    AND: filterClauses.length > 0 ? filterClauses : undefined,
-    ...(q
-      ? {
-          OR: [
-            { name: { contains: q, mode: "insensitive" as const } },
-            { sku: { contains: q, mode: "insensitive" as const } },
-            { barcode: { contains: q, mode: "insensitive" as const } },
-            { category: { contains: q, mode: "insensitive" as const } },
-            { brand: { contains: q, mode: "insensitive" as const } },
-            { supplierName: { contains: q, mode: "insensitive" as const } },
-          ],
-        }
-      : {}),
-  };
-
-  // Configuração da ordenação (orderBy)
-  let prismaOrderBy: Prisma.ProdutoOrderByWithRelationInput = { updatedAt: "desc" };
-
-  if (opts?.orderBy) {
-    const field = opts.orderBy.field;
-    const dir = opts.orderBy.direction;
-    if (field === "nome") {
-      prismaOrderBy = { name: dir };
-    } else if (field === "sku") {
-      prismaOrderBy = { sku: dir };
-    } else if (field === "estoque") {
-      prismaOrderBy = { stock: dir };
-    } else if (field === "preco") {
-      prismaOrderBy = { price: dir };
-    } else if (field === "status") {
-      prismaOrderBy = { active: dir };
-    } else if (field === "categoria") {
-      prismaOrderBy = { category: dir };
-    } else if (field === "updatedAt") {
-      prismaOrderBy = { updatedAt: dir };
+      };
     }
   }
 
@@ -1476,237 +1326,22 @@ export async function listProdutosPaginado(
     };
   };
 
-  const SELECT = {
-    id: true,
-    name: true,
-    sku: true,
-    barcode: true,
-    category: true,
-    brand: true,
-    supplierName: true,
-    stock: true,
-    price: true,
-    precoCusto: true,
-    warrantyDays: true,
-    active: true,
-    metadata: true,
-  } as const;
+  const resultado = await consultarProdutosSql({
+    storeId,
+    q: opts?.q,
+    page: opts?.page ?? 1,
+    pageSize: opts?.pageSize ?? 100,
+    filters: filtros,
+    orderBy: opts?.orderBy,
+    batchIdResolvido,
+  });
 
-  // ── Busca com ranking de relevância (raw SQL) ─────────────────────────────
-  // O Prisma `orderBy` não consegue expressar "nome começa com o termo", então
-  // uma busca textual ordenada por `updatedAt` deixava itens cujo match veio de
-  // marca/categoria/fornecedor (ex.: "Vinho") acima de itens cujo NOME bate
-  // (ex.: "Teclado"). Quando há termo de busca e o usuário não escolheu uma
-  // coluna de ordenação manual, ranqueamos por relevância priorizando o nome.
-  const useRelevance = !!q && !opts?.orderBy;
-  // O caminho raw serve dois propósitos: ranking de relevância na busca textual e
-  // os filtros de importação (JSONB), que o Prisma não expressa com precisão.
-  const usarRaw = useRelevance || temFiltroImportacaoRaw;
+  // Fail-closed: filtro que não pôde ser aplicado devolve ERRO e ZERO linha. Não existe
+  // mais o fallback que descartava `hoje`/`semNcm`/`semCest` e devolvia o catálogo
+  // inteiro como se o filtro tivesse funcionado.
+  if (!resultado.ok) return { produtos: [], total: 0, erroFiltros: resultado.erro };
 
-  if (usarRaw) {
-    try {
-      const escapeLike = (s: string) => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-      const term = escapeLike(q ?? "");
-      const starts = `${term}%`;
-      const wordStarts = `% ${term}%`;
-      const contains = `%${term}%`;
-
-      // Condições espelham o `where` Prisma acima (mesma semântica de filtros + busca).
-      const sqlConditions: Prisma.Sql[] = [Prisma.sql`p."storeId" = ${storeId}`];
-
-      if (opts?.filters) {
-        const f = opts.filters;
-        if (f.status === "Ativo") {
-          sqlConditions.push(
-            Prisma.sql`(p."active" = true AND p."name" <> '' AND p."price" > 0 AND p."category" IS NOT NULL)`,
-          );
-        } else if (f.status === "Inativo") {
-          sqlConditions.push(
-            Prisma.sql`(p."active" = false AND p."name" <> '' AND p."price" > 0 AND p."category" IS NOT NULL)`,
-          );
-        } else if (f.status === "Incompleto") {
-          sqlConditions.push(
-            Prisma.sql`(p."name" = '' OR p."category" = '' OR p."category" IS NULL OR p."price" <= 0)`,
-          );
-        }
-        if (f.estoque === "com") sqlConditions.push(Prisma.sql`p."stock" > 0`);
-        else if (f.estoque === "sem") sqlConditions.push(Prisma.sql`p."stock" <= 0`);
-        else if (f.estoque === "baixo") sqlConditions.push(Prisma.sql`(p."stock" > 0 AND p."stock" < 6)`);
-        if (f.preco === "semPreco") sqlConditions.push(Prisma.sql`p."price" <= 0`);
-        if (f.fornecedor === "semFornecedor") sqlConditions.push(Prisma.sql`p."supplierName" = ''`);
-        if (f.categoria && f.categoria !== "todos") sqlConditions.push(Prisma.sql`p."category" = ${f.categoria}`);
-        if (f.marca && f.marca !== "todos") sqlConditions.push(Prisma.sql`p."brand" = ${f.marca}`);
-      }
-
-      // ── Filtros de importação em JSONB (exatos) ──────────────────────────
-      const loteSql = Prisma.sql`p."metadata"->'importacao'->'ultimoLote'`;
-      if (batchIdAlvo) {
-        sqlConditions.push(Prisma.sql`${loteSql}->>'batchId' = ${batchIdAlvo}`);
-      }
-      if (filtroFornecedorNome) {
-        sqlConditions.push(Prisma.sql`p."supplierName" ILIKE ${filtroFornecedorNome}`);
-      }
-      if (filtroImportacao === "pendenteRevisao") {
-        sqlConditions.push(Prisma.sql`${loteSql}->>'statusRevisao' = 'pendente'`);
-      } else if (filtroImportacao === "revisado") {
-        sqlConditions.push(Prisma.sql`${loteSql}->>'statusRevisao' = 'revisado'`);
-      } else if (filtroImportacao === "hoje") {
-        // Compara a data ISO gravada na proveniência (prefixo YYYY-MM-DD).
-        const hoje = new Date().toISOString().slice(0, 10);
-        sqlConditions.push(Prisma.sql`LEFT(${loteSql}->>'importadoEm', 10) = ${hoje}`);
-      } else if (filtroImportacao === "semBarcode") {
-        sqlConditions.push(Prisma.sql`(p."barcode" IS NULL OR p."barcode" = '')`);
-      } else if (filtroImportacao === "skuSintetico") {
-        // Espelha `isSyntheticImportSku`: linha-N e IMP-<categoria>-<nome>, com ou
-        // sem prefixo automático de importador. `IMP-4471` NÃO casa.
-        sqlConditions.push(Prisma.sql`(
-          p."sku" ~* '^(gc-|prod-|id-)*linha[-_ ]?[0-9]+$'
-          OR p."sku" ~* '^(gc-|prod-|id-)*imp-[a-z0-9_]+-[a-z0-9][a-z0-9-]*$'
-        )`);
-      } else if (filtroImportacao === "semNcm") {
-        sqlConditions.push(
-          Prisma.sql`COALESCE(NULLIF(p."metadata"->'fiscal'->>'ncm', ''), NULLIF(p."metadata"->>'ncm', '')) IS NULL`,
-        );
-      } else if (filtroImportacao === "semCest") {
-        sqlConditions.push(
-          Prisma.sql`COALESCE(NULLIF(p."metadata"->'fiscal'->>'cest', ''), NULLIF(p."metadata"->>'cest', '')) IS NULL`,
-        );
-      }
-
-      // Busca textual (default escape de LIKE no Postgres já é a barra invertida).
-      if (q) {
-        sqlConditions.push(Prisma.sql`(
-          p."name" ILIKE ${contains} OR p."sku" ILIKE ${contains}
-          OR p."barcode" ILIKE ${contains} OR p."category" ILIKE ${contains}
-          OR p."brand" ILIKE ${contains} OR p."supplierName" ILIKE ${contains}
-        )`);
-      }
-
-      const whereSql = Prisma.join(sqlConditions, " AND ");
-
-      // Com termo de busca e sem ordenação manual: ranking por relevância
-      // (nome começando > nome (palavra) > nome contém > sku > barras > marca > categoria).
-      // Sem termo: respeita a coluna escolhida pelo usuário (ou updatedAt desc).
-      const orderSql = useRelevance
-        ? Prisma.sql`
-            CASE
-              WHEN p."name" ILIKE ${starts} THEN 0
-              WHEN p."name" ILIKE ${wordStarts} THEN 1
-              WHEN p."name" ILIKE ${contains} THEN 2
-              WHEN p."sku" ILIKE ${starts} THEN 3
-              WHEN p."sku" ILIKE ${contains} THEN 4
-              WHEN p."barcode" ILIKE ${contains} THEN 5
-              WHEN p."brand" ILIKE ${contains} THEN 6
-              WHEN p."category" ILIKE ${contains} THEN 7
-              ELSE 8
-            END ASC, p."name" ASC
-          `
-        : ordenacaoSqlProdutos(opts?.orderBy);
-
-      type RawProdutoRow = {
-        id: string;
-        name: string;
-        sku: string | null;
-        barcode: string | null;
-        category: string | null;
-        brand: string;
-        supplierName: string;
-        stock: number | null;
-        price: number | null;
-        precoCusto: number | null;
-        warrantyDays: number | null;
-        active: boolean;
-        metadata: unknown;
-      };
-
-      const [rawRows, countRows] = await Promise.all([
-        prisma.$queryRaw<RawProdutoRow[]>`
-          SELECT p."id", p."name", p."sku", p."barcode", p."category", p."brand",
-                 p."supplierName", p."stock", p."price", p."price_cost" AS "precoCusto",
-                 p."warrantyDays", p."active", p."metadata"
-          FROM "estoque_produtos" p
-          WHERE ${whereSql}
-          ORDER BY ${orderSql}
-          LIMIT ${pageSize} OFFSET ${skip}
-        `,
-        prisma.$queryRaw<Array<{ count: number }>>`
-          SELECT COUNT(*)::int AS count FROM "estoque_produtos" p WHERE ${whereSql}
-        `,
-      ]);
-
-      return { produtos: rawRows.map(mapRow), total: Number(countRows[0]?.count ?? 0) };
-    } catch (e) {
-      // Se o caminho raw falhar, cai para o Prisma padrão abaixo (sem ranking, com os
-      // filtros de importação que o Prisma consegue expressar) em vez de quebrar a tabela.
-      console.error("[cadastros:listProdutosPaginado:raw]", e instanceof Error ? e.message : String(e));
-      if (filtrosImportacaoDescartadosNoFallback.length > 0) {
-        console.warn(
-          "[cadastros:listProdutosPaginado:raw] filtros sem equivalente Prisma foram descartados no fallback:",
-          filtrosImportacaoDescartadosNoFallback.join(", "),
-        );
-      }
-    }
-  }
-
-  try {
-    const [rows, total] = await Promise.all([
-      prisma.produto.findMany({
-        where,
-        orderBy: prismaOrderBy,
-        skip,
-        take: pageSize,
-        select: SELECT,
-      }),
-      prisma.produto.count({ where }),
-    ]);
-    return { produtos: rows.map(mapRow), total };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[cadastros:listProdutosPaginado]", msg);
-    // fallback mínimo sem metadados opcionais
-    const [legacyRows, legacyTotal] = await Promise.all([
-      withPrismaSafe(
-        (db) =>
-          db.produto.findMany({
-            where,
-            orderBy: prismaOrderBy,
-            skip,
-            take: pageSize,
-            select: {
-              id: true,
-              name: true,
-              sku: true,
-              barcode: true,
-              category: true,
-              stock: true,
-              price: true,
-              precoCusto: true,
-              warrantyDays: true,
-              active: true,
-            },
-          }),
-        [] as Array<{
-          id: string;
-          name: string;
-          sku: string | null;
-          barcode: string | null;
-          category: string | null;
-          stock: number | null;
-          price: number | null;
-          precoCusto: number | null;
-          warrantyDays: number | null;
-          active: boolean;
-        }>,
-      ),
-      withPrismaSafe((db) => db.produto.count({ where }), 0),
-    ]);
-    return {
-      produtos: legacyRows.map((p) =>
-        mapRow({ ...p, brand: "", supplierName: "", metadata: null }),
-      ),
-      total: legacyTotal,
-    };
-  }
+  return { produtos: resultado.rows.map(mapRow), total: resultado.total };
 }
 
 export type UpsertProdutoResult =

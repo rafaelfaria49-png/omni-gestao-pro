@@ -19,6 +19,24 @@ const LINHA_N_RE = /^linha[-_ ]?\d+$/i
  */
 const IMP_GERADO_RE = /^imp-[a-z0-9_]+-[a-z0-9][a-z0-9-]*$/i
 
+/**
+ * Os MESMOS padrões acima em POSIX, para o filtro "SKU sintético" da listagem.
+ *
+ * A listagem roda no Postgres e não pode chamar `isSyntheticImportSku`, então esta é a
+ * única tradução autorizada — fica aqui, colada nas regex canônicas, e é BINDADA como
+ * parâmetro de `~*` (nunca interpolada no texto da consulta). A paridade entre as duas
+ * implementações é provada contra Postgres real em
+ * `produtos-listagem-sql.integration.test.ts`, sobre o mesmo corpus que alimenta
+ * `isSyntheticImportSku` — inclusive os códigos legítimos `IMP-4471` e `IMP-9902`.
+ *
+ * Diferenças de dialeto: `(?:` → `(`, `\d` → `[0-9]`, e o prefixo vira `*` (0 ou mais)
+ * porque em SQL ele é opcional dentro do mesmo padrão em vez de removido antes.
+ */
+export const SKU_SINTETICO_PADROES_POSIX: readonly string[] = [
+  "^(gc-|prod-|id-)*linha[-_ ]?[0-9]+$",
+  "^(gc-|prod-|id-)*imp-[a-z0-9_]+-[a-z0-9][a-z0-9-]*$",
+]
+
 /** Preenchimentos de "sem código" que aparecem em planilha e em UI. */
 const PLACEHOLDERS = new Set(["", "-", "--", "—", "–", "n/a", "na", "null", "undefined", "sem sku", "sem codigo", "sem código"])
 

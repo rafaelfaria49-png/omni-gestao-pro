@@ -1389,7 +1389,7 @@ function ProdutosPanel({
       setLoadingRows(true);
       setErr(null);
       try {
-        const { produtos, total } = await listProdutosPaginado(storeId, {
+        const { produtos, total, erroFiltros } = await listProdutosPaginado(storeId, {
           q: debouncedQuery || undefined,
           page,
           pageSize: PAGE_SIZE,
@@ -1404,9 +1404,23 @@ function ProdutosPanel({
           },
           orderBy: sortConfig,
         });
+        // Filtro que não pôde ser aplicado: erro explícito e tabela VAZIA. Mostrar o
+        // catálogo inteiro aqui faria o operador concluir que "não há pendência".
+        // Os filtros selecionados continuam na tela para permitir nova tentativa.
+        if (erroFiltros) {
+          setRows([]);
+          setTotalRows(0);
+          setErr(erroFiltros.mensagem);
+          return;
+        }
         setRows(produtos);
         setTotalRows(total);
       } catch (e) {
+        // Mesma regra da falha de filtro: sem resposta confiável, a tabela esvazia.
+        // Deixar a página anterior na tela junto de um erro faz o operador ler os
+        // números antigos como se fossem o resultado do filtro que acabou de escolher.
+        setRows([]);
+        setTotalRows(0);
         setErr(e instanceof Error ? e.message : "Falha ao carregar produtos");
       } finally {
         setLoadingRows(false);
@@ -1808,7 +1822,23 @@ function ProdutosPanel({
           </div>
         </Card>
       )}
-      {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
+      {err && (
+        <div
+          role="alert"
+          data-testid="produtos-erro-filtros"
+          className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <span className="min-w-0">{err}</span>
+          <button
+            type="button"
+            onClick={() => void refreshRows()}
+            disabled={loadingRows}
+            className="shrink-0 rounded-lg border border-destructive/50 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-destructive/15 disabled:opacity-60"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
       {!loadingRows && !err && rows.length === 0 && !debouncedQuery && statusFilter === "todos" && estoqueFilter === "todos" && precoFilter === "todos" && fornecedorFilter === "todos" && categoriaFilter === "todos" && marcaFilter === "todos" && (
         <Card className="mb-4 border-dashed border-2 border-border/80 bg-gradient-to-br from-card to-muted/20 p-10 text-center">
           <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary">
