@@ -25,14 +25,18 @@ import { StatusOrdemServico } from "@/generated/prisma"
 import { upsertContaReceber } from "@/lib/financeiro/services/contas-receber-service"
 import { upsertContaPagar } from "@/lib/financeiro/services/contas-pagar-service"
 import { nomePareceDocumento } from "@/lib/produto-sku-normalize"
-import { mergeProdutoFiscalIntoMetadata } from "@/lib/produto-fiscal"
+import { getProdutoFiscal, mergeProdutoFiscalIntoMetadata } from "@/lib/produto-fiscal"
 import {
   alertasDaLinha,
+  ativacaoDaAtualizacao,
+  ativacaoDaCriacao,
+  camposCriticosAlteradosNaImportacao,
   candidatoDoPlano,
   construirLoteImportacao,
   contextoDeMatch,
   diffAtualizacao,
   fiscalInputDaLinha,
+  getImportacaoMetadata,
   indexarCandidatos,
   mergeImportacaoIntoMetadata,
   montarAtualizacaoProduto,
@@ -491,21 +495,49 @@ async function persistirProdutos(
       const fiscalInput = fiscalInputDaLinha(linha)
       const alvo = candidatoDoPlano(matchCtx, plano.produtoId)
 
-      const lote = construirLoteImportacao({
-        batchId: ctx.batchId,
-        arquivo: reg.fontes[0] ?? "",
-        importadoEm,
-        acao: plano.acao === "atualizar" ? "atualizado" : "criado",
-        matchPor: plano.matchPor,
-        linhaOrigem: linha.linhaOrigem,
-        contexto: ctx.contexto,
-      })
-
       if (plano.acao === "atualizar" && alvo) {
-        const metadataAtual = await prisma.produto
-          .findUnique({ where: { id: alvo.id }, select: { metadata: true } })
-          .then((r) => r?.metadata ?? null)
+        const atualDoBanco = await prisma.produto
+          .findUnique({
+            where: { id: alvo.id },
+            select: { metadata: true, sku: true, barcode: true, category: true, price: true },
+          })
           .catch(() => null)
+        const metadataAtual = atualDoBanco?.metadata ?? null
+
+        // ── Política de ativação/revisão (F-05) ──────────────────────────────
+        // Precisa do estado ANTERIOR: revisão registrada + campos críticos que este
+        // lote realmente altera. Revisão só é reaberta quando algo crítico muda.
+        const revisaoAnterior = getImportacaoMetadata({ metadata: metadataAtual })
+        const patchPrevia = montarAtualizacaoProduto(linha, alvo, { categoria })
+        const camposCriticosAlterados = camposCriticosAlteradosNaImportacao({
+          patch: patchPrevia,
+          atual: {
+            sku: atualDoBanco?.sku ?? alvo.sku,
+            barcode: atualDoBanco?.barcode ?? alvo.barcode,
+            category: atualDoBanco?.category ?? null,
+            price: Number(atualDoBanco?.price ?? alvo.price ?? 0),
+          },
+          fiscalAtual: getProdutoFiscal({ metadata: metadataAtual }),
+          fiscalNovo: { ncm: fiscalInput.ncm, cest: fiscalInput.cest },
+        })
+        const ativacao = ativacaoDaAtualizacao(linha, alvo, {
+          categoria,
+          statusRevisaoAtual: revisaoAnterior?.ultimoLote.statusRevisao,
+          camposCriticosAlterados,
+        })
+
+        const lote = construirLoteImportacao({
+          batchId: ctx.batchId,
+          arquivo: reg.fontes[0] ?? "",
+          importadoEm,
+          acao: "atualizado",
+          matchPor: plano.matchPor,
+          linhaOrigem: linha.linhaOrigem,
+          contexto: ctx.contexto,
+          statusRevisao: ativacao.statusRevisao,
+          revisadoEm: revisaoAnterior?.ultimoLote.revisadoEm ?? null,
+          revisadoPor: revisaoAnterior?.ultimoLote.revisadoPor ?? null,
+        })
 
         let metadata: Record<string, unknown> = mergeProdutoFiscalIntoMetadata(
           metadataAtual,
@@ -522,13 +554,17 @@ async function persistirProdutos(
           }
         }
 
-        // `montarAtualizacaoProduto` omite `stock` e `active` de propósito: estoque só
-        // muda por movimentação auditada (app/actions/estoque.ts → MovimentacaoEstoque)
-        // e planilha sem preço não inativa cadastro vivo.
+        // `montarAtualizacaoProduto` omite `stock` de propósito: saldo só muda por
+        // movimentação auditada (app/actions/estoque.ts → MovimentacaoEstoque).
+        // `active`/`status` vêm da política e só aparecem para REBAIXAR o produto que
+        // termina sem preço — importação nunca reativa cadastro desligado (F-05).
         await prisma.produto.update({
           where: { id: alvo.id },
           data: {
-            ...montarAtualizacaoProduto(linha, alvo, { categoria }),
+            ...montarAtualizacaoProduto(linha, alvo, {
+              categoria,
+              statusRevisaoAtual: revisaoAnterior?.ultimoLote.statusRevisao,
+            }),
             metadata: metadata as Prisma.InputJsonValue,
           },
         })
@@ -547,8 +583,20 @@ async function persistirProdutos(
       }
 
       // ── Criação ────────────────────────────────────────────────────────────
+      // Produto novo sempre nasce pendente de conferência.
+      const loteCriacao = construirLoteImportacao({
+        batchId: ctx.batchId,
+        arquivo: reg.fontes[0] ?? "",
+        importadoEm,
+        acao: "criado",
+        matchPor: plano.matchPor,
+        linhaOrigem: linha.linhaOrigem,
+        contexto: ctx.contexto,
+        statusRevisao: ativacaoDaCriacao(linha, categoria).statusRevisao,
+      })
+
       let metadata: Record<string, unknown> = mergeProdutoFiscalIntoMetadata({}, fiscalInput)
-      metadata = mergeImportacaoIntoMetadata(metadata, lote)
+      metadata = mergeImportacaoIntoMetadata(metadata, loteCriacao)
       if (linha.codigoFornecedor) {
         metadata.fornecedor = { codigo: linha.codigoFornecedor, nome: linha.fornecedorNome || undefined }
       }

@@ -177,7 +177,17 @@ export function construirLoteImportacao(input: {
   matchPor: ProdutoImportMatch | null
   linhaOrigem: number
   contexto: ContextoLoteImport
+  /**
+   * Revisão resultante da política de ativação (F-05). Ausente = `"pendente"`.
+   * Só a política pode devolver `"revisado"`, e apenas quando o lote não alterou
+   * nenhum campo crítico de um produto já conferido.
+   */
+  statusRevisao?: StatusRevisaoImport
+  /** Preservado quando a revisão anterior sobrevive ao lote. */
+  revisadoEm?: string | null
+  revisadoPor?: string | null
 }): LoteImportacaoMetadata {
+  const statusRevisao: StatusRevisaoImport = input.statusRevisao ?? "pendente"
   return {
     batchId: txt(input.batchId, 80),
     origem: "planilha",
@@ -201,8 +211,10 @@ export function construirLoteImportacao(input: {
         }
       : null,
     linhaOrigem: Math.max(0, Math.trunc(input.linhaOrigem)),
-    statusRevisao: "pendente",
-    revisadoEm: null,
-    revisadoPor: null,
+    statusRevisao,
+    // Quem foi revisado antes e continua revisado mantém a assinatura da conferência;
+    // quem voltou a pendente perde a assinatura, que deixou de valer.
+    revisadoEm: statusRevisao === "revisado" ? (input.revisadoEm ?? null) : null,
+    revisadoPor: statusRevisao === "revisado" ? txt(input.revisadoPor ?? "", 120) || null : null,
   }
 }

@@ -153,6 +153,14 @@ export function ConferenciaLoteProdutos({ storeId, batchId, onFechar }: Conferen
           setErro(r.message);
           return;
         }
+        // Ativação recusada não pode passar em silêncio: o operador precisa saber que
+        // aqueles produtos continuam fora do PDV, e por quê.
+        if (r.naoAtivados.length > 0) {
+          const motivos = [...new Set(r.naoAtivados.map((n) => n.motivo))];
+          setErro(
+            `${r.naoAtivados.length} produto(s) não foram ativados. ${motivos.join(" · ")}`,
+          );
+        }
         carregar();
       } catch (e) {
         setErro(e instanceof Error ? e.message : "Falha ao aplicar alterações");

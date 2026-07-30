@@ -35,6 +35,7 @@ import {
   getImportacaoMetadata,
   isSyntheticImportSku,
   marcarLoteRevisado,
+  MENSAGEM_PRECO_OBRIGATORIO,
   type EstadoConferencia,
   type ProdutoImportMatch,
 } from "@/lib/cadastros/importacao-produtos";
@@ -1748,15 +1749,26 @@ export async function getConferenciaLote(
 }
 
 export type AplicarConferenciaResult =
-  | { ok: true; atualizados: number; ativados: number; revisados: number }
+  | {
+      ok: true;
+      atualizados: number;
+      ativados: number;
+      revisados: number;
+      /** Itens que pediram ativação e foram recusados, com o motivo exibível. */
+      naoAtivados: Array<{ id: string; motivo: string }>;
+    }
   | { ok: false; message: string };
 
 /**
  * Aplica as decisões da conferência em lote.
  *
  * Cada item traz explicitamente o que muda — a tela confirma antes de chamar.
- * `ativar` só liga o produto quando ele passa por `avaliarAptidaoAtivacao`;
  * `estoque` NUNCA é tocado aqui (movimentação é fluxo próprio, Parte 13).
+ *
+ * Ativação (F-05) exige, sem exceção: preço > 0, nome, categoria, ausência de conflito
+ * de SKU/barcode na loja, e o produto pertencer a ESTA loja E a ESTE lote. Recusa não é
+ * silenciosa — volta em `naoAtivados` com o motivo. "Marcar como revisado" NÃO ativa:
+ * são duas decisões distintas e continuam separadas.
  */
 export async function aplicarConferenciaLote(
   storeId: string,
@@ -1789,13 +1801,23 @@ export async function aplicarConferenciaLote(
   // ou de outro batch pode ser alterado por esta ação.
   const atuais = await prisma.produto.findMany({
     where: { id: { in: ids }, storeId: sid },
-    select: { id: true, name: true, category: true, price: true, active: true, metadata: true },
+    select: {
+      id: true,
+      name: true,
+      category: true,
+      price: true,
+      active: true,
+      metadata: true,
+      sku: true,
+      barcode: true,
+    },
   });
   const porId = new Map(atuais.map((p) => [p.id, p]));
 
   let atualizados = 0;
   let ativados = 0;
   let revisados = 0;
+  const naoAtivados: Array<{ id: string; motivo: string }> = [];
   const revisadoPor = (opts?.revisadoPor ?? "").trim() || "Conferência de importação";
 
   for (const item of itens) {
@@ -1815,12 +1837,36 @@ export async function aplicarConferenciaLote(
     const precoFinal = data.price !== undefined ? Number(data.price) : Number(atual.price ?? 0);
 
     if (item.ativar) {
+      // Conflito de identidade DENTRO da loja: outro produto já usa este SKU/barcode.
+      // Ativar assim quebraria o unique `storeId_sku`/`storeId_barcode` no PDV.
+      const conflitos = await prisma.produto.count({
+        where: {
+          storeId: sid,
+          id: { not: atual.id },
+          OR: [
+            ...(atual.sku ? [{ sku: atual.sku }] : []),
+            ...(atual.barcode ? [{ barcode: atual.barcode }] : []),
+          ],
+        },
+      });
+      const temConflitoIdentidade =
+        conflitos > 0 && Boolean(atual.sku || atual.barcode);
+
       const aptidao = avaliarAptidaoAtivacao({
         nome: atual.name,
         categoria: atual.category,
         preco: precoFinal,
+        temConflitoIdentidade,
       });
-      if (aptidao.apto && !atual.active) {
+      if (!aptidao.apto) {
+        // Preço zero tem mensagem própria — é a pendência que o operador resolve na tela.
+        naoAtivados.push({
+          id: atual.id,
+          motivo: !(precoFinal > 0)
+            ? MENSAGEM_PRECO_OBRIGATORIO
+            : aptidao.pendencias.join(" · "),
+        });
+      } else if (!atual.active) {
         data.active = true;
         data.status = "Ativo";
         ativados++;
@@ -1846,7 +1892,7 @@ export async function aplicarConferenciaLote(
   }
 
   revalidatePath("/dashboard/cadastros-v2");
-  return { ok: true, atualizados, ativados, revisados };
+  return { ok: true, atualizados, ativados, revisados, naoAtivados };
 }
 
 export type DeleteProdutoResult =

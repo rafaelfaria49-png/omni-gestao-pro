@@ -7,12 +7,19 @@
  * Invariantes:
  *  - `brand` nunca recebe o nome da categoria (defeito original) nem é inventado do nome;
  *  - `stock` de produto existente NUNCA é tocado (saldo só muda por movimentação auditada);
- *  - `active` de produto existente nunca é rebaixado por planilha sem preço;
+ *  - `active`/`status` saem SEMPRE de `resolveImportProductActivation` — criação e
+ *    atualização usam a mesma política (F-05). Produto que termina a importação com
+ *    preço <= 0 fica inativo e incompleto, seja ele novo ou existente;
  *  - SKU sintético é limpo; SKU real é gravado; ausência preserva o que já existe.
  */
 
-import { ativacaoDeProdutoNovo } from "./alertas"
+import {
+  resolveImportProductActivation,
+  type CampoCriticoImport,
+  type ResultadoAtivacaoImport,
+} from "./ativacao"
 import { chaveCategoria } from "./categoria"
+import type { StatusRevisaoImport } from "./metadata"
 import { isSyntheticImportSku } from "./sku"
 import type { PoliticaEstoqueImport, ProdutoCandidato, ProdutoImportLinha } from "./types"
 
@@ -71,7 +78,7 @@ export type DadosCriacaoProduto = {
   stock: number
   warrantyDays: number
   active: boolean
-  status: "Ativo" | "Inativo"
+  status: "Ativo" | "Inativo" | "Incompleto"
 }
 
 export function montarCriacaoProduto(
@@ -81,11 +88,7 @@ export function montarCriacaoProduto(
   const categoria = opts.categoria.trim()
   // `nao_movimentar` (padrão) cadastra com saldo 0 — entrada física/fiscal é outro fluxo.
   const stock = opts.politicaEstoque === "planilha_somente_novos" ? (linha.estoque ?? 0) : 0
-  const ativacao = ativacaoDeProdutoNovo({
-    nome: linha.nome,
-    categoria: categoria || null,
-    preco: linha.preco,
-  })
+  const ativacao = ativacaoDaCriacao(linha, categoria)
 
   return {
     name: linha.nome,
@@ -98,14 +101,33 @@ export function montarCriacaoProduto(
     price: linha.preco,
     stock,
     warrantyDays: linha.garantiaDias ?? 0,
-    active: ativacao.active,
-    status: ativacao.status,
+    // Criação sempre decide as duas colunas — o `??` só existe porque o tipo do
+    // resultado permite "não tocar", situação que nunca ocorre em criação.
+    active: ativacao.active ?? false,
+    status: ativacao.status ?? "Inativo",
   }
+}
+
+/** Política de ativação aplicada à CRIAÇÃO. Exportada para o preview e a auditoria. */
+export function ativacaoDaCriacao(
+  linha: ProdutoImportLinha,
+  categoria: string,
+): ResultadoAtivacaoImport {
+  return resolveImportProductActivation({
+    operacao: "criacao",
+    nome: linha.nome,
+    categoria: categoria.trim() || null,
+    preco: linha.preco,
+  })
 }
 
 /**
  * Patch de atualização. Chaves ausentes significam "não tocar" — é assim que
- * estoque, preço já curado e situação ativo/inativo ficam preservados.
+ * estoque e preço já curado ficam preservados.
+ *
+ * `active`/`status` só aparecem quando a política MANDA rebaixar (preço final <= 0).
+ * Produto com preço válido continua com a chave ausente: importação não reativa
+ * cadastro que o operador desligou.
  */
 export type PatchAtualizacaoProduto = {
   name: string
@@ -117,12 +139,17 @@ export type PatchAtualizacaoProduto = {
   precoCusto?: number
   price?: number
   warrantyDays?: number
+  active?: boolean
+  status?: "Ativo" | "Inativo" | "Incompleto"
 }
+
+/** Alvo mínimo para decidir a atualização: identidade + situação + preço atual. */
+export type AlvoAtualizacao = Pick<ProdutoCandidato, "sku" | "brand" | "price" | "active">
 
 export function montarAtualizacaoProduto(
   linha: ProdutoImportLinha,
-  alvo: Pick<ProdutoCandidato, "sku" | "brand">,
-  opts: { categoria: string },
+  alvo: AlvoAtualizacao,
+  opts: { categoria: string; statusRevisaoAtual?: StatusRevisaoImport },
 ): PatchAtualizacaoProduto {
   const categoria = opts.categoria.trim()
   const marca = marcaParaGravar(linha, categoria)
@@ -145,18 +172,54 @@ export function montarAtualizacaoProduto(
   if (linha.preco > 0) patch.price = linha.preco
   if (linha.garantiaDias != null) patch.warrantyDays = linha.garantiaDias
 
+  // ── Política de ativação (F-05) ────────────────────────────────────────────
+  // Decidida sobre o preço FINAL: o da planilha quando ela trouxe preço, senão o
+  // que já estava no banco. Sem isso, produto que continua a R$ 0,00 seguia ativo
+  // e vendável — foi o que manteve os 13 itens da NF-e Martins no PDV.
+  const ativacao = ativacaoDaAtualizacao(linha, alvo, opts)
+  if (ativacao.active !== undefined) patch.active = ativacao.active
+  if (ativacao.status !== undefined) patch.status = ativacao.status
+
   return patch
+}
+
+/** Política de ativação aplicada à ATUALIZAÇÃO. Exportada para o preview e a auditoria. */
+export function ativacaoDaAtualizacao(
+  linha: ProdutoImportLinha,
+  alvo: AlvoAtualizacao,
+  opts: {
+    categoria: string
+    statusRevisaoAtual?: StatusRevisaoImport
+    camposCriticosAlterados?: readonly CampoCriticoImport[]
+    temConflitoIdentidade?: boolean
+  },
+): ResultadoAtivacaoImport {
+  const categoria = opts.categoria.trim()
+  const precoFinal = linha.preco > 0 ? linha.preco : Number(alvo.price ?? 0)
+  return resolveImportProductActivation({
+    operacao: "atualizacao",
+    nome: linha.nome,
+    categoria: categoria || null,
+    preco: precoFinal,
+    activeAtual: alvo.active,
+    statusRevisaoAtual: opts.statusRevisaoAtual,
+    camposCriticosAlterados: opts.camposCriticosAlterados,
+    temConflitoIdentidade: opts.temConflitoIdentidade,
+  })
 }
 
 /** Campos que a atualização vai mexer / preservar — texto do preview. */
 export function diffAtualizacao(
   linha: ProdutoImportLinha,
-  alvo: Pick<ProdutoCandidato, "name" | "sku" | "barcode" | "brand">,
-  opts: { categoria: string },
+  alvo: Pick<ProdutoCandidato, "name" | "sku" | "barcode" | "brand" | "price" | "active">,
+  opts: { categoria: string; statusRevisaoAtual?: StatusRevisaoImport },
 ): { alterados: string[]; preservados: string[] } {
   const patch = montarAtualizacaoProduto(linha, alvo, opts)
   const alterados: string[] = []
-  const preservados: string[] = ["estoque", "situação ativo/inativo"]
+  // A situação só é "preservada" quando a política NÃO mandou rebaixar o produto.
+  const preservados: string[] = ["estoque"]
+  if (patch.active === undefined) preservados.push("situação ativo/inativo")
+  else if (patch.active === false) alterados.push("situação (inativado: sem preço de venda)")
 
   if (patch.name !== alvo.name) alterados.push("nome")
   if (patch.sku !== undefined) {

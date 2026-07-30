@@ -105,19 +105,10 @@ export function avaliarAptidaoAtivacao(p: {
   return { apto: pendencias.length === 0, pendencias }
 }
 
-/**
- * Estado de ativação de um produto CRIADO pela importação.
- * Produto existente nunca é inativado por falta de preço na planilha — por isso
- * esta função só é consultada no caminho de criação.
- */
-export function ativacaoDeProdutoNovo(p: {
-  nome: string
-  categoria: string | null
-  preco: number
-}): { active: boolean; status: "Ativo" | "Inativo" } {
-  const { apto } = avaliarAptidaoAtivacao(p)
-  return apto ? { active: true, status: "Ativo" } : { active: false, status: "Inativo" }
-}
+// `ativacaoDeProdutoNovo` foi REMOVIDA (F-05). Ela decidia a ativação só na criação e
+// dizia, no próprio comentário, que produto existente nunca é inativado por falta de
+// preço — a assimetria que deixou 13 produtos vendáveis a R$ 0,00. A decisão agora é
+// única, em `./ativacao` → `resolveImportProductActivation`, para criação e atualização.
 
 /** Estado operacional exibido na conferência. */
 export type EstadoConferencia = "pendente" | "incompleto" | "revisado" | "conflito" | "erro"
