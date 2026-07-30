@@ -145,12 +145,29 @@ atualiza o lote no lugar, sem duplicar histórico. Todos os outros namespaces de
 
 ## 7. Ativação
 
-- Produto **novo** sem preço de venda nasce `active: false` / `status: "Inativo"` —
-  visível na conferência, fora do PDV.
-- Produto **existente e ativo** nunca é inativado por planilha sem preço.
-- Ativar exige: nome + categoria + preço > 0 + ausência de conflito de SKU/barcode.
+Política ÚNICA, em `lib/cadastros/importacao-produtos/ativacao.ts`
+(`resolveImportProductActivation`). Criação, atualização, reparo e conferência
+consultam a mesma função — não há segunda implementação.
+
+- Produto que **termina a importação com preço <= 0** fica `active: false` /
+  `status: "Incompleto"` / `statusRevisao: "pendente"`, seja ele **novo ou existente**.
+  Fora do PDV, visível na conferência.
+- Produto com **preço > 0**: a criação ativa quando apto (nome + categoria + preço);
+  a atualização **preserva a situação atual** — importação nunca reativa sozinha um
+  cadastro que o operador desligou.
+- **Revisão anterior sobrevive** a lote que só enriquece campos. Volta a `pendente`
+  apenas quando o lote altera um campo crítico (`CAMPOS_CRITICOS_IMPORT`: preço,
+  barcode, SKU, categoria, NCM, CEST).
+- "Marcar como revisado" **não ativa**. "Revisar e ativar" exige nome + categoria +
+  preço > 0 + ausência de conflito de SKU/barcode, com o produto na loja e no lote
+  corretos; recusa volta em `naoAtivados` com o motivo, nunca em silêncio. Sem preço a
+  mensagem é: *"Defina o preço de venda antes de ativar este produto."*
 - Barcode, fornecedor, NCM e CEST geram **alerta**, nunca bloqueio — há produtos que
   legitimamente não têm esses dados.
+
+> Antes da correção `...REVIEW_HARDENING_CORRECTIONS_001` a regra era assimétrica:
+> produto novo sem preço nascia inativo, mas produto existente sem preço continuava
+> ativo. Os 13 itens da NF-e Martins ficaram vendáveis a R$ 0,00 no PDV.
 
 ## 8. Conferência pós-importação
 
@@ -175,10 +192,32 @@ são colunas separadas. Markup nunca é chamado de margem.
 `ultimoLote`, `hoje`, `pendenteRevisao`, `revisado`, `semBarcode`, `skuSintetico`,
 `semNcm`, `semCest`.
 
-Resolvidos em SQL sobre o JSONB (exatos), no mesmo caminho `$queryRaw` que já servia ao
-ranking de busca. Paginação e busca seguem server-side. Se o caminho raw falhar, há
-fallback Prisma com os equivalentes expressáveis; `semNcm`, `semCest` e `hoje` são
-registrados como descartados no log em vez de silenciosamente ignorados.
+Resolvidos em `lib/cadastros/produtos-listagem-sql.ts` — **camada única**, uma consulta
+estática por requisição. Paginação, busca e ranking seguem server-side.
+
+Regras que a camada garante, e por quê:
+
+- **Nada de `Prisma.join` ou fragmento `Prisma.Sql` aninhado.** Depois do bundle do Next
+  o `instanceof Prisma.Sql` deixa de valer entre módulos empacotados: o fragmento vira
+  parâmetro `jsonb` e o Postgres responde `SQLSTATE 42804 — argument of WHERE must be
+  type boolean, not type jsonb`. Build, typecheck e a suíte inteira passavam mesmo assim.
+- **Cada filtro é ligado por uma flag booleana parametrizada** (`${flag}::boolean = false
+  OR <condição>`), nunca por concatenação de texto. Sem `$queryRawUnsafe`.
+- **`COUNT(*) OVER ()`**: total e página nascem literalmente do mesmo `WHERE`.
+- **`ORDER BY` com desempate por `p."id"`** — sem isso a paginação repete/omite linhas
+  quando `updatedAt` empata.
+- **`hoje` é o dia do operador** (`America/Sao_Paulo`), não o dia UTC.
+- **`skuSintetico` reutiliza a definição canônica** (`SKU_SINTETICO_PADROES_POSIX`, em
+  `importacao-produtos/sku.ts`), bindada como parâmetro. Códigos legítimos de fornecedor
+  como `IMP-4471` e `IMP-9902` **não** são classificados como sintéticos.
+
+**Não existe fallback.** Se a consulta falhar, a Server Action devolve
+`erroFiltros: { codigo: "FILTROS_PRODUTOS_SQL_FALHOU", filtrosSolicitados, sqlState }`,
+a tabela fica **vazia** e a UI mostra *"Não foi possível aplicar os filtros…"* com
+**Tentar novamente**, preservando os filtros escolhidos. O log registra código estável,
+chaves de filtro e SQLSTATE — nunca valores digitados, metadata ou dados de produto.
+Devolver o catálogo inteiro para um filtro restritivo faria o operador concluir que não
+há pendências.
 
 ## 10. Score de qualidade
 
@@ -208,7 +247,9 @@ Depois do deploy, o reparo é feito pela própria UI:
    alerta "Correspondência por nome exato" nas 13 linhas.
 5. Importar. Os SKUs `linha-1..13` são limpos, os 13 barcodes gravados, o fornecedor
    preenchido, as categorias voltam a legíveis, a marca copiada da categoria é limpa e
-   NCM/CEST entram em `metadata.fiscal`. Estoque e preço permanecem em zero.
+   NCM/CEST entram em `metadata.fiscal`. Estoque e preço permanecem em zero — e, por
+   terminarem sem preço, os 13 ficam **inativos, `Incompleto` e pendentes de revisão**
+   (seção 7). Nenhum deles é vendável no PDV até a conferência.
 6. Clicar em **Revisar produtos desta importação**, definir os preços de venda
    (acréscimo % sobre o custo + arredondamento `,90` costuma bastar), conferir na prévia,
    salvar, marcar como revisado e **Ativar produtos aptos**.
@@ -229,3 +270,15 @@ com a fixture em
 roda detector → merger → linha canônica → matching → escrita → metadata contra um banco
 simulado em memória, cobrindo a primeira importação (13 matches por nome), a segunda
 (13 por barcode) e o isolamento multi-loja com os mesmos EANs.
+
+Cobertura adicionada pela correção `...REVIEW_HARDENING_CORRECTIONS_001`:
+
+| Arquivo | O que prova |
+|---|---|
+| [`produtos-listagem-sql.test.ts`](../../../lib/cadastros/produtos-listagem-sql.test.ts) | Contrato dos filtros, guarda de arquitetura contra o padrão do 42804, e **injeção de falha**: consulta que falha devolve erro, nunca linhas. |
+| [`produtos-listagem-sql.integration.test.ts`](../../../lib/cadastros/produtos-listagem-sql.integration.test.ts) | Cada filtro contra **PostgreSQL real**, cruzado com SQL independente; paridade `skuSintetico` × `isSyntheticImportSku`; isolamento multi-loja; entradas hostis. Pulado sem `PRODUTOS_LISTAGEM_SQL_IT=1`. |
+| [`importacao-produtos/ativacao.test.ts`](../../../lib/cadastros/importacao-produtos/ativacao.test.ts) | Política de ativação: fail-closed de preço zero, preservação da situação e reabertura de revisão por campo crítico. |
+| [`app/api/import/advanced/route.test.ts`](../../../app/api/import/advanced/route.test.ts) | Contrato multipart na **rota real**: `dominios[]` e `dominios`, dedupe, allowlist, e que domínio não selecionado **não é persistido**. |
+
+> Vitest sozinho não cobre o `SQLSTATE 42804`: ele importa TypeScript direto e não
+> atravessa o bundler. A prova exige `next build` + `next start` + chamada HTTP real.
