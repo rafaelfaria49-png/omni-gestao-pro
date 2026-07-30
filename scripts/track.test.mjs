@@ -29,10 +29,15 @@ const HOOKS_SRC = path.join(HERE, '..', '.githooks');
 // ---------------------------------------------------------------------------
 
 function sh(cmd, args, opts = {}) {
+  // Isolamento: `AEP_WRITE` herdado do shell de quem roda a suíte mudaria o
+  // comportamento dos hooks e do `close`, tornando o resultado dependente do
+  // ambiente externo. Cada teste declara explicitamente o que precisa.
+  const base = { ...process.env };
+  delete base.AEP_WRITE;
   const r = spawnSync(cmd, args, {
     cwd: opts.cwd,
     encoding: 'utf8',
-    env: { ...process.env, ...(opts.env || {}) },
+    env: { ...base, ...(opts.env || {}) },
     maxBuffer: 32 * 1024 * 1024,
     windowsHide: true,
   });
@@ -880,8 +885,28 @@ test('importador recusa manifesto com path fora da gramática (exit 1)', (t) => 
 });
 
 // ---------------------------------------------------------------------------
-// Correções do contrato de importação — gates_extra, fontes, gate_humano, branch-only
+// Correções do contrato de importação — gates_extra, fontes, gate_humano, plano_ids
 // ---------------------------------------------------------------------------
+
+/** Motivo canônico de gate humano pendente (§ D3 do corretivo). */
+const MOTIVO_GATE_HUMANO = 'HUMAN_PUSH_AUTHORIZATION_NOT_SENT';
+
+/** Lê o LEDGER.jsonl da trilha demo como array de objetos. */
+function ledgerDe(repo) {
+  return fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+/** Lê o RECONCILIACAO.md da trilha demo. */
+function reconciliacaoDe(repo) {
+  return fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/_closed/reports/RECONCILIACAO.md'), 'utf8');
+}
+
+/** Lê o bloco AEP:META de um arquivo de GOAL. */
+function metaDe(repo, rel) {
+  const doc = fs.readFileSync(path.join(repo, rel), 'utf8');
+  return JSON.parse(doc.split('<!-- AEP:META\n')[1].split('\n-->')[0]);
+}
 
 const GATE_EXTRA_11 = ['main', 'schema', 'migration', 'auth_externa', 'storage_r2_preview',
   'storage_r2_production', 'fiscal_readonly', 'portal_legado', 'dados_destrutivos', 'secrets', 'deploy'];
@@ -941,7 +966,7 @@ test('C2b: fontes em array legado são aceitas para retrocompatibilidade', (t) =
   assert.match(doc, /PLANO\.md/);
 });
 
-test('C3: gate_humano pendente impede READY e o GOAL não vai ao caminho quente', (t) => {
+test('C3: gate_humano pendente vira BLOCKED com o motivo canônico e não vai ao caminho quente', (t) => {
   const { repo, name } = makeRepo(t);
   initTrack(repo);
   const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
@@ -955,13 +980,95 @@ test('C3: gate_humano pendente impede READY e o GOAL não vai ao caminho quente'
   w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
   const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
   assert.equal(r.code, 0, r.all);
-  assert.match(r.all, /aguardando humano:\s+1/);
-  assert.match(r.all, /demo-012G\[HUMAN_AUTHORIZATION_NOT_SENT\]/);
+  assert.match(r.all, /gate humano \(BLOCKED\):\s*1/);
+  assert.match(r.all, new RegExp(`demo-012G\\[${MOTIVO_GATE_HUMANO}\\]`));
   // NÃO está no caminho quente e NÃO é READY.
   assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-012G.md')), false);
+  // Está em _closed/goals/ com status BLOCKED — estado já existente na máquina do § 3.
+  const meta = metaDe(repo, 'docs/execution-tracks/demo/_closed/goals/demo-012G.md');
+  assert.equal(meta.status, 'BLOCKED');
+  assert.equal(meta.gate_humano.decisao, MOTIVO_GATE_HUMANO);
+  // O ledger ratifica o bloqueio com a categoria já prevista pelo protocolo.
+  const linha = ledgerDe(repo).find((l) => l.goal === 'demo-012G');
+  assert.equal(linha.result, 'BLOCKED');
+  assert.equal(linha.blocked_by, 'gate');
+  assert.equal(linha.reason, MOTIVO_GATE_HUMANO);
+  // A reconciliação explica a pendência.
+  const rec = reconciliacaoDe(repo);
+  assert.match(rec, /## 4\. Bloqueados por gate humano \(BLOCKED — não executáveis\)/);
+  assert.match(rec, new RegExp(`demo-012G.*BLOCKED[\\s\\S]*?${MOTIVO_GATE_HUMANO}`));
   const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
   assert.equal(st.current_goal, null);
   assert.notEqual(st.status, 'RUNNING', 'sem GOAL no caminho quente a trilha não pode estar RUNNING');
+  assert.equal(st.status, 'BLOCKED', 'a última ratificação é um bloqueio humano');
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+test('C3b: READY SEM gate humano continua READY e elegível — o gate não vaza para os demais', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [
+      { id: 'demo-001', situacao: 'READY', title: 'Sem gate', worktree: name },
+      { id: 'demo-012G', situacao: 'READY', gate_humano: true, title: 'Com gate', worktree: name },
+    ],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  assert.equal(aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']).code, 0);
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-001.md')), true);
+  assert.equal(metaDe(repo, 'docs/execution-tracks/demo/goals/demo-001.md').status, 'READY');
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-012G.md')), false);
+  const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+  assert.equal(st.current_goal, 'demo-001');
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+test('C3c: o gate humano NÃO depende do ID 012G — qualquer ID recebe o mesmo tratamento', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [
+      { id: 'PROJETO-QUALQUER-ABC', situacao: 'READY', gate_humano: true, title: 'Outro projeto', worktree: name },
+    ],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, new RegExp(`PROJETO-QUALQUER-ABC\\[${MOTIVO_GATE_HUMANO}\\]`));
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/PROJETO-QUALQUER-ABC.md')), false);
+  const linha = ledgerDe(repo).find((l) => l.goal === 'PROJETO-QUALQUER-ABC');
+  assert.equal(linha.result, 'BLOCKED');
+  assert.equal(linha.reason, MOTIVO_GATE_HUMANO);
+});
+
+test('C3d: motivo explícito de gate humano é normalizado e preservado', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [{
+      id: 'demo-777', situacao: 'READY', title: 'Motivo próprio', worktree: name,
+      gate_humano: { requerido: true, decisao: '  HUMAN_DEPLOY_APPROVAL_NOT_SENT  ' },
+    }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  assert.equal(aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']).code, 0);
+  const linha = ledgerDe(repo).find((l) => l.goal === 'demo-777');
+  assert.equal(linha.reason, 'HUMAN_DEPLOY_APPROVAL_NOT_SENT', 'motivo explícito preservado, sem espaços');
 });
 
 test('C4: gate_humano pendente impede elegibilidade — open não encontra GOAL', (t) => {
@@ -1029,36 +1136,6 @@ test('C6: aprovação explícita pelo fluxo oficial libera o gate humano para RE
   assert.equal(st.current_goal, 'demo-012G');
 });
 
-test('C7: GOAL histórico DONE em branch (main=false) reconciliado sem exigir ancestralidade da main', (t) => {
-  const { repo, name } = makeRepo(t);
-  initTrack(repo);
-  // commit existe APENAS na branch do GOAL, não em origin/main.
-  const sha = commitReal(repo, 'goal/contador-001-status-reconcile', 'docs/contador/RECONCILE.md', '# reconcile\n', 'goal(contador-001): reconcile');
-  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
-  const ancMain = g(repo, 'merge-base', '--is-ancestor', sha, 'origin/main');
-  assert.notEqual(ancMain.code, 0, 'o commit NÃO é ancestral da main — é branch-only');
-  const manifest = {
-    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
-    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
-    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
-    fontes: ['p.md'],
-    goals_declarados: [{
-      id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/contador-001-status-reconcile',
-      main: false, title: 'Reconcile branch-only', worktree: name,
-    }],
-  };
-  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
-  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
-  assert.equal(r.code, 0, r.all);
-  assert.match(r.all, /demo-001\[branch-only\]/);
-  const linhas = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl'), 'utf8')
-    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.equal(linhas[0].result, 'DONE');
-  assert.equal(linhas[0].main, false, 'ledger registra main=false — não publicado na main');
-  const rec = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/_closed/reports/RECONCILIACAO.md'), 'utf8');
-  assert.match(rec, /branch-only \(main = false\)/);
-});
-
 test('C8: commit inexistente ou branch incorreta bloqueia a importação (divergencia)', (t) => {
   const { repo, name } = makeRepo(t);
   initTrack(repo);
@@ -1069,15 +1146,14 @@ test('C8: commit inexistente ou branch incorreta bloqueia a importação (diverg
     paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
     fontes: ['p.md'],
     goals_declarados: [
-      { id: 'demo-001', situacao: 'DONE', commit: 'f'.repeat(40), branch: 'goal/demo-001', main: false, title: 'Fantasma', worktree: name },
+      { id: 'demo-001', situacao: 'DONE', commit: 'f'.repeat(40), branch: 'goal/demo-001', title: 'Fantasma', worktree: name },
     ],
   };
   w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
   const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
   assert.equal(r.code, 0, r.all);
   assert.match(r.all, /divergentes \(BLOCKED\):\s*1/);
-  const linhas = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl'), 'utf8')
-    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const linhas = ledgerDe(repo);
   assert.equal(linhas[0].result, 'BLOCKED');
   assert.equal(linhas[0].blocked_by, 'divergencia');
 });
@@ -1176,7 +1252,7 @@ test('C12: import --dry-run classifica sem escrever state.json, LEDGER, REGISTRY
   assert.equal(r.code, 0, r.all);
   assert.match(r.all, /DRY-RUN/);
   assert.match(r.all, /demo-001/);
-  assert.match(r.all, /aguardando humano:\s+1/);
+  assert.match(r.all, /gate humano \(BLOCKED\):\s*1/);
   // Nada operacional foi escrito.
   assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/demo/state.json').out.trim(), before.state);
   assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/demo/LEDGER.jsonl').out.trim(), before.ledger);
@@ -1184,4 +1260,257 @@ test('C12: import --dry-run classifica sem escrever state.json, LEDGER, REGISTRY
   assert.equal(fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/goals')).filter((f) => f.endsWith('.md')).length, 0);
   assert.equal(fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/_closed/goals')).filter((f) => f.endsWith('.md')).length, 0);
   assert.equal(g(repo, 'status', '--porcelain').out.trim(), '', 'dry-run não suja a árvore');
+});
+
+// ---------------------------------------------------------------------------
+// D4 — plano_ids. `plano_ids` e `goals_declarados` têm funções DIFERENTES:
+// não há fallback de um para o outro.
+// ---------------------------------------------------------------------------
+
+/** Manifesto mínimo de `demo` com os campos obrigatórios preenchidos. */
+function manifestoBase(bootstrap, over = {}) {
+  return {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'BAIXO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'], goals_declarados: [],
+    ...over,
+  };
+}
+
+function importarManifesto(repo, manifest) {
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  return aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+}
+
+/** Cria `n` commits encadeados numa única branch e devolve os SHAs, em ordem. */
+function commitsEmCadeia(repo, branch, n, prefixo) {
+  const atual = g(repo, 'rev-parse', '--abbrev-ref', 'HEAD').out.trim();
+  assert.equal(g(repo, 'checkout', '-q', '-b', branch).code, 0);
+  const shas = [];
+  for (let i = 0; i < n; i += 1) {
+    const rel = `app/${prefixo}-${i}.ts`;
+    w(repo, rel, `export const entrega${i} = ${i};\n`);
+    g(repo, 'add', '--', rel);
+    assert.equal(g(repo, 'commit', '--no-verify', '-m', `goal(${prefixo}-${i}): entrega real`).code, 0);
+    shas.push(g(repo, 'rev-parse', 'HEAD').out.trim());
+  }
+  assert.equal(g(repo, 'checkout', '-q', atual).code, 0);
+  return shas;
+}
+
+test('D4a: plano_ids ausente equivale a [] — sem fallback e sem DRAFT fantasma', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    goals_declarados: [{ id: 'demo-001', situacao: 'READY', title: 'Pronto', worktree: name }],
+  }));
+  assert.equal(r.code, 0, r.all);
+  // Ausência do campo NÃO bloqueia o que foi declarado…
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-001.md')), true);
+  assert.match(r.all, /divergentes \(BLOCKED\):\s*0/);
+  // …e NÃO inventa DRAFTs a partir de goals_declarados (era o efeito do fallback).
+  assert.match(r.all, /rascunhos \(DRAFT\):\s*0/);
+  const rec = reconciliacaoDe(repo);
+  assert.doesNotMatch(rec, /demo-001.*DRAFT/);
+});
+
+test('D4b: plano_ids explicitamente [] se comporta como ausente', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: [],
+    goals_declarados: [{ id: 'demo-001', situacao: 'READY', title: 'Pronto', worktree: name }],
+  }));
+  assert.equal(r.code, 0, r.all);
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-001.md')), true);
+  assert.match(r.all, /rascunhos \(DRAFT\):\s*0/);
+});
+
+test('D4c: IDs só em plano_ids viram DRAFT — fora do caminho quente, do ledger e do open', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001', 'demo-900', 'demo-901'],
+    goals_declarados: [{ id: 'demo-001', situacao: 'READY', title: 'Pronto', worktree: name }],
+  }));
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /rascunhos \(DRAFT\):\s*2 → demo-900, demo-901/);
+  for (const id of ['demo-900', 'demo-901']) {
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/goals/${id}.md`)), false, `${id} não pode ir ao caminho quente`);
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/_closed/goals/${id}.md`)), false, `${id} não é um GOAL fechado`);
+    assert.equal(ledgerDe(repo).some((l) => l.goal === id), false, `${id} não gera ratificação no ledger`);
+  }
+  // DRAFT aparece no tracking como planejamento futuro, sem exigir commit/branch/prova.
+  const rec = reconciliacaoDe(repo);
+  assert.match(rec, /demo-900` → DRAFT · no plano \(`plano_ids`\) e não declarado no manifesto/);
+  assert.match(rec, /não exige commit, branch nem prova no Git/);
+  // O único elegível é o READY declarado — nenhum futuro entra na fila.
+  const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+  assert.equal(st.current_goal, 'demo-001');
+  assert.equal(st.next_goal, null);
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+test('D4d: plano_ids inválido (string isolada, objeto, item não string) falha com exit 1', (t) => {
+  const { repo } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const invalidos = [
+    ['string isolada', 'demo-001'],
+    ['objeto', { 'demo-001': true }],
+    ['número', 42],
+    ['boolean', true],
+  ];
+  for (const [rotulo, valor] of invalidos) {
+    const r = importarManifesto(repo, manifestoBase(bootstrap, { plano_ids: valor }));
+    assert.equal(r.code, 1, `${rotulo} deveria falhar: ${r.all}`);
+    assert.match(r.all, /plano_ids deve ser um array de IDs/);
+  }
+  const itemRuim = importarManifesto(repo, manifestoBase(bootstrap, { plano_ids: ['demo-001', 7] }));
+  assert.equal(itemRuim.code, 1);
+  assert.match(itemRuim.all, /Cada item de plano_ids deve ser um ID/);
+  const itemVazio = importarManifesto(repo, manifestoBase(bootstrap, { plano_ids: ['demo-001', '   '] }));
+  assert.equal(itemVazio.code, 1);
+  assert.match(itemVazio.all, /Cada item de plano_ids deve ser um ID/);
+});
+
+test('D4e: duplicatas internas de plano_ids são eliminadas deterministicamente', (t) => {
+  const { repo } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-900', 'demo-901', 'demo-900', 'demo-901', 'demo-900'],
+  }));
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /rascunhos \(DRAFT\):\s*2 → demo-900, demo-901/);
+  const rec = reconciliacaoDe(repo);
+  assert.equal((rec.match(/`demo-900` → DRAFT/g) || []).length, 1, 'uma única entrada por ID');
+});
+
+test('D4f: ID em plano_ids E em goals_declarados prevalece o declarado, sem entrada dupla', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001', 'demo-002', 'demo-900'],
+    goals_declarados: [
+      { id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name },
+      { id: 'demo-002', situacao: 'READY', title: 'Pronto', worktree: name },
+    ],
+  }));
+  assert.equal(r.code, 0, r.all);
+  // Só demo-900 é DRAFT; os declarados mantêm a situação operacional.
+  assert.match(r.all, /rascunhos \(DRAFT\):\s*1 → demo-900/);
+  assert.equal(ledgerDe(repo).find((l) => l.goal === 'demo-001').result, 'DONE');
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-002.md')), true);
+  const rec = reconciliacaoDe(repo);
+  assert.doesNotMatch(rec, /`demo-001` → DRAFT/);
+  assert.doesNotMatch(rec, /`demo-002` → DRAFT/);
+});
+
+// ---------------------------------------------------------------------------
+// Cenário integrado — equivalente ao manifesto real da trilha contador.
+// ---------------------------------------------------------------------------
+
+const CONTADOR_DONE = [
+  'CONTADOR-HUB-STATUS-RECONCILE-001',
+  'CONTADOR-HUB-HONESTY-ROUTE-SAFETY-002',
+  'CONTADOR-HUB-P0-AUTH-EXTERNA-003',
+  'CONTADOR-HUB-P0-STORE-SCOPE-004',
+  'CONTADOR-HUB-COMPETENCIA-CONTRATOS-005',
+  'CONTADOR-HUB-DADOS-REAIS-READONLY-006',
+  'CONTADOR-HUB-FECHAMENTO-READONLY-007',
+  'CONTADOR-HUB-PACOTE-EXPORT-MVP-008',
+  'CONTADOR-HUB-SCHEMA-NUCLEO-009',
+  'CONTADOR-HUB-STATUS-COMENTARIOS-011',
+];
+const CONTADOR_SUPERSEDED = [
+  'CONTADOR-HUB-DOCUMENTOS-REAL-010',
+  'CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012',
+];
+const CONTADOR_GATE = 'CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN';
+const CONTADOR_FUTUROS = [
+  'CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013',
+  'CONTADOR-HUB-IDENTIDADE-CONVITE-014',
+  'CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015',
+  'CONTADOR-HUB-OBRIGACOES-GUIAS-016',
+  'CONTADOR-HUB-OMNI-AGENT-INTEGRATION-017',
+  'CONTADOR-HUB-FISCAL-INTEGRATION-018',
+  'CONTADOR-HUB-PRODUCTION-HARDENING-019',
+];
+
+test('CI1: cenário integrado — 10 DONE, 2 SUPERSEDED, 012G BLOCKED por gate humano, 013–019 DRAFT', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const produtivoAntes = g(repo, 'hash-object', 'app/produtivo.ts').out.trim();
+  const branch = 'goal/contador-entregas';
+  const shas = commitsEmCadeia(repo, branch, CONTADOR_DONE.length, 'contador');
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+
+  const manifest = manifestoBase(bootstrap, {
+    risk_tier: 'MEDIO',
+    gates_extra: GATE_EXTRA_11,
+    fontes: { resumo: 'import/contador/RESUMO.md', masterplan: 'import/contador/MASTERPLAN.md' },
+    plano_ids: [...CONTADOR_DONE, ...CONTADOR_SUPERSEDED, CONTADOR_GATE, ...CONTADOR_FUTUROS],
+    goals_declarados: [
+      ...CONTADOR_DONE.map((id, i) => ({ id, situacao: 'DONE', commit: shas[i], branch, title: id, worktree: name })),
+      ...CONTADOR_SUPERSEDED.map((id) => ({ id, situacao: 'SUPERSEDED', title: id, worktree: name })),
+      { id: CONTADOR_GATE, situacao: 'READY', gate_humano: true, title: 'Publish main', worktree: name },
+    ],
+  });
+  const r = importarManifesto(repo, manifest);
+  assert.equal(r.code, 0, r.all);
+
+  const porId = Object.fromEntries(ledgerDe(repo).map((l) => [l.goal, l]));
+
+  // 001–009 e 011 reconciliáveis com prova no Git.
+  for (const id of CONTADOR_DONE) {
+    assert.equal(porId[id].result, 'DONE', id);
+    assert.equal(porId[id].source, 'importado');
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/_closed/goals/${id}.md`)), true, id);
+  }
+  // 010 e 012 originais SUPERSEDED.
+  for (const id of CONTADOR_SUPERSEDED) {
+    assert.equal(porId[id].result, 'SUPERSEDED', id);
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/goals/${id}.md`)), false, id);
+  }
+  // 012G BLOCKED pelo motivo canônico — nunca READY.
+  assert.equal(porId[CONTADOR_GATE].result, 'BLOCKED');
+  assert.equal(porId[CONTADOR_GATE].blocked_by, 'gate');
+  assert.equal(porId[CONTADOR_GATE].reason, MOTIVO_GATE_HUMANO);
+  assert.equal(metaDe(repo, `docs/execution-tracks/demo/_closed/goals/${CONTADOR_GATE}.md`).status, 'BLOCKED');
+  assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/goals/${CONTADOR_GATE}.md`)), false);
+  // 013–019 DRAFT: sem arquivo, sem ledger, sem prova Git.
+  const rec = reconciliacaoDe(repo);
+  for (const id of CONTADOR_FUTUROS) {
+    assert.equal(porId[id], undefined, `${id} não pode ratificar nada`);
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/goals/${id}.md`)), false, id);
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/_closed/goals/${id}.md`)), false, id);
+    assert.match(rec, new RegExp(`\`${id}\` → DRAFT`));
+  }
+  // Caminho quente vazio (≤ max_hot_goals) e nenhum GOAL futuro executável.
+  const quentes = fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/goals')).filter((f) => f.endsWith('.md'));
+  assert.equal(quentes.length, 0);
+  assert.ok(quentes.length <= FIXTURE_PROTOCOL.max_hot_goals);
+  const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+  assert.equal(st.current_goal, null);
+  assert.equal(st.next_goal, null);
+  assert.equal(st.counters.goals_done, CONTADOR_DONE.length);
+  g(repo, 'checkout', '-q', '-b', 'goal/demo-012g');
+  const o = aep(repo, ['open', 'demo']);
+  assert.notEqual(o.code, 0, 'nenhum GOAL é abrível após a importação');
+  g(repo, 'checkout', '-q', 'main');
+
+  // A importação NÃO altera código produtivo e só commita dentro de docs/.
+  assert.equal(g(repo, 'hash-object', 'app/produtivo.ts').out.trim(), produtivoAntes);
+  const tocados = g(repo, 'show', '--name-only', '--format=', 'HEAD').out.split('\n').filter(Boolean);
+  assert.equal(tocados.every((p) => p.startsWith('docs/execution-tracks/') || p.startsWith('docs/ai-execution/')), true, tocados.join(' '));
+  assert.equal(g(repo, 'ls-files', '--', 'import').out.trim(), '', 'import/ é gitignored');
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '');
 });

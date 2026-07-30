@@ -1896,10 +1896,21 @@ export function normalizeGatesExtra(gatesExtra, manifestLabel) {
 }
 
 /**
+ * Motivo canônico de gate humano pendente. É o valor determinístico quando o
+ * manifesto não fornece um motivo explícito — nenhuma regra depende do ID do GOAL.
+ */
+const GATE_HUMANO_MOTIVO_CANONICO = 'HUMAN_PUSH_AUTHORIZATION_NOT_SENT';
+
+/**
  * Correção 3 — gate_humano. Aprovação humana EXIGE evidência explícita. Ausência,
  * silêncio, `false`, `null` ou valor indefinido NUNCA são interpretados como
  * aprovação. Só libera o gate um objeto de evidência com `aprovado: true` e
  * um identificador de autorização registrado pelo fluxo oficial do AEP.
+ *
+ * Gate pendente NÃO cria estado novo na máquina do § 3 do EXECUTION_PROTOCOL:
+ * o GOAL vira `BLOCKED` (estado já existente), com `blocked_by: "gate"` — a
+ * categoria já prevista em `block --by=gate|dependencia|externo|decisao` — e o
+ * motivo canônico em `reason`.
  */
 function resolveGateHumano(g, manifestLabel) {
   const gh = g.gate_humano;
@@ -1909,7 +1920,7 @@ function resolveGateHumano(g, manifestLabel) {
     return {
       requerido: true, pendente: true,
       motivo: 'gate humano exigido pelo manifesto; nenhuma evidência de aprovação registrada',
-      decisao: 'HUMAN_AUTHORIZATION_NOT_SENT',
+      decisao: GATE_HUMANO_MOTIVO_CANONICO,
     };
   }
   if (gh === false) return { requerido: false, pendente: false, motivo: null, decisao: null };
@@ -1925,15 +1936,50 @@ function resolveGateHumano(g, manifestLabel) {
         aprovacao: { aprovado: true, autorizacao: ev.autorizacao.trim(), registrado_por: ev.registrado_por || null, em: ev.em || null },
       };
     }
+    // Motivo explícito do manifesto é normalizado e preservado; na ausência dele,
+    // o motivo é o canônico — determinístico, nunca derivado do ID do GOAL.
+    const decisao = typeof gh.decisao === 'string' && gh.decisao.trim()
+      ? gh.decisao.trim() : GATE_HUMANO_MOTIVO_CANONICO;
     return {
       requerido: true, pendente: true,
       motivo: gh.motivo || 'gate humano pendente — aprovação explícita ausente',
-      decisao: gh.decisao || 'HUMAN_AUTHORIZATION_NOT_SENT',
+      decisao,
     };
   }
   fail(1, 'metadado inválido', `grep -n '"gate_humano"' ${manifestLabel}`, JSON.stringify(gh),
     'gate_humano deve ser boolean ou objeto { requerido?, motivo?, decisao?, aprovacao? }.');
   return { requerido: false, pendente: false, motivo: null, decisao: null };
+}
+
+/**
+ * Correção 4 — `plano_ids` e `goals_declarados` têm funções DIFERENTES e não são
+ * intercambiáveis: `plano_ids` é a lista de IDs do plano humano (`plan_ref`);
+ * `goals_declarados` é o subconjunto que o manifesto declara com situação
+ * operacional. Não existe fallback de um para o outro — o fallback anterior
+ * (`plano_ids || goals_declarados`) tornava as regras 1 e 5 do § 12 letra morta.
+ *
+ * Ausente → lista vazia. Presente → precisa ser array de strings não vazias.
+ * Duplicatas internas são eliminadas preservando a primeira ocorrência.
+ */
+export function normalizePlanoIds(planoIds, manifestLabel) {
+  if (planoIds === undefined || planoIds === null) return [];
+  if (!Array.isArray(planoIds)) {
+    fail(1, 'metadado inválido', `grep -n '"plano_ids"' ${manifestLabel}`, JSON.stringify(planoIds),
+      'plano_ids deve ser um array de IDs (strings não vazias). Objeto, número, boolean ou string isolada são inválidos.');
+  }
+  const vistos = new Set();
+  const out = [];
+  planoIds.forEach((id, idx) => {
+    if (typeof id !== 'string' || !id.trim()) {
+      fail(1, 'metadado inválido', `grep -n '"plano_ids"' ${manifestLabel} (índice ${idx})`, JSON.stringify(id),
+        'Cada item de plano_ids deve ser um ID (string não vazia).');
+    }
+    const v = id.trim();
+    if (vistos.has(v)) return; // duplicata interna: determinística, primeira ocorrência vence
+    vistos.add(v);
+    out.push(v);
+  });
+  return out;
 }
 
 function cmdImport(root, protocol, track, flags) {
@@ -1972,16 +2018,22 @@ function cmdImport(root, protocol, track, flags) {
 
   const dir = trackDir(root, protocol, track);
   const rel = trackRel(protocol, track);
-  const planoIds = Array.isArray(manifest.plano_ids) ? manifest.plano_ids : manifest.goals_declarados.map((g) => g.id);
+  // Correção 4 — sem fallback: `plano_ids` ausente é lista VAZIA, nunca os IDs de
+  // `goals_declarados`. Um plano vazio não carrega evidência de divergência, então a
+  // regra 1 (§ 12) só pode disparar quando existe uma lista de plano para contradizer
+  // o manifesto; a regra 5 (DRAFT) opera sobre o excedente do plano.
+  const planoIds = normalizePlanoIds(manifest.plano_ids, toPosix(manifestArg));
+  const planoIdsSet = new Set(planoIds);
   const declaradosIds = new Set(manifest.goals_declarados.map((g) => g.id));
   const planRev = Number(manifest.plan_rev);
 
   const confirmados = [];
   const divergentes = [];
   const pendentes = [];
+  const rascunhos = [];
   const supersedidos = [];
   const prontos = [];
-  const aguardandoHumano = [];
+  const bloqueadosGateHumano = [];
   const ts = new Date().toISOString();
 
   const baseMeta = (g, status, gateHumano) => {
@@ -2017,31 +2069,22 @@ function cmdImport(root, protocol, track, flags) {
 
   for (const g of manifest.goals_declarados) {
     const gateHumano = resolveGateHumano(g, toPosix(manifestArg));
-    // Regra 1 — no manifesto mas não no plano → BLOCKED (decisao)
-    if (!planoIds.includes(g.id)) {
+    // Regra 1 — no manifesto mas não no plano → BLOCKED (decisao). Só é aplicável
+    // quando o manifesto declarou uma lista de plano: sem ela não há com o que
+    // confrontar, e ausência de campo opcional nunca vira bloqueio universal.
+    if (planoIds.length && !planoIdsSet.has(g.id)) {
       divergentes.push({
         id: g.id, motivo: 'no manifesto mas não no plano', blocked_by: 'decisao',
         cmd: `grep -n "${g.id}" ${manifest.plan_ref}`, out: 'ausente em plano_ids',
       });
       continue;
     }
-    // Regra 2 — DONE exige prova no Git.
-    //   main = true (ou omitido): o commit deve estar na branch declarada (default: origin/main).
-    //   main = false (branch-only): valida o commit CONTRA a branch declarada do GOAL,
-    //   sem exigir ancestralidade da main — entrega histórica concluída fora da main,
-    //   reconciliada como DONE branch-only, NUNCA classificada como publicada na main.
+    // Regra 2 — DONE exige prova no Git: o commit deve existir E estar na branch
+    // declarada pelo manifesto. Branch não declarada NUNCA é presumida.
     if (g.situacao === 'DONE') {
-      const branchAlvo = g.branch || `origin/${defaultBranch(protocol)}`;
-      const v = verifyCommit(root, g.commit, branchAlvo);
-      if (v.ok) {
-        const branchOnly = g.main === false;
-        confirmados.push({
-          ...g, branch: branchAlvo, evid_cmd: v.cmd, evid_out: v.out,
-          branch_only: branchOnly, meta: baseMeta(g, 'DONE', gateHumano),
-        });
-      } else {
-        divergentes.push({ id: g.id, motivo: 'DONE sem prova no Git', blocked_by: 'divergencia', cmd: v.cmd, out: v.out });
-      }
+      const v = verifyCommit(root, g.commit, g.branch);
+      if (v.ok) confirmados.push({ ...g, evid_cmd: v.cmd, evid_out: v.out, meta: baseMeta(g, 'DONE', gateHumano) });
+      else divergentes.push({ id: g.id, motivo: 'DONE sem prova no Git', blocked_by: 'divergencia', cmd: v.cmd, out: v.out });
       continue;
     }
     // Regra 3 — superado por plan_rev mais novo, ou declarado SUPERSEDED explicitamente
@@ -2054,11 +2097,12 @@ function cmdImport(root, protocol, track, flags) {
       supersedidos.push({ ...g, meta: baseMeta(g, 'SUPERSEDED', gateHumano), gRev });
       continue;
     }
-    // Regra 4 — READY. Gate humano PENDENTE impede READY: o GOAL fica em
-    //   WAITING_HUMAN (não executável), fora do caminho quente e da elegibilidade.
+    // Regra 4 — READY. Gate humano PENDENTE impede READY: o GOAL vira BLOCKED
+    //   (estado já existente na máquina do § 3), fora do caminho quente e da
+    //   elegibilidade. Nenhum estado novo é criado para este corretivo.
     if (g.situacao === 'READY') {
       if (gateHumano.requerido && gateHumano.pendente) {
-        aguardandoHumano.push({ ...g, meta: baseMeta(g, 'WAITING_HUMAN', gateHumano), gateHumano });
+        bloqueadosGateHumano.push({ ...g, meta: baseMeta(g, 'BLOCKED', gateHumano), gateHumano });
       } else {
         prontos.push({ ...g, meta: baseMeta(g, 'READY', gateHumano) });
       }
@@ -2070,9 +2114,13 @@ function cmdImport(root, protocol, track, flags) {
     });
   }
 
-  // Regra 5 — no plano mas não no manifesto → DRAFT, fora de goals/
+  // Regra 5 — no plano mas não no manifesto → DRAFT, fora de goals/.
+  // O AEP não tem diretório de planejamento frio: DRAFT é representado no
+  // tracking (RECONCILIACAO.md + saída do import), sem arquivo em goals/, sem
+  // linha de ledger e sem exigir commit, branch ou prova Git. Quando o ID também
+  // está em goals_declarados, prevalece o declarado — nunca duas entradas.
   for (const id of planoIds) {
-    if (!declaradosIds.has(id)) pendentes.push({ id, motivo: 'no plano mas não declarado no manifesto → DRAFT' });
+    if (!declaradosIds.has(id)) rascunhos.push({ id });
   }
 
   // Caminho quente: no máximo `max_hot_goals`.
@@ -2086,12 +2134,13 @@ function cmdImport(root, protocol, track, flags) {
     process.stdout.write([
       `${AEP_LABEL} · import ${track} · DRY-RUN · manifesto ${toPosix(manifestArg)}`,
       'MODO DRY-RUN: nenhum arquivo operacional do AEP foi escrito.',
-      `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => `${c.id}${c.branch_only ? '[branch-only]' : ''}`).join(', ') || '—'}`,
+      `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => c.id).join(', ') || '—'}`,
       `divergentes (BLOCKED):${divergentes.length} → ${divergentes.map((d) => `${d.id}[${d.blocked_by}]`).join(', ') || '—'}`,
       `superados (SUPERSEDED):${supersedidos.length} → ${supersedidos.map((s) => s.id).join(', ') || '—'}`,
-      `aguardando humano:    ${aguardandoHumano.length} → ${aguardandoHumano.map((w) => `${w.id}[${w.gateHumano.decisao}]`).join(', ') || '—'}`,
+      `gate humano (BLOCKED):${bloqueadosGateHumano.length} → ${bloqueadosGateHumano.map((w) => `${w.id}[${w.gateHumano.decisao}]`).join(', ') || '—'}`,
       `prontos (READY, quente):${hot.length} → ${hot.map((h) => h.id).join(', ') || '—'}`,
-      `pendentes (DRAFT):    ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
+      `rascunhos (DRAFT):    ${rascunhos.length} → ${rascunhos.map((p) => p.id).join(', ') || '—'}`,
+      `pendências:           ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
       '',
     ].join('\n'));
     return 0;
@@ -2105,20 +2154,15 @@ function cmdImport(root, protocol, track, flags) {
 
   for (const c of confirmados) {
     const f = path.join(dir, '_closed', 'goals', `${c.id}.md`);
-    const prov = ['## Proveniência', '',
+    fs.writeFileSync(f, goalDoc(c.meta, manifest, ['## Proveniência', '',
       `- importado de \`${manifest.plan_ref}\` em ${ts}`,
       `- commit confirmado: \`${c.commit}\` na branch \`${c.branch}\``,
-      `- evidência: \`${c.evid_cmd}\` → ${c.evid_out}`];
-    if (c.branch_only) {
-      prov.push('- **branch-only (main = false):** entrega histórica concluída na branch declarada e NÃO publicada na main. Não classificar como publicada na main.');
-    }
-    fs.writeFileSync(f, goalDoc(c.meta, manifest, prov));
+      `- evidência: \`${c.evid_cmd}\` → ${c.evid_out}`]));
     escritos.push(`${rel}/_closed/goals/${c.id}.md`);
     appendLedger(dir, {
       aep: AEP_VERSION, ts, track, goal: c.id, result: 'DONE', attempt: 1,
       source: 'importado', bootstrap_commit: manifest.bootstrap_commit,
       branch: c.branch, head_commit: c.commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
-      main: c.branch_only ? false : true,
       evidencia: { cmd: c.evid_cmd, out: c.evid_out },
     });
   }
@@ -2145,21 +2189,27 @@ function cmdImport(root, protocol, track, flags) {
     fs.writeFileSync(f, goalDoc(h.meta, manifest, ['## Critério de pronto', '', '- <PREENCHER>']));
     escritos.push(`${rel}/goals/${h.id}.md`);
   }
-  // Correção 3 — gate humano pendente: o GOAL fica NÃO EXECUTÁVEL em _closed/goals/
-  // com status WAITING_HUMAN. Não entra no caminho quente, não é elegível e não é
-  // abrível por `open` (que só lê goals/ com status READY). Sem ledger DONE/BLOCKED:
-  // não é ratificação — é uma pendência de autorização humana, listada na reconciliação.
-  for (const w of aguardandoHumano) {
+  // Correção 3 — gate humano pendente: o GOAL fica NÃO EXECUTÁVEL, com status
+  // BLOCKED em _closed/goals/ (§ 3: BLOCKED → _closed/goals/). Não entra no caminho
+  // quente, não é elegível e não é abrível por `open` (que só lê goals/ com status
+  // READY). O bloqueio É ratificado no ledger, com a categoria já existente
+  // `blocked_by: "gate"` e o motivo canônico em `reason`.
+  for (const w of bloqueadosGateHumano) {
     const f = path.join(dir, '_closed', 'goals', `${w.id}.md`);
     fs.writeFileSync(f, goalDoc(w.meta, manifest, [
-      '## Gate humano pendente', '',
+      '## Gate humano pendente — BLOCKED', '',
       `- motivo: ${w.gateHumano.motivo}`,
       `- decisão humana requerida: \`${w.gateHumano.decisao}\``,
       '- este GOAL NÃO está READY, NÃO é elegível e NÃO pode ser aberto por track.mjs.',
       '- ausência de aprovação NÃO libera o GOAL — a liberação exige evidência explícita registrada pelo fluxo oficial do AEP.',
     ]));
     escritos.push(`${rel}/_closed/goals/${w.id}.md`);
-    pendentes.push({ id: w.id, motivo: `gate humano pendente (${w.gateHumano.decisao}) → WAITING_HUMAN, fora do caminho quente` });
+    appendLedger(dir, {
+      aep: AEP_VERSION, ts, track, goal: w.id, result: 'BLOCKED', attempt: 1,
+      source: 'importado', blocked_by: 'gate', reason: w.gateHumano.decisao,
+      bootstrap_commit: manifest.bootstrap_commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
+      evidencia: { cmd: `grep -n '"gate_humano"' ${toPosix(manifestArg)}`, out: w.gateHumano.motivo },
+    });
   }
 
   const n = fs.readdirSync(path.join(dir, '_closed', 'reports')).filter((f) => /^IMPORT-\d+-MANIFEST\.json$/.test(f)).length + 1;
@@ -2179,9 +2229,7 @@ function cmdImport(root, protocol, track, flags) {
   rec.push('## 1. Confirmados (DONE com prova no Git)');
   rec.push('');
   if (!confirmados.length) rec.push('_(nenhum)_');
-  for (const c of confirmados) {
-    rec.push(`- \`${c.id}\` → DONE · commit \`${c.commit}\` · branch \`${c.branch}\`${c.branch_only ? ' · **branch-only (main = false)** — não publicado na main' : ''}\n  - evidência: \`${c.evid_cmd}\` → ${c.evid_out}`);
-  }
+  for (const c of confirmados) rec.push(`- \`${c.id}\` → DONE · commit \`${c.commit}\` · branch \`${c.branch}\`\n  - evidência: \`${c.evid_cmd}\` → ${c.evid_out}`);
   rec.push('');
   rec.push('## 2. Divergentes (BLOCKED — nunca presumidos DONE)');
   rec.push('');
@@ -2190,14 +2238,19 @@ function cmdImport(root, protocol, track, flags) {
   rec.push('');
   rec.push('## 3. Pendentes de planejamento (DRAFT — fora de goals/)');
   rec.push('');
-  if (!pendentes.length) rec.push('_(nenhum)_');
+  if (!rascunhos.length && !pendentes.length) rec.push('_(nenhum)_');
+  for (const p of rascunhos) {
+    rec.push(`- \`${p.id}\` → DRAFT · no plano (\`plano_ids\`) e não declarado no manifesto`
+      + '\n  - planejamento futuro: não exige commit, branch nem prova no Git.'
+      + '\n  - fora do caminho quente, fora do ledger e NÃO elegível para `open`.');
+  }
   for (const p of pendentes) rec.push(`- \`${p.id}\` — ${p.motivo}`);
   rec.push('');
-  rec.push('## 4. Aguardando gate humano (WAITING_HUMAN — não executáveis)');
+  rec.push('## 4. Bloqueados por gate humano (BLOCKED — não executáveis)');
   rec.push('');
-  if (!aguardandoHumano.length) rec.push('_(nenhum)_');
-  for (const w of aguardandoHumano) {
-    rec.push(`- \`${w.id}\` → WAITING_HUMAN · ${w.gateHumano.motivo}\n  - decisão humana requerida: \`${w.gateHumano.decisao}\`\n  - ausência de aprovação NÃO libera o GOAL — exige evidência explícita registrada pelo fluxo oficial do AEP.`);
+  if (!bloqueadosGateHumano.length) rec.push('_(nenhum)_');
+  for (const w of bloqueadosGateHumano) {
+    rec.push(`- \`${w.id}\` → BLOCKED (\`gate\`) · ${w.gateHumano.motivo}\n  - decisão humana requerida: \`${w.gateHumano.decisao}\`\n  - ausência de aprovação NÃO libera o GOAL — exige evidência explícita registrada pelo fluxo oficial do AEP.`);
   }
   rec.push('');
   rec.push('## 5. Superados (SUPERSEDED → _closed/goals/)');
@@ -2222,12 +2275,13 @@ function cmdImport(root, protocol, track, flags) {
 
   process.stdout.write([
     `${AEP_LABEL} · import ${track} · manifesto ${toPosix(manifestArg)}`,
-    `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => `${c.id}${c.branch_only ? '[branch-only]' : ''}`).join(', ') || '—'}`,
+    `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => c.id).join(', ') || '—'}`,
     `divergentes (BLOCKED):${divergentes.length} → ${divergentes.map((d) => `${d.id}[${d.blocked_by}]`).join(', ') || '—'}`,
     `superados (SUPERSEDED):${supersedidos.length} → ${supersedidos.map((s) => s.id).join(', ') || '—'}`,
-    `aguardando humano:    ${aguardandoHumano.length} → ${aguardandoHumano.map((w) => `${w.id}[${w.gateHumano.decisao}]`).join(', ') || '—'}`,
+    `gate humano (BLOCKED):${bloqueadosGateHumano.length} → ${bloqueadosGateHumano.map((w) => `${w.id}[${w.gateHumano.decisao}]`).join(', ') || '—'}`,
     `prontos (READY, quente):${hot.length} → ${hot.map((h) => h.id).join(', ') || '—'}`,
-    `pendentes (DRAFT):    ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
+    `rascunhos (DRAFT):    ${rascunhos.length} → ${rascunhos.map((p) => p.id).join(', ') || '—'}`,
+    `pendências:           ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
     `reconciliação: ${recRel}`,
     `proveniência:  ${manifestCopyRel}`,
     `state.json: status ${derived.status} · current_goal ${derived.current_goal || 'null'}`,
