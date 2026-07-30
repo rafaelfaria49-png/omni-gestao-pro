@@ -1742,7 +1742,44 @@ function cmdHook(kind, arg) {
 const MANIFEST_REQUIRED = ['aep', 'track', 'plan_ref', 'plan_rev', 'risk_tier', 'branch_pattern',
   'test_command', 'paths_base', 'gates_extra', 'bootstrap_commit', 'fontes', 'goals_declarados'];
 
+/**
+ * Fontes do manifesto — o formato CANÔNICO da especificação é OBJETO
+ * ({ rotulo: caminho }). Aceita array legado ["caminho", ...] apenas para
+ * retrocompatibilidade. Normaliza SEMPRE para um array determinístico de
+ * { rotulo, caminho }, ordenado por rotulo, para que a representação interna
+ * não dependa da ordem de inserção das chaves do objeto.
+ */
+export function normalizeFontes(fontes) {
+  if (fontes === undefined || fontes === null) return [];
+  if (Array.isArray(fontes)) {
+    for (const f of fontes) {
+      if (typeof f !== 'string' || !f.trim()) {
+        fail(1, 'metadado inválido', 'JSON.stringify(fontes)', JSON.stringify(fontes),
+          'fontes em array legado deve conter apenas strings não vazias.');
+      }
+    }
+    return fontes.map((f) => ({ rotulo: f, caminho: f }));
+  }
+  if (typeof fontes === 'object') {
+    const out = [];
+    for (const rotulo of Object.keys(fontes)) {
+      const caminho = fontes[rotulo];
+      if (typeof caminho !== 'string' || !caminho.trim()) {
+        fail(1, 'metadado inválido', `JSON.stringify(fontes.${rotulo})`, JSON.stringify(caminho),
+          'Cada valor do objeto fontes deve ser um caminho (string não vazia).');
+      }
+      out.push({ rotulo, caminho });
+    }
+    out.sort((a, b) => a.rotulo.localeCompare(b.rotulo));
+    return out;
+  }
+  fail(1, 'metadado inválido', 'JSON.stringify(fontes)', JSON.stringify(fontes),
+    'fontes deve ser um objeto { rotulo: caminho } (canônico) ou um array de caminhos (legado).');
+  return [];
+}
+
 function goalDoc(meta, manifest, extra) {
+  const fontes = normalizeFontes(manifest.fontes);
   return [
     '<!-- AEP:META',
     JSON.stringify(meta, null, 2),
@@ -1758,7 +1795,7 @@ function goalDoc(meta, manifest, extra) {
     '',
     '## Fontes (documentos de origem — o importador NÃO reimplementa nada)',
     '',
-    ...(manifest.fontes || []).map((f) => `- \`${f}\``),
+    ...fontes.map((f) => (f.rotulo === f.caminho ? `- \`${f.caminho}\`` : `- \`${f.rotulo}\`: \`${f.caminho}\``)),
     '',
     '## Allowlist',
     '',
@@ -1781,6 +1818,122 @@ function verifyCommit(root, sha, branch) {
     return { ok: false, cmd: `git merge-base --is-ancestor ${sha} ${branch}`, out: oneLine(anc.stderr || `exit ${anc.code} — commit fora da branch declarada`) };
   }
   return { ok: true, cmd: `git merge-base --is-ancestor ${sha} ${branch}`, out: 'commit existe e está na branch declarada' };
+}
+
+/** Status permitidos para gates de domínio (gates_extra). */
+const GATE_EXTRA_STATUS = ['pendente', 'aprovado', 'liberado', 'ativo', 'requer_aprovacao'];
+
+/**
+ * Correção 1 — gates_extra de DOMÍNIO. Aceita duas formas por entrada:
+ *   - string: "main"                        → { id: "main", status: "pendente", dependencias: [] }
+ *   - objeto: { id, status?, dependencias? } → validado campo a campo
+ * NÃO exige interseção com os gates centrais (IDs G-*) do protocolo — são
+ * vocabulários separados por natureza. Valida estrutura, ID não vazio,
+ * unicidade dentro do track, status permitido e dependências referenciadas.
+ * Devolve array normalizado e determinístico (ordem de declaração preservada).
+ */
+export function normalizeGatesExtra(gatesExtra, manifestLabel) {
+  if (gatesExtra === undefined || gatesExtra === null) return [];
+  if (!Array.isArray(gatesExtra)) {
+    fail(1, 'metadado inválido', `grep -n '"gates_extra"' ${manifestLabel}`, JSON.stringify(gatesExtra),
+      'gates_extra deve ser um array de strings ou de objetos { id, status?, dependencias? }.');
+  }
+  const vistos = new Set();
+  const ids = [];
+  const out = gatesExtra.map((entrada, idx) => {
+    const onde = `grep -n '"gates_extra"' ${manifestLabel} (índice ${idx})`;
+    let g;
+    if (typeof entrada === 'string') {
+      g = { id: entrada, status: 'pendente', dependencias: [] };
+    } else if (entrada && typeof entrada === 'object' && !Array.isArray(entrada)) {
+      g = {
+        id: entrada.id,
+        status: entrada.status === undefined ? 'pendente' : entrada.status,
+        dependencias: entrada.dependencias === undefined ? [] : entrada.dependencias,
+      };
+    } else {
+      fail(1, 'metadado inválido', onde, JSON.stringify(entrada),
+        'Cada gate_extra deve ser string (id) ou objeto { id, status?, dependencias? }.');
+    }
+    if (typeof g.id !== 'string' || !g.id.trim()) {
+      fail(1, 'metadado inválido', onde, JSON.stringify(entrada),
+        'gate_extra precisa de um "id" (string não vazia).');
+    }
+    g.id = g.id.trim();
+    if (vistos.has(g.id)) {
+      fail(1, 'metadado inválido', onde, g.id,
+        `gate_extra "${g.id}" duplicado dentro do mesmo manifesto — IDs de domínio devem ser únicos no track.`);
+    }
+    vistos.add(g.id);
+    ids.push(g.id);
+    if (!GATE_EXTRA_STATUS.includes(g.status)) {
+      fail(1, 'metadado inválido', onde, `status="${g.status}"`,
+        `status de gate_extra deve ser um de: ${GATE_EXTRA_STATUS.join(' | ')}.`);
+    }
+    if (!Array.isArray(g.dependencias)) {
+      fail(1, 'metadado inválido', onde, JSON.stringify(g.dependencias),
+        'dependencias de gate_extra deve ser um array de IDs (pode ser vazio).');
+    }
+    for (const dep of g.dependencias) {
+      if (typeof dep !== 'string' || !dep.trim()) {
+        fail(1, 'metadado inválido', onde, JSON.stringify(dep),
+          'cada dependência de gate_extra deve ser um ID (string não vazia).');
+      }
+    }
+    return g;
+  });
+  // Validação de dependências referenciadas (após coletar todos os IDs).
+  const declarados = new Set(ids);
+  for (const g of out) {
+    for (const dep of g.dependencias) {
+      if (!declarados.has(dep)) {
+        fail(1, 'metadado inválido', `grep -n '"${g.id}"' ${manifestLabel}`, `dependencia "${dep}"`,
+          `gate_extra "${g.id}" depende de "${dep}", que não está declarado em gates_extra.`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Correção 3 — gate_humano. Aprovação humana EXIGE evidência explícita. Ausência,
+ * silêncio, `false`, `null` ou valor indefinido NUNCA são interpretados como
+ * aprovação. Só libera o gate um objeto de evidência com `aprovado: true` e
+ * um identificador de autorização registrado pelo fluxo oficial do AEP.
+ */
+function resolveGateHumano(g, manifestLabel) {
+  const gh = g.gate_humano;
+  if (gh === undefined || gh === null) return { requerido: false, pendente: false, motivo: null, decisao: null };
+  // Forma simples: gate_humano: true → requerido e pendente (sem evidência).
+  if (gh === true) {
+    return {
+      requerido: true, pendente: true,
+      motivo: 'gate humano exigido pelo manifesto; nenhuma evidência de aprovação registrada',
+      decisao: 'HUMAN_AUTHORIZATION_NOT_SENT',
+    };
+  }
+  if (gh === false) return { requerido: false, pendente: false, motivo: null, decisao: null };
+  if (typeof gh === 'object' && !Array.isArray(gh)) {
+    const requerido = gh.requerido !== false; // objeto presente implica exigência, salvo requerido:false
+    if (!requerido) return { requerido: false, pendente: false, motivo: null, decisao: null };
+    const ev = gh.aprovacao;
+    const aprovado = ev && typeof ev === 'object' && ev.aprovado === true
+      && typeof ev.autorizacao === 'string' && ev.autorizacao.trim();
+    if (aprovado) {
+      return {
+        requerido: true, pendente: false, motivo: null, decisao: null,
+        aprovacao: { aprovado: true, autorizacao: ev.autorizacao.trim(), registrado_por: ev.registrado_por || null, em: ev.em || null },
+      };
+    }
+    return {
+      requerido: true, pendente: true,
+      motivo: gh.motivo || 'gate humano pendente — aprovação explícita ausente',
+      decisao: gh.decisao || 'HUMAN_AUTHORIZATION_NOT_SENT',
+    };
+  }
+  fail(1, 'metadado inválido', `grep -n '"gate_humano"' ${manifestLabel}`, JSON.stringify(gh),
+    'gate_humano deve ser boolean ou objeto { requerido?, motivo?, decisao?, aprovacao? }.');
+  return { requerido: false, pendente: false, motivo: null, decisao: null };
 }
 
 function cmdImport(root, protocol, track, flags) {
@@ -1810,13 +1963,12 @@ function cmdImport(root, protocol, track, flags) {
       `O manifesto declara a trilha "${manifest.track}", mas o comando pediu "${track}".`);
   }
   manifest.paths_base.forEach((p) => assertPattern(p, `${toPosix(manifestArg)} paths_base`));
-  const known = new Set(protocol.gates.map((g) => g.id));
-  for (const g of manifest.gates_extra || []) {
-    if (!known.has(g)) {
-      fail(1, 'metadado inválido', `grep -n '"${g}"' ${toPosix(manifestArg)}`, 'gate desconhecido',
-        `gates_extra contém "${g}", que não existe em ${PROTOCOL_REL}.`);
-    }
-  }
+
+  // Correção 1 — gates_extra são gates de DOMÍNIO do track importado, NÃO os
+  // gates centrais do protocolo (IDs G-*). Não exigem interseção com os centrais.
+  // Validação: estrutura, ID não vazio, unicidade no track, status permitido e
+  // dependências referenciadas quando aplicável.
+  const gatesExtra = normalizeGatesExtra(manifest.gates_extra, toPosix(manifestArg));
 
   const dir = trackDir(root, protocol, track);
   const rel = trackRel(protocol, track);
@@ -1829,30 +1981,42 @@ function cmdImport(root, protocol, track, flags) {
   const pendentes = [];
   const supersedidos = [];
   const prontos = [];
+  const aguardandoHumano = [];
   const ts = new Date().toISOString();
 
-  const baseMeta = (g, status) => ({
-    aep: AEP_VERSION,
-    id: g.id,
-    track,
-    title: g.title || '<PREENCHER>',
-    status,
-    class: g.class || 'C2',
-    risk_tier: manifest.risk_tier,
-    branch: g.branch || manifest.branch_pattern.replace('<nnn>', String(g.id).split('-').pop()),
-    worktree: g.worktree || '<PREENCHER>',
-    test_command: manifest.test_command,
-    allowlist: Array.isArray(g.allowlist) && g.allowlist.length ? g.allowlist : manifest.paths_base,
-    gates_liberados: Array.isArray(g.gates_liberados) ? g.gates_liberados : [],
-    read_budget: Number(g.read_budget) > 0 ? Number(g.read_budget) : 8,
-    plan_ref: manifest.plan_ref,
-    plan_rev: g.plan_rev === undefined ? planRev : Number(g.plan_rev),
-    familia_executor: g.familia_executor || null,
-    revisao_independente: g.revisao_independente === true,
-    reversibilidade: g.reversibilidade || null,
-  });
+  const baseMeta = (g, status, gateHumano) => {
+    const meta = {
+      aep: AEP_VERSION,
+      id: g.id,
+      track,
+      title: g.title || '<PREENCHER>',
+      status,
+      class: g.class || 'C2',
+      risk_tier: manifest.risk_tier,
+      branch: g.branch || manifest.branch_pattern.replace('<nnn>', String(g.id).split('-').pop()),
+      worktree: g.worktree || '<PREENCHER>',
+      test_command: manifest.test_command,
+      allowlist: Array.isArray(g.allowlist) && g.allowlist.length ? g.allowlist : manifest.paths_base,
+      gates_liberados: Array.isArray(g.gates_liberados) ? g.gates_liberados : [],
+      read_budget: Number(g.read_budget) > 0 ? Number(g.read_budget) : 8,
+      plan_ref: manifest.plan_ref,
+      plan_rev: g.plan_rev === undefined ? planRev : Number(g.plan_rev),
+      familia_executor: g.familia_executor || null,
+      revisao_independente: g.revisao_independente === true,
+      reversibilidade: g.reversibilidade || null,
+    };
+    // gates_extra são metadata governada do track — preservadas no GOAL importado.
+    if (gatesExtra.length) meta.gates_extra = gatesExtra;
+    if (gateHumano && gateHumano.requerido) {
+      meta.gate_humano = gateHumano.pendente
+        ? { requerido: true, pendente: true, motivo: gateHumano.motivo, decisao: gateHumano.decisao }
+        : { requerido: true, pendente: false, aprovacao: gateHumano.aprovacao };
+    }
+    return meta;
+  };
 
   for (const g of manifest.goals_declarados) {
+    const gateHumano = resolveGateHumano(g, toPosix(manifestArg));
     // Regra 1 — no manifesto mas não no plano → BLOCKED (decisao)
     if (!planoIds.includes(g.id)) {
       divergentes.push({
@@ -1861,26 +2025,47 @@ function cmdImport(root, protocol, track, flags) {
       });
       continue;
     }
-    // Regra 2 — DONE exige prova no Git
+    // Regra 2 — DONE exige prova no Git.
+    //   main = true (ou omitido): o commit deve estar na branch declarada (default: origin/main).
+    //   main = false (branch-only): valida o commit CONTRA a branch declarada do GOAL,
+    //   sem exigir ancestralidade da main — entrega histórica concluída fora da main,
+    //   reconciliada como DONE branch-only, NUNCA classificada como publicada na main.
     if (g.situacao === 'DONE') {
-      const v = verifyCommit(root, g.commit, g.branch);
-      if (v.ok) confirmados.push({ ...g, evid_cmd: v.cmd, evid_out: v.out, meta: baseMeta(g, 'DONE') });
-      else divergentes.push({ id: g.id, motivo: 'DONE sem prova no Git', blocked_by: 'divergencia', cmd: v.cmd, out: v.out });
+      const branchAlvo = g.branch || `origin/${defaultBranch(protocol)}`;
+      const v = verifyCommit(root, g.commit, branchAlvo);
+      if (v.ok) {
+        const branchOnly = g.main === false;
+        confirmados.push({
+          ...g, branch: branchAlvo, evid_cmd: v.cmd, evid_out: v.out,
+          branch_only: branchOnly, meta: baseMeta(g, 'DONE', gateHumano),
+        });
+      } else {
+        divergentes.push({ id: g.id, motivo: 'DONE sem prova no Git', blocked_by: 'divergencia', cmd: v.cmd, out: v.out });
+      }
       continue;
     }
-    // Regra 3 — superado por plan_rev mais novo
+    // Regra 3 — superado por plan_rev mais novo, ou declarado SUPERSEDED explicitamente
     const gRev = g.plan_rev === undefined ? planRev : Number(g.plan_rev);
-    if (gRev < planRev) {
-      supersedidos.push({ ...g, meta: baseMeta(g, 'SUPERSEDED'), gRev });
+    if (g.situacao === 'SUPERSEDED') {
+      supersedidos.push({ ...g, meta: baseMeta(g, 'SUPERSEDED', gateHumano), gRev });
       continue;
     }
-    // Regra 4 — READY
+    if (gRev < planRev) {
+      supersedidos.push({ ...g, meta: baseMeta(g, 'SUPERSEDED', gateHumano), gRev });
+      continue;
+    }
+    // Regra 4 — READY. Gate humano PENDENTE impede READY: o GOAL fica em
+    //   WAITING_HUMAN (não executável), fora do caminho quente e da elegibilidade.
     if (g.situacao === 'READY') {
-      prontos.push({ ...g, meta: baseMeta(g, 'READY') });
+      if (gateHumano.requerido && gateHumano.pendente) {
+        aguardandoHumano.push({ ...g, meta: baseMeta(g, 'WAITING_HUMAN', gateHumano), gateHumano });
+      } else {
+        prontos.push({ ...g, meta: baseMeta(g, 'READY', gateHumano) });
+      }
       continue;
     }
     divergentes.push({
-      id: g.id, motivo: `situacao "${g.situacao}" não é DONE nem READY`, blocked_by: 'decisao',
+      id: g.id, motivo: `situacao "${g.situacao}" não é DONE nem READY nem SUPERSEDED`, blocked_by: 'decisao',
       cmd: `grep -n '"situacao"' ${toPosix(manifestArg)}`, out: String(g.situacao),
     });
   }
@@ -1895,6 +2080,23 @@ function cmdImport(root, protocol, track, flags) {
   const excedentes = prontos.slice(protocol.max_hot_goals);
   for (const e of excedentes) pendentes.push({ id: e.id, motivo: `READY além do teto de ${protocol.max_hot_goals} GOALs no caminho quente → fica fora de goals/` });
 
+  // ---- DRY-RUN: executa toda a validação e classificação, mas NÃO escreve nada
+  // (state.json, LEDGER.jsonl, REGISTRY.md, goals/, _closed/goals/ ficam intactos).
+  if (flags['dry-run'] === true || flags.dry_run === true) {
+    process.stdout.write([
+      `${AEP_LABEL} · import ${track} · DRY-RUN · manifesto ${toPosix(manifestArg)}`,
+      'MODO DRY-RUN: nenhum arquivo operacional do AEP foi escrito.',
+      `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => `${c.id}${c.branch_only ? '[branch-only]' : ''}`).join(', ') || '—'}`,
+      `divergentes (BLOCKED):${divergentes.length} → ${divergentes.map((d) => `${d.id}[${d.blocked_by}]`).join(', ') || '—'}`,
+      `superados (SUPERSEDED):${supersedidos.length} → ${supersedidos.map((s) => s.id).join(', ') || '—'}`,
+      `aguardando humano:    ${aguardandoHumano.length} → ${aguardandoHumano.map((w) => `${w.id}[${w.gateHumano.decisao}]`).join(', ') || '—'}`,
+      `prontos (READY, quente):${hot.length} → ${hot.map((h) => h.id).join(', ') || '—'}`,
+      `pendentes (DRAFT):    ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
+      '',
+    ].join('\n'));
+    return 0;
+  }
+
   // ---- escrita
   const escritos = [];
   fs.mkdirSync(path.join(dir, 'goals'), { recursive: true });
@@ -1903,12 +2105,20 @@ function cmdImport(root, protocol, track, flags) {
 
   for (const c of confirmados) {
     const f = path.join(dir, '_closed', 'goals', `${c.id}.md`);
-    fs.writeFileSync(f, goalDoc(c.meta, manifest, ['## Proveniência', '', `- importado de \`${manifest.plan_ref}\` em ${ts}`, `- commit confirmado: \`${c.commit}\` na branch \`${c.branch}\``, `- evidência: \`${c.evid_cmd}\` → ${c.evid_out}`]));
+    const prov = ['## Proveniência', '',
+      `- importado de \`${manifest.plan_ref}\` em ${ts}`,
+      `- commit confirmado: \`${c.commit}\` na branch \`${c.branch}\``,
+      `- evidência: \`${c.evid_cmd}\` → ${c.evid_out}`];
+    if (c.branch_only) {
+      prov.push('- **branch-only (main = false):** entrega histórica concluída na branch declarada e NÃO publicada na main. Não classificar como publicada na main.');
+    }
+    fs.writeFileSync(f, goalDoc(c.meta, manifest, prov));
     escritos.push(`${rel}/_closed/goals/${c.id}.md`);
     appendLedger(dir, {
       aep: AEP_VERSION, ts, track, goal: c.id, result: 'DONE', attempt: 1,
       source: 'importado', bootstrap_commit: manifest.bootstrap_commit,
       branch: c.branch, head_commit: c.commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
+      main: c.branch_only ? false : true,
       evidencia: { cmd: c.evid_cmd, out: c.evid_out },
     });
   }
@@ -1935,6 +2145,22 @@ function cmdImport(root, protocol, track, flags) {
     fs.writeFileSync(f, goalDoc(h.meta, manifest, ['## Critério de pronto', '', '- <PREENCHER>']));
     escritos.push(`${rel}/goals/${h.id}.md`);
   }
+  // Correção 3 — gate humano pendente: o GOAL fica NÃO EXECUTÁVEL em _closed/goals/
+  // com status WAITING_HUMAN. Não entra no caminho quente, não é elegível e não é
+  // abrível por `open` (que só lê goals/ com status READY). Sem ledger DONE/BLOCKED:
+  // não é ratificação — é uma pendência de autorização humana, listada na reconciliação.
+  for (const w of aguardandoHumano) {
+    const f = path.join(dir, '_closed', 'goals', `${w.id}.md`);
+    fs.writeFileSync(f, goalDoc(w.meta, manifest, [
+      '## Gate humano pendente', '',
+      `- motivo: ${w.gateHumano.motivo}`,
+      `- decisão humana requerida: \`${w.gateHumano.decisao}\``,
+      '- este GOAL NÃO está READY, NÃO é elegível e NÃO pode ser aberto por track.mjs.',
+      '- ausência de aprovação NÃO libera o GOAL — a liberação exige evidência explícita registrada pelo fluxo oficial do AEP.',
+    ]));
+    escritos.push(`${rel}/_closed/goals/${w.id}.md`);
+    pendentes.push({ id: w.id, motivo: `gate humano pendente (${w.gateHumano.decisao}) → WAITING_HUMAN, fora do caminho quente` });
+  }
 
   const n = fs.readdirSync(path.join(dir, '_closed', 'reports')).filter((f) => /^IMPORT-\d+-MANIFEST\.json$/.test(f)).length + 1;
   const manifestCopyRel = `${rel}/_closed/reports/IMPORT-${n}-MANIFEST.json`;
@@ -1953,7 +2179,9 @@ function cmdImport(root, protocol, track, flags) {
   rec.push('## 1. Confirmados (DONE com prova no Git)');
   rec.push('');
   if (!confirmados.length) rec.push('_(nenhum)_');
-  for (const c of confirmados) rec.push(`- \`${c.id}\` → DONE · commit \`${c.commit}\` · branch \`${c.branch}\`\n  - evidência: \`${c.evid_cmd}\` → ${c.evid_out}`);
+  for (const c of confirmados) {
+    rec.push(`- \`${c.id}\` → DONE · commit \`${c.commit}\` · branch \`${c.branch}\`${c.branch_only ? ' · **branch-only (main = false)** — não publicado na main' : ''}\n  - evidência: \`${c.evid_cmd}\` → ${c.evid_out}`);
+  }
   rec.push('');
   rec.push('## 2. Divergentes (BLOCKED — nunca presumidos DONE)');
   rec.push('');
@@ -1965,12 +2193,19 @@ function cmdImport(root, protocol, track, flags) {
   if (!pendentes.length) rec.push('_(nenhum)_');
   for (const p of pendentes) rec.push(`- \`${p.id}\` — ${p.motivo}`);
   rec.push('');
-  rec.push('## 4. Superados (SUPERSEDED → _closed/goals/)');
+  rec.push('## 4. Aguardando gate humano (WAITING_HUMAN — não executáveis)');
+  rec.push('');
+  if (!aguardandoHumano.length) rec.push('_(nenhum)_');
+  for (const w of aguardandoHumano) {
+    rec.push(`- \`${w.id}\` → WAITING_HUMAN · ${w.gateHumano.motivo}\n  - decisão humana requerida: \`${w.gateHumano.decisao}\`\n  - ausência de aprovação NÃO libera o GOAL — exige evidência explícita registrada pelo fluxo oficial do AEP.`);
+  }
+  rec.push('');
+  rec.push('## 5. Superados (SUPERSEDED → _closed/goals/)');
   rec.push('');
   if (!supersedidos.length) rec.push('_(nenhum)_');
   for (const s of supersedidos) rec.push(`- \`${s.id}\` — plan_rev ${s.gRev} < ${planRev}`);
   rec.push('');
-  rec.push('## 5. Caminho quente após a importação');
+  rec.push('## 6. Caminho quente após a importação');
   rec.push('');
   if (!hot.length) rec.push('_(vazio)_');
   for (const h of hot) rec.push(`- \`${h.id}\` → \`${rel}/goals/${h.id}.md\` (READY)`);
@@ -1987,9 +2222,10 @@ function cmdImport(root, protocol, track, flags) {
 
   process.stdout.write([
     `${AEP_LABEL} · import ${track} · manifesto ${toPosix(manifestArg)}`,
-    `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => c.id).join(', ') || '—'}`,
+    `confirmados (DONE):   ${confirmados.length} → ${confirmados.map((c) => `${c.id}${c.branch_only ? '[branch-only]' : ''}`).join(', ') || '—'}`,
     `divergentes (BLOCKED):${divergentes.length} → ${divergentes.map((d) => `${d.id}[${d.blocked_by}]`).join(', ') || '—'}`,
     `superados (SUPERSEDED):${supersedidos.length} → ${supersedidos.map((s) => s.id).join(', ') || '—'}`,
+    `aguardando humano:    ${aguardandoHumano.length} → ${aguardandoHumano.map((w) => `${w.id}[${w.gateHumano.decisao}]`).join(', ') || '—'}`,
     `prontos (READY, quente):${hot.length} → ${hot.map((h) => h.id).join(', ') || '—'}`,
     `pendentes (DRAFT):    ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
     `reconciliação: ${recRel}`,
@@ -2049,7 +2285,7 @@ function usage() {
     '  attempt <trilha> --fail --reason="..."',
     '  block <trilha> --reason="..." --by=gate|dependencia|externo|decisao',
     '  init <trilha> [--risk=BAIXO|MEDIO|ALTO|CRITICO]',
-    '  import <trilha> --manifest=<caminho>',
+    '  import <trilha> --manifest=<caminho> [--dry-run]',
     '  registry                        regenera REGISTRY.md e GATES.md',
     '  verify [<trilha>] [--all]       recalcula o estado a partir do Git',
     '  doctor                          camada local + camada remota',
