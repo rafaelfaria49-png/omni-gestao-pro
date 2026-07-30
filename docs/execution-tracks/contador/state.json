@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "contador",
-  "status": "PLANNED",
+  "status": "BLOCKED",
   "risk_tier": "MEDIO",
   "current_goal": null,
   "next_goal": null,
-  "bootstrap_commit": null,
+  "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 0,
-    "goals_blocked": 0,
-    "goals_imported": 0,
-    "ledger_lines": 0
+    "goals_done": 9,
+    "goals_blocked": 2,
+    "goals_imported": 13,
+    "ledger_lines": 13
   },
-  "last_goal": null,
-  "last_result": null,
-  "last_ratified_at": null
+  "last_goal": "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
+  "last_result": "BLOCKED",
+  "last_ratified_at": "2026-07-30T21:29:13.806Z"
 }

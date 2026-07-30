@@ -6,4 +6,4 @@ Semáforo: 🟢 rodando · 🟡 esperando humano · 🔴 bloqueado ou check falh
 
 | Trilha | Semáforo | Status | Risco | GOAL atual | Próximo | DONE | BLOCKED | Última ratificação |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| contador | 🟡 amarelo | PLANNED | MEDIO | — | — | 0 | 0 | — |
+| contador | 🔴 vermelho | BLOCKED | MEDIO | — | — | 9 | 2 | 2026-07-30T21:29:13.806Z |
