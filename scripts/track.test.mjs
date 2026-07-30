@@ -878,3 +878,310 @@ test('importador recusa manifesto com path fora da gramática (exit 1)', (t) => 
   assert.equal(r.code, 1);
   assert.match(r.all, /Glob não suportado/);
 });
+
+// ---------------------------------------------------------------------------
+// Correções do contrato de importação — gates_extra, fontes, gate_humano, branch-only
+// ---------------------------------------------------------------------------
+
+const GATE_EXTRA_11 = ['main', 'schema', 'migration', 'auth_externa', 'storage_r2_preview',
+  'storage_r2_production', 'fiscal_readonly', 'portal_legado', 'dados_destrutivos', 'secrets', 'deploy'];
+
+test('C1: gates_extra com 11 gates de domínio e zero interseção com gates centrais é aceito', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: GATE_EXTRA_11, bootstrap_commit: bootstrap,
+    fontes: { resumo: 'import/demo/RESUMO.md' }, goals_declarados: [],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  // Nenhum dos 11 é gate central G-*; a importação não pode falhar por vocabulário.
+  assert.equal(GATE_EXTRA_11.every((id) => !id.startsWith('G-')), true);
+});
+
+test('C2a: fontes no formato objeto (canônico) são consumidas sem .map sobre objeto', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'BAIXO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: { resumo_canonico: 'import/demo/RESUMO.md', masterplan: 'import/demo/MASTERPLAN.md', comandos: 'import/demo/COMANDOS.md' },
+    goals_declarados: [{ id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  const doc = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/_closed/goals/demo-001.md'), 'utf8');
+  assert.match(doc, /resumo_canonico.*RESUMO\.md/);
+});
+
+test('C2b: fontes em array legado são aceitas para retrocompatibilidade', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'BAIXO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['docs/planos/PLANO.md', 'docs/audits/AUDIT.md'],
+    goals_declarados: [{ id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  const doc = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/_closed/goals/demo-001.md'), 'utf8');
+  assert.match(doc, /PLANO\.md/);
+});
+
+test('C3: gate_humano pendente impede READY e o GOAL não vai ao caminho quente', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [{ id: 'demo-012G', situacao: 'READY', gate_humano: true, title: 'Publish main', worktree: name }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /aguardando humano:\s+1/);
+  assert.match(r.all, /demo-012G\[HUMAN_AUTHORIZATION_NOT_SENT\]/);
+  // NÃO está no caminho quente e NÃO é READY.
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-012G.md')), false);
+  const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+  assert.equal(st.current_goal, null);
+  assert.notEqual(st.status, 'RUNNING', 'sem GOAL no caminho quente a trilha não pode estar RUNNING');
+});
+
+test('C4: gate_humano pendente impede elegibilidade — open não encontra GOAL', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [{ id: 'demo-012G', situacao: 'READY', gate_humano: true, title: 'Publish', worktree: name }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  assert.equal(aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']).code, 0);
+  g(repo, 'checkout', '-q', '-b', 'goal/demo-012g');
+  const o = aep(repo, ['open', 'demo']);
+  assert.notEqual(o.code, 0);
+  assert.match(o.all, /nenhum GOAL com status READY|Não há GOAL elegível/);
+});
+
+test('C5: ausência de aprovação (silêncio/undefined/false) NÃO libera o GOAL', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  for (const [i, gh] of [true, { requerido: true }, { requerido: true, aprovacao: { aprovado: false } }].entries()) {
+    const id = `demo-01${i}`;
+    const manifest = {
+      aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+      branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+      paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+      fontes: ['p.md'],
+      goals_declarados: [{ id, situacao: 'READY', gate_humano: gh, title: id, worktree: name }],
+    };
+    w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+    const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+    assert.equal(r.code, 0, r.all);
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/goals/${id}.md`)), false,
+      `gate_humano=${JSON.stringify(gh)} não pode liberar READY`);
+    const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+    assert.equal(st.current_goal, null);
+  }
+});
+
+test('C6: aprovação explícita pelo fluxo oficial libera o gate humano para READY', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [{
+      id: 'demo-012G', situacao: 'READY', title: 'Publish aprovado', worktree: name,
+      gate_humano: { requerido: true, aprovacao: { aprovado: true, autorizacao: 'HUMAN_PUSH_AUTHORIZATION_SENT', registrado_por: 'rafael', em: '2026-07-30T00:00:00Z' } },
+    }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/goals/demo-012G.md')), true,
+    'com aprovação explícita o GOAL entra no caminho quente como READY');
+  const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+  assert.equal(st.current_goal, 'demo-012G');
+});
+
+test('C7: GOAL histórico DONE em branch (main=false) reconciliado sem exigir ancestralidade da main', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  // commit existe APENAS na branch do GOAL, não em origin/main.
+  const sha = commitReal(repo, 'goal/contador-001-status-reconcile', 'docs/contador/RECONCILE.md', '# reconcile\n', 'goal(contador-001): reconcile');
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const ancMain = g(repo, 'merge-base', '--is-ancestor', sha, 'origin/main');
+  assert.notEqual(ancMain.code, 0, 'o commit NÃO é ancestral da main — é branch-only');
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [{
+      id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/contador-001-status-reconcile',
+      main: false, title: 'Reconcile branch-only', worktree: name,
+    }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /demo-001\[branch-only\]/);
+  const linhas = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(linhas[0].result, 'DONE');
+  assert.equal(linhas[0].main, false, 'ledger registra main=false — não publicado na main');
+  const rec = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/_closed/reports/RECONCILIACAO.md'), 'utf8');
+  assert.match(rec, /branch-only \(main = false\)/);
+});
+
+test('C8: commit inexistente ou branch incorreta bloqueia a importação (divergencia)', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [
+      { id: 'demo-001', situacao: 'DONE', commit: 'f'.repeat(40), branch: 'goal/demo-001', main: false, title: 'Fantasma', worktree: name },
+    ],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /divergentes \(BLOCKED\):\s*1/);
+  const linhas = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl'), 'utf8')
+    .split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.equal(linhas[0].result, 'BLOCKED');
+  assert.equal(linhas[0].blocked_by, 'divergencia');
+});
+
+test('C9: GOAL 012G permanece não executável — nem READY nem elegível nem abrível', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: GATE_EXTRA_11, bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [
+      { id: 'CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN', situacao: 'READY', gate_humano: true, title: 'Publish main', worktree: name },
+    ],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  assert.equal(aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']).code, 0);
+  const quentes = fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/goals')).filter((f) => f.endsWith('.md'));
+  assert.equal(quentes.length, 0, 'nenhum GOAL no caminho quente');
+  const st = JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+  assert.equal(st.current_goal, null);
+  assert.equal(st.next_goal, null);
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+test('C10: dry-run não toca state.json, LEDGER.jsonl, REGISTRY.md ou goals/', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const before = {
+    state: g(repo, 'hash-object', 'docs/execution-tracks/demo/state.json').out.trim(),
+    ledger: g(repo, 'hash-object', 'docs/execution-tracks/demo/LEDGER.jsonl').out.trim(),
+    registry: g(repo, 'hash-object', 'docs/execution-tracks/REGISTRY.md').out.trim(),
+  };
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: [], bootstrap_commit: bootstrap,
+    fontes: ['p.md'], goals_declarados: [{ id: 'demo-001', situacao: 'READY', title: 'x', worktree: name }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  // status é somente leitura — não deve alterar nada.
+  assert.equal(aep(repo, ['status', 'demo']).code, 0);
+  assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/demo/state.json').out.trim(), before.state);
+  assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/demo/LEDGER.jsonl').out.trim(), before.ledger);
+  assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/REGISTRY.md').out.trim(), before.registry);
+  const quentes = fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/goals')).filter((f) => f.endsWith('.md'));
+  assert.equal(quentes.length, 0, 'status não cria GOAL em goals/');
+});
+
+test('C11: gates_extra é preservado como metadata governada no GOAL importado', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: GATE_EXTRA_11, bootstrap_commit: bootstrap,
+    fontes: ['p.md'],
+    goals_declarados: [{ id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name }],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  assert.equal(aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json']).code, 0);
+  const doc = fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/_closed/goals/demo-001.md'), 'utf8');
+  const meta = JSON.parse(doc.split('<!-- AEP:META\n')[1].split('\n-->')[0]);
+  assert.equal(Array.isArray(meta.gates_extra), true);
+  assert.equal(meta.gates_extra.length, 11);
+  assert.equal(meta.gates_extra[0].id, 'main');
+});
+
+test('C12: import --dry-run classifica sem escrever state.json, LEDGER, REGISTRY ou goals/', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const before = {
+    state: g(repo, 'hash-object', 'docs/execution-tracks/demo/state.json').out.trim(),
+    ledger: g(repo, 'hash-object', 'docs/execution-tracks/demo/LEDGER.jsonl').out.trim(),
+    registry: g(repo, 'hash-object', 'docs/execution-tracks/REGISTRY.md').out.trim(),
+  };
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  const manifest = {
+    aep: '1.0-R2', track: 'demo', plan_ref: 'p.md', plan_rev: 1, risk_tier: 'ALTO',
+    branch_pattern: 'goal/demo-<nnn>', test_command: 'node scripts/goal-test.mjs',
+    paths_base: ['app/**'], gates_extra: GATE_EXTRA_11, bootstrap_commit: bootstrap,
+    fontes: { resumo: 'import/demo/RESUMO.md' },
+    goals_declarados: [
+      { id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name },
+      { id: 'demo-012G', situacao: 'READY', gate_humano: true, title: 'Publish', worktree: name },
+    ],
+  };
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  const r = aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json', '--dry-run']);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /DRY-RUN/);
+  assert.match(r.all, /demo-001/);
+  assert.match(r.all, /aguardando humano:\s+1/);
+  // Nada operacional foi escrito.
+  assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/demo/state.json').out.trim(), before.state);
+  assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/demo/LEDGER.jsonl').out.trim(), before.ledger);
+  assert.equal(g(repo, 'hash-object', 'docs/execution-tracks/REGISTRY.md').out.trim(), before.registry);
+  assert.equal(fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/goals')).filter((f) => f.endsWith('.md')).length, 0);
+  assert.equal(fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/_closed/goals')).filter((f) => f.endsWith('.md')).length, 0);
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '', 'dry-run não suja a árvore');
+});
