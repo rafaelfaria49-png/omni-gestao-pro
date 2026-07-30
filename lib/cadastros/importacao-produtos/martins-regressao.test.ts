@@ -20,7 +20,9 @@ import { mergeProdutoFiscalIntoMetadata, getProdutoFiscal } from "@/lib/produto-
 import { alertasDaLinha, temBloqueio } from "./alertas"
 import { candidatoDoPlano, contextoDeMatch, indexarCandidatos, type ProdutoCandidatoRow } from "./candidatos"
 import { resolverNomeCategoria } from "./categoria"
+import { camposCriticosAlteradosNaImportacao } from "./ativacao"
 import {
+  ativacaoDaAtualizacao,
   fiscalInputDaLinha,
   montarAtualizacaoProduto,
   montarCriacaoProduto,
@@ -172,9 +174,14 @@ function rodarImportacao(
     if (plano.acao === "atualizar") {
       const alvo = candidatoDoPlano(ctx, plano.produtoId)!
       const registro = banco.find((p) => p.id === alvo.id)!
-      const patch = montarAtualizacaoProduto(linha, alvo, { categoria })
+      const revisaoAnterior = getImportacaoMetadata({ metadata: registro.metadata })
+      const patch = montarAtualizacaoProduto(linha, alvo, {
+        categoria,
+        statusRevisaoAtual: revisaoAnterior?.ultimoLote.statusRevisao,
+      })
 
-      // Aplica o patch: chave ausente = campo intocado (estoque, active, price).
+      // Aplica o patch: chave ausente = campo intocado (estoque, price e — quando o
+      // produto tem preço válido — também `active`/`status`).
       registro.name = patch.name
       if ("sku" in patch) registro.sku = patch.sku ?? null
       if (patch.barcode !== undefined) registro.barcode = patch.barcode
@@ -184,9 +191,31 @@ function rodarImportacao(
       if (patch.precoCusto !== undefined) registro.precoCusto = patch.precoCusto
       if (patch.price !== undefined) registro.price = patch.price
       if (patch.warrantyDays !== undefined) registro.warrantyDays = patch.warrantyDays
+      // F-05: sem estas duas linhas o fake ignoraria a decisão de ativação e o teste
+      // passaria por acidente, exatamente como acontecia antes da correção.
+      if (patch.active !== undefined) registro.active = patch.active
+      if (patch.status !== undefined) registro.status = patch.status
+
+      // O lote grava a revisão decidida pela política, igual ao persistidor real.
+      const ativacao = ativacaoDaAtualizacao(linha, alvo, {
+        categoria,
+        statusRevisaoAtual: revisaoAnterior?.ultimoLote.statusRevisao,
+        camposCriticosAlterados: camposCriticosAlteradosNaImportacao({
+          patch,
+          atual: {
+            sku: alvo.sku,
+            barcode: alvo.barcode,
+            category: registro.category,
+            price: alvo.price,
+          },
+          fiscalAtual: getProdutoFiscal({ metadata: registro.metadata }),
+          fiscalNovo: { ncm: linha.fiscal.ncm || null, cest: linha.fiscal.cest || null },
+        }),
+      })
+      const loteAtualizacao = { ...lote, statusRevisao: ativacao.statusRevisao }
 
       let metadata = mergeProdutoFiscalIntoMetadata(registro.metadata, fiscalInputDaLinha(linha))
-      metadata = mergeImportacaoIntoMetadata(metadata, lote)
+      metadata = mergeImportacaoIntoMetadata(metadata, loteAtualizacao)
       registro.metadata = metadata
 
       consumidos.add(alvo.id)
@@ -418,17 +447,39 @@ describe("PRIMEIRA importação sobre o banco degradado", () => {
     expect(res.atualizados).toBe(0)
     for (const p of banco) {
       expect(p.active).toBe(false)
-      expect(p.status).toBe("Inativo")
+      expect(p.status).toBe("Incompleto")
       expect(p.stock).toBe(0)
       expect(getImportacaoMetadata({ metadata: p.metadata })!.ultimoLote.statusRevisao).toBe("pendente")
     }
   })
 
-  it("produto existente ATIVO não é inativado por planilha sem preço", () => {
+  /**
+   * O F-05 em uma frase: antes, os 13 produtos saíam do reparo `active = true` com
+   * `price = 0` e podiam ser vendidos a R$ 0,00 no PDV. A simetria agora é total —
+   * produto novo e produto existente terminam no mesmo estado.
+   */
+  it("produto existente ATIVO que termina sem preço É INATIVADO (F-05)", () => {
     const banco = bancoDegradado()
     expect(banco.every((p) => p.active)).toBe(true)
     rodarImportacao(banco, "loja-2", "adv-repair-1")
-    expect(banco.every((p) => p.active)).toBe(true)
+
+    expect(banco).toHaveLength(13)
+    for (const p of banco) {
+      expect(p.price).toBe(0)
+      expect(p.active).toBe(false)
+      expect(p.status).toBe("Incompleto")
+      expect(getImportacaoMetadata({ metadata: p.metadata })!.ultimoLote.statusRevisao).toBe("pendente")
+    }
+  })
+
+  it("produto existente COM preço curado não é inativado nem reativado pelo lote", () => {
+    const banco = bancoDegradado().map((p) => ({ ...p, price: 39.9, active: false }))
+    rodarImportacao(banco, "loja-2", "adv-repair-preco")
+    for (const p of banco) {
+      expect(p.price).toBe(39.9)
+      // Preço válido: a importação não mexe na situação — reativar é decisão humana.
+      expect(p.active).toBe(false)
+    }
   })
 })
 

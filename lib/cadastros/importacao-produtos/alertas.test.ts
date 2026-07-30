@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { alertasDaLinha, ativacaoDeProdutoNovo, avaliarAptidaoAtivacao, estadoConferencia, temBloqueio } from "./alertas"
+import { alertasDaLinha, avaliarAptidaoAtivacao, estadoConferencia, temBloqueio } from "./alertas"
 import { extrairLinhaProduto } from "./linha"
 import type { PlanoMatchProduto, ProdutoImportLinha } from "./types"
 
@@ -99,25 +99,8 @@ describe("avaliarAptidaoAtivacao", () => {
   })
 })
 
-describe("ativacaoDeProdutoNovo", () => {
-  it("produto novo SEM preço nasce inativo", () => {
-    expect(ativacaoDeProdutoNovo({ nome: "X", categoria: "Mercearia", preco: 0 })).toEqual({
-      active: false,
-      status: "Inativo",
-    })
-  })
-
-  it("produto novo completo nasce ativo", () => {
-    expect(ativacaoDeProdutoNovo({ nome: "X", categoria: "Mercearia", preco: 29.9 })).toEqual({
-      active: true,
-      status: "Ativo",
-    })
-  })
-
-  it("produto novo sem categoria nasce inativo", () => {
-    expect(ativacaoDeProdutoNovo({ nome: "X", categoria: null, preco: 29.9 }).active).toBe(false)
-  })
-})
+// A cobertura de `ativacaoDeProdutoNovo` migrou para `ativacao.test.ts`, junto com a
+// função. A política de ativação de criação e de atualização é uma só (F-05).
 
 describe("estadoConferencia", () => {
   it("erro e conflito vencem tudo", () => {

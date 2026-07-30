@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  ativacaoDaCriacao,
   diffAtualizacao,
   marcaEhCopiaDaCategoria,
   marcaParaGravar,
@@ -89,9 +90,14 @@ describe("montarCriacaoProduto", () => {
     expect(dados.stock).toBe(0)
   })
 
-  it("produto sem preço nasce inativo", () => {
+  it("produto sem preço nasce inativo e INCOMPLETO (F-05)", () => {
     const dados = montarCriacaoProduto(linha(), { categoria: "C", politicaEstoque: "nao_movimentar" })
-    expect(dados).toMatchObject({ active: false, status: "Inativo", price: 0 })
+    expect(dados).toMatchObject({ active: false, status: "Incompleto", price: 0 })
+  })
+
+  it("produto sem preço nasce pendente de conferência", () => {
+    expect(ativacaoDaCriacao(linha(), "C").statusRevisao).toBe("pendente")
+    expect(ativacaoDaCriacao(linha(), "C").vendavel).toBe(false)
   })
 
   it("produto completo nasce ativo", () => {
@@ -108,11 +114,41 @@ describe("montarCriacaoProduto", () => {
 })
 
 describe("montarAtualizacaoProduto", () => {
-  it("não inclui stock nem active — estoque e situação são preservados", () => {
-    const patch = montarAtualizacaoProduto(linha(), alvo(), { categoria: "C" })
-    expect(patch).not.toHaveProperty("stock")
+  it("nunca inclui stock — saldo só muda por movimentação auditada", () => {
+    expect(montarAtualizacaoProduto(linha(), alvo(), { categoria: "C" })).not.toHaveProperty("stock")
+    expect(
+      montarAtualizacaoProduto(linha(), alvo({ price: 49.9 }), { categoria: "C" }),
+    ).not.toHaveProperty("stock")
+  })
+
+  it("produto com preço válido preserva a situação: nem active nem status no patch", () => {
+    const patch = montarAtualizacaoProduto(linha(), alvo({ price: 49.9 }), { categoria: "C" })
     expect(patch).not.toHaveProperty("active")
     expect(patch).not.toHaveProperty("status")
+  })
+
+  it("produto ATIVO que termina sem preço é INATIVADO (F-05 — o defeito dos 13 Martins)", () => {
+    // `alvo()` é exatamente o estado degradado: preço 0 e ativo.
+    const patch = montarAtualizacaoProduto(linha(), alvo({ price: 0, active: true }), {
+      categoria: "C",
+    })
+    expect(patch.active).toBe(false)
+    expect(patch.status).toBe("Incompleto")
+  })
+
+  it("produto INATIVO com preço válido NÃO é reativado pela importação", () => {
+    const patch = montarAtualizacaoProduto(linha({ "financeiro.precoVenda": "59,90" }), alvo({ active: false }), {
+      categoria: "C",
+    })
+    expect(patch).not.toHaveProperty("active")
+  })
+
+  it("preço vindo da planilha salva o produto da inativação", () => {
+    const patch = montarAtualizacaoProduto(linha({ "financeiro.precoVenda": "59,90" }), alvo({ price: 0 }), {
+      categoria: "C",
+    })
+    expect(patch.price).toBe(59.9)
+    expect(patch).not.toHaveProperty("active")
   })
 
   it("planilha sem preço não sobrescreve o preço existente", () => {
@@ -169,11 +205,22 @@ describe("montarAtualizacaoProduto", () => {
 })
 
 describe("diffAtualizacao", () => {
-  it("declara estoque e situação como preservados", () => {
-    const d = diffAtualizacao(linha(), alvo({ sku: "linha-1" }), { categoria: "Pilhas e Baterias" })
-    expect(d.preservados).toContain("estoque")
-    expect(d.preservados).toContain("situação ativo/inativo")
-    expect(d.preservados).toContain("preço atual")
+  it("estoque é sempre preservado; a situação só quando o produto tem preço", () => {
+    const comPreco = diffAtualizacao(linha(), alvo({ sku: "linha-1", price: 49.9 }), {
+      categoria: "Pilhas e Baterias",
+    })
+    expect(comPreco.preservados).toContain("estoque")
+    expect(comPreco.preservados).toContain("situação ativo/inativo")
+    expect(comPreco.preservados).toContain("preço atual")
+  })
+
+  it("o preview AVISA que o produto sem preço será inativado (F-05)", () => {
+    const semPreco = diffAtualizacao(linha(), alvo({ sku: "linha-1", price: 0, active: true }), {
+      categoria: "Pilhas e Baterias",
+    })
+    expect(semPreco.preservados).toContain("estoque")
+    expect(semPreco.preservados).not.toContain("situação ativo/inativo")
+    expect(semPreco.alterados).toContain("situação (inativado: sem preço de venda)")
   })
 
   it("declara os campos que serão alterados", () => {
