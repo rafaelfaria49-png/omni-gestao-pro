@@ -8,6 +8,7 @@ import { parsearArquivos } from "@/lib/importador-avancado/parser"
 import { agruparEMerge, labelDominio } from "@/lib/importador-avancado"
 import { persistirImportacao, planejarProdutosDoLote } from "@/lib/importador-avancado/persistidor"
 import type { DominioImport } from "@/lib/importador-avancado/types"
+import { lerSelecaoDominiosDoFormData } from "@/lib/importador-avancado/dominios-multipart"
 import { CONTEXTO_LOTE_VAZIO, type ContextoLoteImport } from "@/lib/cadastros/importacao-produtos"
 import { separarSmart, persistirSmartSeparado } from "@/lib/importador-avancado/smart-genius/orquestrar"
 import { prisma } from "@/lib/prisma"
@@ -116,7 +117,19 @@ export async function POST(req: NextRequest) {
   const modoQuery = req.nextUrl.searchParams.get("modo")
   const modoForm = formData.get("modo") as string | null
   const modo = modoQuery ?? modoForm ?? "preview"
-  const dominiosFiltro = (formData.getAll("dominios") as string[]).filter(Boolean) as DominioImport[]
+  // ── Seleção de domínios (F-06) ───────────────────────────────────────────
+  // Lida UMA vez, antes de decidir entre preview e importar, para que os dois modos
+  // recebam exatamente a mesma seleção. Aceita `dominios[]` (canônica, a que o hook
+  // envia) e `dominios` (legada). Domínio desconhecido é ERRO — antes a seleção
+  // inteira era descartada em silêncio e tudo que fosse detectado era importado.
+  const selecao = lerSelecaoDominiosDoFormData(formData)
+  if (!selecao.ok) {
+    return NextResponse.json(
+      { error: "Domínio de importação desconhecido", dominios: selecao.invalidos },
+      { status: 400 },
+    )
+  }
+  const dominiosFiltro = selecao.dominios as DominioImport[]
   const batchId = `adv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   const contextoProdutos = lerContextoProdutos(formData.get("contextoProdutos") as string | null)
 
