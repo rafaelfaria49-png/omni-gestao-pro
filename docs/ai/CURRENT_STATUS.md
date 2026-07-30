@@ -353,6 +353,38 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
+**Numeração server-side de venda — infraestrutura DORMENTE (30/07/2026)**
+- Migration aditiva `0016_add_sale_numbering_infrastructure`, aplicada depois da
+  `0015_contador_identidade_externa`: `series_venda`,
+  `Store.codigoNumeracaoVenda` e 8 campos **nullable** em `Venda`; sem backfill,
+  renumeração ou coluna obrigatória no histórico.
+- Constraints: unique `(storeId, clientSaleId)`, unique
+  `(serieVendaId, numeroSequencial)` e FK composta `(serieVendaId, storeId)`.
+- `lib/vendas/server-sale-numbering.ts` é server-only e recebe o
+  `Prisma.TransactionClient` do caller. A série anual é criada sob advisory lock e o
+  número é reservado num único incremento atômico; rollback do caller reverte o contador.
+- Formato futuro: `VDA-{CODIGO_LOJA}-{ANO}-{NNNNNN}`, ano civil do servidor em
+  `America/Sao_Paulo`, teto 999.999 e falha fechada sem configuração/na exaustão.
+- **Nada foi ativado:** nenhum writer/rota/PDV/importador chama o helper; nenhuma loja
+  recebeu código; `pedidoId` do writer v1 e das vendas históricas permanece intacto.
+- A suíte PostgreSQL real é opt-in via `SALE_NUMBERING_TEST_DATABASE_URL` e recusa host
+  remoto. Fakes cobrem apenas contrato/rollback simulado, nunca são tratados como prova
+  de lock ou concorrência real.
+- **Readiness local em 03/08/2026:** base auditada
+  `origin/main@1ed325912de50750a018903cda9c14be4f4df92d`; migration e upgrade de
+  3 vendas legadas verdes em PostgreSQL 17.10 descartável, preservando os `pedidoId` e
+  mantendo os 8 campos novos `NULL`.
+- Em `READ COMMITTED`, 50 transações concorrentes na mesma loja/ano e 20 por loja em
+  duas lojas produziram séries monotônicas, sem duplicidade, lacuna ou cruzamento.
+  A criação inicial sob snapshot forte propagou `P2002` em `RepeatableRead` e `P2034`
+  em `Serializable`; não há retry interno/global nesta infraestrutura. O futuro writer
+  poderá repetir com limite somente a transação inteira classificada como `P2034`.
+- A cadeia histórica bruta de migrations continua sem bootstrap integral por falha
+  preexistente na `0005`; a prova partiu de banco vazio materializado pelo
+  `schema-pre-0015.prisma`, registrou o baseline `0001..0014` e aplicou fisicamente
+  `0015` + `0016`. Isso não autoriza migration de produção.
+- Próximo passo permanece **GOAL 002C**: idempotência/API e integração controlada.
+
 **Writer legado v1 — replay atômico e conflito permanente (28/07/2026)**
 - `Venda` passou a ser **create-only**: não existe mais `upsert` permissivo no caminho compartilhado.
 - Reenvio idêntico na mesma loja é replay sem novas escritas; divergência canônica vira

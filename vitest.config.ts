@@ -17,6 +17,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(root, "."),
+      // Next resolve `server-only` internamente. Nos testes Node, o stub preserva
+      // o marcador sem executar o pacote sentinela do runtime de componentes.
+      "server-only": resolve(root, "test/server-only.ts"),
     },
   },
   test: {

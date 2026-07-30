@@ -2,7 +2,7 @@
 title: Dívida Técnica — Tracking vivo
 status: vivo
 owner: produto + Sonnet
-last_update: 2026-06-02
+last_update: 2026-07-30
 fonte_overview: docs/ai/CURRENT_STATUS_OVERVIEW.md §5
 ---
 
@@ -45,6 +45,7 @@ fonte_overview: docs/ai/CURRENT_STATUS_OVERVIEW.md §5
 | DT-10 | Pool de executores Omni Agent pequeno | Omni Agent | P1 | ⏳ | herdada | a planejar | Só `recebimentoFinanceiro` real |
 | DT-11 | Painel inicial com mocks misturados | BI | P0 | ⏳ | herdada | SPRINT_NN_BI | Confunde decisão de negócio |
 | DT-12 | Mocks no `lib/utils.ts` Lovable excluídos do tsc | Lovable | P3 | 🚫 | herdada | aceito | Decisão de isolamento documentada no CLAUDE.md |
+| DT-18 | `Venda.storeId` mantém `@default("loja-1")` no schema | PDV / Multi-loja | P2 | ⏳ | 2026-07-30 | GOAL 002C (API v2 de venda) | Preservado no GOAL 002B por sua remoção não ser aditiva. O helper novo exige `storeId` explícito e não usa fallback; remover o default só após provar todos os writers/importadores |
 
 ---
 
