@@ -101,9 +101,12 @@ export function sanitizeProdutoFiscal(input: ProdutoFiscalInput | null | undefin
   }
 }
 
+/** Campos do contrato canônico, na ordem de gravação. */
+const FISCAL_KEYS = Object.keys(PRODUTO_FISCAL_VAZIO) as (keyof ProdutoFiscal)[]
+
 /** True se nenhum campo fiscal foi informado. */
 export function isProdutoFiscalVazio(f: ProdutoFiscal): boolean {
-  return (Object.keys(PRODUTO_FISCAL_VAZIO) as (keyof ProdutoFiscal)[]).every((k) => !f[k])
+  return FISCAL_KEYS.every((k) => !f[k])
 }
 
 function asObject(v: unknown): Record<string, unknown> | null {
@@ -138,17 +141,43 @@ export function getProdutoFiscal(
  * ESCRITA CANÔNICA — devolve um novo objeto `metadata` com `fiscal` saneado, preservando
  * todas as demais chaves. Se nada fiscal for informado, NÃO adiciona a chave (evita poluir).
  * `metadataBase` pode ser o metadata atual do produto (merge não-destrutivo).
+ *
+ * O merge é PARCIAL campo a campo — nunca substitui o bloco `fiscal` inteiro:
+ *  - chave ausente / `undefined` / `null` / string vazia → preserva o valor atual;
+ *  - valor válido depois do saneamento → substitui SOMENTE aquele campo;
+ *  - valor inválido (NCM curto, origem fora de 0-8…) → omitido, preserva o atual;
+ *  - entrada fiscal vazia → `metadata.fiscal` atual fica intacto;
+ *  - chaves de `metadata.fiscal` fora do contrato canônico → preservadas (nunca lidas).
+ *
+ * Não existe canal de limpeza explícita de campo fiscal: as portas (`fiscalInputFromBody`,
+ * `fiscalInputDaLinha`) já traduzem "não informado" para `null`/vazio, e apagar por omissão
+ * foi exatamente o defeito que este contrato fecha.
  */
 export function mergeProdutoFiscalIntoMetadata(
   metadataBase: unknown,
   fiscalInput: ProdutoFiscalInput | null | undefined,
 ): Record<string, unknown> {
   const base = { ...(asObject(metadataBase) ?? {}) }
-  const fiscal = sanitizeProdutoFiscal(fiscalInput)
+  // Ponto de partida = identidade JÁ gravada (canônica; com o fallback legado do topo).
+  const atual = getProdutoFiscal(base)
+  const entrada = sanitizeProdutoFiscal(fiscalInput)
+  const fiscal: ProdutoFiscal = { ...atual }
+  for (const k of FISCAL_KEYS) {
+    if (entrada[k]) fiscal[k] = entrada[k]
+  }
   if (isProdutoFiscalVazio(fiscal)) return base
+  // Chaves já persistidas em `metadata.fiscal` fora do contrato (ex.: GTIN gravado por caller
+  // antigo): este helper não as interpreta, mas também não as apaga.
+  const extras: Record<string, unknown> = {}
+  const fiscalGravado = asObject(base.fiscal)
+  if (fiscalGravado) {
+    for (const [k, v] of Object.entries(fiscalGravado)) {
+      if (!(k in PRODUTO_FISCAL_VAZIO)) extras[k] = v
+    }
+  }
   // Guarda apenas os campos não-vazios (JSONB enxuto).
-  const compact: Record<string, string> = {}
-  for (const k of Object.keys(PRODUTO_FISCAL_VAZIO) as (keyof ProdutoFiscal)[]) {
+  const compact: Record<string, unknown> = { ...extras }
+  for (const k of FISCAL_KEYS) {
     if (fiscal[k]) compact[k] = fiscal[k]
   }
   base.fiscal = compact
