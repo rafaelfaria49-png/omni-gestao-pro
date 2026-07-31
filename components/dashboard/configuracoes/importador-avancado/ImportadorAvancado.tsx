@@ -4,8 +4,10 @@ import { AlertCircle, AlertTriangle, ArrowRight, Loader2, Sparkles, Wand2 } from
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useImportadorAvancado } from "./hooks/use-importador-avancado"
+import { ContextoProdutosLote } from "./ContextoProdutosLote"
 import { LogAuditoria } from "./LogAuditoria"
 import { PreviewCruzamento } from "./PreviewCruzamento"
+import { PreviewProdutosLote } from "./PreviewProdutosLote"
 import { UploadZone } from "./UploadZone"
 
 /**
@@ -44,9 +46,17 @@ export type ImportadorAvancadoProps = {
    * Sem callback, o banner só mostra a orientação textual.
    */
   onSwitchToProdutosLotes?: () => void
+  /**
+   * Opcional. Chamado com o `batchId` quando o operador clica em
+   * "Revisar produtos desta importação" (Parte 9).
+   */
+  onRevisarLoteProdutos?: (batchId: string) => void
 }
 
-export function ImportadorAvancado({ onSwitchToProdutosLotes }: ImportadorAvancadoProps = {}) {
+export function ImportadorAvancado({
+  onSwitchToProdutosLotes,
+  onRevisarLoteProdutos,
+}: ImportadorAvancadoProps = {}) {
   const imp = useImportadorAvancado()
   const {
     estado,
@@ -54,12 +64,16 @@ export function ImportadorAvancado({ onSwitchToProdutosLotes }: ImportadorAvanca
     totalArquivos,
     tamanhoTotalBytes,
     temLojaObrigatoria,
+    lojaHeader,
+    contextoProdutos,
     adicionarArquivos,
     removerArquivo,
     limparArquivos,
     limparEstado,
     rodarPreview,
     rodarImport,
+    atualizarContextoProdutos,
+    limparContextoProdutos,
   } = imp
 
   const desabilitarUpload =
@@ -68,6 +82,11 @@ export function ImportadorAvancado({ onSwitchToProdutosLotes }: ImportadorAvanca
   const podePreVisualizar = totalArquivos > 0 && temLojaObrigatoria && !desabilitarUpload
 
   const arquivosXlsLegadoProdutos = arquivos.filter(parecemXlsLegadoDeProdutos)
+
+  // Preview de produtos só existe quando o backend detectou o domínio `produtos`.
+  const previewProdutos =
+    estado.fase === "preview-ok" ? (estado.preview.previewProdutos ?? null) : null
+  const totalLinhasProdutos = previewProdutos?.linhas.length ?? 0
 
   return (
     <div className="space-y-6">
@@ -190,11 +209,30 @@ export function ImportadorAvancado({ onSwitchToProdutosLotes }: ImportadorAvanca
       {/* Skeleton de loading do preview (UX premium) */}
       {estado.fase === "preview-loading" && <SkeletonPreview />}
 
+      {/* Contexto do lote de produtos (Parte 7) — só quando há produtos no lote */}
+      {estado.fase === "preview-ok" && totalLinhasProdutos > 0 && (
+        <ContextoProdutosLote
+          valor={contextoProdutos}
+          onChange={atualizarContextoProdutos}
+          storeId={lojaHeader}
+          totalLinhas={totalLinhasProdutos}
+        />
+      )}
+
+      {/* Preview linha a linha dos produtos (Parte 8) */}
+      {previewProdutos && <PreviewProdutosLote preview={previewProdutos} />}
+
       {/* Preview do cruzamento */}
       {estado.fase === "preview-ok" && (
         <PreviewCruzamento
           preview={estado.preview}
           importando={false}
+          bloqueado={previewProdutos?.bloqueado ?? false}
+          motivoBloqueio={
+            previewProdutos?.bloqueado
+              ? "Resolva os conflitos de duplicidade acima antes de importar."
+              : undefined
+          }
           onImportar={() => void rodarImport()}
         />
       )}
@@ -208,9 +246,11 @@ export function ImportadorAvancado({ onSwitchToProdutosLotes }: ImportadorAvanca
       {estado.fase === "import-ok" && (
         <LogAuditoria
           result={estado.result}
+          onRevisarLoteProdutos={onRevisarLoteProdutos}
           onReiniciar={() => {
             limparArquivos()
             limparEstado()
+            limparContextoProdutos()
           }}
         />
       )}

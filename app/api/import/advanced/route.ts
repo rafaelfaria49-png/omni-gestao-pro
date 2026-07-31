@@ -6,8 +6,10 @@ import { getTrustedTimeMs } from "@/lib/trusted-time"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 import { parsearArquivos } from "@/lib/importador-avancado/parser"
 import { agruparEMerge, labelDominio } from "@/lib/importador-avancado"
-import { persistirImportacao } from "@/lib/importador-avancado/persistidor"
+import { persistirImportacao, planejarProdutosDoLote } from "@/lib/importador-avancado/persistidor"
 import type { DominioImport } from "@/lib/importador-avancado/types"
+import { lerSelecaoDominiosDoFormData } from "@/lib/importador-avancado/dominios-multipart"
+import { CONTEXTO_LOTE_VAZIO, type ContextoLoteImport } from "@/lib/cadastros/importacao-produtos"
 import { separarSmart, persistirSmartSeparado } from "@/lib/importador-avancado/smart-genius/orquestrar"
 import { prisma } from "@/lib/prisma"
 
@@ -52,6 +54,50 @@ export async function GET() {
   })
 }
 
+// ── Contexto do lote de produtos (Parte 7) ──────────────────────────────────
+
+/**
+ * Lê o campo `contextoProdutos` do FormData (JSON). Tudo é opcional e saneado aqui:
+ * o contexto é informação humana do lote (fornecedor, NF-e, política de estoque),
+ * nunca entrada confiável. Ausência/JSON inválido cai no contexto vazio, que tem
+ * `politicaEstoque: "nao_movimentar"` — o padrão seguro.
+ */
+function lerContextoProdutos(raw: string | null): ContextoLoteImport {
+  if (!raw) return { ...CONTEXTO_LOTE_VAZIO }
+  let obj: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { ...CONTEXTO_LOTE_VAZIO }
+    obj = parsed as Record<string, unknown>
+  } catch {
+    return { ...CONTEXTO_LOTE_VAZIO }
+  }
+
+  const txt = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max)
+  const fornecedorNome = txt(obj.fornecedorNome, 200)
+  const numero = txt(obj.documentoNumero, 40)
+  const chave = txt(obj.documentoChave, 60)
+
+  return {
+    fornecedor: fornecedorNome
+      ? { nome: fornecedorNome, documento: txt(obj.fornecedorDocumento, 32) }
+      : null,
+    documento:
+      numero || chave
+        ? {
+            tipo: obj.documentoTipo === "nfe" ? "nfe" : "outro",
+            numero,
+            serie: txt(obj.documentoSerie, 10),
+            chave,
+            dataEmissao: txt(obj.documentoDataEmissao, 30),
+          }
+        : null,
+    observacao: txt(obj.observacao, 500),
+    politicaEstoque:
+      obj.politicaEstoque === "planilha_somente_novos" ? "planilha_somente_novos" : "nao_movimentar",
+  }
+}
+
 // ── POST: parse → detect → merge → preview | importar ───────────────────────
 
 export async function POST(req: NextRequest) {
@@ -71,8 +117,21 @@ export async function POST(req: NextRequest) {
   const modoQuery = req.nextUrl.searchParams.get("modo")
   const modoForm = formData.get("modo") as string | null
   const modo = modoQuery ?? modoForm ?? "preview"
-  const dominiosFiltro = (formData.getAll("dominios") as string[]).filter(Boolean) as DominioImport[]
+  // ── Seleção de domínios (F-06) ───────────────────────────────────────────
+  // Lida UMA vez, antes de decidir entre preview e importar, para que os dois modos
+  // recebam exatamente a mesma seleção. Aceita `dominios[]` (canônica, a que o hook
+  // envia) e `dominios` (legada). Domínio desconhecido é ERRO — antes a seleção
+  // inteira era descartada em silêncio e tudo que fosse detectado era importado.
+  const selecao = lerSelecaoDominiosDoFormData(formData)
+  if (!selecao.ok) {
+    return NextResponse.json(
+      { error: "Domínio de importação desconhecido", dominios: selecao.invalidos },
+      { status: 400 },
+    )
+  }
+  const dominiosFiltro = selecao.dominios as DominioImport[]
   const batchId = `adv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  const contextoProdutos = lerContextoProdutos(formData.get("contextoProdutos") as string | null)
 
   // ── Fase 1: coleta arquivos ──────────────────────────────────────────────
   const arquivosRaw = formData.getAll("arquivos[]") as File[]
@@ -168,19 +227,37 @@ export async function POST(req: NextRequest) {
 
   // ── Modo preview: retorna detecção sem persistir ─────────────────────────
   if (modo === "preview") {
+    // Domínio produtos ganha preview linha a linha (Parte 8): resultado previsto,
+    // motivo do match, campos alterados/preservados e alertas. Read-only — usa o
+    // MESMO motor de matching da persistência, então preview e import não divergem.
+    const regProdutosPreview = grupos.get("produtos") ?? []
+    let previewProdutos = null
+    if (regProdutosPreview.length > 0) {
+      try {
+        previewProdutos = await planejarProdutosDoLote(storeId, regProdutosPreview, contextoProdutos)
+      } catch (e) {
+        console.error(
+          "[api/import/advanced] falha ao planejar preview de produtos:",
+          e instanceof Error ? e.message : String(e),
+        )
+      }
+    }
+
     return NextResponse.json({
       batchId,
+      storeId,
       modo: "preview",
       planilhasDetectadas: deteccao,
       grupos: totaisDetectados,
       dominiosParaImportar: Object.keys(totaisDetectados),
+      previewProdutos,
     })
   }
 
   // ── Modo importar: persiste ──────────────────────────────────────────────
   let resultado
   try {
-    resultado = await persistirImportacao(storeId, grupos, batchId)
+    resultado = await persistirImportacao(storeId, grupos, batchId, contextoProdutos)
   } catch (e) {
     return NextResponse.json(
       { error: "Falha ao persistir importação", detalhe: e instanceof Error ? e.message : String(e) },
@@ -273,6 +350,18 @@ export async function POST(req: NextRequest) {
           },
           porDominio,
           arquivos: deteccao.map((d) => ({ arquivo: d.arquivo, dominio: d.dominio, confianca: d.confianca, totalLinhas: d.totalLinhas })),
+          // Contexto do lote de produtos: permite ao Histórico mostrar fornecedor/NF-e
+          // e abrir a conferência do batch.
+          ...(resultado.resumoProdutos.length > 0
+            ? {
+                contextoProdutos: {
+                  fornecedor: contextoProdutos.fornecedor,
+                  documento: contextoProdutos.documento,
+                  politicaEstoque: contextoProdutos.politicaEstoque,
+                  totalLinhas: resultado.resumoProdutos.length,
+                },
+              }
+            : {}),
         }).slice(0, 8000),
       },
     })
@@ -282,11 +371,15 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     batchId,
+    storeId,
     modo: "importar",
     ok: okFinal,
+    duracaoMs: totaisFinais.duracaoMs,
     planilhasDetectadas: deteccao,
     totais: totaisFinais,
     porDominio,
     errosDetalhados,
+    // Alimenta o CTA "Revisar produtos desta importação" (Parte 9).
+    resumoProdutos: resultado.resumoProdutos,
   })
 }

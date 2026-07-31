@@ -3,9 +3,10 @@ import {
   Sparkles, Link2, Barcode, ImagePlus, Type, Check, Loader2,
   Wand2, Layers, Tag as TagIcon, Store,
   AlertCircle, Image as ImageIcon,
-  Send, Plus, ChevronDown,
+  Send, Plus, ChevronDown, PackagePlus,
 } from "lucide-react";
 import { Badge, Card, Field, Input, Modal, SectionTitle, Select, Textarea } from "./ui-kit";
+import { MovimentacaoEstoqueModal } from "./MovimentacaoEstoqueModal";
 import {
   listCategorias,
   listCategoriasMarcasUsadasEmProduto,
@@ -37,6 +38,8 @@ import {
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers";
 import { normalizeProdutoTags } from "@/lib/cadastros/produto-upsert-metadata";
 import { validarGtin, type GtinFormato } from "@/lib/cadastros/gtin";
+import { getProdutoFiscal } from "@/lib/produto-fiscal";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 function metadataRecord(value: unknown): Record<string, unknown> | null {
@@ -345,7 +348,6 @@ export function ProductAIModal({
   const [ncmDisplay, setNcmDisplay] = useState(initial?.ncm ?? "");
   const [cestDisplay, setCestDisplay] = useState(initial?.cest ?? "");
   const [modeloCompativel, setModeloCompativel] = useState("");
-  const [tributacao, setTributacao] = useState("");
   const [tags, setTags] = useState("");
   const [descricao, setDescricao] = useState("");
   const [barcodeScan, setBarcodeScan] = useState("");
@@ -354,6 +356,16 @@ export function ProductAIModal({
   const [externalBarcodeLookup, setExternalBarcodeLookup] = useState<ExternalBarcodeLookup | null>(null);
   const [barcodeSuggestionApplication, setBarcodeSuggestionApplication] = useState<BarcodeSuggestionApplication | null>(null);
   const [cosmosFiscalApplied, setCosmosFiscalApplied] = useState<{ ncm?: string; cest?: string } | null>(null);
+
+  // Modal de movimentação de estoque (Parte 13) — só em edição.
+  const [movimentacaoAberta, setMovimentacaoAberta] = useState(false);
+
+  // Validação fiscal na digitação: vazio é válido; senão exige a quantidade exata
+  // de dígitos. Mesma regra do importador (lib/cadastros/importacao-produtos/linha.ts).
+  const ncmDigitos = ncmDisplay.replace(/\D/g, "");
+  const cestDigitos = cestDisplay.replace(/\D/g, "");
+  const ncmInvalido = ncmDigitos.length > 0 && ncmDigitos.length !== 8;
+  const cestInvalido = cestDigitos.length > 0 && cestDigitos.length !== 7;
 
   // CATALOGO-APARELHOS-UI-CADASTROSV2-002 — estado da seção "Compatibilidade com aparelhos".
   const [catalogoValue, setCatalogoValue] = useState<CompatibilidadeValue>(() => emptyCompatibilidade());
@@ -370,18 +382,16 @@ export function ProductAIModal({
     const metadata = metadataRecord(initial?.metadata);
     setAcessoriosValue(produtoAcessoriosFormFromMetadata(metadata));
     const atributos = metadataRecord(metadata?.atributos);
-    const fiscal = metadataRecord(metadata?.fiscal);
-    const fiscalRegime = metadataRecord(metadata?.fiscalRegime);
     setModeloCompativel(typeof atributos?.modeloCompativel === "string" ? atributos.modeloCompativel : "");
-    // Regime tributário (texto livre) mora em `metadata.fiscalRegime`; fallback ao legado
-    // `metadata.fiscal.tributacao` para produtos salvos antes da canonização (GOAL-004).
-    setTributacao(
-      typeof fiscalRegime?.tributacao === "string"
-        ? fiscalRegime.tributacao
-        : typeof fiscal?.tributacao === "string"
-          ? fiscal.tributacao
-          : "",
-    );
+    // NCM/CEST: leitura pelo helper canônico (`metadata.fiscal` primeiro, legado
+    // `metadata.ncm`/`metadata.cest` como fallback). Só cai no `initial` quando o
+    // caller já mandou o valor pronto.
+    const fiscalCanonico = getProdutoFiscal({ metadata });
+    setNcmDisplay(fiscalCanonico.ncm || initial?.ncm || "");
+    setCestDisplay(fiscalCanonico.cest || initial?.cest || "");
+    // `metadata.fiscalRegime` legado é PRESERVADO no banco (o merge de dois níveis
+    // não apaga chave omitida), mas deixou de ser editável aqui: regime tributário é
+    // da loja, não do produto.
     setTags(Array.isArray(atributos?.tags) ? atributos.tags.filter((tag): tag is string => typeof tag === "string").join(", ") : "");
     setDescricao(typeof atributos?.descricao === "string" ? atributos.descricao : "");
     setBarcodeScan("");
@@ -883,7 +893,40 @@ export function ProductAIModal({
             </Field>
             <Field label="Modelo compatível"><Input value={modeloCompativel} onChange={(event) => setModeloCompativel(event.target.value)} placeholder="Ex.: iPhone 11" /></Field>
             <Field label="Fornecedor"><Input ref={fornecedorRef} defaultValue={initial?.fornecedor ?? ""} placeholder="Nome do fornecedor" /></Field>
-            <Field label="Estoque atual"><Input ref={estoqueRef} type="number" min={0} step={1} defaultValue={initial?.estoque !== undefined ? String(initial.estoque) : (productId ? "" : "0")} placeholder="0" /></Field>
+            {/* Estoque (Parte 13): em EDIÇÃO é somente leitura — saldo só muda por
+                movimentação auditada (MovimentacaoEstoque). Na CRIAÇÃO continua
+                editável, rotulado como saldo inicial. */}
+            {productId ? (
+              <Field label="Estoque atual">
+                <div className="flex items-center gap-2">
+                  <Input
+                    readOnly
+                    value={initial?.estoque !== undefined ? String(initial.estoque) : "0"}
+                    className="flex-1 cursor-default bg-muted/40 tabular-nums text-foreground"
+                    title="Saldo somente leitura — use Movimentar estoque"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setMovimentacaoAberta(true)}
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-2 text-xs font-medium text-foreground hover:bg-accent"
+                  >
+                    <PackagePlus className="h-3.5 w-3.5" /> Movimentar estoque
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Salvar o produto não altera o saldo. Entrada e ajuste ficam registrados no
+                  histórico de movimentações.
+                </p>
+              </Field>
+            ) : (
+              <Field label="Estoque inicial">
+                <Input ref={estoqueRef} type="number" min={0} step={1} defaultValue="0" placeholder="0" />
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Saldo inicial do cadastro. Depois de criado, o estoque muda somente por
+                  movimentação.
+                </p>
+              </Field>
+            )}
             <Field label="Garantia (dias)"><Input ref={garantiaRef} defaultValue={initial?.garantia !== undefined ? String(initial.garantia) : ""} placeholder="90" /></Field>
             {/* CATALOGO-APARELHOS-UI-CADASTROSV2-002 — compatibilidade de aparelhos (reuso). */}
             <div className="col-span-2">
@@ -910,25 +953,49 @@ export function ProductAIModal({
                 <Field label="Margem"><Input readOnly defaultValue="" placeholder="Auto" className="bg-muted/40 text-muted-foreground cursor-default" /></Field>
               </div>
             </div>
+            {/* Identidade fiscal do produto — editável e revisável pelo operador.
+                Lê `metadata.fiscal` primeiro (contrato canônico de lib/produto-fiscal.ts),
+                com fallback para o legado `metadata.ncm` / `metadata.cest`. A gravação
+                passa pelo mesmo write path canônico da Server Action. */}
             <Field label="NCM">
               <Input
-                readOnly
                 value={ncmDisplay}
-                placeholder={ncmDisplay ? undefined : "Fase fiscal futura"}
-                className={ncmDisplay ? "font-mono text-foreground" : "text-muted-foreground cursor-default"}
-                title={ncmDisplay ? "NCM importado ou persistido em metadata" : "Edição fiscal — em breve"}
+                onChange={(event) => setNcmDisplay(event.target.value)}
+                placeholder="8 dígitos — ex.: 85065010"
+                inputMode="numeric"
+                className={cn("font-mono", ncmInvalido && "border-destructive")}
+                aria-invalid={ncmInvalido || undefined}
+                title="NCM do produto — 8 dígitos. Deixe vazio se ainda não souber."
               />
+              {ncmInvalido && (
+                <p className="mt-1 text-[11px] text-destructive">
+                  NCM precisa ter 8 dígitos (ou ficar vazio).
+                </p>
+              )}
             </Field>
             <Field label="CEST">
               <Input
-                readOnly
                 value={cestDisplay}
-                placeholder={cestDisplay ? undefined : "—"}
-                className={cestDisplay ? "font-mono text-foreground" : "text-muted-foreground cursor-default"}
-                title={cestDisplay ? "CEST persistido em metadata" : "Não informado"}
+                onChange={(event) => setCestDisplay(event.target.value)}
+                placeholder="7 dígitos — ex.: 1700600"
+                inputMode="numeric"
+                className={cn("font-mono", cestInvalido && "border-destructive")}
+                aria-invalid={cestInvalido || undefined}
+                title="CEST do produto — 7 dígitos. Só se aplica a mercadorias sujeitas a ST."
               />
+              {cestInvalido && (
+                <p className="mt-1 text-[11px] text-destructive">
+                  CEST precisa ter 7 dígitos (ou ficar vazio).
+                </p>
+              )}
             </Field>
-            <Field label="Tributação"><Select value={tributacao} onChange={(event) => setTributacao(event.target.value)}><option value="">—</option><option>Simples</option><option>Lucro Presumido</option><option>Lucro Real</option></Select></Field>
+            <Field label="Regime tributário">
+              <div className="flex h-9 items-center rounded-md border border-dashed border-border bg-muted/30 px-3">
+                <p className="truncate text-xs text-muted-foreground" title="O regime é da loja, não do produto">
+                  Configurado na Identidade Fiscal da loja
+                </p>
+              </div>
+            </Field>
             <Field label="Tags" span={2}><Input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="Separadas por vírgula — Ex.: apple, tela, original" /></Field>
             <Field label="Descrição" span={2}>
               <Textarea value={descricao} onChange={(event) => setDescricao(event.target.value)} rows={3} placeholder="Descrição comercial (opcional)" />
@@ -1034,7 +1101,14 @@ export function ProductAIModal({
                           source: "manual",
                         })
                       : null;
-                  const tributacaoNormalizada = tributacao.trim();
+                  if (ncmInvalido || cestInvalido) {
+                    toast.error(
+                      ncmInvalido
+                        ? "NCM inválido — informe 8 dígitos ou deixe vazio."
+                        : "CEST inválido — informe 7 dígitos ou deixe vazio.",
+                    );
+                    return;
+                  }
                   const barcodeLookupMetadata = externalBarcodeLookup
                     ? (() => {
                         const { result } = externalBarcodeLookup;
@@ -1090,22 +1164,15 @@ export function ProductAIModal({
                         tags: normalizeProdutoTags(tags),
                         modeloCompativel: modeloCompativel.trim(),
                       },
-                      // Identidade fiscal canônica (GOAL-004): manda só os campos do contrato
-                      // (ncm/cest sugeridos pelo Cosmos, revisados pelo operador) em
-                      // `metadata.fiscal`; a Server Action sanea e persiste na forma canônica. A
-                      // proveniência da sugestão já é auditada em `metadata.barcodeLookup`.
-                      ...(cosmosFiscalApplied ? { fiscal: { ...cosmosFiscalApplied } } : {}),
-                      // Regime tributário é texto livre do operador (fora do contrato fiscal
-                      // canônico): vive em `metadata.fiscalRegime` para não poluir `metadata.fiscal`.
-                      ...(tributacaoNormalizada
-                        ? {
-                            fiscalRegime: {
-                              tributacao: tributacaoNormalizada,
-                              origem: "operador",
-                              atualizadoEm: new Date().toISOString(),
-                            },
-                          }
-                        : {}),
+                      // Identidade fiscal canônica: manda NCM/CEST como o operador
+                      // revisou (venham do Cosmos, do importador ou digitados) em
+                      // `metadata.fiscal`; a Server Action sanea e persiste na forma
+                      // canônica. A proveniência da sugestão externa continua auditada
+                      // em `metadata.barcodeLookup`.
+                      fiscal: { ncm: ncmDigitos, cest: cestDigitos },
+                      // `metadata.fiscalRegime` legado NÃO é reenviado: o merge de dois
+                      // níveis preserva o que já estava salvo, sem continuar gravando
+                      // regime tributário no produto.
                       ...(barcodeLookupMetadata ? { barcodeLookup: barcodeLookupMetadata } : {}),
                     },
                   });
@@ -1127,6 +1194,26 @@ export function ProductAIModal({
           </button>
         </div>
       </div>
+
+      {/* Movimentação de estoque — reusa o modal já publicado (Parte 13). */}
+      {productId && (
+        <MovimentacaoEstoqueModal
+          open={movimentacaoAberta}
+          onClose={() => setMovimentacaoAberta(false)}
+          storeId={storeId}
+          produto={{
+            id: productId,
+            nome: initial?.nome ?? "",
+            sku: initial?.sku,
+            estoque: initial?.estoque ?? 0,
+            custo: initial?.custo,
+          }}
+          onSaved={() => {
+            setMovimentacaoAberta(false);
+            onSaved?.();
+          }}
+        />
+      )}
     </Modal>
   );
 }

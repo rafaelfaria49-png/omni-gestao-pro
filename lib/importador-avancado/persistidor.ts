@@ -6,7 +6,13 @@
 
 import { prisma } from "@/lib/prisma"
 import { normalizeNameForMatch, docDigitsForDedupe } from "@/lib/import-normalize"
-import type { RegistroMergeado, LogLinhaImport, DominioImport, ResultadoImportacao } from "./types"
+import type {
+  RegistroMergeado,
+  LogLinhaImport,
+  DominioImport,
+  ResultadoImportacao,
+  ResumoLinhaProduto,
+} from "./types"
 import {
   extrairCamposOS,
   extrairCamposCliente,
@@ -18,9 +24,35 @@ import type { Prisma } from "@/generated/prisma"
 import { StatusOrdemServico } from "@/generated/prisma"
 import { upsertContaReceber } from "@/lib/financeiro/services/contas-receber-service"
 import { upsertContaPagar } from "@/lib/financeiro/services/contas-pagar-service"
-import { normalizeSkuForSave } from "@/lib/produto-sku"
-import { normalizeProdutoSku, looksLikeEan, nomePareceDocumento } from "@/lib/produto-sku-normalize"
-import { mergeProdutoFiscalIntoMetadata } from "@/lib/produto-fiscal"
+import { nomePareceDocumento } from "@/lib/produto-sku-normalize"
+import { getProdutoFiscal, mergeProdutoFiscalIntoMetadata } from "@/lib/produto-fiscal"
+import {
+  alertasDaLinha,
+  ativacaoDaAtualizacao,
+  ativacaoDaCriacao,
+  camposCriticosAlteradosNaImportacao,
+  candidatoDoPlano,
+  construirLoteImportacao,
+  contextoDeMatch,
+  diffAtualizacao,
+  fiscalInputDaLinha,
+  getImportacaoMetadata,
+  indexarCandidatos,
+  mergeImportacaoIntoMetadata,
+  montarAtualizacaoProduto,
+  montarCriacaoProduto,
+  planejarMatchProduto,
+  resolverNomeCategoria,
+  temBloqueio,
+  CONTEXTO_LOTE_VAZIO,
+} from "@/lib/cadastros/importacao-produtos"
+import type {
+  AlertaImport,
+  ContextoLoteImport,
+  IndiceCandidatos,
+  ProdutoCandidatoRow,
+  ProdutoImportLinha,
+} from "@/lib/cadastros/importacao-produtos"
 
 // ── Utilitários ───────────────────────────────────────────────
 
@@ -43,9 +75,12 @@ function toStatusPrisma(s: string): StatusOrdemServico {
   }
 }
 
-function slugCategoria(raw: string): string {
-  return norm(raw).replace(/\s+/g, "_").slice(0, 50) || "geral"
-}
+/**
+ * O `slugCategoria` antigo (`norm().replace(/\s+/g,"_")`) foi removido: gravava
+ * `pilhas_e_baterias` na coluna `category` e ainda copiava esse slug para `brand`.
+ * A categoria agora é resolvida por `resolverNomeCategoria`, que reaproveita a
+ * grafia da `CategoriaCadastro` da loja quando ela já existir.
+ */
 
 // ── Persistência por domínio ─────────────────────────────────
 
@@ -185,113 +220,423 @@ async function persistirFornecedores(
   }
 }
 
+// ── Produtos: candidatos, plano e persistência ───────────────
+
+const PRODUTO_CANDIDATO_SELECT = {
+  id: true,
+  name: true,
+  sku: true,
+  barcode: true,
+  brand: true,
+  supplierName: true,
+  active: true,
+  price: true,
+  metadata: true,
+} as const
+
+/**
+ * Carrega, em poucas consultas, todos os candidatos possíveis do lote e devolve o
+ * índice puro de `lib/cadastros/importacao-produtos/candidatos.ts`.
+ *
+ * Sem o pré-carregamento, uma nota da Modenuti com centenas de itens faria 4 queries
+ * por linha. Todas as buscas são escopadas por `storeId` — o mesmo EAN em outra loja
+ * é outro produto e nunca aparece aqui.
+ */
+async function carregarCandidatosProdutos(
+  storeId: string,
+  linhas: ReadonlyArray<ProdutoImportLinha>,
+): Promise<IndiceCandidatos> {
+  const barcodes = [...new Set(linhas.map((l) => l.barcode).filter((b): b is string => !!b))]
+  const skus = [...new Set(linhas.map((l) => l.sku).filter((s): s is string => !!s))]
+  const nomes = [...new Set(linhas.map((l) => l.nome).filter(Boolean))]
+  const fornecedores = [
+    ...new Set(
+      linhas.filter((l) => l.codigoFornecedor).map((l) => l.fornecedorNome.trim()).filter(Boolean),
+    ),
+  ]
+
+  const buscar = async (where: Prisma.ProdutoWhereInput): Promise<ProdutoCandidatoRow[]> => {
+    const rows = await prisma.produto.findMany({
+      where: { storeId, ...where },
+      select: PRODUTO_CANDIDATO_SELECT,
+      take: 5000,
+    })
+    return rows.map((r) => ({ ...r, price: Number(r.price ?? 0) }))
+  }
+
+  const [rowsBarcode, rowsSku, rowsNome, rowsFornecedor, categoriasRows] = await Promise.all([
+    barcodes.length > 0 ? buscar({ barcode: { in: barcodes } }) : Promise.resolve([]),
+    // `gc-` era o prefixo do importador legado: o mesmo código pode estar gravado
+    // como `123` ou `gc-123`. Buscamos as duas formas e comparamos pelo miolo.
+    skus.length > 0
+      ? buscar({ sku: { in: [...skus, ...skus.map((s) => `gc-${s}`)], mode: "insensitive" } })
+      : Promise.resolve([]),
+    nomes.length > 0 ? buscar({ name: { in: nomes, mode: "insensitive" } }) : Promise.resolve([]),
+    fornecedores.length > 0
+      ? buscar({ supplierName: { in: fornecedores, mode: "insensitive" } })
+      : Promise.resolve([]),
+    prisma.categoriaCadastro
+      .findMany({ where: { storeId, type: "produto", active: true }, select: { name: true } })
+      .catch(() => [] as Array<{ name: string }>),
+  ])
+
+  // Dedupe por id: uma mesma linha pode voltar em mais de uma das consultas.
+  const unicos = new Map<string, ProdutoCandidatoRow>()
+  for (const r of [...rowsBarcode, ...rowsSku, ...rowsNome, ...rowsFornecedor]) {
+    if (!unicos.has(r.id)) unicos.set(r.id, r)
+  }
+
+  return indexarCandidatos([...unicos.values()], categoriasRows.map((c) => c.name))
+}
+
+type ResumoProdutoImportado = ResumoLinhaProduto
+
+/** Linha do preview de produtos — tudo que a tela precisa mostrar antes de importar. */
+export type PreviewLinhaProduto = {
+  linhaOrigem: number
+  produto: string
+  barcode: string
+  sku: string
+  categoria: string
+  marca: string
+  fornecedor: string
+  custo: number
+  preco: number
+  estoque: number | null
+  ncm: string
+  cest: string
+  resultado: "criar" | "atualizar" | "ignorar" | "conflito"
+  matchPor: string | null
+  motivo: string
+  /** Campos que a importação vai alterar no produto existente. */
+  camposAlterados: string[]
+  /** Campos deliberadamente preservados (estoque, e preço/custo quando a planilha não traz). */
+  camposPreservados: string[]
+  alertas: AlertaImport[]
+}
+
+export type PreviewProdutos = {
+  linhas: PreviewLinhaProduto[]
+  totalCriar: number
+  totalAtualizar: number
+  totalIgnorar: number
+  totalConflito: number
+  /** `true` trava o botão Importar. */
+  bloqueado: boolean
+}
+
+/**
+ * Planeja o lote de produtos SEM escrever nada. Mesmo motor de matching do
+ * `persistirProdutos` — o preview não pode divergir do que será persistido.
+ */
+export async function planejarProdutosDoLote(
+  storeId: string,
+  registros: RegistroMergeado[],
+  contexto: ContextoLoteImport = { ...CONTEXTO_LOTE_VAZIO },
+): Promise<PreviewProdutos> {
+  const fornecedorPadrao = contexto.fornecedor?.nome ?? ""
+  const linhas = registros.map((reg) => extrairCamposProduto(reg, { fornecedorPadrao }))
+  const validas = linhas.filter((l) => l.nome.trim() && !nomePareceDocumento(l.nome))
+  const candidatos = await carregarCandidatosProdutos(storeId, validas)
+  const consumidos = new Set<string>()
+
+  const out: PreviewLinhaProduto[] = linhas.map((linha) => {
+    const semNome = !linha.nome.trim() || nomePareceDocumento(linha.nome)
+    const ctx = contextoDeMatch(linha, candidatos, consumidos)
+
+    const plano = semNome
+      ? {
+          acao: "ignorar" as const,
+          produtoId: null,
+          matchPor: null,
+          motivo: "Linha sem nome de produto válido",
+          conflitos: [],
+        }
+      : planejarMatchProduto(linha, ctx)
+
+    if (plano.produtoId) consumidos.add(plano.produtoId)
+
+    const categoria = resolverNomeCategoria(linha.categoria, candidatos.categorias)
+    const alvo = candidatoDoPlano(ctx, plano.produtoId)
+
+    let camposAlterados: string[] = []
+    let camposPreservados: string[] = []
+    if (plano.acao === "atualizar" && alvo) {
+      const diff = diffAtualizacao(linha, alvo, { categoria })
+      camposAlterados = diff.alterados
+      camposPreservados = diff.preservados
+    } else if (plano.acao === "criar") {
+      camposPreservados = [
+        contexto.politicaEstoque === "planilha_somente_novos"
+          ? "estoque da planilha"
+          : "estoque zerado (sem movimentação)",
+      ]
+    }
+
+    return {
+      linhaOrigem: linha.linhaOrigem,
+      produto: linha.nome,
+      barcode: linha.barcode ?? "",
+      sku: linha.sku ?? "",
+      categoria,
+      marca: linha.marca,
+      fornecedor: linha.fornecedorNome,
+      custo: linha.custo,
+      preco: linha.preco,
+      estoque: linha.estoque,
+      ncm: linha.fiscal.ncm,
+      cest: linha.fiscal.cest,
+      resultado: plano.acao,
+      matchPor: plano.matchPor,
+      motivo: plano.motivo,
+      camposAlterados,
+      camposPreservados,
+      alertas: alertasDaLinha(linha, plano),
+    }
+  })
+
+  return {
+    linhas: out,
+    totalCriar: out.filter((l) => l.resultado === "criar").length,
+    totalAtualizar: out.filter((l) => l.resultado === "atualizar").length,
+    totalIgnorar: out.filter((l) => l.resultado === "ignorar").length,
+    totalConflito: out.filter((l) => l.resultado === "conflito").length,
+    bloqueado: out.some((l) => temBloqueio(l.alertas)),
+  }
+}
+
 async function persistirProdutos(
   storeId: string,
   registros: RegistroMergeado[],
-  log: LogLinhaImport[]
+  log: LogLinhaImport[],
+  ctx: { batchId: string; contexto: ContextoLoteImport },
+  resumo: ResumoProdutoImportado[],
 ): Promise<void> {
-  for (const reg of registros) {
-    try {
-      const campos = extrairCamposProduto(reg)
-      if (!campos.name.trim()) {
-        log.push({ dominio: "produtos", chave: reg.chave, acao: "ignorado", detalhe: "Nome vazio" })
-        continue
-      }
+  const fornecedorPadrao = ctx.contexto.fornecedor?.nome ?? ""
+  const importadoEm = new Date().toISOString()
 
-      // Guard de documento: termos/contratos que vazam para a planilha não viram produto.
-      if (nomePareceDocumento(campos.name)) {
+  const preparadas = registros.map((reg) => ({
+    reg,
+    linha: extrairCamposProduto(reg, { fornecedorPadrao }),
+  }))
+
+  const validas = preparadas.filter(({ reg, linha }) => {
+    if (!linha.nome.trim()) {
+      log.push({ dominio: "produtos", chave: reg.chave, acao: "ignorado", detalhe: "Nome vazio" })
+      resumo.push({
+        chave: reg.chave,
+        linhaOrigem: linha.linhaOrigem,
+        nome: "",
+        acao: "ignorado",
+        matchPor: null,
+        motivo: "Linha sem nome de produto",
+        produtoId: null,
+      })
+      return false
+    }
+    // Guard de documento: termos/contratos que vazam para a planilha não viram produto.
+    if (nomePareceDocumento(linha.nome)) {
+      log.push({
+        dominio: "produtos",
+        chave: reg.chave,
+        acao: "ignorado",
+        detalhe: "Linha parece termo/documento, não produto (revisar)",
+      })
+      resumo.push({
+        chave: reg.chave,
+        linhaOrigem: linha.linhaOrigem,
+        nome: linha.nome.slice(0, 80),
+        acao: "ignorado",
+        matchPor: null,
+        motivo: "Linha parece termo/documento, não produto",
+        produtoId: null,
+      })
+      return false
+    }
+    return true
+  })
+
+  if (validas.length === 0) return
+
+  const candidatos = await carregarCandidatosProdutos(
+    storeId,
+    validas.map((v) => v.linha),
+  )
+
+  // Ids já consumidos neste lote: duas linhas da mesma planilha não podem cair no
+  // mesmo produto (aconteceria com nomes repetidos + match por nome).
+  const consumidos = new Set<string>()
+
+  for (const { reg, linha } of validas) {
+    try {
+      const matchCtx = contextoDeMatch(linha, candidatos, consumidos)
+      const plano = planejarMatchProduto(linha, matchCtx)
+
+      if (plano.acao === "conflito" || plano.acao === "ignorar") {
         log.push({
           dominio: "produtos",
           chave: reg.chave,
           acao: "ignorado",
-          detalhe: "Linha parece termo/documento, não produto (revisar)",
+          detalhe: `${plano.acao === "conflito" ? "Conflito" : "Ignorado"}: ${plano.motivo}`,
+        })
+        resumo.push({
+          chave: reg.chave,
+          linhaOrigem: linha.linhaOrigem,
+          nome: linha.nome,
+          acao: plano.acao === "conflito" ? "conflito" : "ignorado",
+          matchPor: null,
+          motivo: plano.motivo,
+          produtoId: null,
         })
         continue
       }
 
-      const catSlug = slugCategoria(campos.category || "produto")
+      const categoria = resolverNomeCategoria(linha.categoria, candidatos.categorias)
+      const fiscalInput = fiscalInputDaLinha(linha)
+      const alvo = candidatoDoPlano(matchCtx, plano.produtoId)
 
-      // SKU vazio: gera sintético para evitar colisão no unique(storeId, sku)
-      const skuRaw = campos.sku?.trim()
-        ? campos.sku.trim()
-        : `IMP-${catSlug}-${norm(campos.name).slice(0, 20).replace(/\s+/g, "-")}`
-      const skuToSave = normalizeSkuForSave(skuRaw)
+      if (plano.acao === "atualizar" && alvo) {
+        const atualDoBanco = await prisma.produto
+          .findUnique({
+            where: { id: alvo.id },
+            select: { metadata: true, sku: true, barcode: true, category: true, price: true },
+          })
+          .catch(() => null)
+        const metadataAtual = atualDoBanco?.metadata ?? null
 
-      // Dedupe forte: encontra produto existente mesmo que outro importador tenha gravado
-      // com prefixo gc-/imp- legado ou com o EAN no campo barcode. Evita duplicar (gc-123 vs 123).
-      const skuNorm = normalizeProdutoSku(skuToSave)
-      const orMatch: Prisma.ProdutoWhereInput[] = [{ sku: skuToSave }]
-      if (skuRaw !== skuToSave) orMatch.push({ sku: skuRaw })
-      if (skuNorm && skuNorm !== skuToSave.toLowerCase()) orMatch.push({ sku: skuNorm })
-      if (skuNorm) orMatch.push({ sku: `gc-${skuNorm}` })
-      if (campos.barcode) orMatch.push({ barcode: campos.barcode })
-      if (looksLikeEan(skuNorm)) orMatch.push({ barcode: skuNorm })
+        // ── Política de ativação/revisão (F-05) ──────────────────────────────
+        // Precisa do estado ANTERIOR: revisão registrada + campos críticos que este
+        // lote realmente altera. Revisão só é reaberta quando algo crítico muda.
+        const revisaoAnterior = getImportacaoMetadata({ metadata: metadataAtual })
+        const patchPrevia = montarAtualizacaoProduto(linha, alvo, { categoria })
+        const camposCriticosAlterados = camposCriticosAlteradosNaImportacao({
+          patch: patchPrevia,
+          atual: {
+            sku: atualDoBanco?.sku ?? alvo.sku,
+            barcode: atualDoBanco?.barcode ?? alvo.barcode,
+            category: atualDoBanco?.category ?? null,
+            price: Number(atualDoBanco?.price ?? alvo.price ?? 0),
+          },
+          fiscalAtual: getProdutoFiscal({ metadata: metadataAtual }),
+          fiscalNovo: { ncm: fiscalInput.ncm, cest: fiscalInput.cest },
+        })
+        const ativacao = ativacaoDaAtualizacao(linha, alvo, {
+          categoria,
+          statusRevisaoAtual: revisaoAnterior?.ultimoLote.statusRevisao,
+          camposCriticosAlterados,
+        })
 
-      const existenteProduto = await prisma.produto.findFirst({
-        where: { storeId, OR: orMatch },
-        select: { id: true, barcode: true },
+        const lote = construirLoteImportacao({
+          batchId: ctx.batchId,
+          arquivo: reg.fontes[0] ?? "",
+          importadoEm,
+          acao: "atualizado",
+          matchPor: plano.matchPor,
+          linhaOrigem: linha.linhaOrigem,
+          contexto: ctx.contexto,
+          statusRevisao: ativacao.statusRevisao,
+          revisadoEm: revisaoAnterior?.ultimoLote.revisadoEm ?? null,
+          revisadoPor: revisaoAnterior?.ultimoLote.revisadoPor ?? null,
+        })
+
+        let metadata: Record<string, unknown> = mergeProdutoFiscalIntoMetadata(
+          metadataAtual,
+          fiscalInput,
+        )
+        metadata = mergeImportacaoIntoMetadata(metadata, lote)
+        if (linha.codigoFornecedor) {
+          metadata.fornecedor = {
+            ...(typeof metadata.fornecedor === "object" && metadata.fornecedor !== null
+              ? (metadata.fornecedor as Record<string, unknown>)
+              : {}),
+            codigo: linha.codigoFornecedor,
+            nome: linha.fornecedorNome || undefined,
+          }
+        }
+
+        // `montarAtualizacaoProduto` omite `stock` de propósito: saldo só muda por
+        // movimentação auditada (app/actions/estoque.ts → MovimentacaoEstoque).
+        // `active`/`status` vêm da política e só aparecem para REBAIXAR o produto que
+        // termina sem preço — importação nunca reativa cadastro desligado (F-05).
+        await prisma.produto.update({
+          where: { id: alvo.id },
+          data: {
+            ...montarAtualizacaoProduto(linha, alvo, {
+              categoria,
+              statusRevisaoAtual: revisaoAnterior?.ultimoLote.statusRevisao,
+            }),
+            metadata: metadata as Prisma.InputJsonValue,
+          },
+        })
+        consumidos.add(alvo.id)
+        log.push({ dominio: "produtos", chave: reg.chave, acao: "atualizado" })
+        resumo.push({
+          chave: reg.chave,
+          linhaOrigem: linha.linhaOrigem,
+          nome: linha.nome,
+          acao: "atualizado",
+          matchPor: plano.matchPor,
+          motivo: plano.motivo,
+          produtoId: alvo.id,
+        })
+        continue
+      }
+
+      // ── Criação ────────────────────────────────────────────────────────────
+      // Produto novo sempre nasce pendente de conferência.
+      const loteCriacao = construirLoteImportacao({
+        batchId: ctx.batchId,
+        arquivo: reg.fontes[0] ?? "",
+        importadoEm,
+        acao: "criado",
+        matchPor: plano.matchPor,
+        linhaOrigem: linha.linhaOrigem,
+        contexto: ctx.contexto,
+        statusRevisao: ativacaoDaCriacao(linha, categoria).statusRevisao,
       })
 
-      const produtoData = {
-        storeId,
-        sku: skuToSave,
-        name: campos.name,
-        category: catSlug,
-        precoCusto: campos.cost,
-        price: campos.price,
-        stock: campos.stock,
-        barcode: campos.barcode ?? null,
-        brand: campos.category || "",
+      let metadata: Record<string, unknown> = mergeProdutoFiscalIntoMetadata({}, fiscalInput)
+      metadata = mergeImportacaoIntoMetadata(metadata, loteCriacao)
+      if (linha.codigoFornecedor) {
+        metadata.fornecedor = { codigo: linha.codigoFornecedor, nome: linha.fornecedorNome || undefined }
       }
 
-      if (existenteProduto) {
-        // Produto existente: atualiza só dados cadastrais. NÃO sobrescreve `stock` —
-        // importação comum não pode reverter saldo já vendido. Estoque só muda por
-        // entrada/ajuste/inventário auditado (app/actions/estoque.ts → MovimentacaoEstoque).
-        await prisma.produto.update({
-          where: { id: existenteProduto.id },
-          data: {
-            name: produtoData.name,
-            category: produtoData.category,
-            precoCusto: produtoData.precoCusto > 0 ? produtoData.precoCusto : undefined,
-            price: produtoData.price > 0 ? produtoData.price : undefined,
-            barcode: produtoData.barcode ?? existenteProduto.barcode ?? undefined,
-            brand: produtoData.brand || undefined,
-          },
-        })
-      } else {
-        // Produto novo: pode iniciar com o estoque da planilha.
-        // GOAL_004: preserva a identidade fiscal PARSEADA da planilha (NCM/unidade), que
-        // antes era descartada — `extrairCamposProduto` capturava `campos.payload.ncm`,
-        // mas `produtoData` nunca levava metadata ao banco. Canônico: metadata.fiscal
-        // (lido por getProdutoFiscal). Só no create: o update conservador não sobrescreve
-        // dado fiscal já curado. Omite metadata quando não há nada fiscal (JSONB enxuto).
-        const pf = campos.payload
-        const metadataFiscal = mergeProdutoFiscalIntoMetadata(
-          {},
-          {
-            ncm: pf.ncm == null ? null : String(pf.ncm),
-            unidade: pf.unidade == null ? null : String(pf.unidade),
-          },
-        )
-        await prisma.produto.create({
-          data: {
-            ...produtoData,
-            ...(Object.keys(metadataFiscal).length > 0
-              ? { metadata: metadataFiscal as Prisma.InputJsonValue }
-              : {}),
-          },
-        })
-      }
-
-      log.push({ dominio: "produtos", chave: reg.chave, acao: existenteProduto ? "atualizado" : "criado" })
+      // Política de estoque + regra de ativação vivem em `montarCriacaoProduto`:
+      // `nao_movimentar` (padrão) cadastra com saldo 0 e produto sem preço nasce inativo.
+      const criado = await prisma.produto.create({
+        data: {
+          storeId,
+          ...montarCriacaoProduto(linha, {
+            categoria,
+            politicaEstoque: ctx.contexto.politicaEstoque,
+          }),
+          metadata: metadata as Prisma.InputJsonValue,
+        },
+        select: { id: true },
+      })
+      consumidos.add(criado.id)
+      log.push({ dominio: "produtos", chave: reg.chave, acao: "criado" })
+      resumo.push({
+        chave: reg.chave,
+        linhaOrigem: linha.linhaOrigem,
+        nome: linha.nome,
+        acao: "criado",
+        matchPor: null,
+        motivo: plano.motivo,
+        produtoId: criado.id,
+      })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      if (msg.includes("Unique")) {
-        log.push({ dominio: "produtos", chave: reg.chave, acao: "atualizado" })
-      } else {
-        log.push({ dominio: "produtos", chave: reg.chave, acao: "erro", detalhe: msg })
-      }
+      log.push({ dominio: "produtos", chave: reg.chave, acao: "erro", detalhe: msg })
+      resumo.push({
+        chave: reg.chave,
+        linhaOrigem: linha.linhaOrigem,
+        nome: linha.nome,
+        acao: "erro",
+        matchPor: null,
+        motivo: msg,
+        produtoId: null,
+      })
     }
   }
 }
@@ -707,10 +1052,13 @@ async function persistirContasPagar(
 export async function persistirImportacao(
   storeId: string,
   grupos: Map<DominioImport, RegistroMergeado[]>,
-  batchId: string
+  batchId: string,
+  /** Contexto humano do lote (fornecedor, NF-e, política de estoque). Opcional. */
+  contextoLote: ContextoLoteImport = { ...CONTEXTO_LOTE_VAZIO }
 ): Promise<ResultadoImportacao> {
   const inicio = Date.now()
   const log: LogLinhaImport[] = []
+  const resumoProdutos: ResumoProdutoImportado[] = []
 
   // 1. Clientes primeiro (OS e Vendas dependem deles)
   const clienteNomeParaId = new Map<string, string>()
@@ -729,7 +1077,7 @@ export async function persistirImportacao(
   // 3. Produtos / Catálogo
   const regProdutos = grupos.get("produtos") ?? []
   if (regProdutos.length > 0) {
-    await persistirProdutos(storeId, regProdutos, log)
+    await persistirProdutos(storeId, regProdutos, log, { batchId, contexto: contextoLote }, resumoProdutos)
   }
 
   // 4. Serviços catálogo — não persiste em produto. Aguarda model Servico próprio.
@@ -783,5 +1131,6 @@ export async function persistirImportacao(
     erros,
     log,
     duracaoMs: Date.now() - inicio,
+    resumoProdutos,
   }
 }

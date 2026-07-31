@@ -45,9 +45,14 @@ import {
   upsertServico,
   upsertProduto,
   deleteProduto,
+  getUltimoBatchProdutos,
   type DeleteProdutoResult,
 } from "@/app/actions/cadastros";
-import { catalogQualityScore } from "@/lib/cadastros/produto-quality-score";
+import {
+  catalogQualityScore,
+  qualityScoreInputFromProduto,
+} from "@/lib/cadastros/produto-quality-score";
+import { getProdutoFiscal } from "@/lib/produto-fiscal";
 
 const ICONS: Record<string, any> = {
   Users, Package, Wrench, Truck, HardHat, Smartphone, AlertTriangle, RefreshCw,
@@ -1313,9 +1318,13 @@ function ProdutosPanel({
   const [fornecedorFilter, setFornecedorFilter] = useState("todos"); // "todos" | "semFornecedor"
   const [categoriaFilter, setCategoriaFilter] = useState("todos");
   const [marcaFilter, setMarcaFilter] = useState("todos");
+  // Filtros de importação (Parte 11) — todos resolvidos no servidor.
+  const [importacaoFilter, setImportacaoFilter] = useState("todos");
 
   const [categorias, setCategorias] = useState<string[]>([]);
   const [marcas, setMarcas] = useState<string[]>([]);
+  /** Lote mais recente da loja — base do destaque "Novo da importação". */
+  const [ultimoBatchId, setUltimoBatchId] = useState<string | null>(null);
 
   // Estado de ordenação
   const [sortConfig, setSortConfig] = useState<{ field: string; direction: "asc" | "desc" } | undefined>(undefined);
@@ -1349,13 +1358,17 @@ function ProdutosPanel({
         setMarcas(mrcs.filter((m) => m.active).map((m) => m.name));
       })
       .catch(console.error);
+
+    getUltimoBatchProdutos(storeId)
+      .then(setUltimoBatchId)
+      .catch(() => setUltimoBatchId(null));
   }, [storeId]);
 
   // Reseta página quando os filtros ou ordenação mudam
   useEffect(() => {
     setPage(1);
     setSelectedProductIds(new Set());
-  }, [statusFilter, estoqueFilter, precoFilter, fornecedorFilter, categoriaFilter, marcaFilter, sortConfig]);
+  }, [statusFilter, estoqueFilter, precoFilter, fornecedorFilter, categoriaFilter, marcaFilter, importacaoFilter, sortConfig]);
 
   // loadingRows: bloqueia apenas a tabela; loadingAlerts: atualiza os cards silenciosamente
   const [loadingRows, setLoadingRows] = useState(true);
@@ -1376,7 +1389,7 @@ function ProdutosPanel({
       setLoadingRows(true);
       setErr(null);
       try {
-        const { produtos, total } = await listProdutosPaginado(storeId, {
+        const { produtos, total, erroFiltros } = await listProdutosPaginado(storeId, {
           q: debouncedQuery || undefined,
           page,
           pageSize: PAGE_SIZE,
@@ -1387,12 +1400,27 @@ function ProdutosPanel({
             fornecedor: fornecedorFilter,
             categoria: categoriaFilter,
             marca: marcaFilter,
+            importacao: importacaoFilter !== "todos" ? importacaoFilter : undefined,
           },
           orderBy: sortConfig,
         });
+        // Filtro que não pôde ser aplicado: erro explícito e tabela VAZIA. Mostrar o
+        // catálogo inteiro aqui faria o operador concluir que "não há pendência".
+        // Os filtros selecionados continuam na tela para permitir nova tentativa.
+        if (erroFiltros) {
+          setRows([]);
+          setTotalRows(0);
+          setErr(erroFiltros.mensagem);
+          return;
+        }
         setRows(produtos);
         setTotalRows(total);
       } catch (e) {
+        // Mesma regra da falha de filtro: sem resposta confiável, a tabela esvazia.
+        // Deixar a página anterior na tela junto de um erro faz o operador ler os
+        // números antigos como se fossem o resultado do filtro que acabou de escolher.
+        setRows([]);
+        setTotalRows(0);
         setErr(e instanceof Error ? e.message : "Falha ao carregar produtos");
       } finally {
         setLoadingRows(false);
@@ -1408,6 +1436,7 @@ function ProdutosPanel({
       fornecedorFilter,
       categoriaFilter,
       marcaFilter,
+      importacaoFilter,
       sortConfig,
     ]
   );
@@ -1749,6 +1778,21 @@ function ProdutosPanel({
                 ))}
               </Select>
             </Field>
+            {/* Filtros de importação (Parte 11) — resolvidos no servidor, sobre
+                `metadata.importacao` / `metadata.fiscal`. */}
+            <Field label="Importação">
+              <Select value={importacaoFilter} onChange={(e: any) => setImportacaoFilter(e.target.value)}>
+                <option value="todos">Todos</option>
+                <option value="ultimoLote">Última importação</option>
+                <option value="hoje">Importados hoje</option>
+                <option value="pendenteRevisao">Pendentes de revisão</option>
+                <option value="revisado">Revisados</option>
+                <option value="semBarcode">Sem código de barras</option>
+                <option value="skuSintetico">SKU sintético</option>
+                <option value="semNcm">NCM ausente</option>
+                <option value="semCest">CEST ausente</option>
+              </Select>
+            </Field>
           </div>
           <div className="mt-3 flex justify-end gap-2">
             <button
@@ -1759,6 +1803,7 @@ function ProdutosPanel({
                 setFornecedorFilter("todos");
                 setCategoriaFilter("todos");
                 setMarcaFilter("todos");
+                setImportacaoFilter("todos");
               }}
               className="text-xs text-muted-foreground hover:text-foreground font-medium transition"
             >
@@ -1777,7 +1822,23 @@ function ProdutosPanel({
           </div>
         </Card>
       )}
-      {err && <div className="mb-3 text-sm text-destructive">{err}</div>}
+      {err && (
+        <div
+          role="alert"
+          data-testid="produtos-erro-filtros"
+          className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          <span className="min-w-0">{err}</span>
+          <button
+            type="button"
+            onClick={() => void refreshRows()}
+            disabled={loadingRows}
+            className="shrink-0 rounded-lg border border-destructive/50 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-destructive/15 disabled:opacity-60"
+          >
+            Tentar novamente
+          </button>
+        </div>
+      )}
       {!loadingRows && !err && rows.length === 0 && !debouncedQuery && statusFilter === "todos" && estoqueFilter === "todos" && precoFilter === "todos" && fornecedorFilter === "todos" && categoriaFilter === "todos" && marcaFilter === "todos" && (
         <Card className="mb-4 border-dashed border-2 border-border/80 bg-gradient-to-br from-card to-muted/20 p-10 text-center">
           <div className="mx-auto mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-primary/10 text-primary">
@@ -1874,17 +1935,24 @@ function ProdutosPanel({
             </thead>
             <tbody className="divide-y divide-border">
               {rows.map((p) => {
-                const score = catalogQualityScore(p);
+                // Score lê NCM e status de revisão do metadata pelo helper canônico —
+                // sem isso, produto com fiscal preenchido perdia pontos indevidamente.
+                const score = catalogQualityScore(qualityScoreInputFromProduto(p));
                 const iaStub = p.metadata && typeof p.metadata.cadastroIa === "object";
                 const est = estoqueBadge(p.estoque);
                 const st = produtoStatusBadge(p.status);
                 const inativo = p.status === "Inativo";
+                // Destaque discreto do último lote importado (Parte 11): âmbar suave.
+                // Vermelho forte fica reservado para erro/conflito.
+                const doUltimoLote =
+                  !!ultimoBatchId && p.importacao?.batchId === ultimoBatchId;
+                const precoPendente = p.preco <= 0;
                 return (
                   <tr
                     key={p.id}
                     className={`hover:bg-accent/40 ${inativo ? "bg-muted/20 opacity-80" : ""} ${
-                      selectedProductIds.has(p.id) ? "bg-primary/5" : ""
-                    }`}
+                      doUltimoLote ? "bg-amber-500/5" : ""
+                    } ${selectedProductIds.has(p.id) ? "bg-primary/5" : ""}`}
                   >
                     <td className="px-4 py-3 w-12">
                       <Checkbox
@@ -1903,6 +1971,36 @@ function ProdutosPanel({
                     <td className="px-4 py-3 min-w-0">
                       <div className="font-medium text-foreground">{p.nome}</div>
                       <div className="text-xs text-muted-foreground">{p.marca} • {p.fornecedor}</div>
+                      {p.importacao && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          {doUltimoLote && (
+                            <span
+                              className="rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300"
+                              title={`Lote ${p.importacao.batchId}${p.importacao.fornecedor ? ` · ${p.importacao.fornecedor}` : ""}`}
+                            >
+                              Novo da importação
+                            </span>
+                          )}
+                          {precoPendente && (
+                            <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                              Preço pendente
+                            </span>
+                          )}
+                          {p.importacao.statusRevisao === "revisado" && (
+                            <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                              Revisado
+                            </span>
+                          )}
+                          {p.skuSintetico && (
+                            <span
+                              className="rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                              title="SKU gerado por importador — sem valor comercial"
+                            >
+                              SKU sintético
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 min-w-0">
                       {(() => {
@@ -2221,14 +2319,11 @@ function ProdutosPanel({
                 preco: editing.preco,
                 garantia: editing.garantia,
                 metadata: editing.metadata,
-                ncm:
-                  editing.metadata?.ncm != null && String(editing.metadata.ncm).trim()
-                    ? String(editing.metadata.ncm).trim()
-                    : undefined,
-                cest:
-                  editing.metadata?.cest != null && String(editing.metadata.cest).trim()
-                    ? String(editing.metadata.cest).trim()
-                    : undefined,
+                // Leitura pelo helper canônico: `metadata.fiscal` primeiro, legado
+                // `metadata.ncm`/`metadata.cest` como fallback (antes só o legado era lido,
+                // então NCM/CEST vindos do importador novo não apareciam na ficha).
+                ncm: getProdutoFiscal({ metadata: editing.metadata }).ncm || undefined,
+                cest: getProdutoFiscal({ metadata: editing.metadata }).cest || undefined,
               }
             : undefined
         }

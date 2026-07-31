@@ -27,8 +27,10 @@ import {
 } from "lucide-react";
 
 import { Badge, Card, SectionTitle } from "./ui-kit";
+import { ConferenciaLoteProdutos } from "./ConferenciaLoteProdutos";
 import { RoadmapPreviewDialog } from "@/components/ui/roadmap-preview-dialog";
 import { AppOpsProviders } from "@/components/dashboard/app-ops-providers";
+import { useLojaAtiva } from "@/lib/loja-ativa";
 import { ImportadorAvancado } from "@/components/dashboard/configuracoes/importador-avancado/ImportadorAvancado";
 import { ImportadorProdutos } from "@/components/dashboard/configuracoes/importador-produtos/ImportadorProdutos";
 import {
@@ -61,6 +63,14 @@ const SUBTABS: Array<{ id: SubTab; label: string; icon: typeof FileSpreadsheet; 
 
 export function ImportacaoHub() {
   const [sub, setSub] = useState<SubTab>("planilhas");
+  /** Lote aberto na conferência pós-importação (Parte 9). */
+  const [loteConferencia, setLoteConferencia] = useState<string | null>(null);
+
+  const abrirConferencia = useCallback((batchId: string) => {
+    if (!batchId) return;
+    setLoteConferencia(batchId);
+    setSub("historico");
+  }, []);
 
   return (
     <div className="w-full min-w-0 space-y-6">
@@ -92,10 +102,21 @@ export function ImportacaoHub() {
         </div>
       </div>
 
-      {sub === "planilhas" && <PlanilhasSection onSwitchToProdutosLotes={() => setSub("produtos")} />}
+      {sub === "planilhas" && (
+        <PlanilhasSection
+          onSwitchToProdutosLotes={() => setSub("produtos")}
+          onRevisarLoteProdutos={abrirConferencia}
+        />
+      )}
       {sub === "produtos" && <ProdutosLotesSection />}
       {sub === "xml" && <XmlNfeSection />}
-      {sub === "historico" && <HistoricoSection />}
+      {sub === "historico" && (
+        <HistoricoSection
+          loteConferencia={loteConferencia}
+          onAbrirConferencia={setLoteConferencia}
+          onFecharConferencia={() => setLoteConferencia(null)}
+        />
+      )}
     </div>
   );
 }
@@ -234,7 +255,13 @@ const DOMINIOS_PLANILHA = [
   { l: "Financeiro", icon: Receipt },
 ] as const;
 
-function PlanilhasSection({ onSwitchToProdutosLotes }: { onSwitchToProdutosLotes?: () => void }) {
+function PlanilhasSection({
+  onSwitchToProdutosLotes,
+  onRevisarLoteProdutos,
+}: {
+  onSwitchToProdutosLotes?: () => void;
+  onRevisarLoteProdutos?: (batchId: string) => void;
+}) {
   return (
     <div className="grid w-full min-w-0 gap-6 lg:grid-cols-3">
       <div className="space-y-6 lg:col-span-2">
@@ -245,7 +272,10 @@ function PlanilhasSection({ onSwitchToProdutosLotes }: { onSwitchToProdutosLotes
             action={<Badge tone="success">Em produção</Badge>}
           />
           <AppOpsProviders>
-            <ImportadorAvancado onSwitchToProdutosLotes={onSwitchToProdutosLotes} />
+            <ImportadorAvancado
+              onSwitchToProdutosLotes={onSwitchToProdutosLotes}
+              onRevisarLoteProdutos={onRevisarLoteProdutos}
+            />
           </AppOpsProviders>
         </Card>
       </div>
@@ -754,7 +784,16 @@ function KeyVal({
 // BLOCO 3 — Histórico / Auditoria de importações
 // ─────────────────────────────────────────────────────────────────────────────
 
-function HistoricoSection() {
+function HistoricoSection({
+  loteConferencia,
+  onAbrirConferencia,
+  onFecharConferencia,
+}: {
+  loteConferencia: string | null;
+  onAbrirConferencia: (batchId: string) => void;
+  onFecharConferencia: () => void;
+}) {
+  const { lojaAtivaId } = useLojaAtiva();
   const [logs, setLogs] = useState<ImportacaoAuditoriaDTO[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -776,6 +815,17 @@ function HistoricoSection() {
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  // Conferência aberta: ocupa a aba inteira até o operador fechar.
+  if (loteConferencia) {
+    return (
+      <ConferenciaLoteProdutos
+        storeId={(lojaAtivaId ?? "").trim()}
+        batchId={loteConferencia}
+        onFechar={onFecharConferencia}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -824,6 +874,7 @@ function HistoricoSection() {
                     <th className="px-4 py-3 text-right font-medium">Registros</th>
                     <th className="px-4 py-3 text-right font-medium">Duração</th>
                     <th className="px-4 py-3 text-left font-medium">Status</th>
+                    <th className="px-4 py-3 text-right font-medium">Conferência</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -872,6 +923,19 @@ function HistoricoSection() {
                           <Badge tone={l.status === "erro" ? "danger" : "success"}>
                             {l.status === "erro" ? "Com erros" : "OK"}
                           </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {l.batchId && (l.porDominio?.produtos?.criados || l.porDominio?.produtos?.atualizados) ? (
+                            <button
+                              type="button"
+                              onClick={() => onAbrirConferencia(l.batchId!)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent"
+                            >
+                              <Boxes className="h-3.5 w-3.5" /> Revisar produtos
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                       </tr>
                     );

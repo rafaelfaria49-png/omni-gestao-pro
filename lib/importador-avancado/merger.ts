@@ -5,6 +5,8 @@
 
 import type { PlanilhaParseada, RegistroMergeado, DominioImport } from "./types"
 import { resolverCampoSemantico, mapearHeaders } from "./detector"
+import { extrairLinhaProduto } from "@/lib/cadastros/importacao-produtos/linha"
+import type { ProdutoImportLinha } from "@/lib/cadastros/importacao-produtos/types"
 
 // ── Utilitários ───────────────────────────────────────────────
 
@@ -118,10 +120,11 @@ function extrairValorPorSemantica(
 
 export function normalizarLinha(
   linha: Record<string, unknown>,
-  headers: string[]
+  headers: string[],
+  dominio?: DominioImport
 ): Record<string, unknown> {
   const resultado: Record<string, unknown> = {}
-  const mapaHeaders = mapearHeaders(headers)
+  const mapaHeaders = mapearHeaders(headers, dominio)
 
   for (const [headerOriginal, campoSemantico] of Object.entries(mapaHeaders)) {
     const valor = linha[headerOriginal]
@@ -277,7 +280,13 @@ function mergeCamposSubPlanilha(
   }
 }
 
-/** Planilhas independentes (produtos, financeiro, etc.) */
+/**
+ * Planilhas independentes (produtos, financeiro, etc.).
+ *
+ * `chave` continua podendo ser `linha-N` — é o identificador INTERNO do merge. O que
+ * mudou é o contrato a jusante: `extrairCamposProduto` nunca mais promove essa chave
+ * a SKU comercial (ver `lib/cadastros/importacao-produtos/sku.ts`).
+ */
 function mergePlanilhaIndependente(planilha: PlanilhaParseada): RegistroMergeado[] {
   return planilha.linhas.map((linha, idx) => {
     const chaveValor = planilha.chaveJoin ? linha[planilha.chaveJoin] : null
@@ -285,8 +294,9 @@ function mergePlanilhaIndependente(planilha: PlanilhaParseada): RegistroMergeado
     return {
       chave,
       dominioPrincipal: planilha.dominio,
-      campos: normalizarLinha(linha, planilha.headers),
+      campos: normalizarLinha(linha, planilha.headers, planilha.dominio),
       fontes: [planilha.nomeArquivo],
+      linhaOrigem: idx + 1,
     }
   })
 }
@@ -501,41 +511,21 @@ export function extrairCamposCliente(reg: RegistroMergeado): {
   }
 }
 
-export function extrairCamposProduto(reg: RegistroMergeado): {
-  name: string
-  sku: string
-  barcode: string | null
-  category: string
-  cost: number
-  price: number
-  stock: number
-  payload: Record<string, unknown>
-} {
-  const c = reg.campos
-  const custo = (c["financeiro.custo"] as number | null) ?? toNumberBr(c["_raw.Valor de custo"]) ?? 0
-  const preco = (c["financeiro.precoVenda"] as number | null) ?? toNumberBr(c["_raw.Valor Varejo"]) ?? 0
-  // `produto.estoque` é gravado como string por `normalizarLinha` (cai no else genérico),
-  // então o cast `as number | null` é só de TypeScript — em runtime precisamos converter.
-  const estoque = toNumberBr(c["produto.estoque"] ?? c["_raw.Estoque atual"]) ?? 0
-
-  return {
-    name: String(c["produto.nome"] ?? c["_raw.Produto"] ?? "").trim(),
-    sku: String(c["produto.sku"] ?? c["_raw.Codigo"] ?? reg.chave).trim(),
-    barcode: String(c["produto.barcode"] ?? c["_raw.Codigo de barra"] ?? "").trim() || null,
-    category: String(c["produto.categoria"] ?? c["_raw.Grupo"] ?? "").trim(),
-    cost: typeof custo === "number" ? custo : 0,
-    price: typeof preco === "number" ? preco : 0,
-    stock: typeof estoque === "number" ? Math.max(0, estoque) : 0,
-    payload: {
-      estoqueMinimo: c["produto.estoqueMinimo"] ?? c["_raw.Estoque minimo"] ?? null,
-      estoqueMaximo: c["produto.estoqueMaximo"] ?? c["_raw.Estoque maximo"] ?? null,
-      ncm: c["produto.ncm"] ?? c["_raw.Código NCM"] ?? null,
-      unidade: c["produto.unidade"] ?? null,
-      peso: c["produto.peso"] ?? null,
-      observacoes: c["financeiro.observacao"] ?? null,
-      ativo: c["produto.ativo"] ?? null,
-    },
-  }
+/**
+ * Registro mergeado → linha canônica de produto.
+ *
+ * Substitui o extrator antigo, que promovia `reg.chave` (`linha-N`) a SKU comercial,
+ * slugava a categoria e não lia barcode/fornecedor/CEST. Toda a normalização agora
+ * vive em `lib/cadastros/importacao-produtos` — este wrapper só liga os dois lados.
+ */
+export function extrairCamposProduto(
+  reg: RegistroMergeado,
+  opts?: { fornecedorPadrao?: string }
+): ProdutoImportLinha {
+  return extrairLinhaProduto(reg.campos, {
+    linhaOrigem: reg.linhaOrigem ?? 0,
+    fornecedorPadrao: opts?.fornecedorPadrao,
+  })
 }
 
 // ── Status canônicos do financeiro importado ─────────────────

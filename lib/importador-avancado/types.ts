@@ -40,6 +40,12 @@ export type RegistroMergeado = {
   dominioPrincipal: DominioImport
   campos: Record<string, unknown> // todos os campos de todas as planilhas
   fontes: string[] // quais arquivos contribuíram
+  /**
+   * Posição 1-based da linha no arquivo de origem. Preenchido nos domínios
+   * independentes (produtos, financeiro) — é a proveniência gravada em
+   * `metadata.importacao.ultimoLote.linhaOrigem`.
+   */
+  linhaOrigem?: number
 }
 
 /** Plano de importação — o que vai ser feito antes de persistir */
@@ -72,6 +78,17 @@ export type LogLinhaImport = {
   detalhe?: string
 }
 
+/** Uma linha de produto após o plano de match — alimenta a conferência do lote. */
+export type ResumoLinhaProduto = {
+  chave: string
+  linhaOrigem: number
+  nome: string
+  acao: "criado" | "atualizado" | "ignorado" | "conflito" | "erro"
+  matchPor: string | null
+  motivo: string
+  produtoId: string | null
+}
+
 /** Resultado final da persistência */
 export type ResultadoImportacao = {
   batchId: string
@@ -82,4 +99,6 @@ export type ResultadoImportacao = {
   erros: number
   log: LogLinhaImport[]
   duracaoMs: number
+  /** Só preenchido quando o lote tinha domínio `produtos`. */
+  resumoProdutos: ResumoLinhaProduto[]
 }
