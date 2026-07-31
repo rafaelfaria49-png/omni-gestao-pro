@@ -402,9 +402,77 @@ function eligibleGoals(dir, protocol) {
     .sort((a, b) => String(a.id).localeCompare(String(b.id)));
 }
 
+// ---------------------------------------------------------------------------
+// Projeção last-wins do ledger
+//
+// LEDGER.jsonl é append-only e guarda TODOS os eventos, inclusive os que uma
+// revisão posterior do plano substituiu. O ESTADO VIGENTE de um GOAL é o ÚLTIMO
+// evento classificatório dele; as linhas anteriores continuam no arquivo,
+// íntegras, como histórico auditável. Contar linhas brutas contava o mesmo GOAL
+// duas vezes — era esse o defeito.
+//
+// O desempate é a ORDEM FÍSICA das linhas, NUNCA `ts`: eventos de uma mesma
+// importação carregam o mesmo timestamp e um desempate temporal seria
+// indeterminado.
+// ---------------------------------------------------------------------------
+
+/** Vocabulário classificatório: só estes resultados projetam estado de GOAL. */
+export const RESULTADOS_CLASSIFICATORIOS = ['DONE', 'BLOCKED', 'SUPERSEDED'];
+
+/**
+ * Projeta o estado vigente por GOAL. Devolve um Map id → { goal, result, linha,
+ * entrada }, onde `linha` é o índice físico (0-based) da entrada vencedora.
+ *
+ * A leitura é TOLERANTE por decisão: entrada sem `goal`, ou com `result` fora do
+ * vocabulário, não projeta estado e não entra nas contagens — o formato antigo do
+ * ledger continua legível. Quem denuncia vocabulário desconhecido é o `verify`.
+ */
+export function projectLatestGoalStates(entradas) {
+  const porGoal = new Map();
+  (entradas || []).forEach((entrada, indice) => {
+    if (!entrada || typeof entrada !== 'object') return;
+    const goal = typeof entrada.goal === 'string' ? entrada.goal.trim() : '';
+    if (!goal) return;
+    if (!RESULTADOS_CLASSIFICATORIOS.includes(entrada.result)) return;
+    // Map.set em chave existente SUBSTITUI o valor e PRESERVA a posição de
+    // inserção original: a projeção é determinística sem depender de sort.
+    porGoal.set(goal, { goal, result: entrada.result, linha: indice, entrada });
+  });
+  return porGoal;
+}
+
+/** Contagem por resultado sobre a PROJEÇÃO — um GOAL conta uma vez, não uma por linha. */
+export function countProjectedResults(projecao) {
+  const contagem = { DONE: 0, BLOCKED: 0, SUPERSEDED: 0 };
+  for (const p of projecao.values()) contagem[p.result] += 1;
+  return contagem;
+}
+
+/**
+ * Assinatura de ESTADO de um evento classificatório — o que decide se uma
+ * reimportação anexa linha nova.
+ *
+ * Fica de fora tudo que é PROVENIÊNCIA e muda a cada revisão (`ts`, `plan_rev`,
+ * `superseded_from_rev`, `reason`, `evidencia`): incluir esses campos
+ * transformaria toda reimportação em delta total — foi exatamente esse
+ * acoplamento que reanexaria as 13 linhas do piloto Contador.
+ *
+ * Ficam dentro: o resultado, a CATEGORIA do bloqueio (para que ganho ou perda de
+ * gate humano apareça como mudança) e o commit que prova um DONE.
+ */
+export function classificationSignature(entrada) {
+  const sig = { result: entrada.result };
+  if (entrada.result === 'BLOCKED') sig.blocked_by = entrada.blocked_by ?? null;
+  if (entrada.result === 'DONE') sig.head_commit = entrada.head_commit ?? null;
+  return JSON.stringify(sig);
+}
+
 /**
  * Estado derivado — 100% função de protocol.json + LEDGER.jsonl + goals/ +
  * _closed/goals/ + TRACK.md. Nenhum campo não derivável (por isso `verify` funciona).
+ *
+ * As contagens saem da PROJEÇÃO (um GOAL, um estado). `ledger_lines` continua
+ * sendo o número físico de linhas do arquivo — é fato do arquivo, não projeção.
  */
 export function deriveState(root, protocol, track) {
   const dir = trackDir(root, protocol, track);
@@ -414,11 +482,15 @@ export function deriveState(root, protocol, track) {
   const closed = listClosedGoalFiles(dir);
   const cfg = protocol.tracks[track] || {};
   const last = ledger.length ? ledger[ledger.length - 1] : null;
+  const projecao = projectLatestGoalStates(ledger);
+  const contagem = countProjectedResults(projecao);
 
   let status;
   if (ledger.length === 0 && goals.length === 0 && closed.length === 0) status = 'PLANNED';
   else if (goals.length > 0) status = 'RUNNING';
-  else if (last && last.result === 'BLOCKED') status = 'BLOCKED';
+  // BLOCKED é propriedade da PROJEÇÃO, não da última linha: um GOAL bloqueado não
+  // deixa de estar bloqueado porque outro GOAL ratificou depois dele.
+  else if (contagem.BLOCKED > 0) status = 'BLOCKED';
   else status = readTrackCompletion(dir);
 
   let bootstrap = null;
@@ -433,9 +505,9 @@ export function deriveState(root, protocol, track) {
     next_goal: goals[1] ? goals[1].id : null,
     bootstrap_commit: bootstrap,
     counters: {
-      goals_done: ledger.filter((l) => l.result === 'DONE').length,
-      goals_blocked: ledger.filter((l) => l.result === 'BLOCKED').length,
-      goals_imported: ledger.filter((l) => l.source === 'importado').length,
+      goals_done: contagem.DONE,
+      goals_blocked: contagem.BLOCKED,
+      goals_imported: [...projecao.values()].filter((p) => p.entrada.source === 'importado').length,
       ledger_lines: ledger.length,
     },
     last_goal: last ? last.goal : null,
@@ -623,6 +695,7 @@ function cmdStatus(root, protocol, track, flags) {
   const rel = trackRel(protocol, track);
   const derived = deriveState(root, protocol, track);
   const ledger = readLedger(dir, rel);
+  const contagem = countProjectedResults(projectLatestGoalStates(ledger));
   const tail = ledger.slice(-3);
   const active = readActive(root);
   const branch = currentBranch(root);
@@ -642,7 +715,7 @@ function cmdStatus(root, protocol, track, flags) {
   const lines = [];
   lines.push(`${AEP_LABEL} · trilha ${track} · ${SEMAFORO[derived.status] || ''} ${derived.status}`);
   lines.push(`risco ${derived.risk_tier} · GOAL atual ${derived.current_goal || '—'} · próximo ${derived.next_goal || '—'}`);
-  lines.push(`ratificados: ${derived.counters.goals_done} DONE · ${derived.counters.goals_blocked} BLOCKED · ${derived.counters.ledger_lines} linhas de ledger`);
+  lines.push(`ratificados (projeção por GOAL): ${derived.counters.goals_done} DONE · ${contagem.SUPERSEDED} SUPERSEDED · ${derived.counters.goals_blocked} BLOCKED · ${derived.counters.ledger_lines} linhas de ledger`);
   lines.push(`bootstrap_commit: ${derived.bootstrap_commit || '(nenhum)'} · última ratificação: ${derived.last_ratified_at || '—'}`);
   lines.push(`git: branch ${branch || '?'} · árvore ${dirty ? `${dirty} caminho(s) sujo(s)` : 'limpa'}`);
   lines.push(active
@@ -914,11 +987,34 @@ function cmdCheck(root, protocol, track) {
 // Escrita ratificada (ledger / commit de estado)
 // ---------------------------------------------------------------------------
 
-function appendLedger(dir, line) {
+/**
+ * Anexa N linhas em UMA única escrita. Importação interrompida no meio do lote
+ * não pode deixar metade das linhas ratificadas no arquivo.
+ */
+function appendLedgerLines(dir, linhas) {
+  if (!linhas.length) return 0;
   const file = path.join(dir, 'LEDGER.jsonl');
   const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   const sep = prev.length && !prev.endsWith('\n') ? '\n' : '';
-  fs.appendFileSync(file, `${sep}${JSON.stringify(line)}\n`);
+  fs.appendFileSync(file, `${sep}${linhas.map((l) => JSON.stringify(l)).join('\n')}\n`);
+  return linhas.length;
+}
+
+function appendLedger(dir, line) {
+  return appendLedgerLines(dir, [line]);
+}
+
+/**
+ * Escreve somente quando o conteúdo muda. É o que permite regenerar arquivos de
+ * GOAL a cada importação sem que uma reimportação idêntica produza diff — e, por
+ * consequência, sem commit automático desnecessário.
+ */
+function writeIfChanged(file, content) {
+  const novo = String(content).replace(/\r\n/g, '\n');
+  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') === novo) return false;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+  return true;
 }
 
 function stateCommit(root, message, paths) {
@@ -1349,6 +1445,20 @@ function verifyTrack(root, protocol, track) {
       cmd: `node scripts/track.mjs verify ${track}`,
       out: difs.map((k) => `${k}: arquivo=${JSON.stringify(onDisk[k])} derivado=${JSON.stringify(derived[k])}`).join(' | '),
       acao: `state.json divergiu do estado derivado (ledger + goals/ + TRACK.md). Ele não deve ser editado à mão.`,
+    });
+  }
+
+  // Vocabulário do ledger: a leitura é tolerante para não quebrar formato antigo,
+  // então é aqui que um `result` fora do vocabulário classificatório aparece —
+  // caso contrário ele sairia mudo da projeção e das contagens.
+  const foraDoVocabulario = readLedger(dir, rel)
+    .map((l, i) => ({ l, n: i + 1 }))
+    .filter(({ l }) => l && typeof l === 'object' && l.goal && !RESULTADOS_CLASSIFICATORIOS.includes(l.result));
+  if (foraDoVocabulario.length) {
+    problemas.push({
+      cmd: `sed -n '${foraDoVocabulario.map(({ n }) => n).join('p;')}p' ${rel}/LEDGER.jsonl`,
+      out: foraDoVocabulario.map(({ l, n }) => `linha ${n}: result=${JSON.stringify(l.result)}`).join(' | '),
+      acao: `result fora do vocabulário classificatório (${RESULTADOS_CLASSIFICATORIOS.join(' | ')}). Não projeta estado e não entra nas contagens.`,
     });
   }
 
@@ -2128,8 +2238,125 @@ function cmdImport(root, protocol, track, flags) {
   const excedentes = prontos.slice(protocol.max_hot_goals);
   for (const e of excedentes) pendentes.push({ id: e.id, motivo: `READY além do teto de ${protocol.max_hot_goals} GOALs no caminho quente → fica fora de goals/` });
 
-  // ---- DRY-RUN: executa toda a validação e classificação, mas NÃO escreve nada
-  // (state.json, LEDGER.jsonl, REGISTRY.md, goals/, _closed/goals/ ficam intactos).
+  // ---- delta last-wins: estado vigente projetado × estado desejado pelo manifesto.
+  // O ledger NUNCA é reescrito; o que muda é QUANTAS linhas se anexa.
+  const projecao = projectLatestGoalStates(readLedger(dir, rel));
+
+  // As ratificações são montadas na MESMA ordem de escrita de sempre
+  // (confirmados → superados → divergentes → gate humano), para que o prefixo
+  // físico do ledger continue estável.
+  const ratificacoes = [];
+  for (const c of confirmados) {
+    ratificacoes.push({
+      id: c.id, tipo: 'confirmado', item: c,
+      line: {
+        aep: AEP_VERSION, ts, track, goal: c.id, result: 'DONE', attempt: 1,
+        source: 'importado', bootstrap_commit: manifest.bootstrap_commit,
+        branch: c.branch, head_commit: c.commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
+        evidencia: { cmd: c.evid_cmd, out: c.evid_out },
+      },
+    });
+  }
+  for (const s of supersedidos) {
+    ratificacoes.push({
+      id: s.id, tipo: 'superado', item: s,
+      line: {
+        aep: AEP_VERSION, ts, track, goal: s.id, result: 'SUPERSEDED', attempt: 1,
+        source: 'importado', bootstrap_commit: manifest.bootstrap_commit,
+        plan_ref: manifest.plan_ref, plan_rev: planRev, superseded_from_rev: s.gRev,
+      },
+    });
+  }
+  for (const d of divergentes) {
+    ratificacoes.push({
+      id: d.id, tipo: 'divergente', item: d,
+      line: {
+        aep: AEP_VERSION, ts, track, goal: d.id, result: 'BLOCKED', attempt: 1,
+        source: 'importado', blocked_by: d.blocked_by, reason: d.motivo,
+        bootstrap_commit: manifest.bootstrap_commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
+        evidencia: { cmd: d.cmd, out: d.out },
+      },
+    });
+  }
+  for (const w of bloqueadosGateHumano) {
+    ratificacoes.push({
+      id: w.id, tipo: 'gate_humano', item: w,
+      line: {
+        aep: AEP_VERSION, ts, track, goal: w.id, result: 'BLOCKED', attempt: 1,
+        source: 'importado', blocked_by: 'gate', reason: w.gateHumano.decisao,
+        bootstrap_commit: manifest.bootstrap_commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
+        evidencia: { cmd: `grep -n '"gate_humano"' ${toPosix(manifestArg)}`, out: w.gateHumano.motivo },
+      },
+    });
+  }
+
+  const deltas = [];
+  const classificar = (id, para, anterior) => {
+    if (!anterior) return { id, de: null, para, delta: 'NOVO', sensivel: [] };
+    const sensivel = [];
+    const deResult = anterior.entrada.result;
+    const dePor = anterior.entrada.blocked_by ?? null;
+    if (deResult === 'DONE' && para !== 'DONE') sensivel.push(`regressão de DONE → ${para}`);
+    if (dePor === 'gate' && para !== 'BLOCKED') sensivel.push(`gate humano deixaria de bloquear → ${para}`);
+    return { id, de: deResult, de_blocked_by: dePor, para, delta: null, sensivel };
+  };
+
+  for (const r of ratificacoes) {
+    const anterior = projecao.get(r.id);
+    const d = classificar(r.id, r.line.result, anterior);
+    if (d.delta === null) {
+      d.delta = classificationSignature(anterior.entrada) === classificationSignature(r.line)
+        ? 'INALTERADO' : 'ALTERADO';
+      if (d.delta === 'ALTERADO' && d.de === 'BLOCKED' && d.para === 'BLOCKED') {
+        d.sensivel.push(`categoria de bloqueio ${d.de_blocked_by} → ${r.line.blocked_by}`);
+      }
+    }
+    r.delta = d.delta;
+    // O timestamp da proveniência é o do evento VIGENTE: para INALTERADO é o da
+    // linha antiga, e o arquivo regenerado sai byte-a-byte igual ao que já está lá.
+    r.tsEfetivo = d.delta === 'INALTERADO' ? (anterior.entrada.ts || ts) : ts;
+    d.ledger = true;
+    deltas.push(d);
+  }
+  // READY vive no caminho quente e NUNCA gera linha de ledger (invariante antiga).
+  // Sair de BLOCKED/DONE para READY é, ainda assim, mudança de estado — e sensível.
+  for (const h of hot) {
+    const d = classificar(h.id, 'READY', projecao.get(h.id));
+    if (d.delta === null) d.delta = 'ALTERADO';
+    d.ledger = false;
+    deltas.push(d);
+  }
+
+  const novos = deltas.filter((d) => d.delta === 'NOVO');
+  const alterados = deltas.filter((d) => d.delta === 'ALTERADO');
+  const inalterados = deltas.filter((d) => d.delta === 'INALTERADO');
+  const sensiveis = deltas.filter((d) => d.sensivel.length);
+  const aAnexar = ratificacoes.filter((r) => r.delta !== 'INALTERADO');
+
+  // GOAL com estado vigente que sumiu do plano NÃO é removido em silêncio: fica
+  // preservado com o estado que já tinha e é reportado.
+  const conhecidos = new Set([...declaradosIds, ...planoIds]);
+  const orfaos = [...projecao.values()]
+    .filter((p) => !conhecidos.has(p.goal))
+    .map((p) => ({ id: p.goal, result: p.result }));
+
+  const linhaDelta = `delta: ${novos.length} NOVO · ${alterados.length} ALTERADO · ${inalterados.length} INALTERADO`;
+  const relatorioDelta = () => {
+    const l = [];
+    l.push(linhaDelta);
+    l.push(`linhas de ledger a anexar: ${aAnexar.length} (ledger atual: ${projecao.size} GOAL(s) projetado(s))`);
+    for (const d of [...novos, ...alterados]) {
+      l.push(`  ${d.delta.padEnd(9)} ${d.id}: ${d.de || '(inexistente)'} → ${d.para}${d.ledger ? '' : ' (caminho quente, sem linha de ledger)'}`);
+    }
+    l.push(`deltas sensíveis: ${sensiveis.length}${sensiveis.length ? '' : ' → —'}`);
+    for (const d of sensiveis) l.push(`  ⚠ ${d.id}: ${d.sensivel.join('; ')}`);
+    l.push(`órfãos preservados (no estado vigente e fora do plano): ${orfaos.length} → ${orfaos.map((o) => `${o.id}[${o.result}]`).join(', ') || '—'}`);
+    return l;
+  };
+
+  // ---- DRY-RUN: executa toda a validação, a classificação e o delta, mas NÃO
+  // escreve nada (state.json, LEDGER.jsonl, REGISTRY.md, goals/, _closed/goals/
+  // ficam intactos).
   if (flags['dry-run'] === true || flags.dry_run === true) {
     process.stdout.write([
       `${AEP_LABEL} · import ${track} · DRY-RUN · manifesto ${toPosix(manifestArg)}`,
@@ -2141,6 +2368,7 @@ function cmdImport(root, protocol, track, flags) {
       `prontos (READY, quente):${hot.length} → ${hot.map((h) => h.id).join(', ') || '—'}`,
       `rascunhos (DRAFT):    ${rascunhos.length} → ${rascunhos.map((p) => p.id).join(', ') || '—'}`,
       `pendências:           ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
+      ...relatorioDelta(),
       '',
     ].join('\n'));
     return 0;
@@ -2148,71 +2376,82 @@ function cmdImport(root, protocol, track, flags) {
 
   // ---- escrita
   const escritos = [];
+  const gerenciados = [];
   fs.mkdirSync(path.join(dir, 'goals'), { recursive: true });
   fs.mkdirSync(path.join(dir, '_closed', 'goals'), { recursive: true });
   fs.mkdirSync(path.join(dir, '_closed', 'reports'), { recursive: true });
 
-  for (const c of confirmados) {
-    const f = path.join(dir, '_closed', 'goals', `${c.id}.md`);
-    fs.writeFileSync(f, goalDoc(c.meta, manifest, ['## Proveniência', '',
-      `- importado de \`${manifest.plan_ref}\` em ${ts}`,
-      `- commit confirmado: \`${c.commit}\` na branch \`${c.branch}\``,
-      `- evidência: \`${c.evid_cmd}\` → ${c.evid_out}`]));
-    escritos.push(`${rel}/_closed/goals/${c.id}.md`);
-    appendLedger(dir, {
-      aep: AEP_VERSION, ts, track, goal: c.id, result: 'DONE', attempt: 1,
-      source: 'importado', bootstrap_commit: manifest.bootstrap_commit,
-      branch: c.branch, head_commit: c.commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
-      evidencia: { cmd: c.evid_cmd, out: c.evid_out },
-    });
-  }
-  for (const s of supersedidos) {
-    const f = path.join(dir, '_closed', 'goals', `${s.id}.md`);
-    fs.writeFileSync(f, goalDoc(s.meta, manifest, ['## Proveniência', '', `- SUPERSEDED: plan_rev do GOAL ${s.gRev} < plan_rev do manifesto ${planRev}`]));
-    escritos.push(`${rel}/_closed/goals/${s.id}.md`);
-    appendLedger(dir, {
-      aep: AEP_VERSION, ts, track, goal: s.id, result: 'SUPERSEDED', attempt: 1,
-      source: 'importado', bootstrap_commit: manifest.bootstrap_commit,
-      plan_ref: manifest.plan_ref, plan_rev: planRev, superseded_from_rev: s.gRev,
-    });
-  }
-  for (const d of divergentes) {
-    appendLedger(dir, {
-      aep: AEP_VERSION, ts, track, goal: d.id, result: 'BLOCKED', attempt: 1,
-      source: 'importado', blocked_by: d.blocked_by, reason: d.motivo,
-      bootstrap_commit: manifest.bootstrap_commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
-      evidencia: { cmd: d.cmd, out: d.out },
-    });
+  const regenerar = (relPath, conteudo) => {
+    gerenciados.push(relPath);
+    if (writeIfChanged(path.join(root, relPath), conteudo)) escritos.push(relPath);
+  };
+
+  for (const r of ratificacoes) {
+    const { item: it, tipo } = r;
+    if (tipo === 'confirmado') {
+      regenerar(`${rel}/_closed/goals/${it.id}.md`, goalDoc(it.meta, manifest, ['## Proveniência', '',
+        `- importado de \`${manifest.plan_ref}\` em ${r.tsEfetivo}`,
+        `- commit confirmado: \`${it.commit}\` na branch \`${it.branch}\``,
+        `- evidência: \`${it.evid_cmd}\` → ${it.evid_out}`]));
+    } else if (tipo === 'superado') {
+      regenerar(`${rel}/_closed/goals/${it.id}.md`, goalDoc(it.meta, manifest, ['## Proveniência', '',
+        `- SUPERSEDED: plan_rev do GOAL ${it.gRev} < plan_rev do manifesto ${planRev}`]));
+    } else if (tipo === 'gate_humano') {
+      // Correção 3 — gate humano pendente: o GOAL fica NÃO EXECUTÁVEL, com status
+      // BLOCKED em _closed/goals/ (§ 3: BLOCKED → _closed/goals/). Não entra no
+      // caminho quente, não é elegível e não é abrível por `open` (que só lê goals/
+      // com status READY). O bloqueio É ratificado no ledger, com a categoria já
+      // existente `blocked_by: "gate"` e o motivo canônico em `reason`.
+      regenerar(`${rel}/_closed/goals/${it.id}.md`, goalDoc(it.meta, manifest, [
+        '## Gate humano pendente — BLOCKED', '',
+        `- motivo: ${it.gateHumano.motivo}`,
+        `- decisão humana requerida: \`${it.gateHumano.decisao}\``,
+        '- este GOAL NÃO está READY, NÃO é elegível e NÃO pode ser aberto por track.mjs.',
+        '- ausência de aprovação NÃO libera o GOAL — a liberação exige evidência explícita registrada pelo fluxo oficial do AEP.',
+      ]));
+    }
+    // `divergente` continua sem arquivo de GOAL: BLOCKED por divergência é
+    // ratificação de ausência de prova, não documento de execução.
   }
   for (const h of hot) {
-    const f = path.join(dir, 'goals', `${h.id}.md`);
-    fs.writeFileSync(f, goalDoc(h.meta, manifest, ['## Critério de pronto', '', '- <PREENCHER>']));
-    escritos.push(`${rel}/goals/${h.id}.md`);
-  }
-  // Correção 3 — gate humano pendente: o GOAL fica NÃO EXECUTÁVEL, com status
-  // BLOCKED em _closed/goals/ (§ 3: BLOCKED → _closed/goals/). Não entra no caminho
-  // quente, não é elegível e não é abrível por `open` (que só lê goals/ com status
-  // READY). O bloqueio É ratificado no ledger, com a categoria já existente
-  // `blocked_by: "gate"` e o motivo canônico em `reason`.
-  for (const w of bloqueadosGateHumano) {
-    const f = path.join(dir, '_closed', 'goals', `${w.id}.md`);
-    fs.writeFileSync(f, goalDoc(w.meta, manifest, [
-      '## Gate humano pendente — BLOCKED', '',
-      `- motivo: ${w.gateHumano.motivo}`,
-      `- decisão humana requerida: \`${w.gateHumano.decisao}\``,
-      '- este GOAL NÃO está READY, NÃO é elegível e NÃO pode ser aberto por track.mjs.',
-      '- ausência de aprovação NÃO libera o GOAL — a liberação exige evidência explícita registrada pelo fluxo oficial do AEP.',
-    ]));
-    escritos.push(`${rel}/_closed/goals/${w.id}.md`);
-    appendLedger(dir, {
-      aep: AEP_VERSION, ts, track, goal: w.id, result: 'BLOCKED', attempt: 1,
-      source: 'importado', blocked_by: 'gate', reason: w.gateHumano.decisao,
-      bootstrap_commit: manifest.bootstrap_commit, plan_ref: manifest.plan_ref, plan_rev: planRev,
-      evidencia: { cmd: `grep -n '"gate_humano"' ${toPosix(manifestArg)}`, out: w.gateHumano.motivo },
-    });
+    regenerar(`${rel}/goals/${h.id}.md`, goalDoc(h.meta, manifest, ['## Critério de pronto', '', '- <PREENCHER>']));
   }
 
-  const n = fs.readdirSync(path.join(dir, '_closed', 'reports')).filter((f) => /^IMPORT-\d+-MANIFEST\.json$/.test(f)).length + 1;
+  // NO-OP: reimportar a MESMA revisão não ratifica nada — e não inventa commit,
+  // cópia de manifesto nem número de importação.
+  //
+  // A âncora do "mesma revisão" é a cópia arquivada do manifesto, não o delta do
+  // ledger: um manifesto só de DRAFTs não gera linha nenhuma e ainda assim precisa
+  // ser reconciliado na primeira vez. As demais condições são rede de segurança —
+  // se algum artefato derivado saiu de sincronia, a importação reconcilia.
+  const arquivados = fs.readdirSync(path.join(dir, '_closed', 'reports'))
+    .filter((f) => /^IMPORT-\d+-MANIFEST\.json$/.test(f))
+    .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+  const emDia = (file, esperado) => fs.existsSync(file)
+    && fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') === esperado.replace(/\r\n/g, '\n');
+  const ultimoArquivado = arquivados.length
+    ? path.join(dir, '_closed', 'reports', arquivados[arquivados.length - 1]) : null;
+  const mesmaRevisao = ultimoArquivado !== null
+    && emDia(ultimoArquivado, fs.readFileSync(manifestFile, 'utf8'))
+    && fs.existsSync(path.join(dir, '_closed', 'reports', 'RECONCILIACAO.md'));
+  const derivadosEmDia = emDia(path.join(dir, 'state.json'), canonicalJson(deriveState(root, protocol, track)))
+    && emDia(path.join(tracksRoot(root, protocol), 'REGISTRY.md'), renderRegistry(root, protocol))
+    && emDia(path.join(root, 'docs/ai-execution/GATES.md'), renderGates(protocol));
+
+  if (mesmaRevisao && aAnexar.length === 0 && escritos.length === 0 && derivadosEmDia) {
+    process.stdout.write([
+      `${AEP_LABEL} · import ${track} · NO-OP · manifesto ${toPosix(manifestArg)}`,
+      'Estado desejado já é o estado vigente: nada foi escrito, nada foi commitado.',
+      ...relatorioDelta(),
+      `ledger intacto: ${projecao.size} GOAL(s) projetado(s), 0 linha anexada.`,
+      '',
+    ].join('\n'));
+    return 0;
+  }
+
+  appendLedgerLines(dir, aAnexar.map((r) => r.line));
+
+  const n = arquivados.length + 1;
   const manifestCopyRel = `${rel}/_closed/reports/IMPORT-${n}-MANIFEST.json`;
   fs.copyFileSync(manifestFile, path.join(root, manifestCopyRel));
   escritos.push(manifestCopyRel);
@@ -2225,6 +2464,26 @@ function cmdImport(root, protocol, track, flags) {
   rec.push(`- bootstrap_commit declarado: \`${manifest.bootstrap_commit}\``);
   rec.push(`- manifesto (proveniência): \`${manifestCopyRel}\``);
   rec.push(`- o diretório \`import/\` é gitignored; o manifesto bruto NÃO é commitado.`);
+  rec.push('');
+  rec.push('## 0. Delta desta importação (projeção last-wins por GOAL)');
+  rec.push('');
+  rec.push(`- ${linhaDelta}`);
+  rec.push(`- linhas anexadas ao LEDGER.jsonl: ${aAnexar.length} (o ledger é append-only; nada foi reescrito)`);
+  for (const d of [...novos, ...alterados]) {
+    rec.push(`- \`${d.id}\` — **${d.delta}**: ${d.de || '(inexistente)'} → ${d.para}`
+      + (d.ledger ? '' : ' · caminho quente, sem linha de ledger'));
+  }
+  if (!novos.length && !alterados.length) rec.push('- _(nenhuma mudança de estado)_');
+  rec.push('');
+  rec.push('### Deltas sensíveis');
+  rec.push('');
+  if (!sensiveis.length) rec.push('_(nenhum)_');
+  for (const d of sensiveis) rec.push(`- ⚠ \`${d.id}\` — ${d.sensivel.join('; ')}`);
+  rec.push('');
+  rec.push('### Órfãos preservados (estado vigente, ausentes do plano)');
+  rec.push('');
+  if (!orfaos.length) rec.push('_(nenhum)_');
+  for (const o of orfaos) rec.push(`- \`${o.id}\` — mantém \`${o.result}\`; a importação NÃO remove estado em silêncio.`);
   rec.push('');
   rec.push('## 1. Confirmados (DONE com prova no Git)');
   rec.push('');
@@ -2270,7 +2529,7 @@ function cmdImport(root, protocol, track, flags) {
   const derived = writeState(root, protocol, track);
   const gen = writeGenerated(root, protocol);
   const sha = stateCommit(root, `aep(${track}): import ${n} (plan_rev ${planRev})`, [
-    `${rel}/LEDGER.jsonl`, `${rel}/state.json`, ...escritos, gen.registry, gen.gates,
+    `${rel}/LEDGER.jsonl`, `${rel}/state.json`, ...gerenciados, ...escritos, gen.registry, gen.gates,
   ]);
 
   process.stdout.write([
@@ -2282,6 +2541,8 @@ function cmdImport(root, protocol, track, flags) {
     `prontos (READY, quente):${hot.length} → ${hot.map((h) => h.id).join(', ') || '—'}`,
     `rascunhos (DRAFT):    ${rascunhos.length} → ${rascunhos.map((p) => p.id).join(', ') || '—'}`,
     `pendências:           ${pendentes.length} → ${pendentes.map((p) => p.id).join(', ') || '—'}`,
+    ...relatorioDelta(),
+    `ledger: +${aAnexar.length} linha(s) anexada(s) — nenhuma linha antiga foi reescrita`,
     `reconciliação: ${recRel}`,
     `proveniência:  ${manifestCopyRel}`,
     `state.json: status ${derived.status} · current_goal ${derived.current_goal || 'null'}`,

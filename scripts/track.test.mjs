@@ -19,6 +19,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import {
+  projectLatestGoalStates,
+  countProjectedResults,
+  classificationSignature,
+  RESULTADOS_CLASSIFICATORIOS,
+} from './track.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TRACK = path.join(HERE, 'track.mjs');
@@ -1513,4 +1519,415 @@ test('CI1: cenário integrado — 10 DONE, 2 SUPERSEDED, 012G BLOCKED por gate h
   assert.equal(g(repo, 'ls-files', '--', 'import').out.trim(), '', 'import/ é gitignored');
   assert.equal(aep(repo, ['verify', '--all']).code, 0);
   assert.equal(g(repo, 'status', '--porcelain').out.trim(), '');
+});
+
+// ---------------------------------------------------------------------------
+// Reimportação incremental last-wins — projeção, idempotência e revisão.
+//
+// O LEDGER.jsonl continua append-only: nenhuma linha antiga é removida ou
+// reescrita. O que muda é a LEITURA — o estado vigente de um GOAL é o último
+// evento classificatório dele — e a ESCRITA — só GOAL novo ou alterado gera linha.
+// ---------------------------------------------------------------------------
+
+/** Entrada de ledger mínima, no formato real gravado pelo importador. */
+const linhaLedger = (goal, result, over = {}) => ({
+  aep: '1.0-R2', ts: '2026-07-30T21:29:13.806Z', track: 'demo', goal, result,
+  attempt: 1, source: 'importado', ...over,
+});
+
+// ---- A. Projeção last-wins -------------------------------------------------
+
+test('A1: um evento por GOAL — a projeção devolve exatamente o estado de cada linha', () => {
+  const ledger = [
+    linhaLedger('demo-001', 'DONE', { head_commit: 'a'.repeat(40) }),
+    linhaLedger('demo-002', 'SUPERSEDED'),
+    linhaLedger('demo-003', 'BLOCKED', { blocked_by: 'gate' }),
+  ];
+  const p = projectLatestGoalStates(ledger);
+  assert.equal(p.size, 3);
+  assert.equal(p.get('demo-001').result, 'DONE');
+  assert.equal(p.get('demo-002').result, 'SUPERSEDED');
+  assert.equal(p.get('demo-003').result, 'BLOCKED');
+  assert.deepEqual(countProjectedResults(p), { DONE: 1, BLOCKED: 1, SUPERSEDED: 1 });
+});
+
+test('A2: BLOCKED seguido de SUPERSEDED no mesmo GOAL projeta SUPERSEDED e conta UM GOAL', () => {
+  const antiga = linhaLedger('demo-001', 'BLOCKED', { blocked_by: 'divergencia', reason: 'DONE sem prova no Git' });
+  const ledger = [antiga, linhaLedger('demo-001', 'SUPERSEDED', { superseded_from_rev: 1 })];
+  const p = projectLatestGoalStates(ledger);
+  // Um GOAL, não duas linhas.
+  assert.equal(p.size, 1);
+  assert.equal(p.get('demo-001').result, 'SUPERSEDED');
+  assert.equal(p.get('demo-001').linha, 1, 'a entrada vencedora é a segunda linha física');
+  assert.deepEqual(countProjectedResults(p), { DONE: 0, BLOCKED: 0, SUPERSEDED: 1 });
+  // A linha BLOCKED antiga continua íntegra no ledger — histórico não some.
+  assert.equal(ledger.length, 2);
+  assert.deepEqual(ledger[0], antiga);
+  assert.equal(ledger[0].result, 'BLOCKED');
+  assert.equal(ledger[0].blocked_by, 'divergencia');
+});
+
+test('A3: a ORDEM FÍSICA vence — timestamps iguais ou fora de ordem não desempatam', () => {
+  const mesmoTs = [
+    linhaLedger('demo-001', 'DONE', { head_commit: 'a'.repeat(40) }),
+    linhaLedger('demo-001', 'SUPERSEDED'),
+  ];
+  assert.equal(projectLatestGoalStates(mesmoTs).get('demo-001').result, 'SUPERSEDED');
+  // Timestamp da última linha é ANTERIOR ao da primeira: ainda assim ela vence.
+  const tsInvertido = [
+    linhaLedger('demo-001', 'DONE', { ts: '2026-07-30T23:59:59.000Z', head_commit: 'a'.repeat(40) }),
+    linhaLedger('demo-001', 'BLOCKED', { ts: '2020-01-01T00:00:00.000Z', blocked_by: 'gate' }),
+  ];
+  assert.equal(projectLatestGoalStates(tsInvertido).get('demo-001').result, 'BLOCKED');
+  // Determinismo: mesma entrada, mesma projeção, mesma ordem de iteração.
+  assert.deepEqual([...projectLatestGoalStates(mesmoTs).keys()], [...projectLatestGoalStates(mesmoTs).keys()]);
+});
+
+test('A4: entradas não classificatórias não entram na projeção nem nas contagens', () => {
+  const p = projectLatestGoalStates([
+    linhaLedger('demo-001', 'DONE', { head_commit: 'a'.repeat(40) }),
+    linhaLedger('demo-002', 'READY'),
+    linhaLedger('', 'DONE'),
+    { ts: 'x', result: 'DONE' },
+    null,
+    'nem objeto',
+  ]);
+  assert.equal(p.size, 1);
+  assert.equal(p.has('demo-002'), false, 'READY não é resultado classificatório');
+  assert.deepEqual(countProjectedResults(p), { DONE: 1, BLOCKED: 0, SUPERSEDED: 0 });
+  assert.deepEqual(RESULTADOS_CLASSIFICATORIOS, ['DONE', 'BLOCKED', 'SUPERSEDED']);
+});
+
+// ---- F. Compatibilidade do formato antigo ----------------------------------
+
+test('F1: ledger antigo sem campos opcionais continua legível e comparável', () => {
+  // Formato mínimo: sem blocked_by, sem head_commit, sem plan_rev, sem evidencia.
+  const antigo = [{ goal: 'demo-001', result: 'DONE' }, { goal: 'demo-002', result: 'BLOCKED' }];
+  const p = projectLatestGoalStates(antigo);
+  assert.equal(p.size, 2);
+  assert.deepEqual(countProjectedResults(p), { DONE: 1, BLOCKED: 1, SUPERSEDED: 0 });
+  // A assinatura normaliza ausência para null — nada explode e nada vira delta falso.
+  assert.equal(classificationSignature({ result: 'DONE' }), classificationSignature({ result: 'DONE', head_commit: null }));
+  assert.equal(classificationSignature({ result: 'BLOCKED' }), classificationSignature({ result: 'BLOCKED', blocked_by: null }));
+});
+
+test('F2: a assinatura compara ESTADO, não proveniência', () => {
+  const base = { result: 'SUPERSEDED', plan_rev: 1, superseded_from_rev: 1, ts: 'a' };
+  const revisado = { result: 'SUPERSEDED', plan_rev: 9, superseded_from_rev: 9, ts: 'b' };
+  assert.equal(classificationSignature(base), classificationSignature(revisado),
+    'bump de plan_rev não pode virar delta — foi esse acoplamento que duplicaria o ledger');
+  // Categoria de bloqueio É estado: gate difere de divergencia.
+  assert.notEqual(
+    classificationSignature({ result: 'BLOCKED', blocked_by: 'gate' }),
+    classificationSignature({ result: 'BLOCKED', blocked_by: 'divergencia' }));
+  // Prova de um DONE é estado: commit diferente é ratificação nova.
+  assert.notEqual(
+    classificationSignature({ result: 'DONE', head_commit: 'a'.repeat(40) }),
+    classificationSignature({ result: 'DONE', head_commit: 'b'.repeat(40) }));
+});
+
+test('F3: verify denuncia result fora do vocabulário classificatório', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  assert.equal(importarManifesto(repo, manifestoBase(bootstrap, {
+    goals_declarados: [{ id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name }],
+  })).code, 0);
+  const ledgerFile = path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl');
+  fs.appendFileSync(ledgerFile, `${JSON.stringify(linhaLedger('demo-002', 'PARCIALMENTE_FEITO'))}\n`);
+  const v = aep(repo, ['verify', 'demo']);
+  assert.equal(v.code, 4);
+  assert.match(v.all, /fora do vocabulário classificatório/);
+  assert.match(v.all, /PARCIALMENTE_FEITO/);
+});
+
+// ---- Cenário Contador: R1 → R4 ---------------------------------------------
+
+/** 002–009 e 011: os 9 DONE com prova no Git. */
+const R4_DONE = CONTADOR_DONE.slice(1);
+/** 001: declarado DONE no R1 com commit fora da branch → BLOCKED (divergencia). */
+const R4_DIVERGENTE = CONTADOR_DONE[0];
+
+/**
+ * Monta o cenário real da trilha contador: 9 DONE provados, 2 SUPERSEDED,
+ * 001 BLOCKED por divergência, 012G BLOCKED por gate humano e 013–019 DRAFT.
+ */
+function cenarioContador(repo, name) {
+  const branch = 'goal/contador-entregas';
+  // O commit do GOAL 001 existe, mas NÃO está na branch declarada — é a DIV-1 real.
+  const shaOrfao = commitReal(repo, 'goal/contador-001-orfao', 'app/orfao.ts',
+    'export const orfao = 1;\n', 'goal(contador-001): entrega fora da branch');
+  const shas = commitsEmCadeia(repo, branch, R4_DONE.length, 'contador');
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const comuns = [
+    ...R4_DONE.map((id, i) => ({ id, situacao: 'DONE', commit: shas[i], branch, title: id, worktree: name })),
+    ...CONTADOR_SUPERSEDED.map((id) => ({ id, situacao: 'SUPERSEDED', title: id, worktree: name })),
+    { id: CONTADOR_GATE, situacao: 'READY', gate_humano: true, title: 'Publish main', worktree: name },
+  ];
+  const base = (declarado) => manifestoBase(bootstrap, {
+    risk_tier: 'MEDIO',
+    gates_extra: GATE_EXTRA_11,
+    fontes: { masterplan: 'import/contador/MASTERPLAN.md', resumo: 'import/contador/RESUMO.md' },
+    plano_ids: [...CONTADOR_DONE, ...CONTADOR_SUPERSEDED, CONTADOR_GATE, ...CONTADOR_FUTUROS],
+    goals_declarados: [declarado, ...comuns],
+  });
+  return {
+    bootstrap,
+    // R1: 001 declarado DONE, sem prova válida na branch → BLOCKED (divergencia).
+    r1: base({ id: R4_DIVERGENTE, situacao: 'DONE', commit: shaOrfao, branch, title: R4_DIVERGENTE, worktree: name }),
+    // R4: única alteração do manifesto — 001 passa a SUPERSEDED.
+    r4: base({ id: R4_DIVERGENTE, situacao: 'SUPERSEDED', title: R4_DIVERGENTE, worktree: name }),
+  };
+}
+
+const ledgerBruto = (repo) => fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/LEDGER.jsonl'), 'utf8').replace(/\r\n/g, '\n');
+const stateDe = (repo) => JSON.parse(fs.readFileSync(path.join(repo, 'docs/execution-tracks/demo/state.json'), 'utf8'));
+const projecaoDe = (repo) => countProjectedResults(projectLatestGoalStates(ledgerDe(repo)));
+
+function dryRunManifesto(repo, manifest) {
+  w(repo, 'import/demo/MANIFEST.json', `${JSON.stringify(manifest, null, 2)}\n`);
+  return aep(repo, ['import', 'demo', '--manifest=import/demo/MANIFEST.json', '--dry-run']);
+}
+
+/** Hash de cada arquivo de GOAL fechado — prova de que INALTERADO não é reescrito. */
+function hashesDosGoals(repo) {
+  const dir = path.join(repo, 'docs/execution-tracks/demo/_closed/goals');
+  return Object.fromEntries(fs.readdirSync(dir).sort()
+    .map((f) => [f, g(repo, 'hash-object', `docs/execution-tracks/demo/_closed/goals/${f}`).out.trim()]));
+}
+
+// ---- B. Reimportação idempotente -------------------------------------------
+
+test('B1: reimportar o manifesto idêntico anexa ZERO linhas e não cria commit', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const { r1 } = cenarioContador(repo, name);
+
+  assert.equal(importarManifesto(repo, r1).code, 0);
+  const ledgerAntes = ledgerBruto(repo);
+  const stateAntes = stateDe(repo);
+  const headAntes = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const goalsAntes = hashesDosGoals(repo);
+  assert.equal(ledgerDe(repo).length, 13, 'a primeira importação gera as 13 linhas do piloto');
+
+  const r = importarManifesto(repo, r1);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /NO-OP/);
+  assert.match(r.all, /linhas de ledger a anexar: 0/);
+
+  // Ledger: zero linhas novas e bytes anteriores idênticos.
+  assert.equal(ledgerBruto(repo), ledgerAntes);
+  assert.equal(ledgerDe(repo).length, 13);
+  // Contagens, estado, arquivos e HEAD intactos.
+  assert.deepEqual(stateDe(repo), stateAntes);
+  assert.deepEqual(hashesDosGoals(repo), goalsAntes);
+  assert.equal(g(repo, 'rev-parse', 'HEAD').out.trim(), headAntes, 'nenhum commit automático');
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '', 'reimportação idêntica não suja a árvore');
+  // Nenhuma segunda cópia de proveniência foi criada.
+  assert.equal(fs.existsSync(path.join(repo, 'docs/execution-tracks/demo/_closed/reports/IMPORT-2-MANIFEST.json')), false);
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+// ---- C. Revisão incremental R4 ---------------------------------------------
+
+test('C-R4: a revisão altera só o GOAL 001 — o ledger cresce de 13 para 14 linhas', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const produtivoAntes = g(repo, 'hash-object', 'app/produtivo.ts').out.trim();
+  const { r1, r4 } = cenarioContador(repo, name);
+
+  // --- R1: o cenário atual da trilha contador.
+  assert.equal(importarManifesto(repo, r1).code, 0);
+  assert.equal(ledgerDe(repo).length, 13);
+  assert.deepEqual(projecaoDe(repo), { DONE: 9, BLOCKED: 2, SUPERSEDED: 2 });
+  const st1 = stateDe(repo);
+  assert.equal(st1.counters.goals_done, 9);
+  assert.equal(st1.counters.goals_blocked, 2);
+  assert.equal(st1.counters.ledger_lines, 13);
+  const porId1 = Object.fromEntries(ledgerDe(repo).map((l) => [l.goal, l]));
+  assert.equal(porId1[R4_DIVERGENTE].result, 'BLOCKED');
+  assert.equal(porId1[R4_DIVERGENTE].blocked_by, 'divergencia');
+
+  const ledgerAntes = ledgerBruto(repo);
+  const goalsAntes = hashesDosGoals(repo);
+  const headAntes = g(repo, 'rev-parse', 'HEAD').out.trim();
+
+  // --- dry-run do R4: uma única mudança, uma única linha futura, zero escrita.
+  const dry = dryRunManifesto(repo, r4);
+  assert.equal(dry.code, 0, dry.all);
+  assert.match(dry.all, /delta: 0 NOVO · 1 ALTERADO · 12 INALTERADO/);
+  assert.match(dry.all, /linhas de ledger a anexar: 1/);
+  assert.match(dry.all, new RegExp(`ALTERADO\\s+${R4_DIVERGENTE}: BLOCKED → SUPERSEDED`));
+  assert.equal(ledgerBruto(repo), ledgerAntes, 'dry-run não escreve no ledger');
+  assert.deepEqual(stateDe(repo), st1);
+  assert.equal(g(repo, 'rev-parse', 'HEAD').out.trim(), headAntes, 'dry-run não commita');
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '');
+
+  // --- R4 real.
+  const r = importarManifesto(repo, r4);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /ledger: \+1 linha\(s\) anexada\(s\)/);
+
+  const ledgerDepois = ledgerBruto(repo);
+  assert.equal(ledgerDe(repo).length, 14, 'o ledger cresce de 13 para 14 — não para 26');
+  assert.equal(ledgerDepois.startsWith(ledgerAntes), true, 'o prefixo antigo permanece byte-a-byte idêntico');
+
+  // Contagem final do cenário R4.
+  assert.deepEqual(projecaoDe(repo), { DONE: 9, BLOCKED: 1, SUPERSEDED: 3 });
+  const st4 = stateDe(repo);
+  assert.equal(st4.counters.goals_done, 9);
+  assert.equal(st4.counters.goals_blocked, 1);
+  assert.equal(st4.counters.ledger_lines, 14);
+  assert.equal(st4.current_goal, null, '0 READY');
+  assert.equal(st4.next_goal, null);
+  assert.equal(fs.readdirSync(path.join(repo, 'docs/execution-tracks/demo/goals')).filter((f) => f.endsWith('.md')).length, 0);
+
+  // O GOAL 001 tem DUAS linhas no ledger e UM estado vigente.
+  const linhas001 = ledgerDe(repo).filter((l) => l.goal === R4_DIVERGENTE);
+  assert.equal(linhas001.length, 2);
+  assert.equal(linhas001[0].result, 'BLOCKED', 'a linha BLOCKED antiga continua no ledger');
+  assert.equal(linhas001[1].result, 'SUPERSEDED');
+  assert.equal(projectLatestGoalStates(ledgerDe(repo)).get(R4_DIVERGENTE).result, 'SUPERSEDED');
+
+  // Os 9 DONE não ganharam linha nova e seus arquivos não foram reescritos.
+  const goalsDepois = hashesDosGoals(repo);
+  for (const id of R4_DONE) {
+    assert.equal(ledgerDe(repo).filter((l) => l.goal === id).length, 1, id);
+    assert.equal(goalsDepois[`${id}.md`], goalsAntes[`${id}.md`], `${id}.md não pode ser reescrito`);
+  }
+  // 012G permanece BLOCKED pelo motivo canônico, em uma única linha.
+  const linhasGate = ledgerDe(repo).filter((l) => l.goal === CONTADOR_GATE);
+  assert.equal(linhasGate.length, 1);
+  assert.equal(linhasGate[0].blocked_by, 'gate');
+  assert.equal(linhasGate[0].reason, MOTIVO_GATE_HUMANO);
+  assert.equal(metaDe(repo, `docs/execution-tracks/demo/_closed/goals/${CONTADOR_GATE}.md`).status, 'BLOCKED');
+  // 013–019 continuam DRAFT: sem linha, sem arquivo, presentes na reconciliação.
+  const rec = reconciliacaoDe(repo);
+  for (const id of CONTADOR_FUTUROS) {
+    assert.equal(ledgerDe(repo).some((l) => l.goal === id), false, id);
+    assert.equal(fs.existsSync(path.join(repo, `docs/execution-tracks/demo/goals/${id}.md`)), false, id);
+    assert.match(rec, new RegExp(`\`${id}\` → DRAFT`));
+  }
+  // A reconciliação registra o delta e nenhum órfão.
+  assert.match(rec, /## 0\. Delta desta importação/);
+  assert.match(rec, new RegExp(`\`${R4_DIVERGENTE}\` — \\*\\*ALTERADO\\*\\*: BLOCKED → SUPERSEDED`));
+  assert.match(rec, /linhas anexadas ao LEDGER\.jsonl: 1/);
+  assert.match(rec, /### Órfãos preservados[\s\S]*?_\(nenhum\)_/);
+
+  // open recusa e nada produtivo foi tocado.
+  g(repo, 'checkout', '-q', '-b', 'goal/demo-pos-r4');
+  assert.notEqual(aep(repo, ['open', 'demo']).code, 0, 'nenhum GOAL é abrível após o R4');
+  g(repo, 'checkout', '-q', 'main');
+  assert.equal(g(repo, 'hash-object', 'app/produtivo.ts').out.trim(), produtivoAntes);
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '');
+});
+
+// ---- D. Segunda aplicação do R4 --------------------------------------------
+
+test('D-R4: aplicar o R4 duas vezes não duplica a reclassificação', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const { r1, r4 } = cenarioContador(repo, name);
+  assert.equal(importarManifesto(repo, r1).code, 0);
+  assert.equal(importarManifesto(repo, r4).code, 0);
+
+  const ledgerAntes = ledgerBruto(repo);
+  const stateAntes = stateDe(repo);
+  const headAntes = g(repo, 'rev-parse', 'HEAD').out.trim();
+
+  const r = importarManifesto(repo, r4);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /NO-OP/);
+  assert.equal(ledgerBruto(repo), ledgerAntes, 'zero linha adicionada na segunda aplicação');
+  assert.equal(ledgerDe(repo).length, 14);
+  assert.equal(ledgerDe(repo).filter((l) => l.goal === R4_DIVERGENTE && l.result === 'SUPERSEDED').length, 1,
+    'a reclassificação não é duplicada');
+  assert.deepEqual(stateDe(repo), stateAntes);
+  assert.deepEqual(projecaoDe(repo), { DONE: 9, BLOCKED: 1, SUPERSEDED: 3 });
+  assert.equal(g(repo, 'rev-parse', 'HEAD').out.trim(), headAntes);
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '');
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+// ---- E. Segurança da reimportação ------------------------------------------
+
+test('E1: GOAL fora do novo plano é PRESERVADO e reportado, nunca removido em silêncio', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  const declarado = { id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name };
+  assert.equal(importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001', 'demo-002'],
+    goals_declarados: [declarado, { id: 'demo-002', situacao: 'SUPERSEDED', title: 'Superado', worktree: name }],
+  })).code, 0);
+  assert.equal(ledgerDe(repo).length, 2);
+
+  // Novo plano esquece demo-002 por completo.
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001'], goals_declarados: [declarado],
+  }));
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /órfãos preservados[^\n]*demo-002\[SUPERSEDED\]/);
+  // Estado preservado: a linha continua no ledger e a projeção segue SUPERSEDED.
+  assert.equal(projectLatestGoalStates(ledgerDe(repo)).get('demo-002').result, 'SUPERSEDED');
+  assert.deepEqual(projecaoDe(repo), { DONE: 1, BLOCKED: 0, SUPERSEDED: 1 });
+  assert.match(reconciliacaoDe(repo), /`demo-002` — mantém `SUPERSEDED`/);
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
+});
+
+test('E2: regressão de DONE e perda de gate humano aparecem como delta sensível no dry-run', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  const sha = commitReal(repo, 'goal/demo-001', 'app/feito.ts', 'export const feito = 1;\n', 'goal(demo-001): feito');
+  assert.equal(importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001', 'demo-002'],
+    goals_declarados: [
+      { id: 'demo-001', situacao: 'DONE', commit: sha, branch: 'goal/demo-001', title: 'Feito', worktree: name },
+      { id: 'demo-002', situacao: 'READY', gate_humano: true, title: 'Sob gate', worktree: name },
+    ],
+  })).code, 0);
+  assert.deepEqual(projecaoDe(repo), { DONE: 1, BLOCKED: 1, SUPERSEDED: 0 });
+
+  // Nova revisão: 001 regride de DONE para SUPERSEDED e 002 perde o gate humano.
+  const dry = dryRunManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001', 'demo-002'],
+    goals_declarados: [
+      { id: 'demo-001', situacao: 'SUPERSEDED', title: 'Feito', worktree: name },
+      { id: 'demo-002', situacao: 'READY', title: 'Sem gate', worktree: name },
+    ],
+  }));
+  assert.equal(dry.code, 0, dry.all);
+  assert.match(dry.all, /deltas sensíveis: 2/);
+  assert.match(dry.all, /demo-001: regressão de DONE → SUPERSEDED/);
+  assert.match(dry.all, /demo-002: gate humano deixaria de bloquear → READY/);
+  // O dry-run não escreveu nada: o gate segue bloqueando e o DONE segue DONE.
+  assert.deepEqual(projecaoDe(repo), { DONE: 1, BLOCKED: 1, SUPERSEDED: 0 });
+  assert.equal(g(repo, 'status', '--porcelain').out.trim(), '');
+});
+
+test('E3: BLOCKED que muda de categoria é ALTERADO — divergencia por gate não passa muda', (t) => {
+  const { repo, name } = makeRepo(t);
+  initTrack(repo);
+  const bootstrap = g(repo, 'rev-parse', 'HEAD').out.trim();
+  assert.equal(importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001'],
+    goals_declarados: [{ id: 'demo-001', situacao: 'DONE', commit: 'f'.repeat(40), branch: 'goal/demo-001', title: 'Fantasma', worktree: name }],
+  })).code, 0);
+  assert.equal(ledgerDe(repo)[0].blocked_by, 'divergencia');
+
+  const r = importarManifesto(repo, manifestoBase(bootstrap, {
+    plano_ids: ['demo-001'],
+    goals_declarados: [{ id: 'demo-001', situacao: 'READY', gate_humano: true, title: 'Sob gate', worktree: name }],
+  }));
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.all, /1 ALTERADO/);
+  assert.match(r.all, /categoria de bloqueio divergencia → gate/);
+  assert.equal(ledgerDe(repo).length, 2);
+  assert.equal(projectLatestGoalStates(ledgerDe(repo)).get('demo-001').entrada.blocked_by, 'gate');
+  assert.deepEqual(projecaoDe(repo), { DONE: 0, BLOCKED: 1, SUPERSEDED: 0 });
+  assert.equal(aep(repo, ['verify', '--all']).code, 0);
 });

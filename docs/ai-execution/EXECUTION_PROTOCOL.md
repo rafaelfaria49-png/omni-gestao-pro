@@ -40,6 +40,22 @@ Somente `close`, `block`, `import`, `registry`, `init` e `sync-adapters` escreve
 `_closed/goals/` + `TRACK.md`. Não existe nele um único campo não derivável — é por isso
 que `verify` consegue detectar edição manual.
 
+### Projeção last-wins do ledger
+
+`LEDGER.jsonl` é **append-only**: linha ratificada nunca é removida, reescrita ou
+compactada. Um GOAL pode, portanto, ter vários eventos ao longo das revisões do plano.
+
+O **estado vigente** de um GOAL é o **último evento classificatório dele**, e o
+desempate é a **ordem física das linhas** — nunca `ts`, porque eventos de uma mesma
+importação carregam o mesmo timestamp. Vocabulário classificatório:
+`DONE`, `BLOCKED`, `SUPERSEDED`. Entrada sem `goal` ou com `result` fora do vocabulário
+não projeta estado e não entra em contagem; o `verify` denuncia o vocabulário desconhecido.
+
+Todas as contagens de `state.json`, do `status`, do `REGISTRY.md` e do `verify` saem
+dessa projeção — **um GOAL conta uma vez**, não uma vez por linha. A única exceção é
+`counters.ledger_lines`, que é o número físico de linhas do arquivo. `READY` vive em
+`goals/` e **nunca** gera linha de ledger; `DRAFT` também não.
+
 ### Ritual de planejamento
 
 Adicionar ou remover um GOAL em `goals/` é ato **humano** e muda o estado derivado
@@ -72,7 +88,7 @@ DRAFT ──(planejamento humano)──▶ READY ──(open)──▶ IN_PROGRE
 | --- | --- |
 | `PLANNED` | sem ledger, sem GOALs, sem GOALs fechados |
 | `RUNNING` | existe ao menos um GOAL `READY` em `goals/` |
-| `BLOCKED` | sem GOAL elegível e a última linha do ledger é `BLOCKED` |
+| `BLOCKED` | sem GOAL elegível e ao menos um GOAL com `BLOCKED` **na projeção vigente** |
 | `PAUSED` / `DONE` | sem GOAL elegível; qual dos dois vem de `completion_when_empty` no bloco `AEP:TRACK` do `TRACK.md` |
 
 Fechar o **último** GOAL da trilha é permitido: a ausência de próximo GOAL é informativa
@@ -180,6 +196,37 @@ gitignored e seu conteúdo bruto não é commitado, e o manifesto é copiado par
 `_closed/reports/IMPORT-<n>-MANIFEST.json` como proveniência. A saída é
 `_closed/reports/RECONCILIACAO.md` com confirmados, divergentes (com o comando e a saída
 que provam a divergência) e pendentes de planejamento.
+
+### Reimportação incremental (revisão de plano)
+
+A importação **não reanexa o que já está ratificado**. Ela compara o estado vigente
+projetado (§ 2) com o estado desejado pelo manifesto e classifica cada GOAL:
+
+| Classe | Efeito no ledger |
+| --- | --- |
+| `NOVO` | anexa uma linha classificatória |
+| `ALTERADO` | anexa **exatamente uma** linha nova; a antiga permanece como histórico |
+| `INALTERADO` | **nenhuma** linha |
+
+A comparação é de **estado**, não de proveniência: entram o `result`, a categoria do
+bloqueio (`blocked_by`) e o `head_commit` que prova um `DONE`. Ficam de fora `ts`,
+`plan_rev`, `superseded_from_rev`, `reason` e `evidencia` — incluí-los faria todo bump de
+revisão virar delta total e duplicaria o ledger inteiro.
+
+Consequências contratuais:
+
+- reimportar a **mesma revisão** é **NO-OP**: zero linha, zero arquivo, zero commit.
+  A âncora do "mesma revisão" é a cópia arquivada em `IMPORT-<n>-MANIFEST.json`;
+- arquivos de GOAL são regenerados, mas gravados **só quando o conteúdo muda** — a
+  proveniência de um `INALTERADO` carrega o `ts` do evento vigente, não o da importação;
+- GOAL com estado vigente e **ausente do novo plano** é preservado e reportado como
+  órfão. A importação nunca remove estado em silêncio;
+- regressão de `DONE`, mudança de categoria de bloqueio e perda de gate humano são
+  marcadas como **delta sensível** no `--dry-run` e na reconciliação;
+- as linhas do lote são anexadas em **uma única escrita**: importação interrompida não
+  deixa metade do lote ratificada;
+- `--dry-run` calcula o delta completo, informa quantas linhas seriam anexadas e **não
+  escreve nada**.
 
 ## 13. Códigos de saída
 
