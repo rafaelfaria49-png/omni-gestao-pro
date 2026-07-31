@@ -1,10 +1,24 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 1 · 2026-07-30T21:29:13.806Z
+- importação nº 2 · 2026-07-31T03:13:49.583Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-1-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-2-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
+
+## 0. Delta desta importação (projeção last-wins por GOAL)
+
+- delta: 0 NOVO · 1 ALTERADO · 12 INALTERADO
+- linhas anexadas ao LEDGER.jsonl: 1 (o ledger é append-only; nada foi reescrito)
+- `CONTADOR-HUB-STATUS-RECONCILE-001` — **ALTERADO**: BLOCKED → SUPERSEDED
+
+### Deltas sensíveis
+
+_(nenhum)_
+
+### Órfãos preservados (estado vigente, ausentes do plano)
+
+_(nenhum)_
 
 ## 1. Confirmados (DONE com prova no Git)
 
@@ -29,8 +43,7 @@
 
 ## 2. Divergentes (BLOCKED — nunca presumidos DONE)
 
-- `CONTADOR-HUB-STATUS-RECONCILE-001` → BLOCKED (`divergencia`) · DONE sem prova no Git
-  - evidência: `git merge-base --is-ancestor f56039918fb34a45e7f7790e861f0d871832469b origin/main` → exit 1 — commit fora da branch declarada
+_(nenhum)_
 
 ## 3. Pendentes de planejamento (DRAFT — fora de goals/)
 
@@ -64,6 +77,7 @@
 
 ## 5. Superados (SUPERSEDED → _closed/goals/)
 
+- `CONTADOR-HUB-STATUS-RECONCILE-001` — plan_rev 1 < 1
 - `CONTADOR-HUB-DOCUMENTOS-REAL-010` — plan_rev 1 < 1
 - `CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012` — plan_rev 1 < 1
 

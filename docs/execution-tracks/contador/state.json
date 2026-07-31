@@ -8,11 +8,11 @@
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
     "goals_done": 9,
-    "goals_blocked": 2,
+    "goals_blocked": 1,
     "goals_imported": 13,
-    "ledger_lines": 13
+    "ledger_lines": 14
   },
-  "last_goal": "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
-  "last_result": "BLOCKED",
-  "last_ratified_at": "2026-07-30T21:29:13.806Z"
+  "last_goal": "CONTADOR-HUB-STATUS-RECONCILE-001",
+  "last_result": "SUPERSEDED",
+  "last_ratified_at": "2026-07-31T03:13:49.583Z"
 }
