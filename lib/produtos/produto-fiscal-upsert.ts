@@ -14,9 +14,6 @@
 import {
   getProdutoFiscal,
   mergeProdutoFiscalIntoMetadata,
-  sanitizeProdutoFiscal,
-  PRODUTO_FISCAL_VAZIO,
-  type ProdutoFiscal,
   type ProdutoFiscalInput,
 } from "@/lib/produto-fiscal"
 
@@ -26,11 +23,13 @@ function asObject(value: unknown): Record<string, unknown> | null {
     : null
 }
 
-const FISCAL_KEYS = Object.keys(PRODUTO_FISCAL_VAZIO) as (keyof ProdutoFiscal)[]
-
 /**
  * Reescreve `metadata.fiscal` na forma canônica a partir de um metadata JÁ mesclado
  * (merge de 2 níveis do `upsertProduto`) e do input fiscal extraído do body.
+ *
+ * A SEMÂNTICA do merge parcial não mora aqui: é a de `mergeProdutoFiscalIntoMetadata`, a
+ * mesma usada por REST e importadores. Este adaptador só acrescenta a regra da porta V2 —
+ * descartar o bloco `fiscal` recebido do body, que pode trazer resíduo não canônico.
  *
  * Chame apenas quando houver sinal fiscal (`fiscalInputFromBody(body) != null`); sem sinal,
  * o merge de 2 níveis já preserva o `fiscal` existente e este helper não deve ser chamado.
@@ -39,19 +38,14 @@ export function canonicalizeProdutoFiscalMetadata(
   mergedMetadata: unknown,
   fiscalInput: ProdutoFiscalInput,
 ): Record<string, unknown> {
-  // Base = fiscal já mesclado campo a campo (existente + `metadata.fiscal` enviado), lido
-  // canonicamente (saneado; fallback legado do topo tratado por `getProdutoFiscal`).
-  const base = getProdutoFiscal({ metadata: mergedMetadata })
-  // Campos fiscais top-level do body sobrepõem a base — só os preenchidos, para não apagar
-  // os campos não reenviados (aliases origem/unidade resolvidos pelo saneamento).
-  const incoming = sanitizeProdutoFiscal(fiscalInput)
-  const fiscalSource: ProdutoFiscal = { ...base }
-  for (const key of FISCAL_KEYS) {
-    if (incoming[key]) fiscalSource[key] = incoming[key]
-  }
-  // Remove qualquer resíduo não canônico antes de gravar a forma compacta (só os 10 campos).
-  // Se nada fiscal sobrar, `mergeProdutoFiscalIntoMetadata` não recria a chave (JSONB enxuto).
-  const next = { ...(asObject(mergedMetadata) ?? {}) }
-  delete next.fiscal
-  return mergeProdutoFiscalIntoMetadata(next, fiscalSource)
+  // Identidade já mesclada (existente + `metadata.fiscal` do body), lida ANTES do descarte.
+  const fiscalAtual = getProdutoFiscal({ metadata: mergedMetadata })
+  const semFiscal = { ...(asObject(mergedMetadata) ?? {}) }
+  delete semFiscal.fiscal
+  // Duas passadas do MESMO contrato: a primeira regrava o bloco só com os campos canônicos,
+  // a segunda aplica o patch do body campo a campo (preservando o que não foi reenviado).
+  return mergeProdutoFiscalIntoMetadata(
+    mergeProdutoFiscalIntoMetadata(semFiscal, fiscalAtual),
+    fiscalInput,
+  )
 }
