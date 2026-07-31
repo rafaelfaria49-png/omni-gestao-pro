@@ -6,4 +6,4 @@ Semáforo: 🟢 rodando · 🟡 esperando humano · 🔴 bloqueado ou check falh
 
 | Trilha | Semáforo | Status | Risco | GOAL atual | Próximo | DONE | BLOCKED | Última ratificação |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| contador | 🟡 amarelo | PAUSED | MEDIO | — | — | 10 | 0 | 2026-07-31T15:53:54.922Z |
+| contador | 🟢 verde | RUNNING | MEDIO | CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013 | — | 10 | 0 | 2026-07-31T15:53:54.922Z |

@@ -1,20 +1,20 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 3 · 2026-07-31T15:53:54.922Z
+- importação nº 4 · 2026-07-31T16:37:41.366Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-3-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-4-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
 
-- delta: 0 NOVO · 1 ALTERADO · 12 INALTERADO
-- linhas anexadas ao LEDGER.jsonl: 1 (o ledger é append-only; nada foi reescrito)
-- `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` — **ALTERADO**: BLOCKED → DONE
+- delta: 1 NOVO · 0 ALTERADO · 13 INALTERADO
+- linhas anexadas ao LEDGER.jsonl: 0 (o ledger é append-only; nada foi reescrito)
+- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
 
 ### Deltas sensíveis
 
-- ⚠ `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` — gate humano deixaria de bloquear → DONE
+_(nenhum)_
 
 ### Órfãos preservados (estado vigente, ausentes do plano)
 
@@ -49,9 +49,6 @@ _(nenhum)_
 
 ## 3. Pendentes de planejamento (DRAFT — fora de goals/)
 
-- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` → DRAFT · no plano (`plano_ids`) e não declarado no manifesto
-  - planejamento futuro: não exige commit, branch nem prova no Git.
-  - fora do caminho quente, fora do ledger e NÃO elegível para `open`.
 - `CONTADOR-HUB-IDENTIDADE-CONVITE-014` → DRAFT · no plano (`plano_ids`) e não declarado no manifesto
   - planejamento futuro: não exige commit, branch nem prova no Git.
   - fora do caminho quente, fora do ledger e NÃO elegível para `open`.
@@ -83,4 +80,4 @@ _(nenhum)_
 
 ## 6. Caminho quente após a importação
 
-_(vazio)_
+- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` → `docs/execution-tracks/contador/goals/CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013.md` (READY)
