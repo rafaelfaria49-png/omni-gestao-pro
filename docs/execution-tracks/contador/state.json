@@ -7,12 +7,12 @@
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 10,
+    "goals_done": 11,
     "goals_blocked": 0,
-    "goals_imported": 13,
-    "ledger_lines": 15
+    "goals_imported": 14,
+    "ledger_lines": 16
   },
-  "last_goal": "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
+  "last_goal": "CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013",
   "last_result": "DONE",
-  "last_ratified_at": "2026-07-31T15:53:54.922Z"
+  "last_ratified_at": "2026-07-31T20:46:01.037Z"
 }

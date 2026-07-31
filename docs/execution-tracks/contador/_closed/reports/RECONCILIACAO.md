@@ -1,16 +1,16 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 4 · 2026-07-31T16:37:41.366Z
+- importação nº 5 · 2026-07-31T20:46:01.037Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-4-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-5-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
 
 - delta: 1 NOVO · 0 ALTERADO · 13 INALTERADO
-- linhas anexadas ao LEDGER.jsonl: 0 (o ledger é append-only; nada foi reescrito)
-- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
+- linhas anexadas ao LEDGER.jsonl: 1 (o ledger é append-only; nada foi reescrito)
+- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` — **NOVO**: (inexistente) → DONE
 
 ### Deltas sensíveis
 
@@ -42,6 +42,8 @@ _(nenhum)_
   - evidência: `git merge-base --is-ancestor 1f1190a078ea54e2092da02ce844856f380ec11c origin/main` → commit existe e está na branch declarada
 - `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` → DONE · commit `7f4361e52437f68c21c9748db06238d9a4412e11` · branch `origin/main`
   - evidência: `git merge-base --is-ancestor 7f4361e52437f68c21c9748db06238d9a4412e11 origin/main` → commit existe e está na branch declarada
+- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` → DONE · commit `0ef448ce5f669b7b25b40245507da14da488cf84` · branch `origin/main`
+  - evidência: `git merge-base --is-ancestor 0ef448ce5f669b7b25b40245507da14da488cf84 origin/main` → commit existe e está na branch declarada
 
 ## 2. Divergentes (BLOCKED — nunca presumidos DONE)
 
@@ -80,4 +82,4 @@ _(nenhum)_
 
 ## 6. Caminho quente após a importação
 
-- `CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013` → `docs/execution-tracks/contador/goals/CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013.md` (READY)
+_(vazio)_
