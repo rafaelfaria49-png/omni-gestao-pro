@@ -92,8 +92,9 @@ Categorias **não** são criadas automaticamente: a importação reaproveita
 ### Fiscal
 
 Só campos já aceitos por `lib/produto-fiscal.ts` — sem namespace paralelo.
-Persistidos: `ncm`, `cest`, `unidadeComercial`, `unidadeTributavel`, `gtinComercial`,
-`gtinTributavel`.
+A planilha **lê** `ncm`, `cest`, `unidadeComercial`, `unidadeTributavel`, `gtinComercial`
+e `gtinTributavel`; **persistidos** em `metadata.fiscal` são os quatro primeiros —
+os dois GTIN não fazem parte do contrato canônico e hoje só alimentam o match.
 
 - **NCM**: vazio ou exatamente 8 dígitos após remover pontuação. Valor com outro
   comprimento é **descartado e vira alerta visível** — não é completado com zero.
@@ -101,6 +102,38 @@ Persistidos: `ncm`, `cest`, `unidadeComercial`, `unidadeTributavel`, `gtinComerc
 - `gtinComercial` espelha o código de barras do item (é o `cEAN` da NF-e — o mesmo dado
   sob o nome fiscal). `gtinTributavel` só é preenchido quando explicitamente informado.
 - Tributação, CST, CSOSN e CFOP **não** são automatizados.
+
+#### Merge parcial não-destrutivo
+
+`mergeProdutoFiscalIntoMetadata` mescla **campo a campo** — nunca substitui o bloco
+`metadata.fiscal` inteiro. Uma planilha que traz só NCM/CEST não apaga unidade comercial,
+unidade tributável, origem, CFOP nem qualquer outro campo já curado.
+
+| Entrada para um campo | Efeito |
+|---|---|
+| chave ausente / `undefined` | preserva o valor atual |
+| `null` | preserva o valor atual — **não existe limpeza explícita** neste contrato |
+| string vazia ou só espaços | preserva o valor atual |
+| valor inválido (NCM curto, origem fora de `0..8`) | omitido; preserva o atual e **não** toca nos campos irmãos |
+| valor válido | substitui **somente** aquele campo |
+| entrada fiscal inteiramente vazia | `metadata.fiscal` atual fica intacto |
+
+- Namespaces irmãos (`importacao`, `acessorios`, `catalogoAparelhos`, `barcodeLookup`,
+  `atributos` e desconhecidos) são preservados integralmente — nenhum save fiscal apaga
+  proveniência de importação ou configuração de acessórios.
+- Chaves já persistidas **dentro** de `metadata.fiscal` fora do contrato canônico não são
+  interpretadas, mas também não são apagadas. Exceção: a porta do Cadastros V2
+  (`canonicalizeProdutoFiscalMetadata`) descarta o bloco `fiscal` recebido no body para
+  rejeitar resíduo não canônico, e nesse caminho as chaves fora do contrato não sobrevivem.
+- Produto legado com `metadata.ncm`/`metadata.cest` no topo tem a identidade **promovida**
+  para `metadata.fiscal` no primeiro save fiscal; a chave legada do topo é preservada.
+- Produto novo e produto existente usam **o mesmo** contrato de merge, assim como as portas
+  REST (`/api/produtos`), o `upsertProduto` do Cadastros V2 e os dois importadores.
+- O merge é **idempotente**: reaplicar o mesmo lote não altera o resultado.
+
+Isto é pré-requisito da **reimportação dos 13 produtos do Martins** (§11): sem ele, o
+segundo lote — que traz NCM/CEST — apagaria as unidades e a identidade fiscal revisada
+manualmente entre os dois lotes.
 
 ## 5. Política de estoque
 
@@ -279,6 +312,13 @@ Cobertura adicionada pela correção `...REVIEW_HARDENING_CORRECTIONS_001`:
 | [`produtos-listagem-sql.integration.test.ts`](../../../lib/cadastros/produtos-listagem-sql.integration.test.ts) | Cada filtro contra **PostgreSQL real**, cruzado com SQL independente; paridade `skuSintetico` × `isSyntheticImportSku`; isolamento multi-loja; entradas hostis. Pulado sem `PRODUTOS_LISTAGEM_SQL_IT=1`. |
 | [`importacao-produtos/ativacao.test.ts`](../../../lib/cadastros/importacao-produtos/ativacao.test.ts) | Política de ativação: fail-closed de preço zero, preservação da situação e reabertura de revisão por campo crítico. |
 | [`app/api/import/advanced/route.test.ts`](../../../app/api/import/advanced/route.test.ts) | Contrato multipart na **rota real**: `dominios[]` e `dominios`, dedupe, allowlist, e que domínio não selecionado **não é persistido**. |
+
+Cobertura adicionada pela correção `PRODUTO-FISCAL-METADATA-PARTIAL-MERGE-FIX-001`:
+
+| Arquivo | O que prova |
+|---|---|
+| [`lib/produto-fiscal.test.ts`](../../../lib/produto-fiscal.test.ts) | Semântica do merge parcial no helper: ausente / `undefined` / `null` / vazio / inválido preservam; só valor válido substitui; namespaces irmãos e chaves fora do contrato sobrevivem; idempotência; ausência de mutação do metadata recebido. |
+| [`lib/produtos/produto-fiscal-merge-parcial.test.ts`](../../../lib/produtos/produto-fiscal-merge-parcial.test.ts) | As 4 portas de escrita (Cadastros V2, REST POST/PATCH, importador avançado, importador especializado) produzem o **mesmo** `metadata.fiscal`; guarda de arquitetura contra montar o bloco à mão; fixture Martins do liquidificador `7899882308945` com patch NCM+CEST. |
 
 > Vitest sozinho não cobre o `SQLSTATE 42804`: ele importa TypeScript direto e não
 > atravessa o bundler. A prova exige `next build` + `next start` + chamada HTTP real.
