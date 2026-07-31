@@ -139,11 +139,72 @@ $ git status --short / git diff --name-only / git diff --stat
 
 ## 7. Publicação e reconciliação AEP
 
-(preenchido após o gate humano — ver relatório final da sessão)
+### 7.1 Autorização humana
 
-- Autorização humana: (pendente)
-- Commit da auditoria: (pendente)
-- Push fast-forward: (pendente)
-- Reconciliação (013 READY → DONE): (pendente)
-- Commit de reconciliação: (pendente)
-- Estado final AEP: (pendente)
+Gate humano liberado nesta sessão pela resposta humana literal:
+
+```
+AUTORIZO O PUSH FAST-FORWARD DA AUDITORIA DO CONTADOR 013 E SUA RECONCILIACAO AEP PARA ORIGIN/MAIN
+```
+
+Sem essa resposta, nenhum push foi feito. Nenhum force push em nenhuma etapa.
+
+### 7.2 Readiness (origin/main avançou durante a sessão)
+
+- `origin/main` no pré-flight: `958698c6b5d9e4c08d31c8a35cb501462c899a9c` (== SHA esperado).
+- Novo fetch antes do push: `origin/main` = `59bf1e6e4a69f8b4192afd20b74ef71ab6da4328`
+  (4 commits fiscais — `lib/produto-fiscal*`, `lib/produtos/produto-fiscal-*`,
+  `docs/modules/reports/IMPORTACAO_PRODUTOS_CONTRATO.md`). Contém `958698c`;
+  **zero interseção** com esta auditoria → commits reaplicados por `git rebase origin/main`
+  na mesma sessão, sem conflitos; AEP `verify --all` verde na nova base.
+- Commits reaplicados: `bd9f5d6 aep(contador): import 4 (plan_rev 1)` +
+  `0ef448c docs(contador): auditar portal externo do contador`.
+
+### 7.3 Publicação (fast-forward, sem force)
+
+```
+$ git merge-base --is-ancestor origin/main HEAD   → exit 0 (FF possível)
+$ git push origin HEAD:main                       → 59bf1e6..0ef448c  HEAD -> main
+$ git rev-parse HEAD origin/main                  → ambos 0ef448ce5f669b7b25b40245507da14da488cf84
+$ git rev-list --left-right --count origin/main...HEAD → 0	0
+```
+
+- **SHA publicado em `origin/main`: `0ef448ce5f669b7b25b40245507da14da488cf84`**
+- Conteúdo: somente os 3 documentos autorizados + artefatos AEP oficiais da ativação
+  (IMPORT-4, RECONCILIACAO, state.json, REGISTRY.md, goals/013.md). Zero código produtivo.
+
+### 7.4 Reconciliação (013 READY → DONE)
+
+- Manifesto: cópia gitignored (`import/contador/MANIFEST.json`) alterando **somente** 013
+  → `DONE` · commit `0ef448ce5f669b7b25b40245507da14da488cf84` · branch `origin/main`
+  · `gate_humano.aprovacao` registrada com a frase literal da autorização.
+- Dry-run: `1 NOVO (013 (inexistente) → DONE) · 0 ALTERADO · 13 INALTERADO ·
+  1 linha de ledger a anexar · 0 sensíveis · 0 órfãos` — uma única transição para DONE;
+  `git status --porcelain` vazio (zero escrita).
+- Import real: ledger +1 linha (16 total, nenhuma linha antiga reescrita),
+  `IMPORT-5-MANIFEST.json` arquivado, `_closed/goals/…013.md` regenerado como DONE,
+  commit de estado do importador `a53d3ab10256c581bca3bc8feeb988967e3d9f06`
+  (somente `docs/execution-tracks/**`).
+- Fechamento do GOAL pelo fluxo oficial: `track.mjs check` documentou que `close` não se
+  aplica nesta topologia (artefatos AEP oficiais fora da allowlist do GOAL — itens 6/8 —
+  e worktree sem `node_modules` — item 10; nada foi escrito pelo check). Aplicado então o
+  ritual documentado do próprio `track.mjs` para reconciliação humana de `goals/`:
+  remoção do arquivo quente obsoleto `goals/…013.md` (o documento DONE com proveniência
+  já existia em `_closed/goals/…013.md`), remoção de `.aep-active` (sessão encerrada,
+  gitignored) e `node scripts/track.mjs registry` → `state.json` PAUSED,
+  `current_goal null`, REGISTRY/GATES regenerados.
+
+### 7.5 Estado final AEP
+
+```
+state.json: PAUSED · current_goal null · next_goal null
+counters: goals_done 11 · goals_blocked 0 · goals_imported 14 · ledger_lines 16
+last_goal: CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013 · last_result: DONE
+```
+
+**11 DONE · 3 SUPERSEDED · 0 BLOCKED · 6 DRAFT (014–019) · 0 READY · 013 DONE.**
+
+- Commit de reconciliação: `aep(contador): fecha auditoria do portal externo 013`
+  (remoção do arquivo quente obsoleto + state.json/REGISTRY regenerados + esta evidência).
+- Push do commit de reconciliação: fast-forward, confirmado `0/0` ao final
+  (SHA final registrado no relatório da sessão).
