@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "contador",
-  "status": "BLOCKED",
+  "status": "PAUSED",
   "risk_tier": "MEDIO",
   "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 9,
-    "goals_blocked": 1,
+    "goals_done": 10,
+    "goals_blocked": 0,
     "goals_imported": 13,
-    "ledger_lines": 14
+    "ledger_lines": 15
   },
-  "last_goal": "CONTADOR-HUB-STATUS-RECONCILE-001",
-  "last_result": "SUPERSEDED",
-  "last_ratified_at": "2026-07-31T03:13:49.583Z"
+  "last_goal": "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
+  "last_result": "DONE",
+  "last_ratified_at": "2026-07-31T15:53:54.922Z"
 }

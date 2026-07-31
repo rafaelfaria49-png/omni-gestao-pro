@@ -4,10 +4,10 @@
   "id": "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
   "track": "contador",
   "title": "<PREENCHER>",
-  "status": "BLOCKED",
+  "status": "DONE",
   "class": "C2",
   "risk_tier": "ALTO",
-  "branch": "goal/contador-MAIN-<slug>",
+  "branch": "origin/main",
   "worktree": "<PREENCHER>",
   "test_command": "npm run typecheck",
   "allowlist": [
@@ -87,9 +87,13 @@
   ],
   "gate_humano": {
     "requerido": true,
-    "pendente": true,
-    "motivo": "gate humano exigido pelo manifesto; nenhuma evidência de aprovação registrada",
-    "decisao": "HUMAN_PUSH_AUTHORIZATION_NOT_SENT"
+    "pendente": false,
+    "aprovacao": {
+      "aprovado": true,
+      "autorizacao": "AUTORIZO O PUSH FAST-FORWARD DO CONTADOR 012G E SUA RECONCILIACAO AEP PARA ORIGIN/MAIN",
+      "registrado_por": "humano na sessao Kimi K3 (chat)",
+      "em": "2026-07-31T15:52:23Z"
+    }
   }
 }
 -->
@@ -97,9 +101,9 @@
 # CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN — <PREENCHER>
 
 - trilha: `contador`
-- classe: C2 · status: BLOCKED
+- classe: C2 · status: DONE
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
-- branch: `goal/contador-MAIN-<slug>`
+- branch: `origin/main`
 - teste: `npm run typecheck`
 
 ## Fontes (documentos de origem — o importador NÃO reimplementa nada)
@@ -121,9 +125,8 @@
 - `prisma/schema.prisma`
 - `prisma/migrations/0014_contador_hub_nucleo/**`
 
-## Gate humano pendente — BLOCKED
+## Proveniência
 
-- motivo: gate humano exigido pelo manifesto; nenhuma evidência de aprovação registrada
-- decisão humana requerida: `HUMAN_PUSH_AUTHORIZATION_NOT_SENT`
-- este GOAL NÃO está READY, NÃO é elegível e NÃO pode ser aberto por track.mjs.
-- ausência de aprovação NÃO libera o GOAL — a liberação exige evidência explícita registrada pelo fluxo oficial do AEP.
+- importado de `CONTADOR-HUB-FABLE5-MASTERPLAN-001` em 2026-07-31T15:53:54.922Z
+- commit confirmado: `7f4361e52437f68c21c9748db06238d9a4412e11` na branch `origin/main`
+- evidência: `git merge-base --is-ancestor 7f4361e52437f68c21c9748db06238d9a4412e11 origin/main` → commit existe e está na branch declarada

@@ -1,20 +1,20 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 2 · 2026-07-31T03:13:49.583Z
+- importação nº 3 · 2026-07-31T15:53:54.922Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-2-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-3-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
 
 - delta: 0 NOVO · 1 ALTERADO · 12 INALTERADO
 - linhas anexadas ao LEDGER.jsonl: 1 (o ledger é append-only; nada foi reescrito)
-- `CONTADOR-HUB-STATUS-RECONCILE-001` — **ALTERADO**: BLOCKED → SUPERSEDED
+- `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` — **ALTERADO**: BLOCKED → DONE
 
 ### Deltas sensíveis
 
-_(nenhum)_
+- ⚠ `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` — gate humano deixaria de bloquear → DONE
 
 ### Órfãos preservados (estado vigente, ausentes do plano)
 
@@ -40,6 +40,8 @@ _(nenhum)_
   - evidência: `git merge-base --is-ancestor 2d808c442428f41bc1417917421ac8b6c29ab6e6 origin/main` → commit existe e está na branch declarada
 - `CONTADOR-HUB-STATUS-COMENTARIOS-011` → DONE · commit `1f1190a078ea54e2092da02ce844856f380ec11c` · branch `origin/main`
   - evidência: `git merge-base --is-ancestor 1f1190a078ea54e2092da02ce844856f380ec11c origin/main` → commit existe e está na branch declarada
+- `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` → DONE · commit `7f4361e52437f68c21c9748db06238d9a4412e11` · branch `origin/main`
+  - evidência: `git merge-base --is-ancestor 7f4361e52437f68c21c9748db06238d9a4412e11 origin/main` → commit existe e está na branch declarada
 
 ## 2. Divergentes (BLOCKED — nunca presumidos DONE)
 
@@ -71,9 +73,7 @@ _(nenhum)_
 
 ## 4. Bloqueados por gate humano (BLOCKED — não executáveis)
 
-- `CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN` → BLOCKED (`gate`) · gate humano exigido pelo manifesto; nenhuma evidência de aprovação registrada
-  - decisão humana requerida: `HUMAN_PUSH_AUTHORIZATION_NOT_SENT`
-  - ausência de aprovação NÃO libera o GOAL — exige evidência explícita registrada pelo fluxo oficial do AEP.
+_(nenhum)_
 
 ## 5. Superados (SUPERSEDED → _closed/goals/)
 
