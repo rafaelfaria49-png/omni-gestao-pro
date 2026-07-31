@@ -109,6 +109,133 @@ describe("mergeProdutoFiscalIntoMetadata — escrita canônica", () => {
   })
 })
 
+// ── Merge PARCIAL não-destrutivo ────────────────────────────────────────────────────
+// Defeito fechado: um patch com NCM/CEST substituía `metadata.fiscal` inteiro e apagava
+// unidade comercial/tributável e demais campos já curados.
+describe("mergeProdutoFiscalIntoMetadata — merge parcial não-destrutivo", () => {
+  const completo = {
+    fiscal: {
+      ncm: "85094010",
+      cest: "2104100",
+      cfop: "5102",
+      cst: "00",
+      csosn: "102",
+      origemMercadoria: "0",
+      unidadeComercial: "UN",
+      unidadeTributavel: "UN",
+      codigoAnp: "123456789",
+      exTipi: "001",
+    },
+  }
+
+  it("metadata fiscal AUSENTE: patch parcial grava só o que veio", () => {
+    expect(mergeProdutoFiscalIntoMetadata({}, { ncm: "85094010" }).fiscal).toEqual({
+      ncm: "85094010",
+    })
+  })
+
+  it("metadata fiscal COMPLETA + patch só NCM: os outros 9 campos sobrevivem", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, { ncm: "85176200" })
+    expect(meta.fiscal).toEqual({ ...completo.fiscal, ncm: "85176200" })
+  })
+
+  it("patch só CEST preserva NCM e unidades", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, { cest: "2106400" })
+    expect(meta.fiscal).toEqual({ ...completo.fiscal, cest: "2106400" })
+  })
+
+  it("patch NCM + CEST preserva unidades, origem, CFOP, CST e CSOSN", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, { ncm: "85176200", cest: "2106400" })
+    expect(meta.fiscal).toEqual({ ...completo.fiscal, ncm: "85176200", cest: "2106400" })
+  })
+
+  it("campos `undefined` no patch não apagam nada", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, {
+      ncm: "85176200",
+      cest: undefined,
+      unidadeComercial: undefined,
+    })
+    expect(meta.fiscal).toEqual({ ...completo.fiscal, ncm: "85176200" })
+  })
+
+  it("patch VAZIO não substitui o metadata.fiscal atual", () => {
+    expect(mergeProdutoFiscalIntoMetadata(completo, {}).fiscal).toEqual(completo.fiscal)
+    expect(mergeProdutoFiscalIntoMetadata(completo, null).fiscal).toEqual(completo.fiscal)
+  })
+
+  it("`null` explícito preserva o campo — não há canal de limpeza no contrato vigente", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, {
+      ncm: "85176200",
+      cest: null,
+      unidadeComercial: null,
+      unidadeTributavel: null,
+    })
+    expect(meta.fiscal).toEqual({ ...completo.fiscal, ncm: "85176200" })
+  })
+
+  it("string vazia é 'não informado' — preserva, não apaga", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, { ncm: "", cest: "   " })
+    expect(meta.fiscal).toEqual(completo.fiscal)
+  })
+
+  it("valor INVÁLIDO é omitido e não apaga o campo nem os irmãos", () => {
+    const meta = mergeProdutoFiscalIntoMetadata(completo, {
+      ncm: "123",
+      origemMercadoria: "9",
+      cfop: "ab",
+    })
+    expect(meta.fiscal).toEqual(completo.fiscal)
+  })
+
+  it("namespaces irmãos do metadata são preservados integralmente", () => {
+    const base = {
+      ...completo,
+      importacao: { ultimoLote: { batchId: "lote-1" } },
+      acessorios: { version: 1, modelos: ["a05"] },
+      catalogoAparelhos: { deviceModelKeys: ["a05"] },
+      barcodeLookup: { gtin: "7899882308945", provedor: "cosmos" },
+      atributos: { descricao: "x" },
+      namespaceDesconhecido: { qualquer: true },
+    }
+    const meta = mergeProdutoFiscalIntoMetadata(base, { cest: "2106400" })
+    expect(meta.importacao).toEqual(base.importacao)
+    expect(meta.acessorios).toEqual(base.acessorios)
+    expect(meta.catalogoAparelhos).toEqual(base.catalogoAparelhos)
+    expect(meta.barcodeLookup).toEqual(base.barcodeLookup)
+    expect(meta.atributos).toEqual(base.atributos)
+    expect(meta.namespaceDesconhecido).toEqual(base.namespaceDesconhecido)
+  })
+
+  it("chave já persistida DENTRO de fiscal fora do contrato não é apagada", () => {
+    const base = { fiscal: { ncm: "85094010", gtinComercial: "7899882308945" } }
+    const meta = mergeProdutoFiscalIntoMetadata(base, { cest: "2104100" })
+    expect(meta.fiscal).toEqual({
+      ncm: "85094010",
+      cest: "2104100",
+      gtinComercial: "7899882308945",
+    })
+  })
+
+  it("produto legado (ncm no topo) tem a identidade promovida, não perdida", () => {
+    const meta = mergeProdutoFiscalIntoMetadata({ ncm: "85094010" }, { cest: "2104100" })
+    expect(meta.fiscal).toEqual({ ncm: "85094010", cest: "2104100" })
+    expect(meta.ncm).toBe("85094010")
+    expect(getProdutoFiscal({ metadata: meta }).ncm).toBe("85094010")
+  })
+
+  it("é idempotente: reaplicar o mesmo patch não muda o resultado", () => {
+    const um = mergeProdutoFiscalIntoMetadata(completo, { ncm: "85176200", cest: "2106400" })
+    const dois = mergeProdutoFiscalIntoMetadata(um, { ncm: "85176200", cest: "2106400" })
+    expect(dois).toEqual(um)
+  })
+
+  it("não muta o metadata recebido", () => {
+    const base = { fiscal: { ncm: "85094010" }, importacao: { lote: 1 } }
+    mergeProdutoFiscalIntoMetadata(base, { cest: "2104100" })
+    expect(base.fiscal).toEqual({ ncm: "85094010" })
+  })
+})
+
 describe("fiscalInputFromBody — API (top-level ou metadata.fiscal)", () => {
   it("extrai campos fiscais top-level do body", () => {
     const inp = fiscalInputFromBody({ name: "x", ncm: "85176200", cfop: "5102" })
