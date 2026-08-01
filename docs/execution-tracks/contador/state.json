@@ -1,9 +1,9 @@
 {
   "aep": "1.0-R2",
   "track": "contador",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "MEDIO",
-  "current_goal": "CONTADOR-HUB-IDENTIDADE-CONVITE-014",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
