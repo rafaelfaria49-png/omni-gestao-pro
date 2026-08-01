@@ -9,7 +9,7 @@
     "dev": "next dev --webpack -p 3000 -H 0.0.0.0",
     "dev:clean": "npx kill-port 3000 && npm run dev",
     "dev:https": "next dev --webpack --experimental-https",
-    "build": "prisma generate && next build --webpack",
+    "build": "node scripts/vercel-build.mjs",
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "node --max-old-space-size=4096 ./node_modules/typescript/lib/tsc.js --noEmit",
