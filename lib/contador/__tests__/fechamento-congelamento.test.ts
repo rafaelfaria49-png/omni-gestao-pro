@@ -33,7 +33,7 @@ process.env.AUTH_SECRET ??= "segredo-de-teste-012e"
 const COMP = { ano: 2026, mes: 7 }
 const CODIGO = "2026-07"
 const ESCOPO = { storeId: "loja-1", userId: "user-1" }
-const ELEVADO = { acessaHub: true, podeConferir: true } as const
+const ELEVADO = { acessaHub: true, podeConferir: true, podeGerenciarAcessoExterno: true } as const
 
 /* ─────────────────────────── documentos ─────────────────────────── */
 

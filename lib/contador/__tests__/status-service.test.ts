@@ -126,8 +126,8 @@ function fakeDb(docs: DocRow[]): FakeDb {
 const AGORA = new Date("2026-07-28T12:00:00.000Z")
 const ESCOPO_A = { storeId: "loja-1", userId: "user-1" }
 const ESCOPO_B = { storeId: "loja-2", userId: "user-2" }
-const ELEVADO = { acessaHub: true, podeConferir: true } as const
-const BASICO = { acessaHub: true, podeConferir: false } as const
+const ELEVADO = { acessaHub: true, podeConferir: true, podeGerenciarAcessoExterno: true } as const
+const BASICO = { acessaHub: true, podeConferir: false, podeGerenciarAcessoExterno: false } as const
 
 function doc(over: Partial<DocRow> = {}): DocRow {
   return {

@@ -37,7 +37,7 @@ import type { ArquivoPacote, PacoteContador } from "@/lib/contador/pacote/tipos"
 const AGORA = new Date("2026-08-05T12:00:00.000Z")
 const COMP = { ano: 2026, mes: 7 }
 const CODIGO = "2026-07"
-const ELEVADO = { acessaHub: true, podeConferir: true } as const
+const ELEVADO = { acessaHub: true, podeConferir: true, podeGerenciarAcessoExterno: true } as const
 const SCOPE = { ok: true, storeId: "loja-1", userId: "user-1", permissaoContador: true } as unknown as ContadorScopeInterno
 const ESCOPO = { storeId: "loja-1", userId: "user-1" }
 

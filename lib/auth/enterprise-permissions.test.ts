@@ -139,6 +139,7 @@ describe("getEnterprisePermissions — matriz por papel", () => {
     expect(p.operacoes.cancelarOs).toBe(true)
     expect(p.pdv.cancelarVenda).toBe(true)
     expect(p.auditoria).toBe(true)
+    expect(p.contador.manageExternalAccess).toBe(true) // GOAL 014 — permissão específica
   })
 
   it("GERENTE: igual a admin mas sem master console", () => {
@@ -146,6 +147,9 @@ describe("getEnterprisePermissions — matriz por papel", () => {
     expect(p.admin.masterConsole).toBe(true) // gerente herda FULL atualmente (matriz Fase 1)
     expect(p.auditoria).toBe(true)
     expect(p.financeiro.fecharPeriodo).toBe(true)
+    // GOAL 014: capacidade do Contador HUB como permissão EXPLÍCITA do domínio
+    // (não derivada de financeiro.edit — fallback silencioso proibido no G3).
+    expect(p.contador.manageExternalAccess).toBe(true)
   })
 
   it("CAIXA: NÃO tem IA Mestre, NÃO tem omni-agent, NÃO tem financeiro, NÃO tem unidades", () => {
@@ -159,6 +163,7 @@ describe("getEnterprisePermissions — matriz por papel", () => {
     expect(p.pdv.cancelarVenda).toBe(false)
     expect(p.financeiro.fecharPeriodo).toBe(false)
     expect(p.auditoria).toBe(false)
+    expect(p.contador.manageExternalAccess).toBe(false) // GOAL 014 — sem acesso externo
   })
 
   it("CAIXA: tem PDV abrir/fechar caixa + devolução + WhatsApp", () => {

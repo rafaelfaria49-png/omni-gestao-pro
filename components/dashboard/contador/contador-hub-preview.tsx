@@ -63,13 +63,13 @@ import {
 import { ContadorDocumentosReal } from "./documentos/contador-documentos-real"
 import { ContadorFechamentoReal } from "./fechamento/contador-fechamento-real"
 import { ContadorTimelineReal } from "./timeline/contador-timeline-real"
+import { ContadorPermissoesReal } from "./permissoes/contador-permissoes-real"
 import {
   CONTADOR_SECTIONS,
   DOSSIES,
   DOSSIE_FILTERS,
   FOLHA_FUNCIONARIOS,
   OBRIGACOES_ROWS,
-  PERMISSOES_ROWS,
   PORTAL_NAO_PODE,
   PORTAL_PODE,
   RADAR_CNPJ,
@@ -912,52 +912,8 @@ export function ContadorHubPreview({
     </>
   )
 
-  /* ── seção: Permissões ── */
-  const renderPermissoes = () => (
-    <>
-      <SectionHeader
-        title="Permissões & acesso"
-        desc="Convide o contador e defina o que ele enxerga. Tudo é somente leitura para ele."
-      />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
-          <h3 className="mb-3 text-[15px] font-semibold text-foreground">Convidar contador</h3>
-          <div className="mb-4 flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-foreground/80">E-mail do contador</label>
-            <input
-              type="email"
-              placeholder="contato@escritorio.com.br"
-              className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[13px] text-foreground outline-none focus:border-primary focus:bg-card"
-            />
-          </div>
-          <Btn variant="primary" className="w-full" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Enviar convite")}>
-            Enviar convite · preview
-          </Btn>
-          <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-foreground">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-sky-500" />
-            O acesso externo real é uma fase futura (autenticação + LGPD).
-          </div>
-        </Card>
-        <Card>
-          <CardHead title="O que o contador vê" right={<span className="text-xs text-muted-foreground">somente leitura</span>} />
-          <div className="px-4 py-1.5">
-            {PERMISSOES_ROWS.map((p, i) => (
-              <div
-                key={p.label}
-                className={cn("flex items-center justify-between gap-3.5 py-3", i < PERMISSOES_ROWS.length - 1 && "border-b border-border/60")}
-              >
-                <div>
-                  <b className="text-[13.5px] font-semibold text-foreground">{p.label}</b>
-                  <small className="block text-[11.5px] text-muted-foreground">{p.sub}</small>
-                </div>
-                <Switch defaultChecked={p.on} disabled title={CTA_INDISPONIVEL_TITLE} aria-label={p.label} />
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-    </>
-  )
+  /* ── seção: Permissões (REAL — GOAL 014) ── */
+  const renderPermissoes = () => <ContadorPermissoesReal />
 
   /* ── seção: Timeline (REAL — GOAL 011) ── */
   const renderTimeline = () => <ContadorTimelineReal competencia={competencia} />

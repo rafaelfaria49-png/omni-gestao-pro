@@ -20,6 +20,7 @@ import {
   resolveLegacyPortalEnabled,
   verifyContadorSessionToken,
 } from "@/lib/contador/auth/legacy-session"
+import { isSegmentoContadorExterno } from "@/lib/contador/auth-externa/proxy-publico"
 
 const { auth } = NextAuth(authConfig)
 
@@ -87,6 +88,20 @@ export const proxy = auth(async (req) => {
     isLoginContadorPath(pathname)
   ) {
     return NextResponse.next()
+  }
+
+  // GOAL 014 (ajuste G3 #4): o segmento do portal externo do contador NÃO é ERP —
+  // não exige selo de assinatura da loja nem sessão NextAuth. Público SOMENTE nas
+  // 3 rotas exatas de `CONTADOR_EXTERNO_ROTAS_PUBLICAS` (classificação pura em
+  // `lib/contador/auth-externa/proxy-publico.ts`); todo o restante do segmento se
+  // autoprotege no servidor, falhando fechado (páginas server-validam a sessão
+  // externa; APIs respondem 401/403). O gate de sessão externa no proxy é GOAL 015.
+  // `Referrer-Policy: no-referrer`: o token de convite trafega no fragmento
+  // (`#token=`) e nunca pode vazar via Referer (R-1).
+  if (isSegmentoContadorExterno(pathname)) {
+    const res = NextResponse.next()
+    res.headers.set("Referrer-Policy", "no-referrer")
+    return res
   }
 
   const cookie = req.cookies.get(SUBSCRIPTION_COOKIE_NAME)?.value

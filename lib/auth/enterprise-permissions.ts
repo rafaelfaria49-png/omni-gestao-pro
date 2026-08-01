@@ -33,6 +33,13 @@ export type EnterprisePermissions = {
   }
   /** Administração */
   admin: { masterConsole: boolean; unidades: boolean; configuracoes: boolean }
+  /**
+   * Contador HUB — permissões ESPECÍFICAS do domínio (GOAL 014, ajuste G3).
+   * `manageExternalAccess`: gerenciar a identidade EXTERNA do contador (convites,
+   * vínculos e suspensão/reativação da identidade). Permissão explícita do
+   * domínio — NÃO é derivada de `financeiro.edit` (sem fallback silencioso).
+   */
+  contador: { manageExternalAccess: boolean }
   /** PDV / operações de caixa (APIs devem revalidar) */
   pdv: {
     abrirCaixa: boolean
@@ -72,6 +79,7 @@ const FULL: EnterprisePermissions = {
     contador: true,
   },
   admin: { masterConsole: true, unidades: true, configuracoes: true },
+  contador: { manageExternalAccess: true },
   pdv: { abrirCaixa: true, fecharCaixa: true, cancelarVenda: true, devolucao: true },
   financeiro: { view: true, edit: true, fecharPeriodo: true, conciliacao: true },
   operacoes: {
@@ -92,6 +100,7 @@ function merge(a: Partial<EnterprisePermissions>, base: EnterprisePermissions = 
     workspace: { ...base.workspace, ...a.workspace },
     hubs: { ...base.hubs, ...a.hubs },
     admin: { ...base.admin, ...a.admin },
+    contador: { ...base.contador, ...a.contador },
     pdv: { ...base.pdv, ...a.pdv },
     financeiro: { ...base.financeiro, ...a.financeiro },
     operacoes: { ...base.operacoes, ...a.operacoes },
@@ -120,6 +129,9 @@ export function getEnterprisePermissions(role: string | undefined | null): Enter
       return merge({
         auditoria: true,
         financeiro: { view: true, edit: true, fecharPeriodo: true, conciliacao: true },
+        // Capacidade operacional do Contador HUB como permissão EXPLÍCITA do
+        // domínio (antes derivada de financeiro.edit — fallback proibido no G3).
+        contador: { manageExternalAccess: true },
       })
     case "caixa":
       return merge({
@@ -137,6 +149,7 @@ export function getEnterprisePermissions(role: string | undefined | null): Enter
           contador: false,
         },
         admin: { masterConsole: false, unidades: false, configuracoes: false },
+        contador: { manageExternalAccess: false },
         pdv: { abrirCaixa: true, fecharCaixa: true, cancelarVenda: false, devolucao: true },
         financeiro: { view: false, edit: false, fecharPeriodo: false, conciliacao: false },
         operacoes: {
@@ -167,6 +180,7 @@ export function getEnterprisePermissions(role: string | undefined | null): Enter
           contador: false,
         },
         admin: { masterConsole: false, unidades: false, configuracoes: false },
+        contador: { manageExternalAccess: false },
         pdv: { abrirCaixa: false, fecharCaixa: false, cancelarVenda: false, devolucao: false },
         financeiro: { view: false, edit: false, fecharPeriodo: false, conciliacao: false },
         operacoes: {
@@ -198,6 +212,7 @@ export function getEnterprisePermissions(role: string | undefined | null): Enter
           contador: false,
         },
         admin: { masterConsole: false, unidades: false, configuracoes: false },
+        contador: { manageExternalAccess: false },
         pdv: { abrirCaixa: true, fecharCaixa: true, cancelarVenda: false, devolucao: true },
         financeiro: { view: false, edit: false, fecharPeriodo: false, conciliacao: false },
         operacoes: {

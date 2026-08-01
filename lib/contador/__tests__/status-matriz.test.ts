@@ -196,6 +196,10 @@ describe("status · capacidades derivadas da sessão (nunca do cliente)", () => 
   )
 
   it("sessão ausente → fail-closed", () => {
-    expect(resolverCapacidadesContador(null)).toEqual({ acessaHub: false, podeConferir: false })
+    expect(resolverCapacidadesContador(null)).toEqual({
+      acessaHub: false,
+      podeConferir: false,
+      podeGerenciarAcessoExterno: false,
+    })
   })
 })

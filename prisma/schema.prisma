@@ -118,6 +118,9 @@ model Store {
   contadorCompetencias     ContadorCompetencia[]
   contadorDocumentos       ContadorDocumento[]
   contadorEventos          ContadorEvento[]
+  // ─── Contador HUB identidade externa (GOAL 014 — aditivo; só relações inversas) ──
+  contadorConvites         ContadorConvite[]
+  contadorAcessos          ContadorAcesso[]
 
   @@index([profile])
   @@map("stores")
@@ -2821,4 +2824,145 @@ model ContadorEvento {
   @@index([competenciaId, createdAt])
   @@index([tipo])
   @@map("contador_eventos")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contador HUB · IDENTIDADE EXTERNA, VÍNCULO, CONVITE E SESSÃO (GOAL 014)
+//
+// Blocos 100% NOVOS e aditivos (migration 0015). Zero alteração em models
+// existentes. Desenho aprovado no gate G3:
+// docs/contador/CONTADOR_HUB_IDENTIDADE_CONVITE_014_SCHEMA_PROPOSAL.md
+//
+// A identidade externa é SEPARADA por construção: nenhuma relação/FK com
+// AdminUser/AdminUserStore, nenhum papel interno, nenhuma permissão do ERP.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Ciclo de vida da identidade externa do contador. */
+enum ContadorUsuarioStatus {
+  ATIVO    @map("ativo")
+  SUSPENSO @map("suspenso")
+}
+
+/** Papel externo mínimo do vínculo contador↔loja. Nenhum papel "all". */
+enum ContadorPapelExterno {
+  LEITURA     @map("leitura")
+  CONFERENCIA @map("conferencia")
+}
+
+/** Ciclo de vida do vínculo. Revogação é terminal; reconcessão reativa a mesma linha. */
+enum ContadorAcessoStatus {
+  ATIVO    @map("ativo")
+  SUSPENSO @map("suspenso")
+  REVOGADO @map("revogado")
+}
+
+/**
+ * Identidade externa dedicada do contador (GOAL 014, §A da proposta).
+ *
+ * SEM role, SEM lojaId, SEM storeAccess, SEM FK para AdminUser: não autentica
+ * nenhuma rota interna por construção (cookie e verificador distintos).
+ * `email` é normalizado na aplicação (trim + lowercase) antes de qualquer
+ * leitura/escrita. `senhaHash` = bcrypt custo 12 (bcryptjs, mesmo padrão do
+ * admin interno). `tokenVersion++` em suspensão derruba todas as sessões.
+ */
+model ContadorUsuario {
+  id            String                @id @default(cuid())
+  email         String                @unique
+  nome          String
+  senhaHash     String
+  status        ContadorUsuarioStatus @default(ATIVO)
+  tokenVersion  Int                   @default(1)
+  ultimoLoginEm DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  acessos       ContadorAcesso[]
+  sessoes       ContadorSessaoExterna[]
+
+  @@map("contador_usuarios")
+}
+
+/**
+ * Convite de vínculo para UMA loja (GOAL 014, §C da proposta).
+ *
+ * O token bruto (32 bytes, base64url) é retornado UMA vez na criação e NUNCA
+ * persistido nem logado — o banco guarda somente `tokenHash` (sha256 hex).
+ * Uso único: o aceite é um update condicional atômico (`usadoEm IS NULL`).
+ * Índice parcial único (SQL direto, fora da expressividade do Prisma — ver
+ * migration 0015): no máximo 1 convite aberto por (email, storeId).
+ */
+model ContadorConvite {
+  id            String               @id @default(cuid())
+  email         String
+  storeId       String
+  store         Store                @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  papel         ContadorPapelExterno @default(LEITURA)
+  tokenHash     String               @unique
+  expiraEm      DateTime
+  usadoEm       DateTime?
+  revogadoEm    DateTime?
+  revogadoPorId String?
+  criadoPorId   String
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([email, storeId])
+  @@index([storeId, createdAt])
+  @@map("contador_convites")
+}
+
+/**
+ * Vínculo contador↔loja (GOAL 014, §B da proposta) — N:N via este model.
+ *
+ * Um vínculo por par (usuarioId, storeId). Reconcessão após revogação ATUALIZA
+ * a linha existente (status→ativo, papel novo, concessão renovada, campos de
+ * suspensão/revogação limpos); a trilha fica nos eventos. Suspensão/revogação
+ * valem na PRÓXIMA request (checagem por request, nunca via cookie de loja).
+ */
+model ContadorAcesso {
+  id             String               @id @default(cuid())
+  usuarioId      String
+  usuario        ContadorUsuario      @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  storeId        String
+  store          Store                @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  papel          ContadorPapelExterno
+  status         ContadorAcessoStatus @default(ATIVO)
+  concedidoPorId String
+  concedidoEm    DateTime             @default(now())
+  suspensoEm     DateTime?
+  suspensoPorId  String?
+  revogadoEm     DateTime?
+  revogadoPorId  String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  @@unique([usuarioId, storeId])
+  @@index([storeId, status])
+  @@index([usuarioId, status])
+  @@map("contador_acessos")
+}
+
+/**
+ * Sessão externa persistida e revogável (GOAL 014, §D da proposta).
+ *
+ * `id` É o `sid` do cookie HMAC. Verificada a CADA request (revogadoEm/expiraEm/
+ * status/tokenVersion da identidade). SEM storeId de propósito: a sessão
+ * identifica a pessoa, não autoriza loja alguma — a loja é parâmetro de rota
+ * validado por request contra ContadorAcesso ativo.
+ * `ipHash` = sha256 salgado truncado (IP bruto NUNCA); `userAgentResumo` ≤200 chars.
+ */
+model ContadorSessaoExterna {
+  id              String          @id @default(cuid())
+  usuarioId       String
+  usuario         ContadorUsuario @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  expiraEm        DateTime
+  revogadoEm      DateTime?
+  ultimoUsoEm     DateTime?
+  ipHash          String?
+  userAgentResumo String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([usuarioId])
+  @@index([expiraEm])
+  @@map("contador_sessoes_externas")
 }

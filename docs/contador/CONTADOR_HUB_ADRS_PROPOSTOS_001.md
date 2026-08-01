@@ -4,7 +4,7 @@
 |---|---|
 | GOAL de origem | CONTADOR-HUB-FABLE5-MASTERPLAN-001 |
 | Data | 2026-07-11 |
-| Status das ADRs | **001, 003, 004, 005, 006 — Accepted em 2026-07-19 (Gate G2)** · 002, 007, 008 — Proposed (G3 / GOAL 018 / G4) |
+| Status das ADRs | **001, 003, 004, 005, 006 — Accepted em 2026-07-19 (Gate G2)** · **002, 008 — Accepted em 2026-07-31 (Gate G3)** · 007 — Proposed (GOAL 018) |
 | Convenção | Ao aprovar, o GOAL correspondente muda o status para Accepted no mesmo branch e registra a data |
 | Gate G2 | Aprovado por Rafael em 2026-07-19. Ajuste G2-05 (PII) registrado em ADR-006 e referenciado em ADR-004. Próximo: GOAL 009 somente após publicação validada deste arquivo em `main`. |
 
@@ -47,6 +47,8 @@ C) **Separação total:** interno permanece em `/dashboard/contador`; portal v2 
 **Riscos.** Duplicação de UI entre interno e portal (mitigar: componentes de leitura compartilhados sem providers).
 
 **Não decidido.** Rota final do v2: reutilizar o caminho `/contador` após retirada do legado ou novo caminho (ex.: `/portal/contador`) — insumo do GOAL 013.
+
+> **✅ Accepted — 2026-07-31 (Gate G3).** Decisão C (separação total) aprovada. **Emenda de rota do G3:** o portal v2 passa a ser oficialmente `/contador-externo` (páginas) + `/api/contador-externo` (APIs) — caminho novo; o legado `/contador` e `/login-contador` permanecem congelados e intactos até a retirada autorizada (G4 / GOAL 019). Gate de sessão externa no proxy fica para o GOAL 015 (páginas e handlers se autoprotegem por request até lá). Registro da emenda: proposta `docs/contador/CONTADOR_HUB_IDENTIDADE_CONVITE_014_SCHEMA_PROPOSAL.md` (GOAL CONTADOR-HUB-IDENTIDADE-CONVITE-014).
 
 ---
 
@@ -177,6 +179,8 @@ C) **Identidade externa dedicada:** `ContadorUsuario` (email único, senhaHash c
 
 **Não decidido.** E-mail automático (provider a escolher) vs link copiável permanente; MFA (recomendado como evolução no GOAL 019); SSO; recuperação de senha (fluxo mínimo no 014 ou adiado); agrupamento por Empresa/CNPJ acima de `storeId` (registrar aqui quando decidido).
 
+> **✅ Accepted — 2026-07-31 (Gate G3).** Decisão C (identidade externa dedicada) aprovada, confirmando o §11.1 do GOAL 013. **Emendas do G3:** (1) convite por **link copiável** é o modelo do MVP — verificado que o repo não tem infra de e-mail; o token (32 bytes, base64url) é exibido **uma única vez** ao admin e só o sha256 hex é persistido; envio automático fica **não implementado** (registrado, sem envio falso); (2) a sessão externa combina **cookie HMAC ≤12h rotativo** (Web Crypto, chave derivada com separação de domínio de `CONTADOR_EXTERNO_SESSION_SECRET` — sem fallback, fail-closed 503) **com linha persistida revogável** verificada a cada request — são **4 models** (`ContadorUsuario`, `ContadorConvite`, `ContadorAcesso`, `ContadorSessaoExterna`), sendo a sessão persistida o único acréscimo estrutural sobre o §6.3 da auditoria (que previa 3), exigido pelo comando do GOAL; (3) papel padrão do convite = `leitura`; `conferencia` só por escolha explícita do admin; (4) recuperação de acesso é **administrativa** (revogar + novo convite) — self-service adiado. Registro: proposta `docs/contador/CONTADOR_HUB_IDENTIDADE_CONVITE_014_SCHEMA_PROPOSAL.md` (migration `0015_contador_identidade_externa`, domínio `lib/contador/auth-externa/**`, rotas `/api/contador-externo/**`, portal `/contador-externo/**`).
+
 ---
 
 ## Encerramento
@@ -185,6 +189,6 @@ C) **Identidade externa dedicada:** `ContadorUsuario` (email único, senhaHash c
 
 **Pendentes (não bloqueiam GOAL 009):** política de correção retroativa e prazo máximo de reabertura (→ GOAL 012); tabela final de retenção por categoria (→ GOAL 019); rota final do portal v2 (→ G3, após GOAL 013); critério jurídico de "status entregível" fiscal (→ GOAL 018).
 
-**Próximo gate:** **G3** (ADRs 002, 008 + rota do portal) após o GOAL 013. **G4** antes do GOAL 019 (retirada do legado). ADR-007 antes do GOAL 018.
+**Próximo gate:** **G4** antes do GOAL 019 (retirada do legado). ADR-007 antes do GOAL 018. **G3 realizado em 2026-07-31:** ADRs 002 e 008 Accepted com as emendas registradas acima (rota oficial `/contador-externo`; identidade externa separada opção C; convite por link copiável; sessão persistida revogável + cookie HMAC ≤12h, 4 models).
 
 **GOAL 009** (migration núcleo) só deve ser iniciado **após a publicação validada deste arquivo em `main`** e após o comando 9/19 ser preparado contra a base atual.
