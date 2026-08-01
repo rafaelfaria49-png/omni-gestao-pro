@@ -7,12 +7,12 @@
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 11,
+    "goals_done": 12,
     "goals_blocked": 0,
-    "goals_imported": 14,
-    "ledger_lines": 16
+    "goals_imported": 15,
+    "ledger_lines": 17
   },
-  "last_goal": "CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013",
+  "last_goal": "CONTADOR-HUB-IDENTIDADE-CONVITE-014",
   "last_result": "DONE",
-  "last_ratified_at": "2026-07-31T20:46:01.037Z"
+  "last_ratified_at": "2026-08-01T11:54:56.745Z"
 }
