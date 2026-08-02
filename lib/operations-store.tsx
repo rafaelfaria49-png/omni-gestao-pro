@@ -15,6 +15,11 @@ import { readSelectedTerminal } from "@/lib/pdv-terminal"
 import { emitEvent } from "@/lib/events/event-bus"
 import { initAutomationEngineClient } from "@/lib/automation/automation-engine"
 import { registrarOperacaoCaixaServer } from "@/lib/pdv-caixa-operacao"
+import {
+  decideCaixaSessionSync,
+  fetchActiveCaixaSession,
+  type CaixaRefreshOutcome,
+} from "@/lib/pdv-caixa-session"
 import { toast } from "@/components/ui/use-toast"
 import type { AccessorySelectionV1, ProdutoAcessoriosMetadataV1 } from "@/lib/acessorios/types"
 import {
@@ -297,6 +302,13 @@ interface OperationsContextType {
   adicionarSaida: (valor: number) => void
   getSaldoAtual: () => number
   setCaixaSessaoId: (id: string | null) => void
+  /**
+   * Reconsulta a sessão de caixa ABERTA da loja atual e re-hidrata o estado local
+   * (servidor é a fonte da verdade). Substitui referência local obsoleta/ausente sem
+   * exigir fechar e abrir outro caixa. Nunca adota caixa de outra loja. Chamadas
+   * concorrentes compartilham a mesma consulta em voo. Não toca no carrinho.
+   */
+  refreshCaixaSession: () => Promise<CaixaRefreshOutcome>
   incrementOsAbertasDia: () => void
   getSaldoCreditoCliente: (cpf: string) => number
   finalizeSaleTransaction: (input: {
@@ -710,58 +722,6 @@ export function OperationsProvider({
           })
         }
 
-        // Reconcilia sessão de caixa com o servidor (best-effort).
-        // Se o server tem sessão ABERTA mas o localStorage diz fechado (ou perdeu o sessaoId),
-        // restaura para evitar sessão órfã e duplicação de abertura.
-        try {
-          const rCaixa = await fetch(
-            `/api/ops/caixa/sessoes?lojaId=${encodeURIComponent(lj)}&status=ABERTA&take=1`,
-            { credentials: "include", headers }
-          )
-          if (!cancelled && rCaixa.ok) {
-            const jCaixa = (await rCaixa.json()) as {
-              sessoes?: Array<{ id: string; saldoInicial: number; abertaEm: string }>
-            }
-            const openSessao = jCaixa.sessoes?.[0] ?? null
-            const localCaixa = stateRef.current.caixa
-            if (openSessao && !localCaixa.isOpen) {
-              // Servidor tem sessão aberta, mas estado local diz fechado — recupera.
-              setState((prev) => ({
-                ...prev,
-                caixaSessaoId: openSessao.id,
-                caixa: {
-                  ...prev.caixa,
-                  isOpen: true,
-                  saldoInicial: openSessao.saldoInicial,
-                  dataAbertura: new Date(openSessao.abertaEm),
-                },
-              }))
-            } else if (!openSessao && localCaixa.isOpen) {
-              // Servidor NÃO tem sessão aberta, mas o estado local diz aberto:
-              // "caixa falso aberto" (ex.: abertura não confirmada no servidor, ou
-              // sessão fechada em outro dispositivo). O servidor é a fonte da verdade —
-              // fecha localmente para o operador não vender sem sessão.
-              // Seguro: este bloco só roda quando o servidor respondeu (rCaixa.ok) e
-              // inventory/ordens carregaram; offline aborta o loadDb antes daqui.
-              // Vendas locais pendentes NÃO são perdidas (continuam em syncPending).
-              setState((prev) => ({
-                ...prev,
-                caixaSessaoId: null,
-                caixa: {
-                  ...prev.caixa,
-                  isOpen: false,
-                  saldoInicial: 0,
-                  dataAbertura: null,
-                  totalEntradas: 0,
-                  totalSaidas: 0,
-                },
-              }))
-            }
-          }
-        } catch {
-          /* ignorar — reconciliação é best-effort */
-        }
-
         // Reconcilia créditos do cliente com o servidor (best-effort).
         // DB é fonte de verdade: saldos conhecidos no DB sobrescrevem localStorage.
         // Docs apenas locais são mantidos (fallback offline).
@@ -808,6 +768,105 @@ export function OperationsProvider({
       cancelled = true
     }
   }, [storageKey])
+
+  /**
+   * Reconcilia a sessão de caixa com o servidor — fonte da verdade.
+   *
+   * Independente de estoque/OS de propósito: antes, a reconciliação vivia dentro
+   * do `loadDb` e qualquer falha de `/api/ops/inventory` ou `/api/ops/ordens`
+   * deixava o caixa local desatualizado para sempre (PDV-CAIXA-SESSION-RECOVERY-001).
+   *
+   * Serializado por `caixaSyncInFlightRef`: cliques repetidos em "Atualizar caixa"
+   * compartilham a mesma consulta em voo.
+   */
+  const caixaSyncInFlightRef = useRef<Promise<CaixaRefreshOutcome> | null>(null)
+
+  const refreshCaixaSession = useCallback(async (): Promise<CaixaRefreshOutcome> => {
+    const inFlight = caixaSyncInFlightRef.current
+    if (inFlight) return inFlight
+
+    const lj = opsLojaIdFromStorageKey(storageKey)
+    const run = (async (): Promise<CaixaRefreshOutcome> => {
+      const fetched = await fetchActiveCaixaSession(lj, fetch)
+      if (!fetched.ok) {
+        return { ok: false, status: "falha", reason: fetched.reason }
+      }
+
+      const local = stateRef.current
+      const decision = decideCaixaSessionSync({
+        storeId: lj,
+        local: { isOpen: local.caixa.isOpen, sessaoId: local.caixaSessaoId },
+        server: fetched.sessao,
+      })
+
+      if (decision.action === "adopt") {
+        setState((prev) => ({
+          ...prev,
+          caixaSessaoId: decision.sessaoId,
+          caixa: {
+            ...prev.caixa,
+            isOpen: true,
+            saldoInicial: decision.saldoInicial,
+            dataAbertura: decision.abertaEm ? new Date(decision.abertaEm) : prev.caixa.dataAbertura,
+          },
+        }))
+        return {
+          ok: true,
+          status: "adotada",
+          sessaoId: decision.sessaoId,
+          substituiu: decision.replaced,
+          motivo: decision.reason,
+        }
+      }
+
+      if (decision.action === "close") {
+        // Vendas locais pendentes NÃO são perdidas (continuam em `syncPending`).
+        setState((prev) => ({
+          ...prev,
+          caixaSessaoId: null,
+          caixa: {
+            ...prev.caixa,
+            isOpen: false,
+            saldoInicial: 0,
+            dataAbertura: null,
+            totalEntradas: 0,
+            totalSaidas: 0,
+          },
+        }))
+        return { ok: true, status: "sem-caixa-aberto" }
+      }
+
+      if (decision.reason === "sessao-de-outra-loja") {
+        return { ok: true, status: "outra-loja" }
+      }
+      if (decision.reason === "sem-sessao-em-ambos") {
+        return { ok: true, status: "sem-caixa-aberto" }
+      }
+      return { ok: true, status: "em-sincronia", sessaoId: local.caixaSessaoId ?? "" }
+    })()
+
+    caixaSyncInFlightRef.current = run
+    try {
+      return await run
+    } finally {
+      caixaSyncInFlightRef.current = null
+    }
+  }, [storageKey])
+
+  // Reconciliação automática: montagem/troca de loja, volta do foco e retorno da rede.
+  // Cobre F5, nova aba, novo login e reinício do computador.
+  useEffect(() => {
+    void refreshCaixaSession()
+    const onFocus = () => {
+      if (document.visibilityState === "visible") void refreshCaixaSession()
+    }
+    window.addEventListener("visibilitychange", onFocus)
+    window.addEventListener("online", onFocus)
+    return () => {
+      window.removeEventListener("visibilitychange", onFocus)
+      window.removeEventListener("online", onFocus)
+    }
+  }, [refreshCaixaSession])
 
   useEffect(() => {
     if (!opsDbReady) return
@@ -1829,6 +1888,7 @@ export function OperationsProvider({
       adicionarSaida,
       getSaldoAtual,
       setCaixaSessaoId,
+      refreshCaixaSession,
       incrementOsAbertasDia,
       getSaldoCreditoCliente,
       finalizeSaleTransaction,
@@ -1851,6 +1911,7 @@ export function OperationsProvider({
       adicionarSaida,
       getSaldoAtual,
       setCaixaSessaoId,
+      refreshCaixaSession,
       incrementOsAbertasDia,
       getSaldoCreditoCliente,
       finalizeSaleTransaction,

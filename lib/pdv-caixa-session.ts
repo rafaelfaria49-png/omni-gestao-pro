@@ -7,10 +7,6 @@
  *
  * Módulo puro (sem React, sem fetch, sem localStorage) para ser reusado pelo
  * `OperationsProvider`, pela barra de caixa e pelos testes em ambiente node.
- *
- * ESTADO ATUAL (extração fiel do `OperationsProvider`): a reconciliação só
- * trata dois casos — servidor aberto + local fechado, e servidor sem sessão +
- * local aberto. Os demais casos caem em "keep".
  */
 
 /** Sessão ABERTA como o servidor devolve em `GET /api/ops/caixa/sessoes?status=ABERTA`. */
@@ -41,8 +37,6 @@ export type CaixaKeepReason =
   | "sem-sessao-em-ambos"
   /** Servidor respondeu com sessão de OUTRA loja: nunca adotar, nunca fechar às cegas. */
   | "sessao-de-outra-loja"
-  /** Caso não coberto pela reconciliação atual. */
-  | "nao-reconciliado"
 
 export type CaixaSessionDecision =
   | {
@@ -72,16 +66,34 @@ export function isCaixaReferenceStale(local: LocalCaixaReference): boolean {
 
 /**
  * Decide o que fazer com o estado local de caixa diante da sessão ativa do servidor.
+ *
+ * Regras:
+ * - servidor com sessão da loja atual vence sempre que a referência local não
+ *   corresponde a ela (ausente, obsoleta, ou cliente achando que está fechado);
+ * - servidor sem sessão aberta fecha o caixa local (não se vende sem sessão);
+ * - sessão de outra loja nunca é adotada — e também não fecha o caixa local,
+ *   porque a resposta é inconsistente com a loja consultada.
  */
 export function decideCaixaSessionSync(input: {
   storeId: string
   local: LocalCaixaReference
   server: ServerCaixaSession | null
 }): CaixaSessionDecision {
-  const { local, server } = input
+  const { storeId, local, server } = input
   const localSessaoId = trimmed(local.sessaoId)
 
-  if (server && !local.isOpen) {
+  if (!server) {
+    return local.isOpen
+      ? { action: "close", reason: "servidor-sem-sessao-aberta" }
+      : { action: "keep", reason: "sem-sessao-em-ambos" }
+  }
+
+  const serverStoreId = trimmed(server.storeId)
+  if (serverStoreId && serverStoreId !== trimmed(storeId)) {
+    return { action: "keep", reason: "sessao-de-outra-loja" }
+  }
+
+  if (!local.isOpen) {
     return {
       action: "adopt",
       reason: "local-fechado",
@@ -92,9 +104,103 @@ export function decideCaixaSessionSync(input: {
     }
   }
 
-  if (!server && local.isOpen) {
-    return { action: "close", reason: "servidor-sem-sessao-aberta" }
+  if (!localSessaoId) {
+    return {
+      action: "adopt",
+      reason: "referencia-ausente",
+      sessaoId: server.id,
+      saldoInicial: server.saldoInicial,
+      abertaEm: server.abertaEm,
+      replaced: null,
+    }
   }
 
-  return { action: "keep", reason: "nao-reconciliado" }
+  if (localSessaoId !== server.id) {
+    return {
+      action: "adopt",
+      reason: "referencia-obsoleta",
+      sessaoId: server.id,
+      saldoInicial: server.saldoInicial,
+      abertaEm: server.abertaEm,
+      replaced: localSessaoId,
+    }
+  }
+
+  return { action: "keep", reason: "em-sincronia" }
+}
+
+/**
+ * Resultado de uma reconciliação completa (consulta + decisão + aplicação no
+ * estado do cliente). É o que a ação "Atualizar caixa" mostra ao operador.
+ */
+export type CaixaRefreshOutcome =
+  | {
+      ok: true
+      status: "adotada"
+      sessaoId: string
+      substituiu: string | null
+      motivo: CaixaAdoptReason
+    }
+  | { ok: true; status: "em-sincronia"; sessaoId: string }
+  | { ok: true; status: "sem-caixa-aberto" }
+  | { ok: true; status: "outra-loja" }
+  | { ok: false; status: "falha"; reason: "http" | "rede" | "resposta-invalida" }
+
+/**
+ * Resultado da consulta da sessão ativa.
+ *
+ * `ok: true` + `sessao: null` significa "o servidor respondeu e NÃO há caixa
+ * aberto". Falha de rede/permissão devolve `ok: false` — nunca pode ser lida
+ * como "sem caixa", senão o cliente fecharia um caixa que está aberto.
+ */
+export type CaixaSessionFetchResult =
+  | { ok: true; sessao: ServerCaixaSession | null }
+  | { ok: false; reason: "http" | "rede" | "resposta-invalida"; status?: number }
+
+function parseServerSession(raw: unknown): ServerCaixaSession | null {
+  if (!raw || typeof raw !== "object") return null
+  const s = raw as Record<string, unknown>
+  const id = trimmed(typeof s.id === "string" ? s.id : "")
+  if (!id) return null
+  const abertaEm = typeof s.abertaEm === "string" ? s.abertaEm : ""
+  return {
+    id,
+    storeId: typeof s.storeId === "string" ? s.storeId : null,
+    saldoInicial: Number(s.saldoInicial) || 0,
+    abertaEm,
+  }
+}
+
+/** URL canônica da sessão ativa da loja (a mais recente ABERTA, sem filtro de terminal). */
+export function activeCaixaSessionUrl(lojaId: string): string {
+  return `/api/ops/caixa/sessoes?lojaId=${encodeURIComponent(lojaId)}&status=ABERTA&take=1`
+}
+
+/** Consulta a sessão de caixa ABERTA da loja. `fetchImpl` injetável para teste. */
+export async function fetchActiveCaixaSession(
+  lojaId: string,
+  fetchImpl: typeof fetch,
+): Promise<CaixaSessionFetchResult> {
+  let res: Response
+  try {
+    res = await fetchImpl(activeCaixaSessionUrl(lojaId), {
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "x-assistec-loja-id": lojaId,
+      },
+    })
+  } catch {
+    return { ok: false, reason: "rede" }
+  }
+
+  if (!res.ok) return { ok: false, reason: "http", status: res.status }
+
+  try {
+    const body = (await res.json()) as { sessoes?: unknown }
+    if (!Array.isArray(body.sessoes)) return { ok: false, reason: "resposta-invalida" }
+    return { ok: true, sessao: parseServerSession(body.sessoes[0]) }
+  } catch {
+    return { ok: false, reason: "resposta-invalida" }
+  }
 }

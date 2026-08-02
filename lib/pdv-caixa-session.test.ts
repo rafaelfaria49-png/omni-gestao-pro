@@ -11,7 +11,9 @@
 
 import { describe, it, expect } from "vitest"
 import {
+  activeCaixaSessionUrl,
   decideCaixaSessionSync,
+  fetchActiveCaixaSession,
   isCaixaReferenceStale,
   type ServerCaixaSession,
 } from "@/lib/pdv-caixa-session"
@@ -139,5 +141,85 @@ describe("isCaixaReferenceStale", () => {
   it("caixa aberto com sessão, ou caixa fechado, não é estado degradado", () => {
     expect(isCaixaReferenceStale({ isOpen: true, sessaoId: "sess-1" })).toBe(false)
     expect(isCaixaReferenceStale({ isOpen: false, sessaoId: null })).toBe(false)
+  })
+})
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as unknown as Response
+}
+
+describe("fetchActiveCaixaSession", () => {
+  it("consulta a loja pedida, com header de unidade", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fake = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return jsonResponse({ ok: true, sessoes: [] })
+    }) as unknown as typeof fetch
+
+    await fetchActiveCaixaSession(LOJA, fake)
+
+    expect(calls[0].url).toBe(activeCaixaSessionUrl(LOJA))
+    expect(calls[0].url).toContain("status=ABERTA")
+    expect((calls[0].init?.headers as Record<string, string>)["x-assistec-loja-id"]).toBe(LOJA)
+  })
+
+  it("servidor respondeu sem sessão aberta → ok com sessao null", async () => {
+    const fake = (async () => jsonResponse({ ok: true, sessoes: [] })) as unknown as typeof fetch
+    await expect(fetchActiveCaixaSession(LOJA, fake)).resolves.toEqual({ ok: true, sessao: null })
+  })
+
+  it("servidor respondeu com sessão aberta → normaliza os campos", async () => {
+    const fake = (async () =>
+      jsonResponse({
+        ok: true,
+        sessoes: [{ id: " sess-1 ", storeId: LOJA, saldoInicial: "150", abertaEm: "2026-08-02T11:00:00.000Z" }],
+      })) as unknown as typeof fetch
+
+    await expect(fetchActiveCaixaSession(LOJA, fake)).resolves.toEqual({
+      ok: true,
+      sessao: { id: "sess-1", storeId: LOJA, saldoInicial: 150, abertaEm: "2026-08-02T11:00:00.000Z" },
+    })
+  })
+
+  it("erro de rede NÃO vira 'sem caixa aberto'", async () => {
+    const fake = (async () => {
+      throw new TypeError("Failed to fetch")
+    }) as unknown as typeof fetch
+
+    await expect(fetchActiveCaixaSession(LOJA, fake)).resolves.toEqual({ ok: false, reason: "rede" })
+  })
+
+  it("HTTP 403 (sem permissão de histórico) NÃO vira 'sem caixa aberto'", async () => {
+    const fake = (async () => jsonResponse({ error: "sem permissão" }, 403)) as unknown as typeof fetch
+
+    await expect(fetchActiveCaixaSession(LOJA, fake)).resolves.toEqual({
+      ok: false,
+      reason: "http",
+      status: 403,
+    })
+  })
+
+  it("corpo inesperado NÃO vira 'sem caixa aberto'", async () => {
+    const fake = (async () => jsonResponse({ ok: true })) as unknown as typeof fetch
+
+    await expect(fetchActiveCaixaSession(LOJA, fake)).resolves.toEqual({
+      ok: false,
+      reason: "resposta-invalida",
+    })
+  })
+
+  it("falha de consulta não pode fechar o caixa local (decisão combinada)", async () => {
+    const fake = (async () => {
+      throw new TypeError("offline")
+    }) as unknown as typeof fetch
+
+    const fetched = await fetchActiveCaixaSession(LOJA, fake)
+    expect(fetched.ok).toBe(false)
+    // A UI só chama `decideCaixaSessionSync` quando `ok === true`; este teste
+    // documenta o contrato — falha de consulta não produz decisão nenhuma.
   })
 })
