@@ -81,7 +81,7 @@ async function migrationsTableExiste() {
   const prisma = new PrismaClient();
   try {
     const rows = await prisma.$queryRawUnsafe(
-      "SELECT to_regclass('public._prisma_migrations') AS t",
+      "SELECT to_regclass('public._prisma_migrations')::text AS t",
     );
     return rows?.[0]?.t != null;
   } finally {
