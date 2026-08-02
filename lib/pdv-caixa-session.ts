@@ -204,3 +204,76 @@ export async function fetchActiveCaixaSession(
     return { ok: false, reason: "resposta-invalida" }
   }
 }
+
+/**
+ * Caminho completo da recuperação: consulta a sessão ativa e decide o que fazer.
+ *
+ * Devolve `decision: null` quando a consulta falhou — o chamador NÃO deve mexer
+ * no estado local nesse caso. É o que impede uma queda de rede de fechar um
+ * caixa que está aberto no servidor.
+ */
+export async function reconcileCaixaSession(params: {
+  storeId: string
+  local: LocalCaixaReference
+  fetchImpl: typeof fetch
+}): Promise<{ outcome: CaixaRefreshOutcome; decision: CaixaSessionDecision | null }> {
+  const fetched = await fetchActiveCaixaSession(params.storeId, params.fetchImpl)
+  if (!fetched.ok) {
+    return { outcome: { ok: false, status: "falha", reason: fetched.reason }, decision: null }
+  }
+
+  const decision = decideCaixaSessionSync({
+    storeId: params.storeId,
+    local: params.local,
+    server: fetched.sessao,
+  })
+
+  if (decision.action === "adopt") {
+    return {
+      outcome: {
+        ok: true,
+        status: "adotada",
+        sessaoId: decision.sessaoId,
+        substituiu: decision.replaced,
+        motivo: decision.reason,
+      },
+      decision,
+    }
+  }
+
+  if (decision.action === "close") {
+    return { outcome: { ok: true, status: "sem-caixa-aberto" }, decision }
+  }
+
+  if (decision.reason === "sessao-de-outra-loja") {
+    return { outcome: { ok: true, status: "outra-loja" }, decision }
+  }
+  if (decision.reason === "sem-sessao-em-ambos") {
+    return { outcome: { ok: true, status: "sem-caixa-aberto" }, decision }
+  }
+  return {
+    outcome: { ok: true, status: "em-sincronia", sessaoId: params.local.sessaoId ?? "" },
+    decision,
+  }
+}
+
+/**
+ * Serializa chamadas concorrentes: enquanto uma execução está em voo, as demais
+ * recebem a MESMA promessa em vez de disparar outra consulta.
+ *
+ * É o que garante que clicar "Atualizar caixa" várias vezes (ou o F5 automático
+ * coincidindo com o clique do operador) não vire N requisições nem N decisões.
+ */
+export function createSingleFlight<T>(): (task: () => Promise<T>) => Promise<T> {
+  let inFlight: Promise<T> | null = null
+  return (task) => {
+    if (inFlight) return inFlight
+    const run = task()
+    inFlight = run
+    const done = () => {
+      if (inFlight === run) inFlight = null
+    }
+    run.then(done, done)
+    return run
+  }
+}

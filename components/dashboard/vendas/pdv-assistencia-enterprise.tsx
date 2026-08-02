@@ -72,6 +72,8 @@ import { findPdvProductByScan } from "@/lib/pdv-scan-product"
 import { lookupPdvScanRemote } from "@/lib/pdv-scan-lookup"
 import { filterPdvCatalogBySearch } from "@/lib/pdv-product-search"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
+import { describeCartDraftIssues, revalidateCartDraft } from "@/lib/pdv-cart-draft"
 import { useCaixa } from "../caixa/caixa-provider"
 import { useToast } from "@/hooks/use-toast"
 import { computePdvCartTotals } from "@/lib/pdv-cart-totals"
@@ -114,7 +116,9 @@ import { readSelectedTerminal } from "@/lib/pdv-terminal"
 // ─── Cart persistence ─────────────────────────────────────────────────────────
 
 const CART_STORAGE_KEY = (storeId: string) => `omnigestao:pdv-assistencia-cart:${storeId}`
-const CART_MAX_AGE_MS = 12 * 60 * 60 * 1000 // 12h
+// Sem expiração por tempo: o rascunho só sai com venda registrada ou "Cancelar
+// venda" (PDV-CAIXA-SESSION-RECOVERY-CART-DRAFT-001). F5, nova aba, logout/login,
+// reinício do computador e erro de caixa nunca apagam o carrinho.
 
 type DiscountType = "reais" | "percent"
 
@@ -949,7 +953,8 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   const { data: session } = useSession()
   const operadorNomeAbertura = usePdvOperadorNome((lojaAtivaId ?? "").trim())
   const operatorLabel = operatorDisplayName({ aberturaNome: operadorNomeAbertura, session })
-  const { caixa } = useCaixa()
+  const { caixa, sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
   const storeIdKey = useMemo(
     () => (lojaAtivaId ?? "").trim(),
     [lojaAtivaId]
@@ -958,6 +963,8 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   const { clientes: clienteSugestoes, isLoading: buscandoCliente } = useClienteSearch(clienteQuery, storeIdKey)
   const [showCustomerSidebarDropdown, setShowCustomerSidebarDropdown] = useState(false)
   const cartHydratedRef = useRef(false)
+  /** Unidade cujo carrinho recuperado já foi revalidado contra o catálogo real. */
+  const cartRevalidatedScopeRef = useRef<string | null>(null)
   const cartPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [postSalePrintOpen, setPostSalePrintOpen] = useState(false)
   const [postSalePrintInput, setPostSalePrintInput] = useState<PdvReceiptInput | null>(null)
@@ -1223,8 +1230,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       const raw = localStorage.getItem(CART_STORAGE_KEY(storeIdKey))
       if (raw) {
         const data = JSON.parse(raw) as CartPersisted
-        const age = Date.now() - new Date(data.savedAt).getTime()
-        if (age < CART_MAX_AGE_MS && Array.isArray(data.cart) && data.cart.length > 0) {
+        if (Array.isArray(data.cart) && data.cart.length > 0) {
           const restoredCart = data.cart
           const restoredSubtotal = restoredCart.reduce((s, l) => s + l.price * l.qty, 0)
           setCart(restoredCart)
@@ -1250,8 +1256,8 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           }
           window.setTimeout(() => {
             toast({
-              title: "Carrinho restaurado",
-              description: `${data.cart.length} item${data.cart.length !== 1 ? "ns" : ""} da sessão anterior recuperados.`,
+              title: "Carrinho recuperado",
+              description: `${restoredCart.length} item${restoredCart.length !== 1 ? "ns" : ""} da sessão anterior recuperados.`,
             })
           }, 600)
         }
@@ -1260,6 +1266,49 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
     cartHydratedRef.current = true
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeIdKey])
+
+  // ── Revalidar o carrinho recuperado contra o catálogo ───────────────────────
+  // Roda uma vez por unidade, assim que o catálogo real chega do servidor (o
+  // restore acima acontece antes disso). Item que sumiu do catálogo é removido e
+  // preço defasado é atualizado — nunca se vende com o preço de ontem.
+  useEffect(() => {
+    if (!storeIdKey || realCatalog.length === 0) return
+    if (cartRevalidatedScopeRef.current === storeIdKey) return
+    cartRevalidatedScopeRef.current = storeIdKey
+
+    setCart((prev) => {
+      if (prev.length === 0) return prev
+      const { lines, issues } = revalidateCartDraft(
+        {
+          lines: prev.map((l) => ({
+            lineId: l.lineId,
+            inventoryId: l.inventoryId,
+            name: l.title,
+            price: l.price,
+            quantity: l.qty,
+            ...(l.isAvulso ? { isAvulso: true as const } : {}),
+          })),
+        },
+        realCatalog.map((p) => ({ id: p.id, name: p.name, price: p.price, stock: p.stock })),
+      )
+      if (issues.length === 0) return prev
+
+      const precoPorLinha = new Map(lines.map((l) => [l.lineId, l.price]))
+      const mantidas = new Set(lines.map((l) => l.lineId))
+      const avisos = describeCartDraftIssues(issues)
+      window.setTimeout(() => {
+        toast({
+          variant: "destructive",
+          title: "Carrinho revisado",
+          description: `${avisos}.`,
+        })
+      }, 900)
+      return prev
+        .filter((l) => mantidas.has(l.lineId))
+        .map((l) => ({ ...l, price: precoPorLinha.get(l.lineId) ?? l.price }))
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeIdKey, realCatalog])
 
   // ── Computed totals ────────────────────────────────────────────────────────────
   const subtotal = useMemo(() => cart.reduce((s, l) => s + l.price * l.qty, 0), [cart])
@@ -1370,12 +1419,11 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       })
       return
     }
-    if (!caixa.isOpen) {
-      toast({
-        title: "Caixa fechado",
-        description: "Abra o caixa antes de finalizar a venda.",
-        variant: "destructive",
-      })
+    // Caixa fechado na tela ou sem referência de sessão utilizável: reconsulta a
+    // sessão ativa da loja antes de recusar. Mesma regra dos demais PDVs — o
+    // carrinho é mantido e a venda não é enviada; o operador finaliza de novo.
+    if (!caixa.isOpen || !sessaoId?.trim()) {
+      void garantirSessao()
       return
     }
     const discountPct = subtotal > 0 ? (desconto / subtotal) * 100 : 0

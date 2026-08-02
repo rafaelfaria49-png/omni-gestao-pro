@@ -45,6 +45,9 @@ import { useSession } from "next-auth/react"
 import { operatorDisplayName } from "@/lib/pdv-operator-label"
 import { usePdvOperadorNome } from "@/lib/pdv-operador-nome"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
+import { usePdvCartDraft } from "./use-pdv-cart-draft"
+import { describeCartDraftIssues } from "@/lib/pdv-cart-draft"
 // useCaixa removido no Lote 4 — sangria/suprimento vivem no CaixaStatusBar.
 import { configPadrao, useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
@@ -232,6 +235,7 @@ export function PdvClassic({
     useLojaAtiva()
   const { pdvParams, impressaoConfig, settings, storeId } = useStoreSettings()
   const { caixa, sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
   const { mode: studioThemeMode } = useStudioTheme()
   const classicStudio = studioThemeMode === "classic"
   const lojaKey = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
@@ -428,6 +432,89 @@ export function PdvClassic({
   }))
 
   const products = mergePdvCatalogWithInventory([], inventory)
+
+  /** Terminal PDV ativo — isola venda em espera e rascunho do carrinho por caixa físico. */
+  const terminalIdForHold = readSelectedTerminal(lojaKey)?.id ?? "default"
+
+  // ── Rascunho do carrinho ────────────────────────────────────────────────────
+  // Sobrevive a F5, nova aba, logout/login e reinício do computador. Só some com
+  // venda confirmada ou "Limpar carrinho" — nunca por erro de caixa.
+  const draftCatalog = useMemo(
+    () => inventory.map((i) => ({ id: i.id, name: i.name, price: i.price, stock: i.stock })),
+    [inventory]
+  )
+  const draftCustomer = useMemo(
+    () =>
+      selectedCustomer
+        ? {
+            id: selectedCustomer.id,
+            name: selectedCustomer.name,
+            cpf: selectedCustomer.cpf,
+            phone: selectedCustomer.phone,
+          }
+        : null,
+    [selectedCustomer]
+  )
+  const { clearDraft } = usePdvCartDraft({
+    storeId: lojaKey,
+    modalidade: "classico",
+    terminalId: terminalIdForHold,
+    ready: inventory.length > 0,
+    catalog: draftCatalog,
+    lines: cart,
+    customer: draftCustomer,
+    discountReais,
+    discountPercent,
+    caixaSessaoId: sessaoId,
+    onRestore: ({ lines, customer, discountReais: dr, discountPercent: dp, issues, sessaoTrocada }) => {
+      setCart(
+        lines.map((l) => ({
+          lineId: l.lineId,
+          inventoryId: l.inventoryId,
+          name: l.name,
+          price: l.price,
+          quantity: l.quantity,
+          ...(l.complementos ? { complementos: l.complementos } : {}),
+          ...(l.vendaPorPeso ? { vendaPorPeso: true } : {}),
+          ...(l.atributosLabel ? { atributosLabel: l.atributosLabel } : {}),
+          ...(l.lineDetail ? { lineDetail: l.lineDetail } : {}),
+          ...(l.isAvulso ? { isAvulso: true } : {}),
+          ...(l.custoUnitario !== undefined ? { custoUnitario: l.custoUnitario } : {}),
+          ...(l.codigoAvulso !== undefined ? { codigoAvulso: l.codigoAvulso } : {}),
+          ...(l.accessorySelection
+            ? { accessorySelection: l.accessorySelection as AccessorySelectionV1 }
+            : {}),
+          ...(l.cartLineKey ? { cartLineKey: l.cartLineKey } : {}),
+        }))
+      )
+      if (customer) {
+        setSelectedCustomer({
+          id: customer.id ?? "",
+          name: customer.name,
+          cpf: customer.cpf ?? "",
+          phone: customer.phone ?? "",
+        })
+      }
+      setDiscountReais(dr)
+      setDiscountPercent(dp)
+      const avisos = describeCartDraftIssues(issues)
+      toast({
+        title: "Carrinho recuperado",
+        description: avisos
+          ? `${lines.length} item(ns) restaurado(s). ${avisos}.`
+          : `${lines.length} item(ns) restaurado(s) da sessão anterior.`,
+        ...(avisos ? { variant: "destructive" as const } : {}),
+      })
+      if (sessaoTrocada) {
+        // O carrinho veio de uma sessão de caixa que não é mais a aberta: a venda
+        // será registrada na sessão ATUAL e o operador precisa confirmar de novo.
+        toast({
+          title: "Caixa mudou desde este carrinho",
+          description: "A venda será registrada na sessão de caixa aberta agora. Revise antes de finalizar.",
+        })
+      }
+    },
+  })
 
   const searchTrim = searchTerm.trim()
   const hideCategoriesPdv = pdvParams.ocultarCategoriasNoPdv === true
@@ -1146,6 +1233,7 @@ export function PdvClassic({
     }
     setPendingOnAccount(true)
     toast({ title: "Venda pendurada na conta", description: `${selectedCustomer.name} - R$ ${total.toFixed(2)}` })
+    clearDraft()
     setCart([])
     setDiscountReais(0)
     setDiscountPercent(0)
@@ -1253,28 +1341,19 @@ export function PdvClassic({
       return false
     }
 
-    if (!caixaState.isOpen) {
-      toast({
-        title: "Caixa fechado",
-        description: "Abra o caixa antes de finalizar a venda.",
-        variant: "destructive",
-      })
-      return false
-    }
-
-    if (!sessaoId?.trim()) {
-      toast({
-        title: "Sessão de caixa inválida",
-        description: "Sessão de caixa inválida. Abra ou atualize o caixa antes de finalizar.",
-        variant: "destructive",
-      })
+    // Caixa fechado na tela ou sem referência de sessão utilizável: em vez de
+    // recusar com uma mensagem morta, reconsulta a sessão ativa da loja. O
+    // carrinho é mantido e a venda NÃO é enviada — quem finaliza de novo, depois
+    // de revisar, é o operador (evita duplicidade se a 1ª resposta for inconclusiva).
+    if (!caixaState.isOpen || !sessaoId?.trim()) {
+      void garantirSessao()
       return false
     }
 
     if (!validateCartAggregatedStock()) return false
 
     return true
-  }, [cart.length, caixa, sessaoId, toast, validateCartAggregatedStock])
+  }, [cart.length, caixa, garantirSessao, sessaoId, toast, validateCartAggregatedStock])
 
   const openPaymentFlow = useCallback(
     (intent: PaymentMethodType | null, multiple: boolean) => {
@@ -1316,11 +1395,8 @@ export function PdvClassic({
           break
         case "F5": {
           if (!caixa.isOpen || !sessaoId?.trim()) {
-            toast({
-              variant: "destructive",
-              title: "Caixa fechado",
-              description: "Abra o caixa antes de receber contas.",
-            })
+            // Mesma recuperação da finalização: consulta o servidor antes de recusar.
+            void garantirSessao()
             goBipe()
             return
           }
@@ -1490,7 +1566,6 @@ export function PdvClassic({
     openPaymentFlow(null, true)
   }
 
-  const terminalIdForHold = readSelectedTerminal(lojaKey)?.id ?? "default"
   const heldSales = getHeldSales(lojaKey, terminalIdForHold)
 
   function handleHoldSale() {
@@ -1520,6 +1595,8 @@ export function PdvClassic({
       pdvType: "classic",
     }
     saveHeldSale(lojaKey, terminalIdForHold, held)
+    // O carrinho passou a viver na venda em espera — o rascunho sai de cena.
+    clearDraft()
     setCart([])
     setSelectedCustomer(null)
     setDiscountReais(0)
@@ -1747,6 +1824,8 @@ export function PdvClassic({
                 if (!open) focusShellBipe()
               }}
               onConfirmCancelSale={() => {
+                // Ação explícita do operador: é o único jeito de descartar o rascunho sem venda.
+                clearDraft()
                 setCart([])
                 setSelectedCartLineId(null)
                 setShellHighlightLineId(null)
@@ -2002,6 +2081,9 @@ export function PdvClassic({
             }
           }
           setLastSaleTotal(total)
+          // Venda registrada (fica em `syncPending` até o servidor confirmar): o
+          // rascunho sai para o próximo mount não repor um carrinho já vendido.
+          clearDraft()
           setCart([])
           setDiscountReais(0)
           setDiscountPercent(0)

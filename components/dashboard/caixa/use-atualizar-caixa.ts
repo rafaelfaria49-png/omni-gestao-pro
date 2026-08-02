@@ -84,3 +84,28 @@ export function useAtualizarCaixa(contexto: "manual" | "finalizacao" = "manual")
 
   return { atualizando, atualizarCaixa }
 }
+
+/**
+ * Garante que existe sessão de caixa utilizável ANTES de gravar a venda.
+ *
+ * Roda a recuperação contra o servidor em vez de recusar a finalização com uma
+ * mensagem morta. Nunca envia a venda: quando a sessão é recuperada, quem
+ * finaliza de novo é o operador — assim uma primeira resposta inconclusiva não
+ * vira venda duplicada.
+ */
+export function useGarantirSessaoCaixa() {
+  const { caixa, sessaoId } = useCaixa()
+  const { atualizando, atualizarCaixa } = useAtualizarCaixa("finalizacao")
+
+  const garantirSessao = useCallback(async (): Promise<"ok" | "recuperada" | "bloqueada"> => {
+    if (caixa.isOpen && sessaoId?.trim()) return "ok"
+
+    const outcome = await atualizarCaixa()
+    if (outcome?.ok && (outcome.status === "adotada" || outcome.status === "em-sincronia")) {
+      return "recuperada"
+    }
+    return "bloqueada"
+  }, [atualizarCaixa, caixa.isOpen, sessaoId])
+
+  return { garantirSessao, atualizando }
+}

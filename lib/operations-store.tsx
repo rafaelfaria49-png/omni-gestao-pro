@@ -16,8 +16,8 @@ import { emitEvent } from "@/lib/events/event-bus"
 import { initAutomationEngineClient } from "@/lib/automation/automation-engine"
 import { registrarOperacaoCaixaServer } from "@/lib/pdv-caixa-operacao"
 import {
-  decideCaixaSessionSync,
-  fetchActiveCaixaSession,
+  createSingleFlight,
+  reconcileCaixaSession,
   type CaixaRefreshOutcome,
 } from "@/lib/pdv-caixa-session"
 import { toast } from "@/components/ui/use-toast"
@@ -779,25 +779,21 @@ export function OperationsProvider({
    * Serializado por `caixaSyncInFlightRef`: cliques repetidos em "Atualizar caixa"
    * compartilham a mesma consulta em voo.
    */
-  const caixaSyncInFlightRef = useRef<Promise<CaixaRefreshOutcome> | null>(null)
+  const caixaSyncSingleFlightRef = useRef(createSingleFlight<CaixaRefreshOutcome>())
 
   const refreshCaixaSession = useCallback(async (): Promise<CaixaRefreshOutcome> => {
-    const inFlight = caixaSyncInFlightRef.current
-    if (inFlight) return inFlight
-
     const lj = opsLojaIdFromStorageKey(storageKey)
-    const run = (async (): Promise<CaixaRefreshOutcome> => {
-      const fetched = await fetchActiveCaixaSession(lj, fetch)
-      if (!fetched.ok) {
-        return { ok: false, status: "falha", reason: fetched.reason }
-      }
-
+    return caixaSyncSingleFlightRef.current(async () => {
       const local = stateRef.current
-      const decision = decideCaixaSessionSync({
+      const { outcome, decision } = await reconcileCaixaSession({
         storeId: lj,
         local: { isOpen: local.caixa.isOpen, sessaoId: local.caixaSessaoId },
-        server: fetched.sessao,
+        fetchImpl: fetch,
       })
+
+      // Consulta falhou: nada muda no estado local — nunca fechar um caixa que
+      // pode estar aberto no servidor só porque a rede caiu.
+      if (!decision) return outcome
 
       if (decision.action === "adopt") {
         setState((prev) => ({
@@ -810,16 +806,7 @@ export function OperationsProvider({
             dataAbertura: decision.abertaEm ? new Date(decision.abertaEm) : prev.caixa.dataAbertura,
           },
         }))
-        return {
-          ok: true,
-          status: "adotada",
-          sessaoId: decision.sessaoId,
-          substituiu: decision.replaced,
-          motivo: decision.reason,
-        }
-      }
-
-      if (decision.action === "close") {
+      } else if (decision.action === "close") {
         // Vendas locais pendentes NÃO são perdidas (continuam em `syncPending`).
         setState((prev) => ({
           ...prev,
@@ -833,24 +820,10 @@ export function OperationsProvider({
             totalSaidas: 0,
           },
         }))
-        return { ok: true, status: "sem-caixa-aberto" }
       }
 
-      if (decision.reason === "sessao-de-outra-loja") {
-        return { ok: true, status: "outra-loja" }
-      }
-      if (decision.reason === "sem-sessao-em-ambos") {
-        return { ok: true, status: "sem-caixa-aberto" }
-      }
-      return { ok: true, status: "em-sincronia", sessaoId: local.caixaSessaoId ?? "" }
-    })()
-
-    caixaSyncInFlightRef.current = run
-    try {
-      return await run
-    } finally {
-      caixaSyncInFlightRef.current = null
-    }
+      return outcome
+    })
   }, [storageKey])
 
   // Reconciliação automática: montagem/troca de loja, volta do foco e retorno da rede.

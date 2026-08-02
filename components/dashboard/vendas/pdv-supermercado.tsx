@@ -34,6 +34,10 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useCaixa } from "../caixa/caixa-provider"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
+import { usePdvCartDraft } from "./use-pdv-cart-draft"
+import { describeCartDraftIssues } from "@/lib/pdv-cart-draft"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
 import { useStoreSettings } from "@/lib/store-settings-provider"
@@ -180,7 +184,9 @@ export function PdvSupermercado({
   const { lojaAtivaId, opsStorageKey, empresaDocumentos, getEnderecoDocumentos } = useLojaAtiva()
   const { pdvParams, blob, save: saveStoreSettings, impressaoConfig } = useStoreSettings()
   const { inventory, setInventory, finalizeSaleTransaction, getSaldoCreditoCliente } = useOperationsStore()
-  
+  const { caixa, sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
+
   const [editAtalhosOpen, setEditAtalhosOpen] = useState(false)
 
   const lojaKey = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
@@ -300,6 +306,66 @@ export function PdvSupermercado({
     () => (Array.isArray(inventory) ? inventory.map(inventoryItemToPdvProduct) : []),
     [inventory]
   )
+
+  /** Terminal PDV ativo — isola venda em espera e rascunho do carrinho por caixa físico. */
+  const terminalIdForHold = readSelectedTerminal(lojaKey)?.id ?? "default"
+
+  // ── Rascunho do carrinho ────────────────────────────────────────────────────
+  // Sobrevive a F5, nova aba, logout/login e reinício do computador. Só some com
+  // venda confirmada ou "Limpar carrinho" — nunca por erro de caixa.
+  const draftCatalog = useMemo(
+    () => inventory.map((i) => ({ id: i.id, name: i.name, price: i.price, stock: i.stock })),
+    [inventory]
+  )
+  const { clearDraft } = usePdvCartDraft({
+    storeId: lojaKey,
+    modalidade: "supermercado",
+    terminalId: terminalIdForHold,
+    ready: inventory.length > 0,
+    catalog: draftCatalog,
+    lines: cart,
+    discountReais,
+    discountPercent,
+    caixaSessaoId: sessaoId,
+    onRestore: ({ lines, discountReais: dr, discountPercent: dp, issues, sessaoTrocada }) => {
+      setCart(
+        lines.map((l) => ({
+          lineId: l.lineId,
+          inventoryId: l.inventoryId,
+          name: l.name,
+          price: l.price,
+          quantity: l.quantity,
+          ...(l.vendaPorPeso ? { vendaPorPeso: true } : {}),
+          ...(l.atributosLabel ? { atributosLabel: l.atributosLabel } : {}),
+          ...(l.isAvulso ? { isAvulso: true } : {}),
+          ...(l.custoUnitario !== undefined ? { custoUnitario: l.custoUnitario } : {}),
+          ...(l.codigoAvulso !== undefined ? { codigoAvulso: l.codigoAvulso } : {}),
+          ...(l.accessorySelection
+            ? { accessorySelection: l.accessorySelection as AccessorySelectionV1 }
+            : {}),
+          ...(l.cartLineKey ? { cartLineKey: l.cartLineKey } : {}),
+        }))
+      )
+      setDiscountReais(dr)
+      setDiscountPercent(dp)
+      const avisos = describeCartDraftIssues(issues)
+      toast({
+        title: "Carrinho recuperado",
+        description: avisos
+          ? `${lines.length} item(ns) restaurado(s). ${avisos}.`
+          : `${lines.length} item(ns) restaurado(s) da sessão anterior.`,
+        ...(avisos ? { variant: "destructive" as const } : {}),
+      })
+      if (sessaoTrocada) {
+        // O carrinho veio de uma sessão de caixa que não é mais a aberta: a venda
+        // será registrada na sessão ATUAL e o operador precisa confirmar de novo.
+        toast({
+          title: "Caixa mudou desde este carrinho",
+          description: "A venda será registrada na sessão de caixa aberta agora. Revise antes de finalizar.",
+        })
+      }
+    },
+  })
 
   const quickItems = useMemo(() => {
     const byId = new Map(inventory.map((i) => [i.id, i]))
@@ -563,6 +629,18 @@ export function PdvSupermercado({
     }
   }, [pdvParams.formasPagamento])
 
+  /**
+   * Caixa fechado na tela ou sem referência de sessão utilizável: reconsulta a
+   * sessão ativa da loja antes de recusar. Mesma regra dos demais PDVs — o
+   * carrinho é mantido e a venda não é enviada; o operador finaliza de novo.
+   */
+  const caixaProntoParaFinalizar = useCallback(() => {
+    if (caixa.isOpen && sessaoId?.trim()) return true
+    void garantirSessao()
+    hardFocusSearch()
+    return false
+  }, [caixa.isOpen, garantirSessao, hardFocusSearch, sessaoId])
+
   const openPaymentModal = useCallback(
     (intent: PaymentMethodType | null) => {
       if (cart.length === 0) {
@@ -570,11 +648,12 @@ export function PdvSupermercado({
         hardFocusSearch()
         return
       }
+      if (!caixaProntoParaFinalizar()) return
       setInstantPayIntent(intent)
       setMultipayMode(false)
       setIsPaymentModalOpen(true)
     },
-    [cart.length, hardFocusSearch, toast]
+    [caixaProntoParaFinalizar, cart.length, hardFocusSearch, toast]
   )
 
   /** Pagamento Múltiplo — convergência operacional com PDV Assistência (F12). */
@@ -584,10 +663,11 @@ export function PdvSupermercado({
       hardFocusSearch()
       return
     }
+    if (!caixaProntoParaFinalizar()) return
     setInstantPayIntent(null)
     setMultipayMode(true)
     setIsPaymentModalOpen(true)
-  }, [cart.length, hardFocusSearch, toast])
+  }, [caixaProntoParaFinalizar, cart.length, hardFocusSearch, toast])
 
   const confirmAttrDialog = useCallback(() => {
     if (!attrProduct) return
@@ -837,7 +917,6 @@ export function PdvSupermercado({
     return () => window.removeEventListener("keydown", onKeyDown, { capture: true } as any)
   }, [isPaymentModalOpen, attrDialogOpen, weightDialogOpen, accessoryProduct, showItemAvulsoModal, vendaEsperaOpen, recebimentoOpen, trocasOpen, cashierId, openPaymentModal, openMultipayModal, formasSupermercado])
 
-  const terminalIdForHold = readSelectedTerminal(lojaKey)?.id ?? "default"
   const heldSales = getHeldSales(lojaKey, terminalIdForHold)
 
   function handleHoldSale() {
@@ -863,6 +942,8 @@ export function PdvSupermercado({
       pdvType: "supermercado",
     }
     saveHeldSale(lojaKey, terminalIdForHold, held)
+    // O carrinho passou a viver na venda em espera — o rascunho sai de cena.
+    clearDraft()
     setCart([])
     setDiscountReais(0)
     setDiscountPercent(0)
@@ -1115,6 +1196,8 @@ export function PdvSupermercado({
                       userLabel: cashierId.slice(0, 8),
                       detail: `${cart.length} ${cart.length === 1 ? "item" : "itens"} removidos do carrinho`,
                     })
+                    // Ação explícita do operador: único descarte de rascunho sem venda.
+                    clearDraft()
                     setCart([])
                     setDiscountPercent(0)
                     setDiscountReais(0)
@@ -1129,6 +1212,8 @@ export function PdvSupermercado({
                       userLabel: cashierId.slice(0, 8),
                       detail: `${cart.length} ${cart.length === 1 ? "item" : "itens"} removidos do carrinho`,
                     })
+                    // Ação explícita do operador: único descarte de rascunho sem venda.
+                    clearDraft()
                     setCart([])
                     setDiscountPercent(0)
                     setDiscountReais(0)
@@ -1500,6 +1585,9 @@ export function PdvSupermercado({
             }
           }
 
+          // Venda registrada (fica em `syncPending` até o servidor confirmar): o
+          // rascunho sai para o próximo mount não repor um carrinho já vendido.
+          clearDraft()
           setCart([])
           setSelectedCustomer(null)
           setDiscountReais(0)
@@ -1716,6 +1804,7 @@ export function PdvSupermercado({
                         userLabel: cashierId.slice(0, 8),
                         detail: `${cart.length} ${cart.length === 1 ? "item" : "itens"} removidos do carrinho — autorizado pelo supervisor`,
                       })
+                      clearDraft()
                       setCart([])
                       setDiscountPercent(0)
                       setDiscountReais(0)

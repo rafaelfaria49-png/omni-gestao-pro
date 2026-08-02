@@ -12,9 +12,11 @@
 import { describe, it, expect } from "vitest"
 import {
   activeCaixaSessionUrl,
+  createSingleFlight,
   decideCaixaSessionSync,
   fetchActiveCaixaSession,
   isCaixaReferenceStale,
+  reconcileCaixaSession,
   type ServerCaixaSession,
 } from "@/lib/pdv-caixa-session"
 
@@ -221,5 +223,179 @@ describe("fetchActiveCaixaSession", () => {
     expect(fetched.ok).toBe(false)
     // A UI só chama `decideCaixaSessionSync` quando `ok === true`; este teste
     // documenta o contrato — falha de consulta não produz decisão nenhuma.
+  })
+})
+
+function fetchComSessao(sessao: ServerCaixaSession | null): typeof fetch {
+  return (async () => jsonResponse({ ok: true, sessoes: sessao ? [sessao] : [] })) as unknown as typeof fetch
+}
+
+describe("reconcileCaixaSession — recuperação ponta a ponta (ação 'Atualizar caixa')", () => {
+  it("computador reiniciado: caixa aberto no servidor volta a ser utilizável", async () => {
+    const { outcome, decision } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: null },
+      fetchImpl: fetchComSessao(sessaoAberta),
+    })
+
+    expect(outcome).toEqual({
+      ok: true,
+      status: "adotada",
+      sessaoId: "sess-servidor-aberta",
+      substituiu: null,
+      motivo: "referencia-ausente",
+    })
+    expect(decision?.action).toBe("adopt")
+  })
+
+  it("carrinho montado na sessão antiga passa a apontar para a sessão aberta agora", async () => {
+    const { outcome } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: "sess-de-ontem" },
+      fetchImpl: fetchComSessao(sessaoAberta),
+    })
+
+    expect(outcome).toMatchObject({
+      status: "adotada",
+      sessaoId: "sess-servidor-aberta",
+      substituiu: "sess-de-ontem",
+      motivo: "referencia-obsoleta",
+    })
+  })
+
+  it("erro de rede NÃO produz decisão — estado local (e carrinho) ficam intactos", async () => {
+    const { outcome, decision } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: "sess-servidor-aberta" },
+      fetchImpl: (async () => {
+        throw new TypeError("Failed to fetch")
+      }) as unknown as typeof fetch,
+    })
+
+    expect(outcome).toEqual({ ok: false, status: "falha", reason: "rede" })
+    expect(decision).toBeNull()
+  })
+
+  it("HTTP 403 também não produz decisão (não fecha caixa aberto por falta de permissão)", async () => {
+    const { outcome, decision } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: "sess-servidor-aberta" },
+      fetchImpl: (async () => jsonResponse({ error: "negado" }, 403)) as unknown as typeof fetch,
+    })
+
+    expect(outcome).toEqual({ ok: false, status: "falha", reason: "http" })
+    expect(decision).toBeNull()
+  })
+
+  it("caixa realmente fechado continua bloqueando (decisão de fechar o local)", async () => {
+    const { outcome, decision } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: "sess-de-ontem" },
+      fetchImpl: fetchComSessao(null),
+    })
+
+    expect(outcome).toEqual({ ok: true, status: "sem-caixa-aberto" })
+    expect(decision).toEqual({ action: "close", reason: "servidor-sem-sessao-aberta" })
+  })
+
+  it("troca de loja: sessão de outra unidade não é adotada nem fecha o caixa local", async () => {
+    const { outcome, decision } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: "sess-da-loja-2" },
+      fetchImpl: fetchComSessao({ ...sessaoAberta, id: "sess-loja-1", storeId: "loja-1" }),
+    })
+
+    expect(outcome).toEqual({ ok: true, status: "outra-loja" })
+    expect(decision).toEqual({ action: "keep", reason: "sessao-de-outra-loja" })
+  })
+
+  it("já em sincronia: atualização manual não muda nada", async () => {
+    const { outcome, decision } = await reconcileCaixaSession({
+      storeId: LOJA,
+      local: { isOpen: true, sessaoId: "sess-servidor-aberta" },
+      fetchImpl: fetchComSessao(sessaoAberta),
+    })
+
+    expect(outcome).toEqual({ ok: true, status: "em-sincronia", sessaoId: "sess-servidor-aberta" })
+    expect(decision).toEqual({ action: "keep", reason: "em-sincronia" })
+  })
+
+  it("consulta sempre a loja atual (não reaproveita caixa de outra unidade)", async () => {
+    const urls: string[] = []
+    const fake = (async (url: string) => {
+      urls.push(url)
+      return jsonResponse({ ok: true, sessoes: [] })
+    }) as unknown as typeof fetch
+
+    await reconcileCaixaSession({ storeId: "loja-1", local: { isOpen: false, sessaoId: null }, fetchImpl: fake })
+    await reconcileCaixaSession({ storeId: "loja-2", local: { isOpen: false, sessaoId: null }, fetchImpl: fake })
+
+    expect(urls[0]).toContain("lojaId=loja-1")
+    expect(urls[1]).toContain("lojaId=loja-2")
+  })
+})
+
+describe("createSingleFlight — clique duplo em 'Atualizar caixa'", () => {
+  it("chamadas concorrentes compartilham a MESMA execução", async () => {
+    let execucoes = 0
+    let liberar: (v: string) => void = () => {}
+    const single = createSingleFlight<string>()
+    const task = () => {
+      execucoes += 1
+      return new Promise<string>((resolve) => {
+        liberar = resolve
+      })
+    }
+
+    const a = single(task)
+    const b = single(task)
+    const c = single(task)
+    liberar("pronto")
+
+    await expect(Promise.all([a, b, c])).resolves.toEqual(["pronto", "pronto", "pronto"])
+    expect(execucoes).toBe(1)
+  })
+
+  it("depois que termina, uma nova chamada executa de novo", async () => {
+    let execucoes = 0
+    const single = createSingleFlight<number>()
+    const task = async () => ++execucoes
+
+    await single(task)
+    await single(task)
+
+    expect(execucoes).toBe(2)
+  })
+
+  it("falha não deixa a trava presa", async () => {
+    let execucoes = 0
+    const single = createSingleFlight<number>()
+    const task = async () => {
+      execucoes += 1
+      throw new Error("rede")
+    }
+
+    await expect(single(task)).rejects.toThrow("rede")
+    await expect(single(task)).rejects.toThrow("rede")
+    expect(execucoes).toBe(2)
+  })
+
+  it("duas reconciliações disparadas juntas fazem UMA consulta ao servidor", async () => {
+    let chamadas = 0
+    const fake = (async () => {
+      chamadas += 1
+      return jsonResponse({ ok: true, sessoes: [sessaoAberta] })
+    }) as unknown as typeof fetch
+
+    const single = createSingleFlight<Awaited<ReturnType<typeof reconcileCaixaSession>>>()
+    const run = () =>
+      single(() =>
+        reconcileCaixaSession({ storeId: LOJA, local: { isOpen: true, sessaoId: null }, fetchImpl: fake }),
+      )
+
+    const [r1, r2] = await Promise.all([run(), run()])
+
+    expect(chamadas).toBe(1)
+    expect(r1.outcome).toEqual(r2.outcome)
   })
 })
