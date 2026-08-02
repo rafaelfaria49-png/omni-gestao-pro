@@ -1,9 +1,9 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 8 · 2026-08-02T00:38:24.720Z
+- importação nº 9 · 2026-08-02T00:39:02.142Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-8-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-9-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)

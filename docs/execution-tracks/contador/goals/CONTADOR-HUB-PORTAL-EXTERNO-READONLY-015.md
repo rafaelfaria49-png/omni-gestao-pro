@@ -8,7 +8,7 @@
   "class": "C2",
   "risk_tier": "ALTO",
   "branch": "goal/contador-015-portal-externo-readonly",
-  "worktree": "<PREENCHER>",
+  "worktree": "C:/Projetos/contador-014-identidade-convite",
   "test_command": "npm run typecheck",
   "allowlist": [
     "app/contador-externo/**",
