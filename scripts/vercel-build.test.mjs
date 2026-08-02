@@ -1,39 +1,55 @@
 /**
  * Testes do runner de build — `node --test "scripts/vercel-build.test.mjs"`
  *
- * Prova que `prisma migrate deploy`:
- *   - NÃO roda local (sem VERCEL_ENV), em development nem em preview;
- *   - roda SOMENTE em production, ANTES de `prisma generate` e `next build`;
- *   - ao falhar, interrompe o build (generate/build nunca são chamados);
- *   - nenhum valor de variável secreta é impresso pelo runner.
+ * Prova que o baseline e o `prisma migrate deploy`:
+ *   - NÃO rodam local (sem VERCEL_ENV), em development nem em preview;
+ *   - rodam SOMENTE em production, ANTES de `prisma generate` e `next build`;
+ *   - ao falhar, interrompem o build (passos seguintes nunca são chamados);
+ *   - nenhum valor de variável secreta é impresso pelo runner;
+ *   - a lista de baseline cobre 0001–0014 e nunca inclui a 0015;
+ *   - o parser de diff distingue drift real de saída vazia.
  *
  * Nenhum comando real é executado: `run` é sempre injetado.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSteps, main, STEP_MIGRATE, STEP_GENERATE, STEP_BUILD } from './vercel-build.mjs';
+import { buildSteps, main, STEP_BASELINE, STEP_MIGRATE, STEP_GENERATE, STEP_BUILD } from './vercel-build.mjs';
+import { BASELINE_MIGRATIONS, diffContemDDL } from './prisma-baseline.mjs';
 
 const label = ([cmd, args]) => `${cmd} ${args.join(' ')}`;
 
-test('local (sem VERCEL_ENV): não chama migrate deploy', () => {
-  const steps = buildSteps({});
-  assert.deepEqual(steps.map(label), [label(STEP_GENERATE), label(STEP_BUILD)]);
+test('local (sem VERCEL_ENV): não chama baseline nem migrate deploy', () => {
+  const steps = buildSteps({}).map(label);
+  assert.deepEqual(steps, [label(STEP_GENERATE), label(STEP_BUILD)]);
 });
 
-test('preview: não chama migrate deploy', () => {
-  const steps = buildSteps({ VERCEL_ENV: 'preview' });
-  assert.ok(!steps.map(label).some((s) => s.includes('migrate deploy')));
+test('preview: não chama baseline nem migrate deploy', () => {
+  const steps = buildSteps({ VERCEL_ENV: 'preview' }).map(label);
+  assert.ok(!steps.some((s) => s.includes('migrate deploy') || s.includes('prisma-baseline')));
 });
 
-test('development: não chama migrate deploy', () => {
-  const steps = buildSteps({ VERCEL_ENV: 'development' });
-  assert.ok(!steps.map(label).some((s) => s.includes('migrate deploy')));
+test('development: não chama baseline nem migrate deploy', () => {
+  const steps = buildSteps({ VERCEL_ENV: 'development' }).map(label);
+  assert.ok(!steps.some((s) => s.includes('migrate deploy') || s.includes('prisma-baseline')));
 });
 
-test('production: migrate deploy roda ANTES de generate e next build', () => {
+test('production: baseline e migrate deploy rodam ANTES de generate e next build', () => {
   const steps = buildSteps({ VERCEL_ENV: 'production' }).map(label);
-  assert.deepEqual(steps, [label(STEP_MIGRATE), label(STEP_GENERATE), label(STEP_BUILD)]);
+  assert.deepEqual(steps, [label(STEP_BASELINE), label(STEP_MIGRATE), label(STEP_GENERATE), label(STEP_BUILD)]);
+});
+
+test('falha do baseline interrompe o build (migrate/generate/build não executam)', () => {
+  const calls = [];
+  const code = main({
+    env: { VERCEL_ENV: 'production' },
+    run: (step) => {
+      calls.push(label(step));
+      return calls.length === 1 ? 1 : 0; // baseline falha
+    },
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(calls, [label(STEP_BASELINE)]);
 });
 
 test('falha da migration interrompe o build (generate/build não executam)', () => {
@@ -42,11 +58,11 @@ test('falha da migration interrompe o build (generate/build não executam)', () 
     env: { VERCEL_ENV: 'production' },
     run: (step) => {
       calls.push(label(step));
-      return calls.length === 1 ? 1 : 0; // migrate falha
+      return label(step) === label(STEP_MIGRATE) ? 1 : 0;
     },
   });
   assert.equal(code, 1);
-  assert.deepEqual(calls, [label(STEP_MIGRATE)]);
+  assert.deepEqual(calls, [label(STEP_BASELINE), label(STEP_MIGRATE)]);
 });
 
 test('falha em qualquer passo propaga o exit code e para a fila', () => {
@@ -59,13 +75,33 @@ test('falha em qualquer passo propaga o exit code e para a fila', () => {
     },
   });
   assert.equal(code, 7);
-  assert.deepEqual(calls, [label(STEP_MIGRATE), label(STEP_GENERATE)]);
+  assert.deepEqual(calls, [label(STEP_BASELINE), label(STEP_MIGRATE), label(STEP_GENERATE)]);
 });
 
 test('build completo em production retorna 0', () => {
   const code = main({ env: { VERCEL_ENV: 'production' }, run: () => 0 });
   assert.equal(code, 0);
 });
+
+test('baseline: lista congelada cobre 0001–0014 e NUNCA inclui a 0015', () => {
+  assert.equal(BASELINE_MIGRATIONS.length, 14);
+  assert.equal(BASELINE_MIGRATIONS[0], '0001_init_clientes_produtos');
+  assert.equal(BASELINE_MIGRATIONS[13], '0014_contador_hub_nucleo');
+  assert.ok(BASELINE_MIGRATIONS.every((m) => !m.startsWith('0015')));
+});
+
+test('baseline: parser de diff — vazio/comentários não são drift', () => {
+  assert.equal(diffContemDDL(''), false);
+  assert.equal(diffContemDDL('\n-- No differences found\n\n'), false);
+  assert.equal(diffContemDDL(';\n-- comentário\n'), false);
+});
+
+test('baseline: parser de diff — qualquer DDL é drift real', () => {
+  assert.equal(diffContemDDL('CREATE TABLE "x" ("id" TEXT);'), true);
+  assert.equal(diffContemDDL('-- comentário\nALTER TABLE "stores" ADD COLUMN "y" TEXT;'), true);
+  assert.equal(diffContemDDL('DROP TABLE "fantasma";'), true);
+});
+
 
 test('nenhuma variável secreta é impressa pelo runner', () => {
   const secretos = {

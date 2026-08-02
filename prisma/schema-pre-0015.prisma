@@ -1,0 +1,2824 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum StoreProfile {
+  ASSISTENCIA
+  VARIEDADES
+  SUPERMERCADO
+}
+
+enum SubscriptionPlan {
+  BRONZE
+  PRATA
+  OURO
+}
+
+enum MarketingMediaJobKind {
+  IMAGE
+  VOICE
+  VIDEO
+  AVATAR
+  REUNIAO
+  AUTOMACAO
+}
+
+model Store {
+  /**
+   * Use ids estáveis: loja-1, loja-2, ...
+   */
+  id               String           @id
+  name             String           @default("") @map("name")
+  cnpj             String           @default("") @map("cnpj")
+  phone            String           @default("") @map("phone")
+  logoUrl          String           @default("") @map("logoUrl")
+  /**
+   * Endereço completo (rua/numero/bairro/cidade/uf/cep) como JSON.
+   */
+  address          Json?            @map("address") @db.JsonB
+  profile          StoreProfile     @default(ASSISTENCIA) @map("profile")
+  /**
+   * Plano SaaS oficial por unidade (first-class).
+   */
+  subscriptionPlan SubscriptionPlan @default(BRONZE) @map("subscriptionPlan")
+  createdAt        DateTime         @default(now()) @map("createdAt")
+  updatedAt        DateTime         @updatedAt @map("updatedAt")
+
+  clientes               Cliente[]
+  produtos               Produto[]
+  depositos              Deposito[]
+  servicos               Servico[]
+  ordensServico          OrdemServico[]
+  contasReceber          ContaReceberTitulo[]
+  contasPagar            ContaPagarTitulo[]
+  movimentacoes          MovimentacaoFinanceira[]
+  carteiras              CarteiraFinanceira[]
+  fechamentos            FechamentoFinanceiro[]
+  conciliacoes           ConciliacaoFinanceira[]
+  auditorias             AuditoriaFinanceira[]
+  fornecedores           Fornecedor[]
+  financialAccounts      FinancialAccount[]
+  financialCategories    FinancialCategory[]
+  financialTransactions  FinancialTransaction[]
+  vendas                 Venda[]
+  categorias             CategoriaProduto[]
+  categoriasCadastro     CategoriaCadastro[]
+  marcasCadastro         MarcaCadastro[]
+  tecnicos               Tecnico[]
+  equipamentosModelos    EquipamentoModelo[]
+  productMedia           ProductMedia[]
+  marketplaceListings    MarketplaceListing[]
+  settings               StoreSettings?
+  iaConversations        IaConversation[]
+  iaMessages             IaMessage[]
+  marketingIaPosts       MarketingIaPost[]
+  marketingPosts         MarketingPost[]
+  marketingMediaJobs     MarketingMediaJob[]
+  whatsappContacts       WhatsAppContact[]
+  whatsappConversations  WhatsAppConversation[]
+  whatsappMessages       WhatsAppMessage[]
+  whatsappAutomations    WhatsAppAutomation[]
+  whatsappQuickReplies   WhatsAppQuickReply[]
+  whatsappEtiquetas      WhatsAppEtiqueta[]
+  whatsappAiSetting      WhatsAppAiSetting?
+  whatsappAutomationLogs WhatsAppAutomationLog[]
+  whatsappPhoneNumbers   WhatsAppPhoneNumber[]
+  sessoesCaixa           SessaoCaixa[]
+  devolucoes             DevolucaoVenda[]
+  garantiasOrdemServico  GarantiaOrdemServico[]
+  adminUserStores        AdminUserStore[]
+  omniAgentCommands      OmniAgentCommand[]
+  omniAgentAutomations   OmniAgentAutomation[]
+  omniAgentConfig        OmniAgentConfig?
+  omniAgentMemories      OmniAgentMemory[]
+  marketplaceConnections   MarketplaceConnection[]
+  marketplaceSyncLogs      MarketplaceSyncLog[]
+  marketplaceProductLinks  MarketplaceProductLink[]
+  movimentacoesEstoque     MovimentacaoEstoque[]
+  creditos                 ClienteCredito[]
+  usosCredito              UsoCreditoCliente[]
+  pdvTerminais             PdvTerminal[]
+  inventarioSessoes        InventarioSessao[]
+  // ─── Fiscal (GOAL_001B — aditivo/dormente; só relações inversas, sem coluna física) ──
+  configuracaoFiscal       ConfiguracaoFiscalLoja?
+  certificadosDigitais     CertificadoDigital[]
+  seriesFiscais            SerieFiscal[]
+  notasFiscais             NotaFiscal[]
+  eventosFiscais           EventoFiscal[]
+  fiscalEmissaoJobs        FiscalEmissaoJob[]
+  fiscalLogs               FiscalLog[]
+  // ─── Contador HUB (GOAL 009 — aditivo; só relações inversas, sem coluna física) ──
+  contadorCompetencias     ContadorCompetencia[]
+  contadorDocumentos       ContadorDocumento[]
+  contadorEventos          ContadorEvento[]
+
+  @@index([profile])
+  @@map("stores")
+}
+
+enum MarketplaceProvider {
+  MERCADO_LIVRE @map("mercado_livre")
+  SHOPEE        @map("shopee")
+  AMAZON        @map("amazon")
+  MAGALU        @map("magalu")
+}
+
+enum MarketplaceConnectionStatus {
+  DISCONNECTED @map("disconnected")
+  CONNECTED    @map("connected")
+  ERROR        @map("error")
+  SYNCING      @map("syncing")
+}
+
+/** Estado de publicação do vínculo produto ↔ canal (simulado na Fase 2). */
+enum MarketplaceProductLinkStatus {
+  NOT_PUBLISHED @map("not_published")
+  PUBLISHED     @map("published")
+  ERROR         @map("error")
+}
+
+/** Estado de sincronização do vínculo (simulado). */
+enum MarketplaceProductSyncStatus {
+  IDLE       @map("idle")
+  PENDING    @map("pending")
+  SYNCED     @map("synced")
+  SYNC_ERROR @map("sync_error")
+}
+
+/**
+ * Conta de marketplace por unidade (OAuth real na Fase 2+).
+ */
+model MarketplaceConnection {
+  id              String                        @id @default(cuid())
+  storeId         String                        @map("storeId")
+  store           Store                         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  provider        MarketplaceProvider           @map("provider")
+  accountName     String                        @map("accountName")
+  status          MarketplaceConnectionStatus   @default(DISCONNECTED) @map("status")
+  /** Placeholder até criptografia/KMS — não expor na API pública. */
+  accessToken     String                        @default("") @map("accessToken")
+  refreshToken    String                        @default("") @map("refreshToken")
+  metadata        Json?                         @map("metadata") @db.JsonB
+  lastSyncAt      DateTime?                     @map("lastSyncAt")
+  lastSyncMessage String                        @default("") @map("lastSyncMessage")
+  createdAt       DateTime                      @default(now()) @map("createdAt")
+  updatedAt       DateTime                      @updatedAt @map("updatedAt")
+
+  syncLogs     MarketplaceSyncLog[]
+  productLinks MarketplaceProductLink[]
+
+  @@index([storeId])
+  @@index([storeId, provider])
+  @@map("marketplace_connections")
+}
+
+/**
+ * Histórico de sincronização simulada / futura sync real.
+ * Opcionalmente amarrado a produto e vínculo (Fase 3 — filtros na UI).
+ */
+model MarketplaceSyncLog {
+  id             String                  @id @default(cuid())
+  storeId        String                  @map("storeId")
+  store          Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  connectionId   String                  @map("connectionId")
+  connection     MarketplaceConnection   @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  produtoId      String?                 @map("produtoId")
+  produto        Produto?                @relation(fields: [produtoId], references: [id], onDelete: SetNull)
+  productLinkId  String?                 @map("productLinkId")
+  productLink    MarketplaceProductLink? @relation(fields: [productLinkId], references: [id], onDelete: SetNull)
+  message        String                  @map("message")
+  createdAt      DateTime                @default(now()) @map("createdAt")
+
+  @@index([storeId])
+  @@index([connectionId, createdAt])
+  @@index([storeId, produtoId, createdAt])
+  @@index([productLinkId, createdAt])
+  @@map("marketplace_sync_logs")
+}
+
+/**
+ * Vínculo leve produto interno ↔ conta de marketplace (Fase 2 — sem OAuth/publicação real).
+ */
+model MarketplaceProductLink {
+  id           String                       @id @default(cuid())
+  storeId      String                       @map("storeId")
+  store        Store                        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  produtoId    String                       @map("produtoId")
+  produto      Produto                      @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  connectionId String                       @map("connectionId")
+  connection   MarketplaceConnection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  provider     MarketplaceProvider          @map("provider")
+  externalId   String?                      @map("externalId")
+  status       MarketplaceProductLinkStatus @default(NOT_PUBLISHED) @map("status")
+  syncStatus   MarketplaceProductSyncStatus @default(IDLE) @map("syncStatus")
+  price        Float                        @default(0) @map("price")
+  stock        Int                          @default(0) @map("stock")
+  publishedAt  DateTime?                    @map("publishedAt")
+  metadata     Json?                        @map("metadata") @db.JsonB
+  createdAt    DateTime                     @default(now()) @map("createdAt")
+  updatedAt    DateTime                     @updatedAt @map("updatedAt")
+
+  syncLogs MarketplaceSyncLog[]
+
+  @@unique([connectionId, produtoId], name: "marketplace_product_link_connection_produto")
+  @@index([storeId])
+  @@index([storeId, produtoId])
+  @@map("marketplace_product_links")
+}
+
+/**
+ * Contato WhatsApp por unidade (Cloud API / Evolution — id externo opcional).
+ */
+model WhatsAppContact {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /**
+   * Identificador oficial WhatsApp quando disponível (ex.: número @c.us ou wa_id).
+   */
+  waExternalId  String   @default("") @map("waExternalId")
+  /**
+   * Somente dígitos com DDI (normalizado).
+   */
+  phoneDigits   String   @map("phoneDigits")
+  displayName   String   @default("") @map("displayName")
+  profilePicUrl String   @default("") @map("profilePicUrl")
+  metadata      Json?    @map("metadata") @db.JsonB
+  createdAt     DateTime @default(now()) @map("createdAt")
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+
+  conversations WhatsAppConversation[]
+
+  @@unique([storeId, phoneDigits], name: "whatsapp_contact_store_phone")
+  @@index([storeId])
+  @@map("whatsapp_contacts")
+}
+
+model WhatsAppConversation {
+  id                 String          @id @default(cuid())
+  storeId            String          @map("storeId")
+  store              Store           @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  contactId          String          @map("contactId")
+  contact            WhatsAppContact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  /**
+   * Vínculo opcional com cliente cadastrado (match por telefone normalizado).
+   */
+  clienteId          String?         @map("clienteId")
+  cliente            Cliente?        @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  externalThreadId   String          @default("") @map("externalThreadId")
+  status             String          @default("open") @map("status")
+  assignedToUserId   String          @default("") @map("assignedToUserId")
+  humanMode          Boolean         @default(false) @map("humanMode")
+  lastMessagePreview String          @default("") @map("lastMessagePreview") @db.Text
+  lastMessageAt      DateTime?       @map("lastMessageAt")
+  unreadCount        Int             @default(0) @map("unreadCount")
+  metadata           Json?           @map("metadata") @db.JsonB
+  createdAt          DateTime        @default(now()) @map("createdAt")
+  updatedAt          DateTime        @updatedAt @map("updatedAt")
+
+  messages  WhatsAppMessage[]
+  etiquetas WhatsAppConversacaoEtiqueta[]
+
+  @@index([storeId, lastMessageAt])
+  @@index([contactId])
+  @@index([clienteId])
+  @@map("whatsapp_conversations")
+}
+
+model WhatsAppMessage {
+  id                String               @id @default(cuid())
+  storeId           String               @map("storeId")
+  store             Store                @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  conversationId    String               @map("conversationId")
+  conversation      WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction         String               @map("direction")
+  body              String               @map("body") @db.Text
+  messageType       String               @default("text") @map("messageType")
+  externalMessageId String               @default("") @map("externalMessageId")
+  payload           Json?                @map("payload") @db.JsonB
+  createdAt         DateTime             @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("whatsapp_messages")
+}
+
+model WhatsAppAutomation {
+  id          String   @id @default(cuid())
+  storeId     String   @map("storeId")
+  store       Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name        String   @map("name")
+  triggerType String   @default("keyword") @map("triggerType")
+  enabled     Boolean  @default(true) @map("enabled")
+  priority    Int      @default(0) @map("priority")
+  conditions  Json?    @map("conditions") @db.JsonB
+  actions     Json?    @map("actions") @db.JsonB
+  createdAt   DateTime @default(now()) @map("createdAt")
+  updatedAt   DateTime @updatedAt @map("updatedAt")
+
+  logs WhatsAppAutomationLog[]
+
+  @@index([storeId, enabled])
+  @@map("whatsapp_automations")
+}
+
+model WhatsAppQuickReply {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  shortcut  String   @map("shortcut")
+  title     String   @map("title")
+  body      String   @map("body") @db.Text
+  category  String   @default("") @map("category")
+  sortOrder Int      @default(0) @map("sortOrder")
+  ativo     Boolean  @default(true) @map("ativo")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@unique([storeId, shortcut], name: "whatsapp_quick_reply_store_shortcut")
+  @@index([storeId])
+  @@map("whatsapp_quick_replies")
+}
+
+model WhatsAppEtiqueta {
+  id           String   @id @default(cuid())
+  storeId      String   @map("storeId")
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  nome         String   @map("nome")
+  cor          String   @default("#10b981") @map("cor")
+  ativo        Boolean  @default(true) @map("ativo")
+  createdAt    DateTime @default(now()) @map("createdAt")
+  updatedAt    DateTime @updatedAt @map("updatedAt")
+
+  conversacoes WhatsAppConversacaoEtiqueta[]
+
+  @@unique([storeId, nome], name: "wa_etiqueta_store_nome")
+  @@index([storeId])
+  @@map("whatsapp_etiquetas")
+}
+
+model WhatsAppConversacaoEtiqueta {
+  id             String               @id @default(cuid())
+  conversationId String               @map("conversationId")
+  conversation   WhatsAppConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  etiquetaId     String               @map("etiquetaId")
+  etiqueta       WhatsAppEtiqueta     @relation(fields: [etiquetaId], references: [id], onDelete: Cascade)
+  createdAt      DateTime             @default(now()) @map("createdAt")
+
+  @@unique([conversationId, etiquetaId])
+  @@index([conversationId])
+  @@index([etiquetaId])
+  @@map("whatsapp_conversa_etiquetas")
+}
+
+/**
+ * Uma linha de configuração de IA por loja (sugestões simuladas no hub).
+ */
+model WhatsAppAiSetting {
+  id                 String   @id @default(cuid())
+  storeId            String   @unique @map("storeId")
+  store              Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tone               String   @default("consultivo") @map("tone")
+  systemPrompt       String   @default("") @map("systemPrompt") @db.Text
+  suggestionsEnabled Boolean  @default(true) @map("suggestionsEnabled")
+  maxContextMessages Int      @default(12) @map("maxContextMessages")
+  metadata           Json?    @map("metadata") @db.JsonB
+  updatedAt          DateTime @updatedAt @map("updatedAt")
+
+  @@map("whatsapp_ai_settings")
+}
+
+model WhatsAppAutomationLog {
+  id           String              @id @default(cuid())
+  storeId      String              @map("storeId")
+  store        Store               @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  automationId String?             @map("automationId")
+  automation   WhatsAppAutomation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+  level        String              @default("info") @map("level")
+  action       String              @map("action")
+  message      String              @default("") @map("message") @db.Text
+  payload      Json?               @map("payload") @db.JsonB
+  createdAt    DateTime            @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([action])
+  @@map("whatsapp_automation_logs")
+}
+
+/**
+ * Mapeia cada número WhatsApp (Meta `phone_number_id`) à sua loja — roteamento
+ * multi-loja do webhook (inbound) e resolução de credencial (outbound).
+ * O token NÃO é armazenado: `tokenEnvKey` referencia a env (Vercel secret) que o contém.
+ */
+model WhatsAppPhoneNumber {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /** Meta WhatsApp Cloud `phone_number_id` — chave de roteamento do webhook. */
+  phoneNumberId String   @unique @map("phoneNumberId")
+  /** WhatsApp Business Account id (`entry[].id`) — auditoria/diagnóstico. */
+  wabaId        String   @default("") @map("wabaId")
+  /** Número exibível (E.164) — apresentação. */
+  displayPhone  String   @default("") @map("displayPhone")
+  /** Nome da env (Vercel secret) com o access token da loja. Token nunca no DB. */
+  tokenEnvKey   String   @default("WHATSAPP_ACCESS_TOKEN") @map("tokenEnvKey")
+  active        Boolean  @default(true) @map("active")
+  createdAt     DateTime @default(now()) @map("createdAt")
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+
+  @@index([storeId])
+  @@map("whatsapp_phone_numbers")
+}
+
+/**
+ * Posts do Marketing IA Hub (conteúdo editorial por unidade).
+ * Status/canal em string validada na API (pt-BR).
+ */
+model MarketingPost {
+  id          String    @id @default(cuid())
+  storeId     String    @map("storeId")
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  titulo      String    @map("titulo")
+  /** instagram | facebook | whatsapp | google | geral */
+  canal       String    @map("canal")
+  /** rascunho | agendado | publicado | erro */
+  status      String    @default("rascunho") @map("status")
+  conteudo    String    @default("") @map("conteudo") @db.Text
+  legenda     String    @default("") @map("legenda") @db.Text
+  hashtags    String    @default("") @map("hashtags")
+  cta         String    @default("") @map("cta")
+  imagemUrl   String    @default("") @map("imagemUrl")
+  scheduledAt DateTime? @map("scheduledAt")
+  publishedAt DateTime? @map("publishedAt")
+  metadata    Json?     @map("metadata") @db.JsonB
+  createdAt   DateTime  @default(now()) @map("createdAt")
+  updatedAt   DateTime  @updatedAt @map("updatedAt")
+
+  @@index([storeId, status])
+  @@index([storeId, scheduledAt])
+  @@index([storeId, createdAt])
+  @@map("marketing_posts")
+}
+
+/**
+ * Legenda e agendamentos do Estúdio Marketing IA (IA Mestre), por unidade.
+ */
+model MarketingIaPost {
+  id           String    @id @default(cuid())
+  storeId      String    @map("storeId")
+  store        Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  caption      String    @map("caption") @db.Text
+  productName  String    @default("") @map("productName")
+  tone         String    @default("") @map("tone")
+  /**
+   * GENERATED (rascunho/gerado) | SCHEDULED (agendado)
+   */
+  status       String    @default("GENERATED") @map("status")
+  scheduledFor DateTime? @map("scheduledFor")
+  createdAt    DateTime  @default(now()) @map("createdAt")
+  updatedAt    DateTime  @updatedAt @map("updatedAt")
+
+  @@index([storeId, createdAt])
+  @@map("marketing_ia_posts")
+}
+
+model StoreSettings {
+  id                    String   @id @default(cuid())
+  storeId               String   @unique @map("storeId")
+  store                 Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /**
+   * Contatos por unidade (não herdar da RafaCell).
+   */
+  contactEmail          String   @default("") @map("contactEmail")
+  contactWhatsapp       String   @default("") @map("contactWhatsapp")
+  contactWhatsappDono   String   @default("") @map("contactWhatsappDono")
+  /**
+   * Rodapé do cupom (mensagem por CNPJ/unidade).
+   */
+  receiptFooter         String   @default("") @map("receiptFooter") @db.Text
+  /**
+   * Config de impressão (host/porta/modelo) por unidade.
+   */
+  printerConfig         Json?    @map("printerConfig") @db.JsonB
+  /**
+   * Taxas de cartão e regras financeiras por unidade.
+   */
+  cardFees              Json?    @map("cardFees") @db.JsonB
+  /**
+   * Créditos do Estúdio de Mídia (locução / vídeo IA) por unidade.
+   */
+  marketingMediaCredits Int      @default(50) @map("marketingMediaCredits")
+  /**
+   * Mascote 3D fixo da loja (consistência de personagem).
+   */
+  mascotCharacterSeed   String   @default("") @map("mascotCharacterSeed")
+  mascotPromptBase      String   @default("") @map("mascotPromptBase") @db.Text
+  updatedAt             DateTime @updatedAt @map("updatedAt")
+
+  @@map("store_settings")
+}
+
+/**
+ * Histórico de jobs de mídia (locução/vídeo) para auditoria e evolução futura.
+ */
+model MarketingMediaJob {
+  id                  String                 @id @default(cuid())
+  storeId             String                 @map("storeId")
+  store               Store                  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /**
+   * Kind legado (String). Preferir `kindV2`.
+   */
+  kind                String                 @map("kind")
+  /**
+   * Kind novo (enum) para padronização/validação.
+   */
+  kindV2              MarketingMediaJobKind? @map("kindV2")
+  /**
+   * Seed do personagem (Mascote Studio / consistência).
+   */
+  characterSeed       String?                @map("characterSeed")
+  /**
+   * Prompt base fixo do personagem.
+   */
+  promptBase          String?                @map("promptBase") @db.Text
+  /**
+   * Status por rede social (multidifusão).
+   */
+  socialNetworkStatus Json?                  @map("socialNetworkStatus") @db.JsonB
+  meta                Json?                  @map("meta") @db.JsonB
+  creditsAfter        Int?                   @map("creditsAfter")
+  createdAt           DateTime               @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@map("marketing_media_jobs")
+}
+
+model IaConversation {
+  id      String @id @default(cuid())
+  storeId String @map("storeId")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /**
+   * Nome opcional (ex.: "Campanhas Abril", "OS/Orçamentos").
+   */
+  title             String  @default("") @map("title")
+  /**
+   * Modelo selecionado (ex.: "gpt-4o", "claude-3.5", "auto").
+   */
+  model             String  @default("auto") @map("model")
+  /**
+   * Se true, aplicar identidade/brand voice da loja.
+   */
+  brandVoiceEnabled Boolean @default(true) @map("brandVoiceEnabled")
+
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  messages IaMessage[]
+
+  @@index([storeId, updatedAt])
+  @@map("ia_conversations")
+}
+
+model IaMessage {
+  id      String @id @default(cuid())
+  storeId String @map("storeId")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  conversationId String         @map("conversationId")
+  conversation   IaConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  role    String @map("role") // "user" | "assistant" | "system"
+  content String @map("content") @db.Text
+  /**
+   * Payload auxiliar opcional (tokens, tool calls, etc.)
+   */
+  meta    Json?  @map("meta") @db.JsonB
+
+  createdAt DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("ia_messages")
+}
+
+model Cliente {
+  id             String    @id @default(cuid())
+  storeId        String    @default("loja-1") @map("storeId")
+  store          Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name           String    @map("name")
+  /**
+   * PF/PJ para Cadastros HUB e OS futuro.
+   */
+  kind           String    @default("PF") @map("kind")
+  /**
+   * CPF/CNPJ (normalizado ou com máscara).
+   */
+  document       String    @default("") @map("document")
+  phone          String?   @map("phone")
+  email          String?   @map("email")
+  /**
+   * Ex.: "São Paulo/SP" (compatível com UI atual).
+   */
+  city           String    @default("") @map("city")
+  /**
+   * Tags livres (UI atual usa string[]).
+   */
+  tags           Json?     @map("tags") @db.JsonB
+  active         Boolean   @default(true) @map("active")
+  /**
+   * Campos auxiliares para UI (opcionais).
+   */
+  totalSpent     Float     @default(0) @map("totalSpent")
+  lastPurchaseAt DateTime? @map("lastPurchaseAt")
+  createdAt      DateTime  @default(now()) @map("createdAt")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updatedAt")
+
+  ordensServico         OrdemServico[]
+  vendas                Venda[]
+  whatsappConversations WhatsAppConversation[]
+  creditos              ClienteCredito[]
+  omniAgentMemories     OmniAgentMemory[]
+
+  @@index([storeId])
+  @@map("clientes_importados")
+}
+
+enum StatusOrdemServico {
+  Aberto
+  EmAnalise
+  Pronto
+  Entregue
+}
+
+model OrdemServico {
+  id           String             @id @default(cuid())
+  storeId      String             @default("loja-1") @map("storeId")
+  store        Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * Número exibido / chave de deduplicação na importação de planilhas.
+   */
+  numero       String?            @map("numero")
+  /**
+   * Snapshot JSON legado (importador universal / backups).
+   */
+  payload      Json?              @map("payload") @db.JsonB
+  clienteId    String?            @map("clienteId")
+  cliente      Cliente?           @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  equipamento  String             @default("") @map("equipamento")
+  defeito      String             @default("") @map("defeito") @db.Text
+  laudoTecnico String?            @map("laudoTecnico") @db.Text
+  /**
+   * Valor de mão de obra / serviço sem peças do estoque.
+   */
+  valorBase    Float              @default(0) @map("valorBase")
+  valorTotal   Float              @default(0) @map("valorTotal")
+  status       StatusOrdemServico @default(Aberto) @map("status")
+  createdAt    DateTime           @default(now()) @map("createdAt")
+  updatedAt    DateTime           @default(now()) @updatedAt @map("updatedAt")
+
+  itens                  OrdemServicoItem[]
+  garantiasOperacionais  GarantiaOrdemServico[]
+
+  @@index([storeId])
+  @@index([clienteId])
+  @@index([numero])
+  @@index([status])
+  @@map("ordens_servico")
+}
+
+/// Garantia operacional persistida (complementa o snapshot JSON em `payload.garantia`).
+model GarantiaOrdemServico {
+  id             String       @id @default(cuid())
+  storeId        String       @map("storeId")
+  store          Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  ordemServicoId String       @map("ordemServicoId")
+  ordemServico   OrdemServico @relation(fields: [ordemServicoId], references: [id], onDelete: Cascade)
+  prazoDias      Int          @map("prazoDias")
+  cobertura      String       @default("") @map("cobertura") @db.Text
+  observacoes    String       @default("") @map("observacoes") @db.Text
+  dataInicio     DateTime     @map("dataInicio")
+  dataFim        DateTime     @map("dataFim")
+  /// ativa | expirada | cancelada
+  status         String       @default("ativa") @map("status")
+  createdAt      DateTime     @default(now()) @map("createdAt")
+
+  @@index([storeId])
+  @@index([ordemServicoId])
+  @@index([status])
+  @@map("garantia_ordem_servico")
+}
+
+model OrdemServicoItem {
+  id             String       @id @default(cuid())
+  ordemServicoId String       @map("ordemServicoId")
+  ordemServico   OrdemServico @relation(fields: [ordemServicoId], references: [id], onDelete: Cascade)
+  /**
+   * Peça vinculada ao catálogo (estoque). Nulo quando `tipo = "servico"` (mão de obra sem SKU).
+   */
+  produtoId String?  @map("produtoId")
+  produto   Produto? @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+  /** peca | servico */
+  tipo       String @default("peca") @map("tipo")
+  /** Rótulo persistido (nome da peça ou descrição do serviço). */
+  descricao  String @default("") @map("descricao")
+  quantidade Int    @map("quantidade")
+  /**
+   * Preço unitário no momento da baixa (snapshot).
+   */
+  precoUnitario Float @map("precoUnitario")
+  observacao    String @default("") @map("observacao") @db.Text
+
+  @@index([ordemServicoId])
+  @@index([produtoId])
+  @@map("ordem_servico_item")
+}
+
+model Produto {
+  id           String   @id @default(cuid())
+  storeId      String   @default("loja-1") @map("storeId")
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * Código de barras / SKU (pode se repetir em lojas diferentes).
+   */
+  sku          String?  @map("sku")
+  /**
+   * Código de barras (EAN/GTIN) — leitura no PDV Alta Performance.
+   */
+  barcode      String?  @map("barcode")
+  name         String   @map("name")
+  brand        String   @default("") @map("brand")
+  supplierName String   @default("") @map("supplierName")
+  stock        Int      @default(0) @map("stock")
+  /**
+   * Custo unitário (planilhas/backup): coluna `price_cost` no Supabase.
+   */
+  precoCusto   Float    @default(0) @map("price_cost")
+  price        Float    @default(0) @map("price")
+  category     String?  @map("category")
+  warrantyDays Int      @default(0) @map("warrantyDays")
+  status       String   @default("Ativo") @map("status")
+  active       Boolean  @default(true) @map("active")
+  /** Extensível (Fase IA: foto, voz, WhatsApp, pipeline) — não substituir colunas core. */
+  metadata     Json?    @map("metadata") @db.JsonB
+  createdAt    DateTime @default(now()) @map("createdAt")
+  updatedAt    DateTime @default(now()) @updatedAt @map("updatedAt")
+
+  ordemServicoItens         OrdemServicoItem[]
+  media                     ProductMedia[]
+  marketplaceListings     MarketplaceListing[]
+  marketplaceProductLinks MarketplaceProductLink[]
+  marketplaceSyncLogs     MarketplaceSyncLog[]
+  movimentacoesEstoque    MovimentacaoEstoque[]
+  produtoDepositos        ProdutoDeposito[]
+
+  @@unique([storeId, sku], name: "storeId_sku")
+  @@unique([storeId, barcode], name: "storeId_barcode")
+  @@index([storeId])
+  @@map("estoque_produtos")
+}
+
+/**
+ * Livro-razão de estoque (append-only). Cada entrada de mercadoria ou ajuste de saldo
+ * gera um registro imutável. O saldo atual vive em Produto.stock; este modelo é a
+ * trilha auditável de COMO o saldo chegou ali, com custo médio ponderado.
+ * Não substitui o decremento de venda do PDV/OS (Fase futura migra o adapter da OS).
+ */
+model MovimentacaoEstoque {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  produtoId String?  @map("produtoId")
+  produto   Produto? @relation(fields: [produtoId], references: [id], onDelete: SetNull)
+
+  /** Snapshot para auditoria — sobrevive à exclusão/edição do produto. */
+  produtoSku  String? @map("produtoSku")
+  produtoNome String  @map("produtoNome")
+
+  /** "entrada" | "ajuste" | "saida" */
+  tipo   String @map("tipo")
+  /** "manual" | "importacao" | "os" | "pdv" */
+  origem String @default("manual") @map("origem")
+
+  /** Delta assinado aplicado ao saldo (+ entrada, +/- ajuste). */
+  quantidade    Int @map("quantidade")
+  estoqueAntes  Int @map("estoqueAntes")
+  estoqueDepois Int @map("estoqueDepois")
+
+  custoUnitario    Float @default(0) @map("custoUnitario")
+  custoMedioAntes  Float @default(0) @map("custoMedioAntes")
+  custoMedioDepois Float @default(0) @map("custoMedioDepois")
+  /** quantidade × custoUnitario (valor da movimentação). */
+  valorTotal       Float @default(0) @map("valorTotal")
+
+  documento  String? @map("documento")
+  fornecedor String? @map("fornecedor")
+  motivo     String? @map("motivo")
+  observacao String? @map("observacao")
+  usuario    String? @map("usuario")
+
+  createdAt DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId])
+  @@index([storeId, produtoId])
+  @@index([storeId, createdAt])
+  @@map("movimentacoes_estoque")
+}
+
+/**
+ * Depósito — localização LÓGICA de estoque dentro de uma loja (NÃO é estabelecimento fiscal).
+ * BL-07 Fase 1 — fundação multi-depósito (ADR-0007 · SPRINT_BL07_FASE1). Aditivo e
+ * não-quebrante: nada do comportamento atual muda. Todo saldo continua refletido em
+ * Produto.stock (cache agregado); este modelo passa a ser a fonte estrutural por depósito.
+ * Invariante "exatamente 1 principal por loja": garantida pelo guard de serviço
+ * (ensureDepositoPrincipal, idempotente) + índice parcial único na migração 0011 (reforço).
+ */
+model Deposito {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  nome      String   @map("nome")
+  /** Código estável por loja (ex.: "PRINCIPAL"). Único por loja. */
+  codigo    String   @map("codigo")
+  ativo     Boolean  @default(true) @map("ativo")
+  /** Depósito principal da loja — destino de todo consumo até as fases de seleção (Fase 2). */
+  principal Boolean  @default(false) @map("principal")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @default(now()) @updatedAt @map("updatedAt")
+
+  produtoDepositos ProdutoDeposito[]
+
+  @@unique([storeId, codigo], name: "storeId_codigo")
+  @@index([storeId])
+  @@map("depositos")
+}
+
+/**
+ * Saldo FÍSICO de um produto em um depósito (BL-07 Fase 1 — fundação multi-depósito).
+ * Fonte estrutural do saldo por depósito; a soma por loja espelha Produto.stock (cache agregado).
+ * Fase 1: SOMENTE saldo físico — sem reserva, sem comprometido, sem trânsito (essas dimensões
+ * são Fase 3, ver BL07_FASE0_ARQUITETURA §3.4). `storeId` denormalizado para isolamento
+ * multi-loja (ETAPA 6); integridade referencial garantida pelas FKs de produto e depósito.
+ */
+model ProdutoDeposito {
+  id         String   @id @default(cuid())
+  storeId    String   @map("storeId")
+  produtoId  String   @map("produtoId")
+  produto    Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  depositoId String   @map("depositoId")
+  deposito   Deposito @relation(fields: [depositoId], references: [id], onDelete: Cascade)
+  quantidade Int      @default(0) @map("quantidade")
+  createdAt  DateTime @default(now()) @map("createdAt")
+  updatedAt  DateTime @default(now()) @updatedAt @map("updatedAt")
+
+  @@unique([produtoId, depositoId], name: "produtoId_depositoId")
+  @@index([storeId])
+  @@index([storeId, produtoId])
+  @@index([depositoId])
+  @@map("produto_depositos")
+}
+
+/**
+ * INVENTARIO_ASSISTIDO_V1 — Sessão de conferência física (contagem) da loja.
+ * ADITIVO e INERTE: é um registro PARALELO que NUNCA altera `Produto.stock`. A única
+ * escrita de saldo acontece fora daqui, por revisão humana, reusando `registrarAjusteEstoque`
+ * (livro-razão `MovimentacaoEstoque`). Multi-loja: tudo escopado por `storeId` (ADR-0003).
+ */
+model InventarioSessao {
+  id           String    @id @default(cuid())
+  storeId      String    @map("storeId")
+  store        Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /** "aberta" | "finalizada" | "cancelada" */
+  status       String    @default("aberta") @map("status")
+  /** Nome do operador (sessão NextAuth) que conduz a contagem. */
+  operador     String?   @map("operador")
+  /** Depósito-alvo (BL-07 ready). Null = contagem agregada da loja (`Produto.stock`). */
+  depositoId   String?   @map("depositoId")
+  nome         String?   @map("nome")
+  observacao   String?   @map("observacao")
+  iniciadoEm   DateTime  @default(now()) @map("iniciadoEm")
+  finalizadoEm DateTime? @map("finalizadoEm")
+  /** Snapshot do relatório gerado no fechamento (A/B/C/D + filas), para auditoria histórica. */
+  payload      Json?     @map("payload") @db.JsonB
+  createdAt    DateTime  @default(now()) @map("createdAt")
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updatedAt")
+
+  contagens InventarioContagem[]
+
+  @@index([storeId])
+  @@index([storeId, status])
+  @@map("inventario_sessoes")
+}
+
+/**
+ * Linha de contagem — UMA por código distinto bipado na sessão (2º bipe = incremento).
+ * `produtoId` null ⇒ código não resolveu no catálogo ⇒ entra na FILA DE RECONCILIAÇÃO
+ * (status "reconciliacao"): pode ser produto com código errado, duplicado, sem barcode ou
+ * realmente inexistente — a decisão é SEMPRE humana (nunca cadastra/zera automático).
+ * Snapshots (`produtoNomeSnapshot`/`Sku`/`estoqueSistemaSnapshot`) sobrevivem à edição do produto.
+ */
+model InventarioContagem {
+  id                     String           @id @default(cuid())
+  storeId                String           @map("storeId")
+  sessaoId               String           @map("sessaoId")
+  sessao                 InventarioSessao @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+  /** Null = sem correspondência no catálogo (fila de reconciliação). */
+  produtoId              String?          @map("produtoId")
+  /** Código EAN/SKU/id efetivamente lido no leitor. */
+  codigoBipado           String           @map("codigoBipado")
+  produtoNomeSnapshot    String?          @map("produtoNomeSnapshot")
+  produtoSkuSnapshot     String?          @map("produtoSkuSnapshot")
+  /** `Produto.stock` no momento do 1º bipe (foto p/ divergência). */
+  estoqueSistemaSnapshot Int?             @map("estoqueSistemaSnapshot")
+  quantidadeContada      Int              @default(0) @map("quantidadeContada")
+  /** "encontrado" | "reconciliacao" */
+  status                 String           @default("encontrado") @map("status")
+  primeiroBipeEm         DateTime         @default(now()) @map("primeiroBipeEm")
+  ultimoBipeEm           DateTime         @default(now()) @map("ultimoBipeEm")
+  /** Histórico opcional de bipes/observações da linha. */
+  payload                Json?            @map("payload") @db.JsonB
+  createdAt              DateTime         @default(now()) @map("createdAt")
+  updatedAt              DateTime         @default(now()) @updatedAt @map("updatedAt")
+
+  @@unique([sessaoId, codigoBipado], name: "sessaoId_codigoBipado")
+  @@index([storeId])
+  @@index([sessaoId])
+  @@index([storeId, status])
+  @@map("inventario_contagens")
+}
+
+model Tecnico {
+  id      String @id @default(cuid())
+  storeId String @default("loja-1") @map("storeId")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  name              String   @map("name")
+  email             String   @default("") @map("email")
+  phone             String   @default("") @map("phone")
+  role              String   @default("") @map("role")
+  specialty         String   @default("") @map("specialty")
+  commissionPercent Float    @default(0) @map("commissionPercent")
+  active            Boolean  @default(true) @map("active")
+  createdAt         DateTime @default(now()) @map("createdAt")
+  updatedAt         DateTime @updatedAt @map("updatedAt")
+
+  @@index([storeId])
+  @@index([name])
+  @@map("tecnicos")
+}
+
+model EquipamentoModelo {
+  id      String @id @default(cuid())
+  storeId String @default("loja-1") @map("storeId")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  name                 String   @map("name")
+  brand                String   @default("") @map("brand")
+  type                 String   @default("") @map("type")
+  year                 Int      @default(0) @map("year")
+  compatibleParts      Json?    @map("compatibleParts") @db.JsonB
+  commonDefects        Json?    @map("commonDefects") @db.JsonB
+  recommendedChecklist Json?    @map("recommendedChecklist") @db.JsonB
+  averageRepairTime    String   @default("") @map("averageRepairTime")
+  active               Boolean  @default(true) @map("active")
+  createdAt            DateTime @default(now()) @map("createdAt")
+  updatedAt            DateTime @updatedAt @map("updatedAt")
+
+  @@index([storeId])
+  @@index([brand])
+  @@index([name])
+  @@map("equipamentos_modelos")
+}
+
+model ProductMedia {
+  id        String  @id @default(cuid())
+  storeId   String  @map("storeId")
+  store     Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId String  @map("productId")
+  product   Produto @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  url       String   @map("url")
+  type      String   @default("image") @map("type")
+  source    String   @default("manual") @map("source")
+  isPrimary Boolean  @default(false) @map("isPrimary")
+  createdAt DateTime @default(now()) @map("createdAt")
+
+  @@unique([productId, url], name: "productId_url")
+  @@index([storeId])
+  @@index([productId])
+  @@map("product_media")
+}
+
+model MarketplaceListing {
+  id        String  @id @default(cuid())
+  storeId   String  @map("storeId")
+  store     Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  productId String  @map("productId")
+  product   Produto @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  channel     String    @map("channel")
+  status      String    @default("draft") @map("status")
+  title       String    @default("") @map("title")
+  description String    @default("") @map("description") @db.Text
+  price       Float     @default(0) @map("price")
+  externalId  String    @default("") @map("externalId")
+  publishedAt DateTime? @map("publishedAt")
+  createdAt   DateTime  @default(now()) @map("createdAt")
+  updatedAt   DateTime  @updatedAt @map("updatedAt")
+
+  @@unique([storeId, channel, externalId], name: "store_channel_external")
+  @@index([storeId])
+  @@index([productId])
+  @@index([channel])
+  @@index([status])
+  @@map("marketplace_listings")
+}
+
+model Servico {
+  id      String @id @default(cuid())
+  storeId String @default("loja-1") @map("storeId")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  name         String  @map("name")
+  category     String  @default("") @map("category")
+  /**
+   * Ex.: "45 min" (mantém UI atual).
+   */
+  avgTime      String  @default("") @map("avgTime")
+  cost         Float   @default(0) @map("cost")
+  price        Float   @default(0) @map("price")
+  margin       Float   @default(0) @map("margin")
+  warrantyDays Int     @default(0) @map("warrantyDays")
+  terms        String  @default("") @map("terms") @db.Text
+  status       String  @default("Ativo") @map("status")
+  active       Boolean @default(true) @map("active")
+
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@index([storeId])
+  @@index([name])
+  @@map("servicos")
+}
+
+// --- Tabelas auxiliares (API ops / WhatsApp / auditoria) — ver prisma/supabase_manual_full_schema.sql
+
+model LedgerSnapshot {
+  /**
+   * Default para `db push`/linhas legadas sem loja; novas linhas devem usar a loja ativa.
+   */
+  storeId   String   @default("loja-1") @map("storeId")
+  date      String   @map("date")
+  payload   String   @map("payload") @db.Text
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@id([storeId, date])
+  @@map("ledger_snapshots")
+}
+
+model AppLojaSettings {
+  id         String   @id
+  perfilLoja String   @default("assistencia") @map("perfilLoja")
+  updatedAt  DateTime @updatedAt @map("updatedAt")
+
+  @@map("app_loja_settings")
+}
+
+model LogsAuditoria {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now()) @map("createdAt")
+  action    String   @map("action")
+  userLabel String   @map("userLabel")
+  detail    String   @map("detail") @db.Text
+  metadata  String?  @map("metadata") @db.Text
+  source    String   @default("dashboard") @map("source")
+
+  @@index([createdAt])
+  @@index([action])
+  @@map("logs_auditoria")
+}
+
+model WhatsAppPendingAction {
+  id        String   @id @default(cuid())
+  phoneKey  String   @unique @map("phoneKey")
+  kind      String   @map("kind")
+  payload   String   @map("payload") @db.Text
+  createdAt DateTime @default(now()) @map("createdAt")
+
+  @@map("whatsapp_pending_actions")
+}
+
+model CategoriaProduto {
+  id      String @id @default(cuid())
+  storeId String @map("lojaId")
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  slug    String @map("slug")
+  nome    String @map("nome")
+
+  @@unique([storeId, slug], name: "lojaId_slug")
+  @@index([storeId])
+  @@map("categorias_produto")
+}
+
+// --- Fornecedores + contas a pagar (multi-loja; `storeId` obrigatório em todas as linhas)
+
+/**
+ * Fornecedor cadastrado por unidade (não compartilhar entre lojas).
+ */
+model Fornecedor {
+  id               String   @id @default(cuid())
+  storeId          String   @default("loja-1") @map("storeId")
+  store            Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * Nome fantasia / exibição.
+   */
+  name             String   @map("name")
+  /**
+   * Razão social (opcional, mas suportada pela UI).
+   */
+  legalName        String   @default("") @map("legalName")
+  /**
+   * Contato principal (opcional).
+   */
+  contactName      String   @default("") @map("contactName")
+  /**
+   * CPF/CNPJ ou identificador fiscal livre.
+   */
+  document         String   @default("") @map("document")
+  email            String   @default("") @map("email")
+  phone            String   @default("") @map("phone")
+  whatsapp         String   @default("") @map("whatsapp")
+  /**
+   * Endereço completo (rua/numero/bairro/cidade/uf/cep) como texto livre.
+   */
+  address          String   @default("") @map("address") @db.Text
+  /**
+   * Lista livre de itens fornecidos (texto).
+   */
+  productsProvided String   @default("") @map("productsProvided") @db.Text
+  /**
+   * Prazo médio (texto, ex.: "5 dias").
+   */
+  avgLeadTime      String   @default("") @map("avgLeadTime")
+  /**
+   * Condição de pagamento (texto, ex.: "30/60").
+   */
+  paymentTerms     String   @default("") @map("paymentTerms")
+  notes            String?  @map("notes") @db.Text
+  active           Boolean  @default(true) @map("active")
+  createdAt        DateTime @default(now()) @map("createdAt")
+  updatedAt        DateTime @updatedAt @map("updatedAt")
+
+  contasPagar ContaPagarTitulo[]
+
+  @@index([storeId])
+  @@index([name])
+  @@map("fornecedores")
+}
+
+/**
+ * Categorias do Cadastros HUB (multi-entidade) por unidade.
+ */
+model CategoriaCadastro {
+  id        String   @id @default(cuid())
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name      String   @map("name")
+  /**
+   * "produto" | "servico" | "equipamento" | "geral"
+   */
+  type      String   @default("geral") @map("type")
+  active    Boolean  @default(true) @map("active")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@unique([storeId, type, name], name: "categoria_cadastro_store_type_name")
+  @@index([storeId])
+  @@index([type])
+  @@map("categorias_cadastro")
+}
+
+/**
+ * Marcas do Cadastros HUB por unidade.
+ */
+model MarcaCadastro {
+  id        String   @id @default(cuid())
+  storeId   String   @default("loja-1") @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name      String   @map("name")
+  /**
+   * Opcional: classificar por tipo (produto/equipamento/geral).
+   */
+  type      String   @default("") @map("type")
+  active    Boolean  @default(true) @map("active")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@unique([storeId, type, name], name: "marca_cadastro_store_type_name")
+  @@index([storeId])
+  @@index([type])
+  @@map("marcas_cadastro")
+}
+
+/**
+ * Título a pagar (fornecedor, boleto, aluguel, etc.) — escopo exclusivo da loja.
+ */
+model ContaPagarTitulo {
+  id              String      @id @default(cuid())
+  storeId         String      @default("loja-1") @map("storeId")
+  store           Store       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * Opcional: vínculo com cadastro de fornecedor da mesma loja.
+   */
+  fornecedorId    String?     @map("fornecedorId")
+  fornecedor      Fornecedor? @relation(fields: [fornecedorId], references: [id], onDelete: SetNull)
+  /**
+   * Id estável no cliente (localStorage / sync), por unidade.
+   */
+  localKey        String?     @map("localKey")
+  /**
+   * Snapshot JSON (parcelas, anexos, histórico de pagamento, etc.).
+   */
+  payload         Json?       @map("payload") @db.JsonB
+  descricao       String      @default("") @map("descricao")
+  valor           Float       @default(0) @map("valor")
+  vencimento      String      @default("") @map("vencimento")
+  status          String      @default("pendente") @map("status")
+  /**
+   * NF, número de boleto ou referência externa.
+   */
+  numeroDocumento String      @default("") @map("numeroDocumento")
+  createdAt       DateTime    @default(now()) @map("createdAt")
+  updatedAt       DateTime    @updatedAt @map("updatedAt")
+
+  @@unique([storeId, localKey])
+  @@index([storeId])
+  @@index([fornecedorId])
+  @@index([status])
+  @@map("contas_pagar_titulos")
+}
+
+// --- Contas a receber + vendas (servidor; opcional — o painel ainda usa localStorage por padrão)
+
+/**
+ * Título a receber no Postgres; relação 1:N com vendas vinculadas.
+ */
+model ContaReceberTitulo {
+  id         String   @id @default(cuid())
+  storeId    String   @default("loja-1") @map("storeId")
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * Id estável do título no navegador (localStorage) — upsert idempotente por unidade.
+   */
+  localKey   String?  @map("localKey")
+  /**
+   * Snapshot JSON do registro completo (parcelas, histórico, etc.).
+   */
+  payload    Json?    @map("payload") @db.JsonB
+  descricao  String   @default("") @map("descricao")
+  cliente    String   @default("") @map("cliente")
+  valor      Float    @default(0) @map("valor")
+  vencimento String   @default("") @map("vencimento")
+  status     String   @default("pendente") @map("status")
+  createdAt  DateTime @default(now()) @map("createdAt")
+  updatedAt  DateTime @updatedAt @map("updatedAt")
+
+  vendas Venda[]
+
+  @@unique([storeId, localKey])
+  @@index([storeId])
+  @@index([cliente])
+  @@map("contas_receber_titulos")
+}
+
+/**
+ * Carteira / conta financeira do HUB Financeiro (caixa, banco, PIX, dinheiro, etc.).
+ * Modelo nativo do OmniGestão — separado do FinancialAccount (Finance Pro page).
+ */
+model CarteiraFinanceira {
+  id           String   @id @default(cuid())
+  storeId      String   @default("loja-1") @map("storeId")
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  nome         String   @map("nome")
+  /**
+   * "caixa" | "banco" | "pix" | "dinheiro" | "credito" | "debito" | "investimento"
+   */
+  tipo         String   @default("caixa") @map("tipo")
+  saldoInicial Float    @default(0) @map("saldoInicial")
+  saldoAtual   Float    @default(0) @map("saldoAtual")
+  ativo        Boolean  @default(true) @map("ativo")
+  /**
+   * Cor hex p/ UI, ex.: "#22c55e"
+   */
+  cor          String   @default("#6366f1") @map("cor")
+  /**
+   * Ícone (nome Lucide), ex.: "wallet", "landmark", etc.
+   */
+  icone        String   @default("wallet") @map("icone")
+  createdAt    DateTime @default(now()) @map("createdAt")
+  updatedAt    DateTime @updatedAt @map("updatedAt")
+
+  movimentacoes MovimentacaoFinanceira[]
+  conciliacoes  ConciliacaoFinanceira[]
+
+  @@index([storeId])
+  @@index([storeId, ativo])
+  @@map("carteiras_financeiras")
+}
+
+model MovimentacaoFinanceira {
+  id           String              @id @default(cuid())
+  storeId      String              @default("loja-1") @map("storeId")
+  store        Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * "entrada" | "saida"
+   */
+  tipo         String              @default("entrada") @map("tipo")
+  /**
+   * "os" | "venda" | "manual" | "pagar" | etc
+   */
+  origem       String              @default("manual") @map("origem")
+  /**
+   * Id de referência (ContaReceberTitulo/ContaPagarTitulo/Venda/etc.)
+   */
+  referenciaId String?             @map("referenciaId")
+  descricao    String              @default("") @map("descricao")
+  valor        Float               @default(0) @map("valor")
+  /**
+   * Carteira que recebe ou debita esta movimentação (opcional).
+   */
+  carteiraId   String?             @map("carteiraId")
+  carteira     CarteiraFinanceira? @relation(fields: [carteiraId], references: [id], onDelete: SetNull)
+  createdAt    DateTime            @default(now()) @map("createdAt")
+
+  @@index([storeId])
+  @@index([tipo])
+  @@index([origem])
+  @@index([referenciaId])
+  @@index([carteiraId])
+  @@index([createdAt])
+  @@map("movimentacoes_financeiras")
+}
+
+/**
+ * Venda (PDV ou importada) opcionalmente ligada a um título em aberto.
+ */
+model Venda {
+  id                   String              @id @default(cuid())
+  storeId              String              @default("loja-1") @map("storeId")
+  store                Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * Ex.: VDA-2026-0001 — chave de negócio
+   */
+  pedidoId             String              @unique @map("pedidoId")
+  /**
+   * Snapshot JSON da venda (formas de pagamento, linhas, etc.) para recuperação fiel.
+   */
+  payload              Json?               @map("payload") @db.JsonB
+  total                Float               @default(0) @map("total")
+  at                   DateTime            @default(now()) @map("at")
+  clienteNome          String?             @map("clienteNome")
+  /**
+   * FK opcional para o cliente cadastrado.
+   * Nulo em vendas de consumidor final ou vendas antigas sem vínculo.
+   * Preservado via SetNull se o cliente for excluído.
+   */
+  clienteId            String?             @map("clienteId")
+  cliente              Cliente?            @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  /**
+   * Status do ciclo de vida da venda.
+   * concluida | cancelada | parcialmente_devolvida | devolvida
+   */
+  status               String              @default("concluida") @map("status")
+  /** Operador que realizou a venda (extraído de payload.cashierId). */
+  operador             String?             @map("operador")
+  canceladaEm          DateTime?           @map("canceladaEm")
+  canceladaPor         String?             @map("canceladaPor")
+  motivoCancelamento   String?             @map("motivoCancelamento")
+  contaReceberTituloId String?             @map("contaReceberTituloId")
+  contaReceberTitulo   ContaReceberTitulo? @relation(fields: [contaReceberTituloId], references: [id], onDelete: SetNull)
+  /**
+   * Terminal PDV (PDV1, PDV2...) em que a venda foi realizada. Nullable para
+   * retrocompatibilidade; o valor também viaja em `payload.terminalId`.
+   */
+  terminalId           String?             @map("terminalId")
+  itens                ItemVenda[]
+  /**
+   * Estado fiscal da venda (GOAL_001B — aditivo/dormente). Ortogonal ao `status`
+   * operacional. Default NAO_FISCAL → toda venda (nova e antiga) nasce sem efeito fiscal;
+   * só transita quando a loja tem ConfiguracaoFiscalLoja.fiscalEnabled = true (GOAL_003+).
+   */
+  fiscalStatus         FiscalStatusVenda   @default(NAO_FISCAL) @map("fiscalStatus")
+  notasFiscais         NotaFiscal[]
+
+  @@index([storeId])
+  @@index([storeId, status])
+  @@index([clienteId])
+  @@index([contaReceberTituloId])
+  @@index([storeId, terminalId])
+  @@index([storeId, fiscalStatus])
+  @@map("vendas")
+}
+
+model ItemVenda {
+  id            String  @id @default(cuid())
+  vendaId       String  @map("vendaId")
+  venda         Venda   @relation(fields: [vendaId], references: [id], onDelete: Cascade)
+  inventoryId   String? @map("inventoryId")
+  nome          String  @default("") @map("nome")
+  quantidade    Int     @default(1) @map("quantidade")
+  precoUnitario Float   @default(0) @map("precoUnitario")
+  lineTotal     Float   @default(0) @map("lineTotal")
+
+  @@index([vendaId])
+  @@map("venda_itens")
+}
+
+// ─── PDV Enterprise — Devoluções ─────────────────────────────────────────────
+
+/**
+ * Documento de devolução/troca PDV.
+ * - `localId` = id gerado no localStorage (DEV-YYYY-NNNN), usado para idempotência.
+ * - `tipo`: "vale_credito" | "somente_estoque" | "troca"
+ * - `sessaoId`: opcional, vincula à sessão de caixa ativa no momento.
+ * - `vendaId`: opcional, venda original. Null se venda só existe no localStorage.
+ */
+model DevolucaoVenda {
+  id             String      @id @default(cuid())
+  storeId        String      @map("storeId")
+  store          Store       @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Chave de negócio local (DEV-2026-0001). Unique por loja. */
+  localId        String      @map("localId")
+  vendaLocalId   String      @default("") @map("vendaLocalId")
+  sessaoId       String?     @map("sessaoId")
+  sessao         SessaoCaixa? @relation(fields: [sessaoId], references: [id], onDelete: SetNull)
+  /** "vale_credito" | "somente_estoque" | "troca" */
+  tipo           String      @map("tipo")
+  valorTotal     Float       @default(0) @map("valorTotal")
+  creditoEmitido Float       @default(0) @map("creditoEmitido")
+  clienteNome    String      @default("") @map("clienteNome")
+  clienteDoc     String      @default("") @map("clienteDoc")
+  operador       String      @default("") @map("operador")
+  motivo         String      @default("") @map("motivo")
+  observacao     String      @default("") @map("observacao")
+  at             DateTime    @default(now()) @map("at")
+  /** Snapshot com linhas e contexto. */
+  payload        Json?       @map("payload") @db.JsonB
+  itens          ItemDevolucaoVenda[]
+  creditos       ClienteCredito[]
+
+  @@unique([storeId, localId])
+  @@index([storeId, at])
+  @@index([storeId, vendaLocalId])
+  @@map("devolucoes_venda")
+}
+
+model ItemDevolucaoVenda {
+  id            String         @id @default(cuid())
+  devolucaoId   String         @map("devolucaoId")
+  devolucao     DevolucaoVenda @relation(fields: [devolucaoId], references: [id], onDelete: Cascade)
+  inventoryId   String?        @map("inventoryId")
+  nome          String         @default("") @map("nome")
+  quantidade    Int            @default(1) @map("quantidade")
+  valorUnitario Float          @default(0) @map("valorUnitario")
+  valorTotal    Float          @default(0) @map("valorTotal")
+
+  @@index([devolucaoId])
+  @@map("itens_devolucao_venda")
+}
+
+// ─── PDV Enterprise — Crédito do Cliente (Vale-Troca persistente) ─────────────
+
+/**
+ * Saldo de crédito/vale por cliente (CPF/CNPJ).
+ * Criado ao registrar devolução com modo vale_credito ou troca.
+ * Debitado ao usar o vale em nova venda (creditoVale no paymentBreakdown).
+ * clienteDoc é a chave de lookup (CPF/CNPJ somente dígitos).
+ */
+model ClienteCredito {
+  id            String          @id @default(cuid())
+  storeId       String          @map("storeId")
+  store         Store           @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** CPF/CNPJ somente dígitos — chave de lookup principal */
+  clienteDoc    String          @map("clienteDoc")
+  clienteNome   String          @default("") @map("clienteNome")
+  /** FK opcional ao cliente cadastrado */
+  clienteId     String?         @map("clienteId")
+  cliente       Cliente?        @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  /** Devolução que originou este crédito */
+  devolucaoId   String?         @map("devolucaoId")
+  devolucao     DevolucaoVenda? @relation(fields: [devolucaoId], references: [id], onDelete: SetNull)
+  /** localId da venda que originou a devolução */
+  vendaOrigemId String          @default("") @map("vendaOrigemId")
+  valorOriginal Float           @map("valorOriginal")
+  saldoAtual    Float           @map("saldoAtual")
+  /** "ativo" | "zerado" | "expirado" */
+  status        String          @default("ativo") @map("status")
+  validoAte     DateTime?       @map("validoAte")
+  createdAt     DateTime        @default(now()) @map("createdAt")
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updatedAt")
+  usos          UsoCreditoCliente[]
+
+  @@index([storeId, clienteDoc, status])
+  @@index([storeId, clienteId])
+  @@map("clientes_creditos")
+}
+
+/** Registro de uso de crédito/vale em uma venda. */
+model UsoCreditoCliente {
+  id          String         @id @default(cuid())
+  creditoId   String         @map("creditoId")
+  credito     ClienteCredito @relation(fields: [creditoId], references: [id], onDelete: Cascade)
+  storeId     String         @map("storeId")
+  store       Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** pedidoId da venda que consumiu este crédito */
+  vendaId     String         @default("") @map("vendaId")
+  valor       Float          @map("valor")
+  saldoAntes  Float          @map("saldoAntes")
+  saldoDepois Float          @map("saldoDepois")
+  operador    String         @default("") @map("operador")
+  at          DateTime       @default(now()) @map("at")
+
+  @@index([creditoId])
+  @@index([storeId])
+  @@map("usos_credito_cliente")
+}
+
+/**
+ * Usuários internos do sistema (operadores e administradores).
+ */
+model User {
+  id              String           @id @default(cuid())
+  name            String           @default("") @map("name")
+  /**
+   * PIN numérico/curto usado para autorização rápida no PDV.
+   */
+  pin             String           @unique @map("pin")
+  /**
+   * "ADMIN" | "CAIXA" (mantido string para compatibilidade simples).
+   */
+  role            String           @default("CAIXA") @map("role")
+  credits         Int              @default(0)
+  usages          Usage[]
+  creditPurchases CreditPurchase[]
+  createdAt       DateTime         @default(now()) @map("createdAt")
+  updatedAt       DateTime         @updatedAt @map("updatedAt")
+
+  @@index([role])
+  @@map("users")
+}
+
+model Usage {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  cost      Int
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model CreditPurchase {
+  id        String   @id @default(cuid())
+  userId    String
+  package   String
+  credits   Int
+  amount    Int
+  status    String   @default("PAID")
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+// ─── Finance Module ──────────────────────────────────────────────────────────
+
+enum FinancialAccountType {
+  cash
+  bank
+  pix
+  credit_card
+}
+
+enum FinancialTransactionType {
+  income
+  expense
+}
+
+enum FinancialTransactionStatus {
+  pending
+  paid
+  canceled
+}
+
+/**
+ * Conta/carteira financeira por unidade (caixa, banco, PIX, cartão etc.).
+ */
+model FinancialAccount {
+  id        String               @id @default(cuid())
+  storeId   String               @default("loja-1") @map("storeId")
+  store     Store                @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name      String               @map("name")
+  type      FinancialAccountType @default(cash) @map("type")
+  balance   Float                @default(0) @map("balance")
+  active    Boolean              @default(true) @map("active")
+  createdAt DateTime             @default(now()) @map("createdAt")
+  updatedAt DateTime             @updatedAt @map("updatedAt")
+
+  transactions FinancialTransaction[]
+
+  @@index([storeId])
+  @@index([storeId, active])
+  @@map("financial_accounts")
+}
+
+/**
+ * Categoria financeira por unidade (receita ou despesa).
+ */
+model FinancialCategory {
+  id        String                   @id @default(cuid())
+  storeId   String                   @default("loja-1") @map("storeId")
+  store     Store                    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  name      String                   @map("name")
+  type      FinancialTransactionType @map("type")
+  color     String                   @default("#6366f1") @map("color")
+  icon      String                   @default("tag") @map("icon")
+  createdAt DateTime                 @default(now()) @map("createdAt")
+
+  transactions FinancialTransaction[]
+
+  @@index([storeId])
+  @@index([storeId, type])
+  @@map("financial_categories")
+}
+
+/**
+ * Transação financeira unificada (receita/despesa, contas a pagar/receber).
+ */
+model FinancialTransaction {
+  id             String                     @id @default(cuid())
+  storeId        String                     @default("loja-1") @map("storeId")
+  store          Store                      @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  accountId      String                     @map("accountId")
+  account        FinancialAccount           @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  categoryId     String?                    @map("categoryId")
+  category       FinancialCategory?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /**
+   * Referência opcional a cliente (string desnormalizado; FK opcional).
+   */
+  clienteId      String?                    @map("clienteId")
+  /**
+   * Referência opcional a uma Venda.
+   */
+  vendaId        String?                    @map("vendaId")
+  /**
+   * Referência opcional a uma OrdemServico (id).
+   */
+  osId           String?                    @map("osId")
+  type           FinancialTransactionType   @map("type")
+  status         FinancialTransactionStatus @default(pending) @map("status")
+  description    String                     @default("") @map("description")
+  amount         Float                      @default(0) @map("amount")
+  dueDate        DateTime                   @map("dueDate")
+  paidAt         DateTime?                  @map("paidAt")
+  /**
+   * Competência contábil (mês/ano de referência).
+   */
+  competencyDate DateTime?                  @map("competencyDate")
+  paymentMethod  String?                    @map("paymentMethod")
+  notes          String?                    @map("notes") @db.Text
+  createdById    String?                    @map("createdById")
+  createdAt      DateTime                   @default(now()) @map("createdAt")
+  updatedAt      DateTime                   @updatedAt @map("updatedAt")
+
+  attachments FinancialAttachment[]
+
+  @@index([storeId])
+  @@index([storeId, type])
+  @@index([storeId, status])
+  @@index([storeId, dueDate])
+  @@index([accountId])
+  @@index([categoryId])
+  @@index([osId])
+  @@index([vendaId])
+  @@map("financial_transactions")
+}
+
+/**
+ * Anexo vinculado a uma transação financeira.
+ */
+model FinancialAttachment {
+  id            String               @id @default(cuid())
+  transactionId String               @map("transactionId")
+  transaction   FinancialTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  fileName      String               @map("fileName")
+  fileUrl       String               @map("fileUrl")
+  createdAt     DateTime             @default(now()) @map("createdAt")
+
+  @@index([transactionId])
+  @@map("financial_attachments")
+}
+
+// ─── Auditoria / Conciliação / Fechamento Financeiro ─────────────────────────
+
+/**
+ * Fechamento financeiro diário ou mensal.
+ * Congela o estado do fluxo no momento do fechamento e permite reabertura controlada.
+ */
+model FechamentoFinanceiro {
+  id              String    @id @default(cuid())
+  storeId         String    @default("loja-1") @map("storeId")
+  store           Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * "diario" | "mensal"
+   */
+  tipo            String    @default("diario") @map("tipo")
+  /**
+   * yyyy-mm-dd para diário; 1º dia do mês para mensal
+   */
+  dataReferencia  String    @map("dataReferencia")
+  mes             Int       @map("mes")
+  ano             Int       @map("ano")
+  /**
+   * "aberto" | "fechado" | "reaberto"
+   */
+  status          String    @default("fechado") @map("status")
+  saldoSistema    Float     @default(0) @map("saldoSistema")
+  saldoInformado  Float?    @map("saldoInformado")
+  diferenca       Float     @default(0) @map("diferenca")
+  observacao      String?   @map("observacao") @db.Text
+  snapshotDRE     Json?     @map("snapshotDRE") @db.JsonB
+  fechadoPor      String?   @map("fechadoPor")
+  reabertoPor     String?   @map("reabertoPor")
+  fechadoEm       DateTime? @map("fechadoEm")
+  reabertoEm      DateTime? @map("reabertoEm")
+  createdAt       DateTime  @default(now()) @map("createdAt")
+  updatedAt       DateTime  @updatedAt @map("updatedAt")
+
+  @@unique([storeId, tipo, dataReferencia], name: "fechamento_store_tipo_data")
+  @@index([storeId])
+  @@index([storeId, tipo])
+  @@index([storeId, mes, ano])
+  @@map("fechamentos_financeiros")
+}
+
+/**
+ * Conciliação de saldo de carteira financeira (sistema vs. informado).
+ */
+model ConciliacaoFinanceira {
+  id              String             @id @default(cuid())
+  storeId         String             @default("loja-1") @map("storeId")
+  store           Store              @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  carteiraId      String             @map("carteiraId")
+  carteira        CarteiraFinanceira @relation(fields: [carteiraId], references: [id], onDelete: Restrict)
+  /**
+   * yyyy-mm-dd data da conciliação
+   */
+  dataReferencia  String             @map("dataReferencia")
+  saldoSistema    Float              @default(0) @map("saldoSistema")
+  saldoInformado  Float              @default(0) @map("saldoInformado")
+  diferenca       Float              @default(0) @map("diferenca")
+  /**
+   * "pendente" | "conciliado" | "divergente"
+   */
+  status          String             @default("pendente") @map("status")
+  observacao      String?            @map("observacao") @db.Text
+  conciliadoPor   String?            @map("conciliadoPor")
+  conciliadoEm    DateTime?          @map("conciliadoEm")
+  createdAt       DateTime           @default(now()) @map("createdAt")
+  updatedAt       DateTime           @updatedAt @map("updatedAt")
+
+  @@index([storeId])
+  @@index([carteiraId])
+  @@index([storeId, dataReferencia])
+  @@index([storeId, status])
+  @@map("conciliacoes_financeiras")
+}
+
+/**
+ * Log imutável de auditoria de operações financeiras.
+ * Nunca atualizar nem deletar — append-only.
+ */
+model AuditoriaFinanceira {
+  id           String   @id @default(cuid())
+  storeId      String   @default("loja-1") @map("storeId")
+  store        Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /**
+   * "movimentacao" | "receber" | "pagar" | "carteira" | "dre" | "fechamento" | "conciliacao"
+   */
+  entidade     String   @map("entidade")
+  entidadeId   String?  @map("entidadeId")
+  /**
+   * "criar" | "editar" | "excluir" | "liquidar" | "estornar" | "fechar" | "reabrir" | "conciliar"
+   */
+  acao         String   @map("acao")
+  /**
+   * Estado antes da operação (JSON snapshot)
+   */
+  antes        Json?    @map("antes") @db.JsonB
+  /**
+   * Estado depois da operação (JSON snapshot)
+   */
+  depois       Json?    @map("depois") @db.JsonB
+  usuarioId    String?  @map("usuarioId")
+  usuarioNome  String?  @map("usuarioNome")
+  ip           String?  @map("ip")
+  userAgent    String?  @map("userAgent")
+  createdAt    DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId])
+  @@index([storeId, entidade])
+  @@index([storeId, entidadeId])
+  @@index([storeId, createdAt])
+  @@map("auditorias_financeiras")
+}
+
+// ─── PDV Enterprise — Sessões e Operações de Caixa ───────────────────────────
+
+enum SessaoCaixaStatus {
+  ABERTA
+  FECHADA
+}
+
+/**
+ * Sessão de caixa PDV: abertura → fechamento com saldo inicial/final.
+ * Persiste no servidor para auditoria e dashboards sem remover o localStorage fast-path.
+ */
+model SessaoCaixa {
+  id           String             @id @default(cuid())
+  storeId      String             @map("storeId")
+  store        Store              @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  operador     String             @default("") @map("operador")
+  saldoInicial Float              @default(0) @map("saldoInicial")
+  saldoFinal   Float?             @map("saldoFinal")
+  saldoContado Float?             @map("saldoContado")
+  observacao   String             @default("") @map("observacao")
+  status       SessaoCaixaStatus  @default(ABERTA) @map("status")
+  abertaEm     DateTime           @default(now()) @map("abertaEm")
+  fechadaEm    DateTime?          @map("fechadaEm")
+  /**
+   * Terminal PDV (PDV1, PDV2...) que abriu a sessão. Nullable para retrocompatibilidade:
+   * sessões anteriores ao multi-terminal ficam null ("Terminal Legacy").
+   */
+  terminalId   String?            @map("terminalId")
+  /** Snapshot de totais do dia (ledger) no momento do fechamento. */
+  payload      Json?              @map("payload") @db.JsonB
+  operacoes    CaixaOperacao[]
+  devolucoes   DevolucaoVenda[]
+
+  @@index([storeId, status])
+  @@index([storeId, abertaEm])
+  @@index([storeId, terminalId, status])
+  @@map("sessoes_caixa")
+}
+
+/**
+ * Operações avulsas durante a sessão: sangria, suprimento, devolução.
+ */
+model CaixaOperacao {
+  id       String      @id @default(cuid())
+  sessaoId String      @map("sessaoId")
+  sessao   SessaoCaixa @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+  storeId  String      @map("storeId")
+  /** "sangria" | "suprimento" | "devolucao" */
+  tipo     String      @map("tipo")
+  valor    Float       @default(0) @map("valor")
+  motivo   String      @default("") @map("motivo")
+  operador String      @default("") @map("operador")
+  at       DateTime    @default(now()) @map("at")
+  payload  Json?       @map("payload") @db.JsonB
+
+  @@index([sessaoId])
+  @@index([storeId, at])
+  @@map("caixa_operacoes")
+}
+
+/**
+ * Terminal PDV de uma loja (modelo supermercado: PDV1, PDV2, PDV3...).
+ * Cada terminal compartilha o mesmo estoque da loja, mas tem caixa/sessão/vendas
+ * próprios. Fase 1: cadastro/seleção. Fase 2 (futuro): lock/heartbeat anti-simultâneo.
+ */
+model PdvTerminal {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /** Código de negócio único por loja: PDV1, PDV2, PDV3... */
+  code      String   @map("code")
+  /** Nome amigável exibido na seleção (ex.: "PDV 1", "Caixa Principal"). */
+  name      String   @default("") @map("name")
+  /** "ACTIVE" | "INACTIVE" — terminal inativo não aparece na seleção por padrão. */
+  status    String   @default("ACTIVE") @map("status")
+  /**
+   * Lock anti-uso-simultâneo (Fase 2). Tudo nullable/backward-compatible.
+   * `lockedByDeviceId` = deviceId do navegador que detém o terminal; `heartbeatAt` =
+   * último sinal de vida (lock expira quando heartbeatAt fica velho — ver
+   * `lib/pdv-terminal-lock.ts`). `lockedByOperador` é só rótulo para exibição.
+   */
+  lockedByDeviceId String?   @map("lockedByDeviceId")
+  lockedByOperador String?   @map("lockedByOperador")
+  lockedAt         DateTime? @map("lockedAt")
+  heartbeatAt      DateTime? @map("heartbeatAt")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@unique([storeId, code])
+  @@index([storeId, status])
+  @@index([storeId, heartbeatAt])
+  @@map("pdv_terminais")
+}
+
+// ─── Omni Agent HUB — comandos auditáveis (Fase 1) ──────────────────────────
+
+enum OmniAgentCommandStatus {
+  PENDENTE
+  AGUARDANDO_CONFIRMACAO
+  EXECUTADO
+  ERRO
+}
+
+/**
+ * Comando interpretado pelo Omni Agent HUB (texto → intenção → execução controlada).
+ */
+model OmniAgentCommand {
+  id               String                  @id @default(cuid())
+  storeId          String                  @map("storeId")
+  store            Store                   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  /** Canal de origem: texto_interno | whatsapp | voz */
+  canal            String                  @default("texto_interno") @map("canal")
+  comandoOriginal  String                  @map("comandoOriginal") @db.Text
+  interpretacao    Json                    @map("interpretacao") @db.JsonB
+  status           OmniAgentCommandStatus  @map("status")
+  resultado        Json?                   @map("resultado") @db.JsonB
+  executadoEm      DateTime?               @map("executadoEm")
+  createdAt        DateTime                @default(now()) @map("createdAt")
+
+  automationRuns OmniAgentAutomationRun[]
+
+  @@index([storeId, createdAt])
+  @@index([storeId, status])
+  @@map("omni_agent_commands")
+}
+
+/**
+ * Automações Omni Agent (gatilho de domínio → comando na Inbox, sem execução automática perigosa).
+ */
+model OmniAgentAutomation {
+  id              String   @id @default(cuid())
+  storeId         String   @map("storeId")
+  store           Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  name            String   @default("") @map("name")
+  /** venda_finalizada | os_entregue | conta_receber_vencida */
+  triggerKey      String   @map("triggerKey")
+  enabled         Boolean  @default(false) @map("enabled")
+  commandTemplate String   @map("commandTemplate") @db.Text
+  priority        Int      @default(0) @map("priority")
+  createdAt       DateTime @default(now()) @map("createdAt")
+  updatedAt       DateTime @updatedAt @map("updatedAt")
+
+  runs OmniAgentAutomationRun[]
+
+  @@index([storeId, enabled])
+  @@index([storeId, triggerKey])
+  @@map("omni_agent_automations")
+}
+
+model OmniAgentAutomationRun {
+  id             String   @id @default(cuid())
+  automationId String   @map("automationId")
+  automation   OmniAgentAutomation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  storeId      String   @map("storeId")
+  eventKey     String   @map("eventKey")
+  entityId     String?  @map("entityId")
+  comandoGerado String  @map("comandoGerado") @db.Text
+  commandId    String?  @map("commandId")
+  omniCommand  OmniAgentCommand? @relation(fields: [commandId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([automationId, createdAt])
+  @@map("omni_agent_automation_runs")
+}
+
+/**
+ * Configuração real do Omni Agent HUB por loja (substitui as preferências que viviam
+ * apenas em localStorage). Sem LLM/provider: campos de perfil/prompt são apenas persistidos,
+ * ainda não interpretados por um modelo. `extraConfirmIntents` tem efeito real no pipeline —
+ * força AGUARDANDO_CONFIRMACAO para intenções de leitura marcadas pelo admin. Escritas
+ * (OS_OPEN, REMINDER_CREATE, EXPENSE_CREATE, RECEIVABLE_CREATE) sempre exigem confirmação,
+ * independentemente desta config.
+ */
+model OmniAgentConfig {
+  id                   String   @id @default(cuid())
+  storeId              String   @unique @map("storeId")
+  store                Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  agentName            String   @default("Omni") @map("agentName")
+  tone                 String   @default("consultivo") @map("tone")
+  basePrompt           String   @default("") @map("basePrompt") @db.Text
+  autonomyLevel        String   @default("medio") @map("autonomyLevel")
+  defaultChannel       String   @default("texto_interno") @map("defaultChannel")
+  businessHoursStart   String   @default("08:00") @map("businessHoursStart")
+  businessHoursEnd     String   @default("18:00") @map("businessHoursEnd")
+  businessHoursDays    String[] @default(["seg", "ter", "qua", "qui", "sex"]) @map("businessHoursDays")
+  /** Intenções de leitura que devem exigir confirmação humana além do padrão (ex.: CASHBOX_QUERY). */
+  extraConfirmIntents  String[] @default([]) @map("extraConfirmIntents")
+  updatedAt            DateTime @updatedAt @map("updatedAt")
+
+  @@map("omni_agent_configs")
+}
+
+/**
+ * Memória operacional real do Omni Agent HUB: registros manuais (nota, decisão, lembrete,
+ * incidente, preferência, observação) vinculados opcionalmente a um cliente. Sem LLM/embeddings —
+ * é um registro estruturado simples, buscável por termo. Arquivar nunca apaga fisicamente
+ * (`status: arquivado`), preservando o histórico.
+ */
+model OmniAgentMemory {
+  id        String   @id @default(cuid())
+  storeId   String   @map("storeId")
+  store     Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  clienteId String?  @map("clienteId")
+  cliente   Cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  /** nota | decisao | lembrete | incidente | preferencia | observacao */
+  tipo      String   @map("tipo")
+  titulo    String   @map("titulo")
+  conteudo  String   @map("conteudo") @db.Text
+  tags      String[] @default([]) @map("tags")
+  /** manual | omni_agent */
+  origem    String   @default("manual") @map("origem")
+  criadoPor String   @default("") @map("criadoPor")
+  /** ativo | arquivado */
+  status    String   @default("ativo") @map("status")
+  createdAt DateTime @default(now()) @map("createdAt")
+  updatedAt DateTime @updatedAt @map("updatedAt")
+
+  @@index([storeId, clienteId, createdAt])
+  @@index([storeId, status, createdAt])
+  @@map("omni_agent_memories")
+}
+
+// ─── NextAuth / Admin Auth ───────────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  GERENTE
+  OPERADOR
+  CAIXA
+  TECNICO
+  VENDEDOR
+}
+
+/**
+ * Vínculo N:N entre usuário admin e lojas com acesso explícito (Fase Auth Enterprise).
+ * Se vazio para o usuário, usa-se `lojaId` primária ou regras legadas na aplicação.
+ */
+model AdminUserStore {
+  id          String    @id @default(cuid())
+  adminUserId String    @map("adminUserId")
+  adminUser   AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  storeId     String    @map("storeId")
+  store       Store     @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now()) @map("createdAt")
+
+  @@unique([adminUserId, storeId])
+  @@index([storeId])
+  @@map("admin_user_stores")
+}
+
+/**
+ * Usuários de acesso ao painel OmniGestão (email + senha). Separado do User PIN-based.
+ */
+model AdminUser {
+  id        String   @id @default(cuid())
+  name      String   @default("")
+  email     String   @unique
+  password  String
+  role      UserRole @default(OPERADOR)
+  lojaId    String?
+  /** Conta ativa; inativos não autenticam no painel. */
+  active    Boolean  @default(true) @map("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  adminUserStores AdminUserStore[]
+
+  // ─── Stripe / Billing ───────────────────────────────────────────────────────
+  stripeCustomerId     String?   @unique
+  stripeSubscriptionId String?   @unique
+  stripePriceId        String?
+  /**
+   * active | canceled | past_due | trialing | incomplete | unpaid
+   */
+  subscriptionStatus   String?
+  /**
+   * BRONZE | PRATA | OURO | DIAMANTE
+   */
+  planName             String?
+  /**
+   * monthly | yearly
+   */
+  billingInterval      String?
+  creditsIA            Int       @default(0)
+  creditsUsed          Int       @default(0)
+  currentPeriodEnd     DateTime?
+
+  @@map("admin_users")
+}
+
+// =================================================================================
+// FUNDACAO FISCAL (NFC-e/SAT/TEF) — GOAL_001B
+// Aditivo + DORMENTE. Nada emite enquanto ConfiguracaoFiscalLoja.fiscalEnabled = false.
+// Multi-loja estrito (ADR-0003): NENHUMA tabela fiscal usa @default("loja-1").
+// Segredo (certificado/senha/CSC/token) NUNCA em coluna em claro — so referencias (*Ref).
+// Desenho: docs/architecture/FISCAL_SCHEMA_DESIGN_v01.md · Governa: MASTER_FISCAL_EXECUTION_PLAN.md
+// =================================================================================
+
+/** Estado fiscal da venda (visão "colapsada"; default NAO_FISCAL = comportamento atual). */
+enum FiscalStatusVenda {
+  NAO_FISCAL
+  PENDENTE
+  EMITINDO
+  EM_CONTINGENCIA
+  AUTORIZADA
+  REJEITADA
+  CANCELADA_FISCAL
+  BLOQUEADA_FISCAL
+}
+
+/** Estado do documento fiscal (mais granular que o da venda). */
+enum StatusNotaFiscal {
+  RASCUNHO
+  VALIDANDO
+  ASSINADA
+  TRANSMITINDO
+  AUTORIZADA
+  REJEITADA
+  DENEGADA
+  CONTINGENCIA
+  CANCELADA
+  INUTILIZADA
+  ERRO
+}
+
+enum ModeloFiscal {
+  NFCE
+  SAT
+  NFE
+}
+
+enum AmbienteFiscal {
+  HOMOLOGACAO
+  PRODUCAO
+}
+
+enum TipoEmissao {
+  NORMAL
+  CONTINGENCIA_OFFLINE
+}
+
+enum RegimeTributario {
+  SIMPLES_NACIONAL
+  SIMPLES_NACIONAL_EXCESSO
+  REGIME_NORMAL
+  MEI
+}
+
+enum FiscalProviderTipo {
+  STUB_HOMOLOGACAO
+  SEFAZ_DIRETO
+  GATEWAY_FOCUS
+  GATEWAY_PLUGNOTAS
+  GATEWAY_ENOTAS
+  GATEWAY_NFEIO
+  SAT_LOCAL
+}
+
+enum CertificadoStatus {
+  PENDENTE_VALIDACAO
+  ATIVO
+  EXPIRADO
+  REVOGADO
+  INVALIDO
+}
+
+enum TipoEventoFiscal {
+  CANCELAMENTO
+  CARTA_CORRECAO
+  INUTILIZACAO
+  CONTINGENCIA_ENVIO
+}
+
+enum StatusEventoFiscal {
+  PENDENTE
+  AUTORIZADO
+  REJEITADO
+}
+
+enum FiscalJobTipo {
+  EMISSAO
+  CANCELAMENTO
+  INUTILIZACAO
+  CONTINGENCIA_TRANSMISSAO
+  CONSULTA
+}
+
+enum FiscalJobStatus {
+  PENDENTE
+  PROCESSANDO
+  AGUARDANDO_RETRY
+  CONCLUIDO
+  FALHA
+  CANCELADO
+}
+
+/**
+ * Identidade fiscal por loja (1:1 com Store). Substitui o DadosFiscais em localStorage
+ * single-empresa (P0-B). CSC/token de gateway são SEGREDO → só referência (*Ref).
+ */
+model ConfiguracaoFiscalLoja {
+  id                  String   @id @default(cuid())
+  storeId             String   @unique @map("storeId")
+  store               Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  // Flags — tudo nasce desligado (default-off)
+  fiscalEnabled       Boolean        @default(false) @map("fiscalEnabled")
+  ambiente            AmbienteFiscal @default(HOMOLOGACAO) @map("ambiente")
+  modeloFiscal        ModeloFiscal   @default(NFCE) @map("modeloFiscal")
+
+  // Identidade fiscal
+  razaoSocial         String   @default("") @map("razaoSocial")
+  nomeFantasia        String   @default("") @map("nomeFantasia")
+  cnpj                String   @default("") @map("cnpj")
+  inscricaoEstadual   String   @default("") @map("inscricaoEstadual")
+  inscricaoMunicipal  String   @default("") @map("inscricaoMunicipal")
+  regimeTributario    RegimeTributario @default(SIMPLES_NACIONAL) @map("regimeTributario")
+  crt                 Int      @default(1) @map("crt")
+
+  // Endereço fiscal ESTRUTURADO (exigência do XML)
+  logradouro          String   @default("") @map("logradouro")
+  numero              String   @default("") @map("numero")
+  complemento         String   @default("") @map("complemento")
+  bairro              String   @default("") @map("bairro")
+  codigoMunicipioIbge String   @default("") @map("codigoMunicipioIbge")
+  municipio           String   @default("") @map("municipio")
+  uf                  String   @default("") @map("uf")
+  cep                 String   @default("") @map("cep")
+  codigoPais          String   @default("1058") @map("codigoPais")
+  fone                String   @default("") @map("fone")
+  email               String   @default("") @map("email")
+
+  // CSC (NFC-e) — SÓ referência ao segredo
+  cscId               String   @default("") @map("cscId")
+  cscTokenRef         String?  @map("cscTokenRef")
+
+  // Provider (provider-agnóstico) — token do gateway por referência
+  provider            FiscalProviderTipo @default(STUB_HOMOLOGACAO) @map("provider")
+  providerConfig      Json?    @map("providerConfig") @db.JsonB
+  providerTokenRef    String?  @map("providerTokenRef")
+
+  certificadoAtivoId  String?  @map("certificadoAtivoId")
+
+  createdAt           DateTime @default(now()) @map("createdAt")
+  updatedAt           DateTime @updatedAt @map("updatedAt")
+
+  @@index([fiscalEnabled])
+  @@map("configuracoes_fiscais_loja")
+}
+
+/**
+ * Certificado digital A1 por loja. SEGREDO: só metadados + referências (blobRef/senhaRef);
+ * NUNCA bytes do .pfx nem a senha em coluna em claro (blueprint §9). O cofre é decidido no GOAL_002.
+ */
+model CertificadoDigital {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  apelido       String   @default("") @map("apelido")
+  tipo          String   @default("A1") @map("tipo")
+  titularCn     String   @default("") @map("titularCn")
+  cnpjTitular   String   @default("") @map("cnpjTitular")
+  serialNumber  String   @default("") @map("serialNumber")
+  fingerprint   String   @default("") @map("fingerprint")
+  validoDe      DateTime? @map("validoDe")
+  validoAte     DateTime? @map("validoAte")
+  status        CertificadoStatus @default(PENDENTE_VALIDACAO) @map("status")
+  ativo         Boolean  @default(false) @map("ativo")
+
+  // SEGREDO — só referência
+  blobRef       String?  @map("blobRef")
+  senhaRef      String?  @map("senhaRef")
+
+  uploadedBy    String?  @map("uploadedBy")
+  createdAt     DateTime @default(now()) @map("createdAt")
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+
+  notasAssinadas NotaFiscal[]
+
+  @@index([storeId])
+  @@index([storeId, ativo])
+  @@index([validoAte])
+  @@map("certificados_digitais")
+}
+
+/** Série + contador atômico de numeração por (loja, modelo, série, ambiente). Resolve P1-E. */
+model SerieFiscal {
+  id            String       @id @default(cuid())
+  storeId       String       @map("storeId")
+  store         Store        @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  modelo        ModeloFiscal   @default(NFCE) @map("modelo")
+  ambiente      AmbienteFiscal @default(HOMOLOGACAO) @map("ambiente")
+  serie         Int          @default(1) @map("serie")
+  proximoNumero Int          @default(1) @map("proximoNumero")
+  descricao     String       @default("") @map("descricao")
+  ativo         Boolean      @default(true) @map("ativo")
+
+  createdAt     DateTime     @default(now()) @map("createdAt")
+  updatedAt     DateTime     @updatedAt @map("updatedAt")
+
+  notas         NotaFiscal[]
+
+  @@unique([storeId, modelo, serie, ambiente])
+  @@index([storeId])
+  @@map("series_fiscais")
+}
+
+/**
+ * Documento fiscal (cabeçalho + snapshots congelados do emitente/destinatário/pagamento).
+ * 1 venda → N tentativas, 1 vigente (índice único PARCIAL na migration). XML é registro legal.
+ */
+model NotaFiscal {
+  id               String   @id @default(cuid())
+  storeId          String   @map("storeId")
+  store            Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  vendaId          String   @map("vendaId")
+  venda            Venda    @relation(fields: [vendaId], references: [id], onDelete: Restrict)
+
+  modelo           ModeloFiscal     @default(NFCE) @map("modelo")
+  ambiente         AmbienteFiscal   @map("ambiente")
+  tipoEmissao      TipoEmissao      @default(NORMAL) @map("tipoEmissao")
+  status           StatusNotaFiscal @default(RASCUNHO) @map("status")
+  vigente          Boolean          @default(true) @map("vigente")
+
+  serieFiscalId    String?  @map("serieFiscalId")
+  serieFiscal      SerieFiscal? @relation(fields: [serieFiscalId], references: [id], onDelete: SetNull)
+  serie            Int?     @map("serie")
+  numero           Int?     @map("numero")
+
+  // Resultado SEFAZ
+  chaveAcesso      String?  @unique @map("chaveAcesso")
+  protocolo        String?  @map("protocolo")
+  cStat            String?  @map("cStat")
+  xMotivo          String?  @map("xMotivo")
+  dataAutorizacao  DateTime? @map("dataAutorizacao")
+  digestValue      String?  @map("digestValue")
+  qrCodeData       String?  @map("qrCodeData") @db.Text
+  urlConsulta      String?  @map("urlConsulta")
+
+  // Totais
+  valorTotal         Float  @default(0) @map("valorTotal")
+  valorDesconto      Float  @default(0) @map("valorDesconto")
+  valorFrete         Float  @default(0) @map("valorFrete")
+  valorTotalTributos Float  @default(0) @map("valorTotalTributos")
+
+  // SNAPSHOTS congelados (foto do instante)
+  snapshotEmitente     Json? @map("snapshotEmitente") @db.JsonB
+  snapshotDestinatario Json? @map("snapshotDestinatario") @db.JsonB
+  snapshotPagamento    Json? @map("snapshotPagamento") @db.JsonB
+
+  // XML (documento legal)
+  xmlAssinado      String?  @map("xmlAssinado") @db.Text
+  xmlAutorizado    String?  @map("xmlAutorizado") @db.Text
+  xmlStorageRef    String?  @map("xmlStorageRef")
+
+  certificadoId    String?  @map("certificadoId")
+  certificado      CertificadoDigital? @relation(fields: [certificadoId], references: [id], onDelete: SetNull)
+
+  localKey         String?  @map("localKey")
+  tentativas       Int      @default(0) @map("tentativas")
+  ultimoErro       String?  @map("ultimoErro")
+  emitidaPor       String?  @map("emitidaPor")
+  dataContingencia DateTime? @map("dataContingencia")
+  justContingencia String?  @map("justContingencia")
+
+  createdAt        DateTime @default(now()) @map("createdAt")
+  updatedAt        DateTime @updatedAt @map("updatedAt")
+
+  itens            NotaFiscalItem[]
+  eventos          EventoFiscal[]
+
+  @@unique([storeId, modelo, serie, numero, ambiente])
+  @@unique([storeId, localKey])
+  @@index([storeId])
+  @@index([storeId, status])
+  @@index([vendaId])
+  @@map("notas_fiscais")
+}
+
+/** Snapshot fiscal CONGELADO por item (origem em GOAL_004/005). Foto do produto no ato. */
+model NotaFiscalItem {
+  id               String   @id @default(cuid())
+  notaFiscalId     String   @map("notaFiscalId")
+  notaFiscal       NotaFiscal @relation(fields: [notaFiscalId], references: [id], onDelete: Cascade)
+
+  itemVendaId      String?  @map("itemVendaId")
+  produtoId        String?  @map("produtoId")
+  numeroItem       Int      @default(1) @map("numeroItem")
+
+  codigoProduto    String   @default("") @map("codigoProduto")
+  descricao        String   @default("") @map("descricao")
+  gtin             String?  @map("gtin")
+  ncm              String   @default("") @map("ncm")
+  cest             String?  @map("cest")
+  cfop             String   @default("") @map("cfop")
+  cst              String?  @map("cst")
+  csosn            String?  @map("csosn")
+  origemMercadoria Int      @default(0) @map("origemMercadoria")
+  unidadeComercial String   @default("UN") @map("unidadeComercial")
+
+  quantidade       Float    @default(1) @map("quantidade")
+  valorUnitario    Float    @default(0) @map("valorUnitario")
+  valorBruto       Float    @default(0) @map("valorBruto")
+  valorDesconto    Float    @default(0) @map("valorDesconto")
+  valorTotal       Float    @default(0) @map("valorTotal")
+
+  baseCalculoIcms  Float    @default(0) @map("baseCalculoIcms")
+  aliquotaIcms     Float    @default(0) @map("aliquotaIcms")
+  valorIcms        Float    @default(0) @map("valorIcms")
+  valorTributos    Float    @default(0) @map("valorTributos")
+
+  createdAt        DateTime @default(now()) @map("createdAt")
+
+  @@index([notaFiscalId])
+  @@map("notas_fiscais_itens")
+}
+
+/** Eventos da nota (cancelamento/CC-e/inutilização/contingência). Idempotente por (nota,tipo,seq). */
+model EventoFiscal {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  notaFiscalId  String   @map("notaFiscalId")
+  notaFiscal    NotaFiscal @relation(fields: [notaFiscalId], references: [id], onDelete: Cascade)
+
+  tipo          TipoEventoFiscal @map("tipo")
+  sequencia     Int      @default(1) @map("sequencia")
+  status        StatusEventoFiscal @default(PENDENTE) @map("status")
+
+  protocolo     String?  @map("protocolo")
+  cStat         String?  @map("cStat")
+  xMotivo       String?  @map("xMotivo")
+  justificativa String?  @map("justificativa")
+  xmlEvento     String?  @map("xmlEvento") @db.Text
+  xmlRetorno    String?  @map("xmlRetorno") @db.Text
+
+  dataEvento    DateTime @default(now()) @map("dataEvento")
+  operador      String?  @map("operador")
+  createdAt     DateTime @default(now()) @map("createdAt")
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+
+  @@unique([notaFiscalId, tipo, sequencia])
+  @@index([storeId])
+  @@map("eventos_fiscais")
+}
+
+/** Fila idempotente de emissão/cancelamento/contingência (pós-commit). Desacopla o balcão (P0-D). */
+model FiscalEmissaoJob {
+  id                 String   @id @default(cuid())
+  storeId            String   @map("storeId")
+  store              Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  vendaId            String   @map("vendaId")
+  notaFiscalId       String?  @map("notaFiscalId")
+
+  tipo               FiscalJobTipo   @default(EMISSAO) @map("tipo")
+  status             FiscalJobStatus @default(PENDENTE) @map("status")
+
+  tentativas         Int      @default(0) @map("tentativas")
+  maxTentativas      Int      @default(5) @map("maxTentativas")
+  proximaTentativaEm DateTime? @map("proximaTentativaEm")
+  prioridade         Int      @default(0) @map("prioridade")
+
+  lockOwner          String?  @map("lockOwner")
+  lockedAt           DateTime? @map("lockedAt")
+  lockExpiresAt      DateTime? @map("lockExpiresAt")
+
+  dedupeKey          String?  @map("dedupeKey")
+  payload            Json?    @map("payload") @db.JsonB
+  ultimoErro         String?  @map("ultimoErro")
+  concluidoEm        DateTime? @map("concluidoEm")
+
+  createdAt          DateTime @default(now()) @map("createdAt")
+  updatedAt          DateTime @updatedAt @map("updatedAt")
+
+  @@unique([storeId, dedupeKey])
+  @@index([status, proximaTentativaEm])
+  @@index([storeId])
+  @@map("fiscal_emissao_jobs")
+}
+
+/** Trilha append-only de toda interação fiscal (montar/assinar/transmitir/consultar + cStat). */
+model FiscalLog {
+  id             String   @id @default(cuid())
+  storeId        String   @map("storeId")
+  store          Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  vendaId        String?  @map("vendaId")
+  notaFiscalId   String?  @map("notaFiscalId")
+  eventoFiscalId String?  @map("eventoFiscalId")
+  jobId          String?  @map("jobId")
+
+  nivel          String   @default("INFO") @map("nivel")
+  acao           String   @default("") @map("acao")
+  cStat          String?  @map("cStat")
+  xMotivo        String?  @map("xMotivo")
+  mensagem       String   @default("") @map("mensagem")
+  detalhe        Json?    @map("detalhe") @db.JsonB
+  operador       String?  @map("operador")
+
+  createdAt      DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([notaFiscalId])
+  @@map("fiscal_logs")
+}
+
+// ─── Contador HUB — núcleo persistente (GOAL 009) ────────────────────────────
+//
+// Gate G2 (2026-07-19): ADR-CONTADOR-001/003/004/005/006 Accepted.
+// Domínio PRÓPRIO do HUB — nenhum dado operacional é duplicado aqui (ADR-006):
+// vendas/OS/financeiro seguem lidos read-only por `lib/contador/readers/*`.
+//
+// Ajuste G2-05 (PII): nenhum campo de dado pessoal de cliente (CPF, CNPJ de
+// cliente, nome, telefone, e-mail, endereço, IMEI, observação operacional) e
+// nenhum toggle de PII entram neste núcleo. Apenas IDs técnicos.
+//
+// `storageRef` é SEMPRE referência privada namespaced — NUNCA URL pública
+// (ADR-003). Storage físico só no GOAL 010.
+//
+// INTEGRIDADE COMPOSTA (GOAL 009-INTEGRIDADE-001): relações escopadas usam FKs
+// COMPOSTAS para que o banco — não o service — garanta que documento/evento não
+// cruzem loja e que comentário/versão não cruzem competência. Padrão multi-tenant
+// do Prisma: campos escalares (storeId/competenciaId) compartilhados entre relações.
+
+/** Estados PERSISTIDOS da competência (ADR-005). `reaberta` é transição auditada, não estado. */
+enum ContadorCompetenciaStatus {
+  ABERTA        @map("aberta")
+  ENVIADA       @map("enviada")
+  COM_PENDENCIA @map("com_pendencia")
+  FECHADA       @map("fechada")
+}
+
+/** Ciclo de vida de um item/documento (ADR-005). `vencido` é flag DERIVADA, nunca persistida. */
+enum ContadorItemStatus {
+  PENDENTE  @map("pendente")
+  ENVIADO   @map("enviado")
+  CONFERIDO @map("conferido")
+  RESOLVIDO @map("resolvido")
+}
+
+/** Categoria contábil do documento. */
+enum ContadorDocumentoCategoria {
+  FISCAL     @map("fiscal")
+  FINANCEIRO @map("financeiro")
+  FOLHA      @map("folha")
+  JURIDICO   @map("juridico")
+  OUTRO      @map("outro")
+}
+
+/**
+ * Competência mensal do Contador HUB — uma por loja/ano/mês.
+ *
+ * Viva enquanto `aberta`/`enviada`; o snapshot só é congelado no fechamento
+ * (GOAL 012) e NUNCA contém linhas operacionais detalhadas (ADR-001).
+ * Reabertura é transição auditada: incrementa `versao` e preserva snapshot e
+ * pacotes anteriores. Sem soft delete — competência não é excluída.
+ */
+model ContadorCompetencia {
+  id             String    @id @default(cuid())
+  storeId        String    @map("storeId")
+  store          Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  ano            Int       @map("ano")
+  mes            Int       @map("mes")
+  status         ContadorCompetenciaStatus @default(ABERTA) @map("status")
+  /** Incrementada a cada reabertura auditada (ADR-005). Nasce em 1. */
+  versao         Int       @default(1) @map("versao")
+
+  /** Snapshot oficial congelado no fechamento (GOAL 012). Agregados — sem linhas operacionais nem PII. */
+  snapshot       Json?     @map("snapshot") @db.JsonB
+  snapshotHash   String?   @map("snapshotHash")
+
+  fechadaEm      DateTime? @map("fechadaEm")
+  fechadaPorId   String?   @map("fechadaPorId")
+  reabertaEm     DateTime? @map("reabertaEm")
+  reabertaPorId  String?   @map("reabertaPorId")
+  reabertaMotivo String?   @map("reabertaMotivo") @db.Text
+
+  createdAt      DateTime  @default(now()) @map("createdAt")
+  updatedAt      DateTime  @updatedAt @map("updatedAt")
+
+  documentos     ContadorDocumento[]
+  pacotes        ContadorPacote[]
+  comentarios    ContadorComentario[]
+  eventos        ContadorEvento[]
+
+  @@unique([storeId, ano, mes])
+  // Alvo das FKs compostas escopadas (documento/evento) — garante que competenciaId
+  // e storeId referenciem SEMPRE a mesma competência e a mesma loja.
+  @@unique([id, storeId])
+  @@index([storeId, status])
+  @@map("contador_competencias")
+}
+
+/**
+ * Metadados de um documento contábil da competência (ADR-003).
+ *
+ * O binário vive no storage (GOAL 010) — aqui só referência privada `storageRef`,
+ * nunca URL pública. Substituição NÃO sobrescreve: cria nova linha apontando a
+ * anterior por `versaoDeId`. Exclusão é SOFT (motivo obrigatório) e não remove o blob.
+ */
+model ContadorDocumento {
+  id             String    @id @default(cuid())
+  competenciaId  String    @map("competenciaId")
+  storeId        String    @map("storeId")
+  // FK COMPOSTA: (competenciaId, storeId) referencia a MESMA competência da MESMA loja.
+  // Impede documento com competenciaId da loja A e storeId da loja B (pina doc.storeId == competencia.storeId).
+  competencia    ContadorCompetencia @relation(fields: [competenciaId, storeId], references: [id, storeId], onDelete: Restrict)
+  // FK direta à loja preservada (relação inversa em Store; storeId sempre válido).
+  store          Store     @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  categoria      ContadorDocumentoCategoria @map("categoria")
+  titulo         String    @map("titulo")
+  nomeArquivo    String    @map("nomeArquivo")
+  mime           String    @map("mime")
+  bytes          Int       @map("bytes")
+  /** Hash do conteúdo — metadado de integridade; verificação física é do GOAL 010. */
+  sha256         String    @map("sha256")
+  /** Caminho privado namespaced `contador/{storeId}/{aaaa-mm}/{docId}`. NUNCA URL pública. */
+  storageRef     String    @map("storageRef")
+
+  status         ContadorItemStatus @default(PENDENTE) @map("status")
+  vencimento     DateTime? @map("vencimento")
+
+  /** "interno" | "externo". `enviadoPorId` é ID técnico, nunca nome/e-mail. */
+  enviadoPorTipo String    @map("enviadoPorTipo")
+  enviadoPorId   String    @map("enviadoPorId")
+
+  /**
+   * Documento que esta linha substitui (versionamento append-only).
+   * FK COMPOSTA: (versaoDeId, competenciaId, storeId) referencia o predecessor pela
+   * MESMA competência e MESMA loja — impede substituir documento de outra competência ou loja.
+   */
+  versaoDeId     String?   @map("versaoDeId")
+  versaoDe       ContadorDocumento?  @relation("ContadorDocumentoVersao", fields: [versaoDeId, competenciaId, storeId], references: [id, competenciaId, storeId], onDelete: Restrict)
+  versoes        ContadorDocumento[] @relation("ContadorDocumentoVersao")
+
+  excluidoEm     DateTime? @map("excluidoEm")
+  excluidoPorId  String?   @map("excluidoPorId")
+  excluidoMotivo String?   @map("excluidoMotivo") @db.Text
+
+  createdAt      DateTime  @default(now()) @map("createdAt")
+  updatedAt      DateTime  @updatedAt @map("updatedAt")
+
+  comentarios    ContadorComentario[]
+
+  // Alvo da FK composta do comentário (documento da MESMA competência).
+  @@unique([id, competenciaId])
+  // Alvo da FK composta de versão (predecessor da MESMA competência e loja).
+  @@unique([id, competenciaId, storeId])
+  @@index([competenciaId, categoria])
+  @@index([storeId, status])
+  @@index([sha256])
+  @@map("contador_documentos")
+}
+
+/**
+ * Versão OFICIAL do pacote da competência (ADR-004) — materializada só no GOAL 012.
+ *
+ * Versões anteriores NUNCA são sobrescritas: supersessão = nova versão auditada.
+ * `manifestoHash` = sha256 do `manifest.json` canônico (`omni.contador.pacote.manifest/v1`).
+ * O pacote MVP sob demanda (GOAL 008) permanece intocado e não grava aqui.
+ */
+model ContadorPacote {
+  id            String   @id @default(cuid())
+  competenciaId String   @map("competenciaId")
+  competencia   ContadorCompetencia @relation(fields: [competenciaId], references: [id], onDelete: Restrict)
+
+  versao        Int      @map("versao")
+  manifestoHash String   @map("manifestoHash")
+  /** Referência privada do ZIP no storage. NUNCA URL pública. */
+  storageRef    String   @map("storageRef")
+  bytes         Int      @map("bytes")
+
+  /** "interno" | "externo". `geradoPorId` é pseudônimo/ID técnico, nunca nome/e-mail. */
+  geradoPorTipo String   @map("geradoPorTipo")
+  geradoPorId   String   @map("geradoPorId")
+  geradoEm      DateTime @default(now()) @map("geradoEm")
+
+  itens         ContadorPacoteItem[]
+
+  @@unique([competenciaId, versao])
+  @@index([competenciaId, geradoEm])
+  @@map("contador_pacotes")
+}
+
+/**
+ * Índice consultável dos arquivos que compõem um pacote oficial (ADR-004).
+ * Espelha o `manifest.json` — só metadados (caminho relativo, bytes, hash, fonte).
+ * Nunca conteúdo de arquivo, nunca URL.
+ */
+model ContadorPacoteItem {
+  id       String @id @default(cuid())
+  pacoteId String @map("pacoteId")
+  pacote   ContadorPacote @relation(fields: [pacoteId], references: [id], onDelete: Cascade)
+
+  /** Caminho relativo dentro do ZIP (ex.: `financeiro/movimentacoes.csv`). */
+  caminho  String @map("caminho")
+  bytes    Int    @map("bytes")
+  sha256   String @map("sha256")
+  fonte    String @map("fonte")
+
+  @@unique([pacoteId, caminho])
+  @@index([pacoteId])
+  @@map("contador_pacote_itens")
+}
+
+/**
+ * Comentário do domínio contábil (competência e, opcionalmente, documento).
+ * Append-only no serviço: sem update/delete de rotina.
+ * `autorId` é ID técnico — nunca nome, e-mail ou telefone.
+ */
+model ContadorComentario {
+  id            String   @id @default(cuid())
+  competenciaId String   @map("competenciaId")
+  competencia   ContadorCompetencia @relation(fields: [competenciaId], references: [id], onDelete: Restrict)
+  documentoId   String?  @map("documentoId")
+  // FK COMPOSTA: (documentoId, competenciaId) exige que o documento pertença à MESMA
+  // competência do comentário. Impede comentário de uma competência apontar documento de outra.
+  documento     ContadorDocumento?  @relation(fields: [documentoId, competenciaId], references: [id, competenciaId], onDelete: Restrict)
+
+  /** "interno" | "externo". */
+  autorTipo     String   @map("autorTipo")
+  autorId       String   @map("autorId")
+  /** "interna" | "compartilhada". */
+  visibilidade  String   @map("visibilidade")
+  texto         String   @map("texto") @db.Text
+
+  createdAt     DateTime @default(now()) @map("createdAt")
+
+  @@index([competenciaId, createdAt])
+  @@index([documentoId, createdAt])
+  @@map("contador_comentarios")
+}
+
+/**
+ * Trilha APPEND-ONLY do Contador HUB.
+ *
+ * NUNCA editar nem deletar linhas deste model — correção se faz por NOVO evento.
+ * `metadata` (nome fixado pela emenda Accepted do Gate G2 — não usar `payload`)
+ * carrega apenas dados saneados: sem payload bruto de venda/OS, sem cookie, token,
+ * senha, stack, conteúdo de documento, URL assinada ou qualquer PII.
+ */
+model ContadorEvento {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  // FK direta à loja preservada — evento sem competência exige apenas storeId válido.
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  competenciaId String?  @map("competenciaId")
+  // FK COMPOSTA opcional: quando competenciaId existe, (competenciaId, storeId) deve pertencer
+  // à MESMA competência e MESMA loja. competenciaId nulo → FK não enforça (MATCH SIMPLE), evento sem competência permitido.
+  competencia   ContadorCompetencia? @relation(fields: [competenciaId, storeId], references: [id, storeId], onDelete: Restrict)
+
+  tipo          String   @map("tipo")
+  /** "sistema" | "interno" | "externo". `atorId` é ID técnico, nunca nome/e-mail. */
+  atorTipo      String   @map("atorTipo")
+  atorId        String   @map("atorId")
+
+  entidade      String?  @map("entidade")
+  entidadeId    String?  @map("entidadeId")
+  origem        String?  @map("origem")
+  /** Metadados SANEADOS do evento. Sem PII, sem payload bruto, sem segredo. */
+  metadata      Json?    @map("metadata") @db.JsonB
+
+  ip            String?  @map("ip")
+  userAgent     String?  @map("userAgent")
+
+  createdAt     DateTime @default(now()) @map("createdAt")
+
+  @@index([storeId, createdAt])
+  @@index([competenciaId, createdAt])
+  @@index([tipo])
+  @@map("contador_eventos")
+}

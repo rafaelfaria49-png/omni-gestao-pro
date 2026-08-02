@@ -19,17 +19,18 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+export const STEP_BASELINE = Object.freeze(['node', ['scripts/prisma-baseline.mjs']]);
 export const STEP_MIGRATE = Object.freeze(['npx', ['prisma', 'migrate', 'deploy']]);
 export const STEP_GENERATE = Object.freeze(['npx', ['prisma', 'generate']]);
 export const STEP_BUILD = Object.freeze(['npx', ['next', 'build', '--webpack']]);
 
 /**
- * Passos do build para o ambiente informado. Migration entra PRIMEIRO e
- * SOMENTE em production.
+ * Passos do build para o ambiente informado. Em production: baseline seguro
+ * (no-op se `_prisma_migrations` já existe) e migration entram PRIMEIRO.
  */
 export function buildSteps(env = process.env) {
   const steps = [];
-  if (env.VERCEL_ENV === 'production') steps.push(STEP_MIGRATE);
+  if (env.VERCEL_ENV === 'production') steps.push(STEP_BASELINE, STEP_MIGRATE);
   steps.push(STEP_GENERATE, STEP_BUILD);
   return steps;
 }
