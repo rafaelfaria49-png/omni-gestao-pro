@@ -776,8 +776,9 @@ export function OperationsProvider({
    * do `loadDb` e qualquer falha de `/api/ops/inventory` ou `/api/ops/ordens`
    * deixava o caixa local desatualizado para sempre (PDV-CAIXA-SESSION-RECOVERY-001).
    *
-   * Serializado por `caixaSyncInFlightRef`: cliques repetidos em "Atualizar caixa"
-   * compartilham a mesma consulta em voo.
+   * Serializado por `createSingleFlight`: cliques repetidos em "Atualizar caixa"
+   * (ou o refresh automático coincidindo com o clique) compartilham a mesma
+   * consulta em voo, em vez de disparar N requisições e N decisões.
    */
   const caixaSyncSingleFlightRef = useRef(createSingleFlight<CaixaRefreshOutcome>())
 
@@ -830,14 +831,15 @@ export function OperationsProvider({
   // Cobre F5, nova aba, novo login e reinício do computador.
   useEffect(() => {
     void refreshCaixaSession()
-    const onFocus = () => {
+    const onVisible = () => {
       if (document.visibilityState === "visible") void refreshCaixaSession()
     }
-    window.addEventListener("visibilitychange", onFocus)
-    window.addEventListener("online", onFocus)
+    const onOnline = () => void refreshCaixaSession()
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("online", onOnline)
     return () => {
-      window.removeEventListener("visibilitychange", onFocus)
-      window.removeEventListener("online", onFocus)
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("online", onOnline)
     }
   }, [refreshCaixaSession])
 

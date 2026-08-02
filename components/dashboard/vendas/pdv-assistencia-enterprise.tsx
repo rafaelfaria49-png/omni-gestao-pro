@@ -965,6 +965,8 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   const cartHydratedRef = useRef(false)
   /** Unidade cujo carrinho recuperado já foi revalidado contra o catálogo real. */
   const cartRevalidatedScopeRef = useRef<string | null>(null)
+  /** Unidade que já recebeu o aviso de revisão do carrinho recuperado. */
+  const cartRevalidateToastedRef = useRef<string | null>(null)
   const cartPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [postSalePrintOpen, setPostSalePrintOpen] = useState(false)
   const [postSalePrintInput, setPostSalePrintInput] = useState<PdvReceiptInput | null>(null)
@@ -1295,14 +1297,19 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
 
       const precoPorLinha = new Map(lines.map((l) => [l.lineId, l.price]))
       const mantidas = new Set(lines.map((l) => l.lineId))
-      const avisos = describeCartDraftIssues(issues)
-      window.setTimeout(() => {
-        toast({
-          variant: "destructive",
-          title: "Carrinho revisado",
-          description: `${avisos}.`,
-        })
-      }, 900)
+      // O updater pode ser reexecutado pelo React; o recálculo é idempotente, mas
+      // o aviso só pode aparecer uma vez por unidade.
+      if (cartRevalidateToastedRef.current !== storeIdKey) {
+        cartRevalidateToastedRef.current = storeIdKey
+        const avisos = describeCartDraftIssues(issues)
+        window.setTimeout(() => {
+          toast({
+            variant: "destructive",
+            title: "Carrinho revisado",
+            description: `${avisos}.`,
+          })
+        }, 900)
+      }
       return prev
         .filter((l) => mantidas.has(l.lineId))
         .map((l) => ({ ...l, price: precoPorLinha.get(l.lineId) ?? l.price }))
