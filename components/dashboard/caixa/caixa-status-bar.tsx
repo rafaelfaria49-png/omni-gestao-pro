@@ -13,10 +13,12 @@ import {
   Loader2,
   ChevronRight,
   EyeOff,
+  RefreshCw,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useCaixa } from "./caixa-provider"
+import { useAtualizarCaixa } from "./use-atualizar-caixa"
 import { AberturaCaixaModal } from "./abertura-caixa-modal"
 import { FechamentoCaixaModal } from "./fechamento-caixa-modal"
 import { CaixaDashboard } from "./caixa-dashboard"
@@ -54,7 +56,8 @@ export function CaixaStatusBar({
   onOpenFechamentoSignalConsumed,
   variant = "default",
 }: CaixaStatusBarProps) {
-  const { caixa, sessaoId } = useCaixa()
+  const { caixa, sessaoId, sessaoDesatualizada } = useCaixa()
+  const { atualizando, atualizarCaixa } = useAtualizarCaixa("manual")
   const { registrarOperacaoCaixa } = useOperationsStore()
   const { lojaAtivaId } = useLojaAtiva()
   const { terminal, clear: clearTerminal } = useTerminalAtivo(lojaAtivaId)
@@ -239,6 +242,26 @@ export function CaixaStatusBar({
     return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
   }
 
+  // Ação de recuperação: reconsulta a sessão ativa no servidor sem exigir fechar
+  // e abrir outro caixa. Disponível em TODOS os PDVs (a barra é compartilhada).
+  // NUNCA abre sessão nova — só lê a que já existe no servidor.
+  const botaoAtualizarCaixa = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => void atualizarCaixa()}
+      disabled={atualizando}
+      className="h-8 shrink-0 rounded-lg border-border"
+    >
+      {atualizando ? (
+        <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+      ) : (
+        <RefreshCw className="mr-1.5 h-4 w-4" />
+      )}
+      {atualizando ? "Atualizando…" : "Atualizar caixa"}
+    </Button>
+  )
+
   if (!caixa.isOpen) {
     return (
       <>
@@ -272,10 +295,14 @@ export function CaixaStatusBar({
                 <p className="text-xs text-muted-foreground">Abra o caixa para realizar vendas</p>
               </div>
             </div>
-            <Button onClick={() => setShowAbertura(true)} className="h-9 rounded-lg bg-primary font-semibold hover:bg-primary/90">
-              <Unlock className="w-4 h-4 mr-2" />
-              Abrir Caixa
-            </Button>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              {/* Antes de abrir outro caixa: confere se já existe sessão aberta no servidor. */}
+              {botaoAtualizarCaixa}
+              <Button onClick={() => setShowAbertura(true)} className="h-9 rounded-lg bg-primary font-semibold hover:bg-primary/90">
+                <Unlock className="w-4 h-4 mr-2" />
+                Abrir Caixa
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -287,6 +314,28 @@ export function CaixaStatusBar({
   return (
     <>
       <PdvPendingSyncBadge className={cn("mb-2", variant === "pdv" && "mx-2 mt-2")} />
+      {/* Caixa aberto na tela mas sem referência de sessão utilizável: a venda seria
+          recusada com "Sessão de caixa inválida". Recuperável sem fechar o caixa. */}
+      {sessaoDesatualizada && (
+        <div
+          className={cn(
+            "mb-2 flex flex-col items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 sm:flex-row sm:items-center sm:justify-between",
+            variant === "pdv" && "mx-2 mt-2"
+          )}
+        >
+          <div className="flex min-w-0 items-center gap-2">
+            <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+            <div className="min-w-0 leading-tight">
+              <p className="text-sm font-semibold text-warning">Sessão de caixa desatualizada</p>
+              <p className="text-xs text-muted-foreground">
+                O caixa está aberto, mas este dispositivo perdeu a referência da sessão. Atualize para
+                voltar a finalizar vendas — o carrinho é mantido.
+              </p>
+            </div>
+          </div>
+          {botaoAtualizarCaixa}
+        </div>
+      )}
       <div
         className={cn(
           "bg-success/10 border border-success/30 rounded-lg mb-4 overflow-hidden",
@@ -353,6 +402,7 @@ export function CaixaStatusBar({
 
               {/* Ações */}
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                {botaoAtualizarCaixa}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -418,16 +468,21 @@ export function CaixaStatusBar({
                 <p className="text-xs text-muted-foreground">Resumo do caixa protegido</p>
               </div>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => requestGate(null)}
-              className="h-8 shrink-0 rounded-lg border-border"
-            >
-              <Lock className="w-4 h-4 mr-2" />
-              Resumo do Caixa
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              {/* Recuperação de sessão não revela valores — fica disponível também
+                  com o Resumo protegido (Caixa Seguro). */}
+              {botaoAtualizarCaixa}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => requestGate(null)}
+                className="h-8 shrink-0 rounded-lg border-border"
+              >
+                <Lock className="w-4 h-4 mr-2" />
+                Resumo do Caixa
+                <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
           </div>
         )}
       </div>
