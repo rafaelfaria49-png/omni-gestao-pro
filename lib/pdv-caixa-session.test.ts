@@ -16,6 +16,7 @@ import {
   decideCaixaSessionSync,
   fetchActiveCaixaSession,
   isCaixaReferenceStale,
+  isCaixaSessionRejectionCode,
   reconcileCaixaSession,
   type ServerCaixaSession,
 } from "@/lib/pdv-caixa-session"
@@ -143,6 +144,27 @@ describe("isCaixaReferenceStale", () => {
   it("caixa aberto com sessão, ou caixa fechado, não é estado degradado", () => {
     expect(isCaixaReferenceStale({ isOpen: true, sessaoId: "sess-1" })).toBe(false)
     expect(isCaixaReferenceStale({ isOpen: false, sessaoId: null })).toBe(false)
+  })
+})
+
+describe("isCaixaSessionRejectionCode", () => {
+  it("reconhece a recusa por sessão de caixa (código real do venda-persist)", () => {
+    expect(isCaixaSessionRejectionCode("CAIXA_FECHADO")).toBe(true)
+    // Ainda não emitido pelo servidor; aceito por antecipação do contrato.
+    expect(isCaixaSessionRejectionCode("SESSAO_INVALIDA")).toBe(true)
+  })
+
+  it("CAIXA_ORIGINAL_FECHADO não é resolvido atualizando o caixa atual", () => {
+    expect(isCaixaSessionRejectionCode("CAIXA_ORIGINAL_FECHADO")).toBe(false)
+  })
+
+  it("recusas de identidade e de estoque não disparam atualização de caixa", () => {
+    expect(isCaixaSessionRejectionCode("PEDIDO_ID_DE_OUTRA_LOJA")).toBe(false)
+    expect(isCaixaSessionRejectionCode("PEDIDO_ID_CONFLITO_MESMA_LOJA")).toBe(false)
+    expect(isCaixaSessionRejectionCode("ESTOQUE_INSUFICIENTE")).toBe(false)
+    expect(isCaixaSessionRejectionCode("PRODUTO_NAO_RESOLVIDO")).toBe(false)
+    expect(isCaixaSessionRejectionCode(undefined)).toBe(false)
+    expect(isCaixaSessionRejectionCode(null)).toBe(false)
   })
 })
 

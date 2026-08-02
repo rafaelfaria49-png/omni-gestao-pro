@@ -56,6 +56,22 @@ function trimmed(value: string | null | undefined): string {
 }
 
 /**
+ * Códigos com que `/api/ops/venda-persist` recusa uma venda por causa da sessão
+ * de caixa. Recebê-los significa que a referência do cliente ficou para trás —
+ * a resposta é reconsultar a sessão ativa, nunca reenviar a venda.
+ *
+ * Hoje o servidor só emite `CAIXA_FECHADO` (`CaixaSessaoInvalidaError`);
+ * `SESSAO_INVALIDA` fica aceito por antecipação do contrato.
+ *
+ * `CAIXA_ORIGINAL_FECHADO` NÃO entra aqui: ali o problema é a sessão em que a
+ * venda nasceu, e atualizar o caixa atual não resolve — quem trata é o reenvio
+ * retroativo, sempre por ação explícita do operador.
+ */
+export function isCaixaSessionRejectionCode(code: string | undefined | null): boolean {
+  return code === "CAIXA_FECHADO" || code === "SESSAO_INVALIDA"
+}
+
+/**
  * Caixa aberto na tela mas sem referência de sessão utilizável: o operador vê
  * "Caixa Aberto" e mesmo assim a finalização é bloqueada. Estado degradado que
  * a UI precisa sinalizar e oferecer "Atualizar caixa".

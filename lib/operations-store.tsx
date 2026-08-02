@@ -17,6 +17,7 @@ import { initAutomationEngineClient } from "@/lib/automation/automation-engine"
 import { registrarOperacaoCaixaServer } from "@/lib/pdv-caixa-operacao"
 import {
   createSingleFlight,
+  isCaixaSessionRejectionCode,
   reconcileCaixaSession,
   type CaixaRefreshOutcome,
 } from "@/lib/pdv-caixa-session"
@@ -1625,6 +1626,13 @@ export function OperationsProvider({
                   ? SALE_IDENTITY_CONFLICT_GUIDANCE
                   : `${detail.slice(0, 200)} · Abra "Vendas" e use Reenviar sync para tentar novamente.`,
               })
+              // Recusa por sessão de caixa: a sessão pode ter sido fechada entre a
+              // checagem do PDV e a gravação. Reconsulta a sessão ativa para que a
+              // PRÓXIMA venda já saia certa. NÃO reenvia esta venda — ela fica em
+              // `syncPending` e só volta por ação do operador (evita duplicidade).
+              if (isCaixaSessionRejectionCode(code)) {
+                void refreshCaixaSession()
+              }
             }
           })
           .catch((err: unknown) => {
@@ -1638,7 +1646,7 @@ export function OperationsProvider({
       }
       return { ok: true, saleId }
     },
-    [storageKey]
+    [refreshCaixaSession, storageKey]
   )
 
   const registrarDevolucao = useCallback<OperationsContextType["registrarDevolucao"]>((input) => {
