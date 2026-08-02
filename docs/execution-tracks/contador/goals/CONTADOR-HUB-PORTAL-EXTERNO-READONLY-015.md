@@ -15,6 +15,7 @@
     "app/api/contador-externo/**",
     "components/contador-externo/**",
     "lib/contador/portal/**",
+    "lib/contador/scope-core.ts",
     "proxy.ts",
     ".env.example",
     "docs/contador/**",
@@ -109,6 +110,7 @@
 - `app/api/contador-externo/**`
 - `components/contador-externo/**`
 - `lib/contador/portal/**`
+- `lib/contador/scope-core.ts`
 - `proxy.ts`
 - `.env.example`
 - `docs/contador/**`
