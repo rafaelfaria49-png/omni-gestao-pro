@@ -31,6 +31,10 @@ const h = vi.hoisted(() => {
   let providerMode: "write" | "pilot" | "off" = "pilot"
   /** Quando setado, a transação de revogação explode com uma mensagem "de Prisma". */
   let erroNaTransacao: string | null = null
+  /** Quando setado, a consulta auxiliar de referência compartilhada explode (R2). */
+  let erroNoCount: string | null = null
+  /** Refs efetivamente passadas a `vault.revoke` — prova de que a remoção física NÃO foi tentada. */
+  const revokeCalls: string[] = []
 
   /**
    * Projeta como o Prisma real: só os campos pedidos em `select`. Sem isto o mock devolveria a
@@ -61,6 +65,7 @@ const h = vi.hoisted(() => {
     updateMany: async () => ({ count: 0 }),
     /** Conta linhas vivas da unidade que ainda apontam para as mesmas refs (OR de blobRef/senhaRef). */
     count: async ({ where }: { where: Row }) => {
+      if (erroNoCount) throw new Error(erroNoCount)
       const w = where as {
         storeId: string
         id: { not: string }
@@ -112,6 +117,7 @@ const h = vi.hoisted(() => {
     certs,
     logs,
     envVault,
+    revokeCalls,
     setProviderMode: (m: "write" | "pilot" | "off") => {
       providerMode = m
     },
@@ -119,13 +125,18 @@ const h = vi.hoisted(() => {
     setErroNaTransacao: (msg: string | null) => {
       erroNaTransacao = msg
     },
+    setErroNoCount: (msg: string | null) => {
+      erroNoCount = msg
+    },
     reset: () => {
       configs.length = 0
       certs.length = 0
       logs.length = 0
+      revokeCalls.length = 0
       for (const k of Object.keys(envVault)) delete envVault[k]
       providerMode = "pilot"
       erroNaTransacao = null
+      erroNoCount = null
     },
   }
 })
@@ -158,9 +169,16 @@ vi.mock("@/lib/fiscal/vault", async (importOriginal) => {
         }
       }
       const allowWrite = mode === "write"
+      const vault = new EnvVault({ env: h.envVault, allowWrite })
+      // Espia `revoke` para provar QUANDO a remoção física é tentada (e quando não é).
+      const revokeOriginal = vault.revoke.bind(vault)
+      vault.revoke = async (storeId: string, ref: string) => {
+        h.revokeCalls.push(ref)
+        return revokeOriginal(storeId, ref)
+      }
       return {
         provider: "env-piloto",
-        vault: new EnvVault({ env: h.envVault, allowWrite }),
+        vault,
         availability: {
           disponivel: true,
           backend: "env-piloto",
@@ -395,6 +413,121 @@ describe("PATCH revogar — referência compartilhada (slot canônico por loja)"
 
     const j = await corpo(await PATCH(req({ revogar: true }), ctx()))
     expect((j.revogacao as Row).refCompartilhada).toBe(false)
+  })
+})
+
+/**
+ * R2 da revisão final: a consulta de referência compartilhada roda DEPOIS da transação de
+ * revogação. Se ela falhar, a revogação lógica já está commitada — devolver 500 diria ao operador
+ * que o certificado comprometido continua valendo. A rota precisa responder 200, declarar a
+ * verificação inconclusiva e NÃO tentar remoção física.
+ */
+describe("PATCH revogar — verificação de compartilhamento inconclusiva (R2)", () => {
+  const ERRO_PRISMA =
+    'Invalid `prisma.certificadoDigital.count()` invocation: Timed out fetching a new connection from the pool'
+
+  it("count lança ⇒ 200, revogação lógica firme e remoção física NÃO tentada", async () => {
+    seedCert()
+    seedConfig()
+    seedMaterial()
+    h.setProviderMode("write") // provider COM capacidade — mesmo assim não deve tentar remover
+    h.setErroNoCount(ERRO_PRISMA)
+
+    const res = await PATCH(req({ revogar: true }), ctx())
+    const j = await corpo(res)
+
+    // A revogação NÃO virou falha.
+    expect(res.status).toBe(200)
+    expect(j.ok).toBe(true)
+
+    // Estado terminal aplicado e persistido.
+    expect(h.certs[0]!.status).toBe("REVOGADO")
+    expect(h.certs[0]!.ativo).toBe(false)
+    expect(h.configs[0]!.certificadoAtivoId).toBeNull()
+
+    // Remoção física não tentada: `vault.revoke` nunca chamado e material intacto.
+    expect(h.revokeCalls).toEqual([])
+    expect(h.envVault[BLOB_REF]).toBe("material-em-custodia")
+    expect(h.envVault[SENHA_REF]).toBe("senha-em-custodia")
+
+    const revogacao = j.revogacao as Row
+    expect(revogacao.logica).toBe("aplicada")
+    expect(revogacao.remocaoFisica).toBe("nao_executada_verificacao_inconclusiva")
+    expect(revogacao.verificacaoInconclusiva).toBe(true)
+    expect(revogacao.remocaoFisicaTentada).toBe(false)
+    expect(revogacao.reativacaoPermitida).toBe(false)
+    expect(revogacao.emissaoPermitida).toBe(false)
+    expect(String(revogacao.orientacao)).toMatch(/não foi possível confirmar com segurança/i)
+    expect(String(revogacao.orientacao)).toMatch(/não remova o secret manualmente/i)
+  })
+
+  it("o erro interno do Prisma não vaza na resposta", async () => {
+    seedCert()
+    seedConfig()
+    seedMaterial()
+    h.setErroNoCount(ERRO_PRISMA)
+
+    const j = await corpo(await PATCH(req({ revogar: true }), ctx()))
+    const serializado = JSON.stringify(j)
+
+    expect(serializado).not.toContain("prisma")
+    expect(serializado).not.toContain("connection pool")
+    expect(serializado).not.toContain("Timed out")
+    expect(serializado).not.toContain(BLOB_REF)
+    expect(serializado).not.toContain(SENHA_REF)
+  })
+
+  it("a auditoria é registrada mesmo com a consulta auxiliar falhando", async () => {
+    seedCert()
+    seedConfig()
+    seedMaterial()
+    h.setErroNoCount(ERRO_PRISMA)
+
+    await PATCH(req({ revogar: true }), ctx())
+
+    const acoes = h.logs.map((l) => l.acao)
+    expect(acoes).toContain("certificado.revogar")
+    expect(acoes).toContain("secret.revoke")
+
+    const secretLog = h.logs.find((l) => l.acao === "secret.revoke")!
+    expect((secretLog.detalhe as Row).remocaoFisica).toBe("nao_executada_verificacao_inconclusiva")
+    expect((secretLog.detalhe as Row).verificacaoInconclusiva).toBe(true)
+    expect((secretLog.detalhe as Row).remocaoFisicaTentada).toBe(false)
+    // A trilha também não carrega o erro do Prisma nem a referência.
+    const trilha = JSON.stringify(h.logs)
+    expect(trilha).not.toContain("Timed out")
+    expect(trilha).not.toContain(BLOB_REF)
+  })
+
+  it("certificado revogado com verificação inconclusiva continua não reativável", async () => {
+    seedCert()
+    seedConfig()
+    h.setErroNoCount(ERRO_PRISMA)
+    expect((await PATCH(req({ revogar: true }), ctx())).status).toBe(200)
+
+    h.setErroNoCount(null)
+    const res = await PATCH(req({ ativo: true }), ctx())
+    expect(res.status).toBe(409)
+    expect((await corpo(res)).codigo).toBe("certificado_revogado")
+    expect(h.certs[0]!.ativo).toBe(false)
+  })
+
+  it("falha inesperada do cofre também não vira 500 — reporta 'pendente'", async () => {
+    seedCert()
+    seedConfig()
+    seedMaterial()
+    h.setProviderMode("write")
+    // Ref fora do escopo da loja faz o EnvVault lançar antes de remover qualquer coisa.
+    h.certs[0]!.blobRef = "FISCAL_A1_PFX_B64_LOJA_9"
+    h.certs[0]!.senhaRef = "FISCAL_A1_SENHA_LOJA_9"
+
+    const res = await PATCH(req({ revogar: true }), ctx())
+    const j = await corpo(res)
+
+    expect(res.status).toBe(200)
+    expect(h.certs[0]!.status).toBe("REVOGADO")
+    // `revogarSegredosCertificado` converte FiscalVaultError em pendência, sem derrubar a rota.
+    expect((j.revogacao as Row).remocaoFisica).toBe("pendente")
   })
 })
 

@@ -35,8 +35,10 @@ const patchSchema = z.object({
    * Revoga o certificado (GOAL-016C · ADR-0009 D8). São DOIS atos distintos, nunca confundidos:
    *  - revogação LÓGICA (sempre aplicada): status REVOGADO + `ativo:false` ⇒ fail-closed imediato
    *    para assinatura/emissão;
-   *  - remoção FÍSICA do material no cofre (condicional): só quando o provider revoga E nenhuma
-   *    outra linha viva da unidade depende do mesmo material. A resposta diz qual dos dois ocorreu.
+   *  - remoção FÍSICA do material no cofre (condicional): só quando o provider revoga, a
+   *    verificação de compartilhamento é conclusiva E nenhuma outra linha viva da unidade depende
+   *    do mesmo material. A resposta diz exatamente o que foi e o que não foi executado.
+   * Falha na verificação ou no cofre NÃO derruba a revogação lógica nem vira 500.
    * Documentos já autorizados permanecem; a revogação só afeta emissões futuras.
    */
   revogar: z.boolean().optional(),
@@ -223,49 +225,77 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         .map((r) => String(r ?? "").trim())
         .filter((r) => r.length > 0)
 
-      /**
-       * Outra linha NÃO revogada da unidade ainda aponta para o mesmo material? Em backend de
-       * referência estável (slot canônico por loja) isso é o caso NORMAL — destruir o material, ou
-       * mandar o operador apagar a env, derrubaria o certificado em uso. Sem essa checagem, nenhuma
-       * orientação de remoção pode ser emitida.
-       */
-      const refCompartilhada =
-        refsDaLinha.length > 0 &&
-        (await prisma.certificadoDigital.count({
-          where: {
-            storeId: acl.storeId,
-            id: { not: certId },
-            status: { not: CertificadoStatus.REVOGADO },
-            OR: refsDaLinha.flatMap((ref) => [{ blobRef: ref }, { senhaRef: ref }]),
-          },
-        })) > 0
-
-      const provider = resolveFiscalSecretProvider()
-      const providerRevoga = Boolean(provider.vault) && provider.availability.capacidades.revogacao
-
       type RemocaoFisica =
         | "nao_aplicavel" // a linha não tinha material referenciado
         | "nao_executada_ref_compartilhada" // outra linha viva usa o mesmo material
         | "nao_executada_provider_sem_revogacao" // piloto: provisionamento manual
-        | "pendente" // provider aceitou, mas não removeu tudo
+        | "nao_executada_verificacao_inconclusiva" // não deu para saber se a ref é compartilhada
+        | "pendente" // tentada, mas não confirmada por completo
         | "executada"
+
+      /**
+       * Outra linha NÃO revogada da unidade ainda aponta para o mesmo material? Em backend de
+       * referência estável (slot canônico por loja) isso é o caso NORMAL — destruir o material, ou
+       * mandar o operador apagar a env, derrubaria o certificado em uso.
+       *
+       * A consulta roda DEPOIS da revogação lógica já commitada. Se ela falhar, a revogação
+       * continua válida: o erro NÃO pode virar 500 nem sugerir que o certificado segue ativo.
+       * Sem resposta confiável, a remoção física simplesmente não é tentada (fail-closed pelo lado
+       * de não destruir segredo).
+       */
+      let refCompartilhada = false
+      let verificacaoInconclusiva = false
+      if (refsDaLinha.length > 0) {
+        try {
+          refCompartilhada =
+            (await prisma.certificadoDigital.count({
+              where: {
+                storeId: acl.storeId,
+                id: { not: certId },
+                status: { not: CertificadoStatus.REVOGADO },
+                OR: refsDaLinha.flatMap((ref) => [{ blobRef: ref }, { senhaRef: ref }]),
+              },
+            })) > 0
+        } catch (e) {
+          verificacaoInconclusiva = true
+          console.error(
+            "[fiscal:certificado:revogar] verificação de referência compartilhada falhou:",
+            e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+          )
+        }
+      }
+
+      const provider = resolveFiscalSecretProvider()
+      const providerRevoga = Boolean(provider.vault) && provider.availability.capacidades.revogacao
 
       let remocaoFisica: RemocaoFisica = "nao_aplicavel"
       if (refsDaLinha.length > 0) {
-        if (refCompartilhada) {
+        if (verificacaoInconclusiva) {
+          remocaoFisica = "nao_executada_verificacao_inconclusiva"
+        } else if (refCompartilhada) {
           remocaoFisica = "nao_executada_ref_compartilhada"
         } else if (!providerRevoga || !provider.vault) {
           remocaoFisica = "nao_executada_provider_sem_revogacao"
         } else {
-          const rev = await revogarSegredosCertificado({
-            vault: provider.vault,
-            storeId: acl.storeId,
-            blobRef: cert.blobRef,
-            senhaRef: cert.senhaRef,
-          })
-          remocaoFisica = rev.pendentes.length > 0 ? "pendente" : "executada"
+          try {
+            const rev = await revogarSegredosCertificado({
+              vault: provider.vault,
+              storeId: acl.storeId,
+              blobRef: cert.blobRef,
+              senhaRef: cert.senhaRef,
+            })
+            remocaoFisica = rev.pendentes.length > 0 ? "pendente" : "executada"
+          } catch (e) {
+            // Erro inesperado do cofre também não desfaz nem mascara a revogação lógica.
+            remocaoFisica = "pendente"
+            console.error(
+              "[fiscal:certificado:revogar] remoção do material no cofre falhou:",
+              e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+            )
+          }
         }
       }
+      const remocaoFisicaTentada = remocaoFisica === "executada" || remocaoFisica === "pendente"
 
       /** Orientação sanitizada — NUNCA nomeia a referência nem manda apagar secret às cegas. */
       const ORIENTACAO: Record<RemocaoFisica, string> = {
@@ -274,8 +304,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           "O certificado foi revogado e não emite mais. O material NÃO foi removido do cofre porque outro certificado ativo desta unidade ainda depende dele — não remova o secret manualmente.",
         nao_executada_provider_sem_revogacao:
           "O certificado foi revogado e não emite mais. Este ambiente não remove material do cofre em runtime: a remoção física segue por provisionamento manual, sob conferência de quais certificados da unidade ainda usam o material.",
+        nao_executada_verificacao_inconclusiva:
+          "O certificado foi revogado e não emite mais. A remoção do material NÃO foi tentada porque não foi possível confirmar com segurança se a referência é compartilhada com outro certificado desta unidade — não remova o secret manualmente sem essa conferência.",
         pendente:
-          "O certificado foi revogado e não emite mais. A remoção do material do cofre ficou parcialmente pendente.",
+          "O certificado foi revogado e não emite mais. A remoção do material do cofre foi tentada e ficou pendente de confirmação.",
         executada: "O certificado foi revogado e o material correspondente foi removido do cofre.",
       }
 
@@ -299,7 +331,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
           provider: provider.provider,
           providerRevoga,
           remocaoFisica,
+          remocaoFisicaTentada,
           refCompartilhada,
+          verificacaoInconclusiva,
           refsVinculadas: refsDaLinha.length,
         },
       })
@@ -312,9 +346,15 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         ok: true,
         certificado: updated,
         revogacao: {
+          // Inequívoco para o caller: o que valeu, o que não pode mais acontecer e o que NÃO foi
+          // tentado no cofre. Nenhum campo carrega erro interno, referência ou detalhe do Prisma.
           logica: "aplicada",
+          reativacaoPermitida: false,
+          emissaoPermitida: false,
           remocaoFisica,
+          remocaoFisicaTentada,
           refCompartilhada,
+          verificacaoInconclusiva,
           orientacao: ORIENTACAO[remocaoFisica],
         },
       })

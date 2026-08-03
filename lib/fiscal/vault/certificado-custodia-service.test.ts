@@ -396,6 +396,92 @@ describe("custodia A1 — rotação", () => {
   })
 })
 
+/**
+ * R1 da revisão final: sem refs anteriores NÃO existe "versão anterior preservada", e descartar a
+ * versão nova seria destrutivo — num backend de slot estável a ref nova pode ser compartilhada com
+ * outra linha da unidade. O serviço precisa dizer `nao_aplicavel` e não apagar nada.
+ */
+describe("custodia A1 — rotação sem material anterior (R1)", () => {
+  async function rotacaoQueFalhaNaTroca(refsAnteriores: { blobRef: string | null; senhaRef: string | null }) {
+    const vault = new FakeVaultVersionado()
+    const novo = validTestPfx({ senha: "senha-sem-anterior-004" })
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      refsAnteriores,
+      confirmarTroca: async () => {
+        throw new Error("falha de banco simulada")
+      },
+    })
+    return { vault, novo, r }
+  }
+
+  it("refs anteriores NULAS + falha na troca ⇒ 'nao_aplicavel' e NADA é revogado", async () => {
+    const { vault, novo, r } = await rotacaoQueFalhaNaTroca({ blobRef: null, senhaRef: null })
+
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.codigo).toBe("troca_nao_confirmada")
+    expect(r.materialAnterior).toBe("nao_aplicavel")
+    // Nunca afirma preservação de algo que não existia.
+    expect(r.mensagem).not.toMatch(/versão nova foi descartada/i)
+    expect(r.mensagem).toMatch(/não tinha material sob custódia anterior/i)
+
+    // PROVA DE NÃO-DESTRUIÇÃO: o material recém-gravado continua no cofre (nada foi revogado).
+    expect(vault.segredos.size).toBe(2)
+    const refs = [...vault.segredos.keys()]
+    expect(await vault.getCertificadoSenha(LOJA, refs.find((k) => k.includes("/senha/"))!)).toBe(novo.senha)
+  })
+
+  it("refs anteriores VAZIAS/espaços + falha na troca ⇒ mesmo tratamento", async () => {
+    const { vault, r } = await rotacaoQueFalhaNaTroca({ blobRef: "   ", senhaRef: "" })
+
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.materialAnterior).toBe("nao_aplicavel")
+    expect(vault.segredos.size).toBe(2) // nada apagado
+  })
+
+  it("refs anteriores PARCIAIS (só blob) + falha na troca ⇒ não descarta sem prova", async () => {
+    // Sem as DUAS refs anteriores não há prova de versão separada: não se destrói a nova.
+    const { vault, r } = await rotacaoQueFalhaNaTroca({ blobRef: "kms://loja-1/pfx/v0", senhaRef: null })
+
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.materialAnterior).toBe("substituido_sem_rollback")
+    expect(vault.segredos.size).toBe(2) // a versão nova permanece
+  })
+
+  it("reuso PARCIAL de ref no sucesso não revoga a ref reutilizada", async () => {
+    // Backend estável degenerado: `blobRef` volta igual, `senhaRef` muda. Revogar o blob anterior
+    // apagaria o material recém-gravado — ele precisa ficar de fora da revogação.
+    const env: Record<string, string | undefined> = {}
+    const vault = new EnvVault({ env, allowWrite: true })
+    const antigo = validTestPfx()
+    const refs = await vault.putCertificadoPfx(LOJA, Buffer.from(antigo.pfx), antigo.senha)
+
+    const novo = validTestPfx({ senha: "senha-reuso-parcial-004" })
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      // `senhaRef` anterior inexistente ⇒ só o blob é reutilizado pelas novas refs.
+      refsAnteriores: { blobRef: refs.blobRef, senhaRef: null },
+      confirmarTroca: async () => {},
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.revogacaoAnterior).toBe("nao_aplicavel")
+    // O material novo continua resolvível — a revogação não comeu o próprio blob gravado.
+    expect(await vault.getCertificadoPfx(LOJA, refs.blobRef)).not.toBeNull()
+    expect(await vault.getCertificadoSenha(LOJA, refs.senhaRef)).toBe(novo.senha)
+  })
+})
+
 describe("custodia A1 — revogação e descrição", () => {
   it("revoga as duas refs; ref ausente é tolerada; pendências são reportadas", async () => {
     const vault = new FakeVaultVersionado()

@@ -93,6 +93,20 @@ A frase **"a versão anterior permanece intacta"** NÃO é uma propriedade do se
 | `EnvVault` (piloto, ADR-0009 D2) | **Referência canônica por LOJA** — `FISCAL_A1_PFX_B64_<LOJA>` / `FISCAL_A1_SENHA_<LOJA>`; um slot por unidade, **não** por certificado nem por versão | **Não existe.** A escrita é *in-place*: no instante da gravação o material anterior já foi substituído. O serviço devolve `materialAnterior: "substituido_sem_rollback"` e não revoga nada (revogar apagaria o único material existente) |
 | `SupabaseVaultStorageVault` (produção, ADR-0014) | Ref versionada por certificado e por versão, com DEK por versão | Real: a versão nova é descartada e a anterior segue servindo — `materialAnterior: "preservado"` |
 
+**A decisão de descartar é por COMPARAÇÃO DE REFS, nunca por suposição de backend.** A versão nova
+só é descartada com prova de objeto separado: as **duas** referências anteriores existiam e as
+**duas** novas são distintas delas. Daí os três valores de `materialAnterior`:
+
+| Valor | Quando | O que o serviço faz |
+|---|---|---|
+| `preservado` | Havia refs anteriores completas e as novas são distintas das duas | Descarta a versão nova; a anterior segue servindo |
+| `substituido_sem_rollback` | Havia refs anteriores, mas há reuso total ou parcial (caso do EnvVault) | **Não descarta nada** — apagar a ref nova destruiria o único material, possivelmente compartilhado |
+| `nao_aplicavel` | A linha **não tinha** refs anteriores | **Não descarta nada** — não havia material a preservar, e a ref nova pode ser um slot compartilhado |
+
+A mesma comparação governa o caminho de sucesso: só é revogada a referência anterior que **não** é
+reutilizada pelas novas. Em reuso parcial (mesmo `blobRef`, `senhaRef` nova), revogar o blob
+anterior apagaria o material recém-gravado — ele fica de fora.
+
 Consequências operacionais **no piloto**, todas honradas em código:
 
 - O EnvVault **não oferece custódia, rotação nem revogação automáticas**. `put*`, `rotateCertificadoPfx`
@@ -103,6 +117,12 @@ Consequências operacionais **no piloto**, todas honradas em código:
   mesma referência**. Por isso a revogação separa **revogação lógica** (sempre aplicada: `REVOGADO`
   + `ativo:false` ⇒ fail-closed imediato para assinatura) de **remoção física** (condicional), e
   nunca orienta apagar um secret ainda referenciado por outra linha viva da unidade.
+- A revogação lógica é **incondicional**: a capacidade do provider é consultada para *relatar*,
+  jamais para bloquear — bloquear deixaria o admin sem meio de derrubar um certificado comprometido.
+  A verificação de compartilhamento e a remoção do material rodam **depois** da transação já
+  commitada; se qualquer uma falhar, a rota responde **200** com o estado real
+  (`nao_executada_verificacao_inconclusiva` ou `pendente`) em vez de 500. Um erro na etapa auxiliar
+  nunca pode sugerir que o certificado revogado continua valendo.
 - A custódia recusa (**409**) armazenar um certificado quando a unidade já tem outro **ATIVO com
   fingerprint diferente**: gravar substituiria em silêncio o material em uso. O caminho é rotacionar
   a linha ativa.

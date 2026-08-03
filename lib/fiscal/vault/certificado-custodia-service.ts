@@ -44,12 +44,17 @@ export type CustodiaFalha = {
   bloqueios: OnboardingBloqueio[]
   /**
    * Só em `troca_nao_confirmada`: o que ACONTECEU de fato com o material anterior.
-   *  - `preservado` — backend de refs versionadas: a versão nova foi descartada e a anterior segue servindo;
-   *  - `substituido_sem_rollback` — backend de referência estável (ex.: EnvVault): a gravação é
-   *    in-place, então o material anterior JÁ foi substituído e não existe rollback a executar.
+   *  - `nao_aplicavel` — a linha NÃO tinha `blobRef`/`senhaRef` anteriores: não havia material a
+   *    preservar. Nada é descartado (sem prova de versão separada, apagar a ref nova poderia
+   *    destruir um slot compartilhado com outra linha da unidade);
+   *  - `preservado` — havia refs anteriores COMPLETAS e as novas são DISTINTAS das duas: prova de
+   *    backend versionado ⇒ a versão nova foi descartada e a anterior segue servindo;
+   *  - `substituido_sem_rollback` — havia refs anteriores, mas não foi possível provar versão
+   *    separada (refs equivalentes às anteriores, total ou parcialmente — caso do EnvVault, que
+   *    grava in-place). Nada é descartado, e o material anterior pode já ter sido substituído.
    * Existe para que nenhum caller precise deduzir rollback a partir da mensagem.
    */
-  materialAnterior?: "preservado" | "substituido_sem_rollback"
+  materialAnterior?: "preservado" | "substituido_sem_rollback" | "nao_aplicavel"
 }
 
 export type ArmazenarResultado =
@@ -180,48 +185,80 @@ export async function rotacionarCertificadoA1(params: {
      * separada para descartar ou revogar — revogar apagaria o segredo recém-gravado. A garantia
      * plena de "anterior servindo até a confirmação" exige provider com refs versionadas
      * (ADR-0014); com refs estáveis, a troca do ponteiro é trivialmente consistente (mesma ref).
+     *
+     * As duas decisões abaixo (descartar a versão nova no rollback; revogar a anterior no sucesso)
+     * são tomadas por COMPARAÇÃO DE REFS, nunca por suposição de backend.
      */
-    const refsIdenticas =
-      novasRefs.blobRef === params.refsAnteriores.blobRef && novasRefs.senhaRef === params.refsAnteriores.senhaRef
+    const blobAnterior = String(params.refsAnteriores.blobRef ?? "").trim()
+    const senhaAnterior = String(params.refsAnteriores.senhaRef ?? "").trim()
 
     /** Havia material anterior a ser descartado? Linha sem custódia prévia ⇒ nada a revogar. */
-    const possuiRefsAnteriores = Boolean(
-      String(params.refsAnteriores.blobRef ?? "").trim() || String(params.refsAnteriores.senhaRef ?? "").trim(),
-    )
+    const possuiRefsAnteriores = Boolean(blobAnterior || senhaAnterior)
+
+    /**
+     * Descartar a versão nova só é SEGURO com prova de que o backend criou objetos separados:
+     * as DUAS refs anteriores existiam e as DUAS novas são distintas delas. Qualquer coisa aquém
+     * disso (sem refs anteriores, ou refs equivalentes total/parcialmente) pode significar slot
+     * estável compartilhado — e apagar a ref nova destruiria material de OUTRA linha da unidade.
+     * Sem prova, não se destrói nada: fail-closed pelo lado de não perder segredo.
+     */
+    const novaVersaoDescartavel =
+      Boolean(blobAnterior) &&
+      Boolean(senhaAnterior) &&
+      novasRefs.blobRef !== blobAnterior &&
+      novasRefs.senhaRef !== senhaAnterior
 
     try {
       await params.confirmarTroca(novasRefs, extraido)
     } catch {
-      // A anterior NUNCA foi revogada aqui. Com refs versionadas a versão nova é um objeto
-      // separado e pode ser descartada; com refs idênticas o valor in-place JÁ é o novo — revogar
-      // apagaria o único material existente.
-      if (!refsIdenticas) {
+      // A anterior NUNCA é revogada aqui. A versão NOVA só é descartada sob a prova acima.
+      if (novaVersaoDescartavel) {
         await revogarSegredosCertificado({ vault, storeId, ...novasRefs })
+      }
+      const materialAnterior = !possuiRefsAnteriores
+        ? "nao_aplicavel"
+        : novaVersaoDescartavel
+          ? "preservado"
+          : "substituido_sem_rollback"
+      const MENSAGEM: Record<typeof materialAnterior, string> = {
+        nao_aplicavel:
+          "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado. Esta linha não tinha material sob custódia anterior, e nada foi descartado do cofre.",
+        preservado:
+          "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado e a versão nova foi descartada (fail-closed).",
+        substituido_sem_rollback:
+          "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado. Este cofre grava por referência estável, então o material já é o da nova versão: confira o certificado da unidade antes de qualquer emissão.",
       }
       return {
         ok: false,
         codigo: "troca_nao_confirmada",
-        // Verdadeira nos dois backends: afirma o que NÃO mudou (o ponteiro) em vez de prometer
-        // um rollback do material que só o backend versionado executa.
-        mensagem: refsIdenticas
-          ? "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado. Este cofre grava por referência estável, então o material já é o da nova versão: confira o certificado da unidade antes de qualquer emissão."
-          : "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado e a versão nova foi descartada (fail-closed).",
+        // Sempre verdadeira: afirma o que NÃO mudou (o ponteiro) em vez de prometer um rollback
+        // que só o backend versionado executa.
+        mensagem: MENSAGEM[materialAnterior],
         bloqueios: [],
-        materialAnterior: refsIdenticas ? "substituido_sem_rollback" : "preservado",
+        materialAnterior,
       }
     }
 
-    // Refs idênticas (in-place) ou linha sem custódia prévia: não existe versão anterior separada
-    // para revogar. Reportar "concluida" aqui afirmaria uma destruição que nunca aconteceu.
-    if (refsIdenticas || !possuiRefsAnteriores) {
+    /**
+     * Só se revoga uma ref ANTERIOR que não é reutilizada pelas novas. Cobre de uma vez:
+     *  - refs idênticas (in-place): ambas reutilizadas ⇒ nada a revogar;
+     *  - linha sem custódia prévia: nada a revogar;
+     *  - reuso PARCIAL (ex.: mesmo `blobRef`, `senhaRef` nova): revogar a ref reutilizada apagaria
+     *    o material recém-gravado — ela fica de fora.
+     * Reportar "concluida" sem ter destruído nada afirmaria uma destruição que não aconteceu.
+     */
+    const anterioresRevogaveis = [blobAnterior, senhaAnterior].filter(
+      (ref) => ref !== "" && ref !== novasRefs.blobRef && ref !== novasRefs.senhaRef,
+    )
+    if (anterioresRevogaveis.length === 0) {
       return { ok: true, refs: novasRefs, extraido, revogacaoAnterior: "nao_aplicavel" }
     }
 
     const revogacao = await revogarSegredosCertificado({
       vault,
       storeId,
-      blobRef: params.refsAnteriores.blobRef,
-      senhaRef: params.refsAnteriores.senhaRef,
+      blobRef: anterioresRevogaveis[0] ?? null,
+      senhaRef: anterioresRevogaveis[1] ?? null,
     })
     return {
       ok: true,
