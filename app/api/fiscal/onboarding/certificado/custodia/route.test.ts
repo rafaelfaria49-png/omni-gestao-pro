@@ -280,6 +280,99 @@ describe("POST custodia — caminho feliz", () => {
   })
 })
 
+/**
+ * Regressão da 3ª revisão independente: refs canônicas por loja fazem TODAS as linhas da unidade
+ * dividirem o mesmo slot. Armazenar um certificado DIFERENTE enquanto há outro ATIVO gravaria por
+ * cima do material em uso — e a guarda antiga (`existente?.ativo`) só cobria fingerprint IGUAL.
+ */
+describe("POST custodia — ativo com OUTRA fingerprint (guarda de slot compartilhado)", () => {
+  /** Seed de um certificado ATIVO cuja fingerprint nunca coincide com a do `.pfx` de teste. */
+  function seedAtivoComOutraFingerprint() {
+    h.certs.push({
+      id: "cert-ativo-outro",
+      storeId: STORE,
+      fingerprint: "aa".repeat(20),
+      ativo: true,
+      status: "ATIVO",
+      blobRef: "FISCAL_A1_PFX_B64_LOJA_1",
+      senhaRef: "FISCAL_A1_SENHA_LOJA_1",
+    })
+    h.envVault["FISCAL_A1_PFX_B64_LOJA_1"] = "material-do-certificado-ativo"
+    h.envVault["FISCAL_A1_SENHA_LOJA_1"] = "senha-do-certificado-ativo"
+  }
+
+  it("⇒ 409 ANTES do cofre: material do ativo intacto, nenhuma linha criada", async () => {
+    seedLoja()
+    seedAtivoComOutraFingerprint()
+    const t = validTestPfx()
+
+    const res = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    const j = await corpoJson(res)
+
+    expect(res.status).toBe(409)
+    expect(j.codigo).toBe("certificado_ativo_divergente_use_rotacao")
+
+    // ORDEM DO BLOQUEIO — a prova central: o cofre não foi tocado.
+    expect(h.envVault["FISCAL_A1_PFX_B64_LOJA_1"]).toBe("material-do-certificado-ativo")
+    expect(h.envVault["FISCAL_A1_SENHA_LOJA_1"]).toBe("senha-do-certificado-ativo")
+    expect(Object.keys(h.envVault).sort()).toEqual(["FISCAL_A1_PFX_B64_LOJA_1", "FISCAL_A1_SENHA_LOJA_1"])
+
+    // Nenhuma linha nova; o certificado ativo segue ativo.
+    expect(h.certs.length).toBe(1)
+    expect(h.certs[0]!.ativo).toBe(true)
+    expect(h.certs[0]!.fingerprint).toBe("aa".repeat(20))
+
+    // Pipeline dormente: configuração fiscal jamais tocada.
+    expect(h.chamadasConfig).toEqual([])
+    expect(h.configs[0]!.fiscalEnabled).toBe(false)
+
+    assertNoSecretLeak(j, { senha: t.senha, pfxBytes: t.pfx }, "ativo com outra fingerprint")
+  })
+
+  it("a recusa é auditada com o motivo, sem segredo", async () => {
+    seedLoja()
+    seedAtivoComOutraFingerprint()
+    const t = validTestPfx()
+
+    await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+
+    const log = h.logs.find((l) => l.detalhe && (l.detalhe as Row).motivo === "ativo_com_outra_fingerprint")
+    expect(log).toBeDefined()
+    expect(log!.acao).toBe("certificado.custodia.armazenar")
+    assertNoSecretLeak(h.logs, { senha: t.senha, pfxBytes: t.pfx }, "auditoria da recusa")
+  })
+
+  it("certificado ATIVO da MESMA fingerprint continua caindo na guarda de rotação (409 próprio)", async () => {
+    seedLoja()
+    const t = validTestPfx()
+    const r1 = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    expect(r1.status).toBe(200)
+    h.certs[0]!.status = "ATIVO"
+    h.certs[0]!.ativo = true
+
+    const res = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    expect(res.status).toBe(409)
+    // A guarda nova NÃO sequestra o caso de fingerprint igual.
+    expect((await corpoJson(res)).codigo).toBe("certificado_ativo_use_rotacao")
+  })
+
+  it("ativo com outra fingerprint mas INATIVO não bloqueia (guarda é sobre ATIVO)", async () => {
+    seedLoja()
+    h.certs.push({
+      id: "cert-inativo-outro",
+      storeId: STORE,
+      fingerprint: "bb".repeat(20),
+      ativo: false,
+      status: "PENDENTE_VALIDACAO",
+      blobRef: null,
+      senhaRef: null,
+    })
+    const t = validTestPfx()
+    const res = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    expect(res.status).toBe(200)
+  })
+})
+
 describe("POST custodia — rejeições fail-closed", () => {
   it("CNPJ divergente da unidade ⇒ 422 ANTES do cofre (nada gravado)", async () => {
     seedLoja("99999999000199") // CNPJ da loja diferente do certificado

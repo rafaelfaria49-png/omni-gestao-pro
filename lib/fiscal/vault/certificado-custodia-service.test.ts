@@ -5,9 +5,10 @@
  *  - armazenar: certificado válido ⇒ refs opacas + metadados seguros; inválido/vencido/senha
  *    incorreta ⇒ bloqueio sanitizado e NADA gravado no cofre;
  *  - provider sem escrita (EnvVault piloto) ⇒ `custodia_indisponivel` (fail-closed);
- *  - rotação: nova versão validada e gravada ANTES; refs anteriores intactas até a confirmação;
- *    confirmada a troca, a versão anterior é revogada; se a troca falha, a nova é descartada e a
- *    anterior CONTINUA servindo (consistência);
+ *  - rotação: nova versão validada e gravada ANTES; confirmada a troca, a versão anterior é
+ *    revogada. O ROLLBACK na falha de troca é condicional ao backend: com refs VERSIONADAS a nova
+ *    é descartada e a anterior continua servindo (`materialAnterior: "preservado"`); com refs
+ *    ESTÁVEIS a gravação é in-place e não há rollback (`"substituido_sem_rollback"`);
  *  - revogação: refs destruídas; provider sem suporte ⇒ pendências reportadas, nunca escondidas;
  *  - descrever: metadados sem segredo (configurada/provider);
  *  - redaction: NENHUM resultado/erro carrega `.pfx`, senha ou chave privada.
@@ -319,6 +320,79 @@ describe("custodia A1 — rotação", () => {
     // Sem refs versionadas não há "versão nova separada" para descartar — e revogar destruiria
     // o segredo. O serviço NÃO revoga nada nesse backend.
     expect(await vault.getCertificadoSenha(LOJA, refsAntigas.senhaRef)).toBe(novo.senha)
+
+    // HONESTIDADE DO CONTRATO (revisão 3): o backend gravou in-place, então não houve rollback —
+    // a resposta precisa dizer isso e a mensagem NÃO pode afirmar que a anterior permanece ativa.
+    expect(r.materialAnterior).toBe("substituido_sem_rollback")
+    expect(r.mensagem).not.toMatch(/anterior permanece ativa/i)
+    expect(r.mensagem).toMatch(/ponteiro no banco não foi alterado/i)
+  })
+
+  it("refs VERSIONADAS + troca não confirmada: rollback real e material anterior preservado", async () => {
+    const vault = new FakeVaultVersionado()
+    const antigo = validTestPfx()
+    const gravado = await armazenarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      pfx: Buffer.from(antigo.pfx),
+      senha: antigo.senha,
+    })
+    if (!gravado.ok) throw new Error("setup falhou")
+
+    const novo = validTestPfx({ senha: "senha-versionada-016c" })
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      refsAnteriores: gravado.refs,
+      confirmarTroca: async () => {
+        throw new Error("falha de banco simulada")
+      },
+    })
+
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.codigo).toBe("troca_nao_confirmada")
+    // Aqui a promessa é verdadeira: versão nova descartada, anterior segue servindo.
+    expect(r.materialAnterior).toBe("preservado")
+    expect(await vault.getCertificadoSenha(LOJA, gravado.refs.senhaRef)).toBe(antigo.senha)
+  })
+
+  it("sem refs anteriores (primeira custódia da linha) ⇒ revogacaoAnterior 'nao_aplicavel'", async () => {
+    // Regressão: nulas ⇒ `refsIdenticas` é falso ⇒ o código antigo reportava "concluida",
+    // afirmando uma destruição que nunca aconteceu.
+    const vault = new FakeVaultVersionado()
+    const novo = validTestPfx()
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      refsAnteriores: { blobRef: null, senhaRef: null },
+      confirmarTroca: async () => {},
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.revogacaoAnterior).toBe("nao_aplicavel")
+  })
+
+  it("refs anteriores só com espaços em branco também são 'nao_aplicavel'", async () => {
+    const vault = new FakeVaultVersionado()
+    const novo = validTestPfx()
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      refsAnteriores: { blobRef: "  ", senhaRef: "" },
+      confirmarTroca: async () => {},
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.revogacaoAnterior).toBe("nao_aplicavel")
   })
 })
 

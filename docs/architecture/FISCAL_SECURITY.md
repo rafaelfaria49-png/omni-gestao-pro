@@ -72,16 +72,44 @@ Mapeia o enum `CertificadoStatus`. Regras:
 >
 > **Estado de implementação (GOAL-016C, branch `fiscal/goal-016c-secret-provider-custodia-a1`):**
 > o port cobre o ciclo completo — `get*`, `put*`, `revoke`, `describeSecret` (metadados sem
-> segredo), `checkAvailability` (disponibilidade/capacidades) e `rotateCertificadoPfx` (nova
-> versão sem tocar refs anteriores). `resolveFiscalSecretProvider` é o ponto único de decisão de
-> backend: `env` ⇒ EnvVault; provider declarado e não implementado ⇒ **indisponível fail-closed,
-> sem fallback**. O serviço `certificado-custodia-service` orquestra armazenar/rotacionar/
-> revogar/descrever: a rotação valida e grava a nova versão ANTES da troca do ponteiro e revoga a
-> anterior só APÓS a confirmação; falha na troca descarta a versão nova e mantém a anterior.
+> segredo), `checkAvailability` (disponibilidade/capacidades) e `rotateCertificadoPfx`.
+> `resolveFiscalSecretProvider` é o ponto único de decisão de backend: `env` ⇒ EnvVault; provider
+> declarado e não implementado ⇒ **indisponível fail-closed, sem fallback**. O serviço
+> `certificado-custodia-service` orquestra armazenar/rotacionar/revogar/descrever: a rotação valida
+> e grava a nova versão ANTES da troca do ponteiro e revoga a anterior só APÓS a confirmação.
 > Endpoints: `POST /api/fiscal/onboarding/certificado/custodia`,
-> `POST /api/fiscal/certificado/[id]/rotacionar` e `revogar` no PATCH do certificado. No piloto
-> (EnvVault sem store mutável), escrita/rotação/revogação respondem fail-closed e a custódia segue
-> por provisionamento manual das envs.
+> `POST /api/fiscal/certificado/[id]/rotacionar` e `revogar` no PATCH do certificado.
+
+### 3.0 ⚠️ Garantia de rollback — o que vale, e sob qual backend
+
+A frase **"a versão anterior permanece intacta"** NÃO é uma propriedade do serviço de custódia.
+É uma propriedade **do backend**, e só existe sob duas condições, ambas da ADR-0014 §2.1:
+
+1. **referências versionadas** — cada versão tem ref própria, distinta da anterior;
+2. **versões imutáveis** — gravar uma versão nova nunca sobrescreve a anterior.
+
+| Backend | Modelo de referência | Rollback na falha de troca |
+|---|---|---|
+| `EnvVault` (piloto, ADR-0009 D2) | **Referência canônica por LOJA** — `FISCAL_A1_PFX_B64_<LOJA>` / `FISCAL_A1_SENHA_<LOJA>`; um slot por unidade, **não** por certificado nem por versão | **Não existe.** A escrita é *in-place*: no instante da gravação o material anterior já foi substituído. O serviço devolve `materialAnterior: "substituido_sem_rollback"` e não revoga nada (revogar apagaria o único material existente) |
+| `SupabaseVaultStorageVault` (produção, ADR-0014) | Ref versionada por certificado e por versão, com DEK por versão | Real: a versão nova é descartada e a anterior segue servindo — `materialAnterior: "preservado"` |
+
+Consequências operacionais **no piloto**, todas honradas em código:
+
+- O EnvVault **não oferece custódia, rotação nem revogação automáticas**. `put*`, `rotateCertificadoPfx`
+  e `revoke` lançam `operacao_nao_suportada`; a escrita permanece **fail-closed** e as rotas de
+  custódia e rotação respondem **503** antes de tocar cofre ou banco.
+- O provisionamento e a remoção de material seguem **manuais**, por secret de plataforma.
+- Como o slot é por loja, **várias linhas de `CertificadoDigital` da mesma unidade compartilham a
+  mesma referência**. Por isso a revogação separa **revogação lógica** (sempre aplicada: `REVOGADO`
+  + `ativo:false` ⇒ fail-closed imediato para assinatura) de **remoção física** (condicional), e
+  nunca orienta apagar um secret ainda referenciado por outra linha viva da unidade.
+- A custódia recusa (**409**) armazenar um certificado quando a unidade já tem outro **ATIVO com
+  fingerprint diferente**: gravar substituiria em silêncio o material em uso. O caminho é rotacionar
+  a linha ativa.
+
+**Requisito duro para qualquer provider gravável futuro:** referências versionadas **por certificado
+e por versão**. Provider com slot estável compartilhado entre linhas está **proibido** — ver
+pré-requisitos em [`ROADMAP_FISCAL`](../roadmaps/ROADMAP_FISCAL.md#pré-requisitos-duros-do-provider-gravável).
 
 ### 3.1 Hierarquia criptográfica de produção
 

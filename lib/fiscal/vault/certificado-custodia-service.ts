@@ -9,8 +9,13 @@
  *  - Fail-closed: provider sem escrita ⇒ `custodia_indisponivel`; certificado inválido/vencido ⇒
  *    bloqueio sanitizado; nenhuma exceção carrega segredo na mensagem.
  *  - Rotação segura: a nova versão é validada e gravada ANTES; as referências anteriores só são
- *    revogadas DEPOIS que o caller confirma a troca do ponteiro (`confirmarTroca`). Se a troca
- *    falha, a versão nova é revogada (limpeza best-effort) e a anterior permanece intacta.
+ *    revogadas DEPOIS que o caller confirma a troca do ponteiro (`confirmarTroca`).
+ *  - ⚠️ ROLLBACK É CONDICIONAL AO BACKEND. "A versão anterior permanece intacta" vale SOMENTE
+ *    para providers de referências VERSIONADAS e versões imutáveis (ADR-0014 §2.1), em que a
+ *    versão nova é um objeto separado e pode ser descartada. Num backend de referência ESTÁVEL
+ *    (EnvVault: slot canônico por loja) a gravação é IN-PLACE — o material anterior já foi
+ *    substituído no instante da escrita e NÃO há rollback a executar. O resultado diz qual dos
+ *    dois casos ocorreu em `materialAnterior`; nenhuma mensagem promete rollback não executado.
  *
  * Módulo PURO quanto a banco: não importa Prisma/Next. Quem grava o ponteiro no banco é a rota.
  */
@@ -37,6 +42,14 @@ export type CustodiaFalha = {
   /** Mensagem sanitizada — NUNCA contém segredo. */
   mensagem: string
   bloqueios: OnboardingBloqueio[]
+  /**
+   * Só em `troca_nao_confirmada`: o que ACONTECEU de fato com o material anterior.
+   *  - `preservado` — backend de refs versionadas: a versão nova foi descartada e a anterior segue servindo;
+   *  - `substituido_sem_rollback` — backend de referência estável (ex.: EnvVault): a gravação é
+   *    in-place, então o material anterior JÁ foi substituído e não existe rollback a executar.
+   * Existe para que nenhum caller precise deduzir rollback a partir da mensagem.
+   */
+  materialAnterior?: "preservado" | "substituido_sem_rollback"
 }
 
 export type ArmazenarResultado =
@@ -50,8 +63,10 @@ export type RotacaoResultado =
       extraido: CertificadoExtraido
       /**
        * `pendente` quando o provider não revogou a versão anterior (ex.: piloto sem escrita);
-       * `nao_aplicavel` quando as refs são as mesmas (backend de refs canônicas/estáveis, como o
-       * EnvVault) — nesse caso a nova versão SUBSTITUI o valor in-place e não há o que revogar.
+       * `nao_aplicavel` em DOIS casos, ambos sem versão anterior separada para destruir:
+       *  - refs iguais (backend canônico/estável como o EnvVault): a nova versão substituiu o
+       *    valor in-place;
+       *  - a linha não tinha `blobRef`/`senhaRef` anteriores (primeira custódia daquela linha).
        */
       revogacaoAnterior: "concluida" | "pendente" | "nao_aplicavel"
     }
@@ -128,10 +143,13 @@ export async function armazenarCertificadoA1(params: {
 /**
  * Rotação segura do A1 (GOAL-016C · ADR-0014 §2.1):
  *  1. valida a NOVA versão em memória (inválida/vencida ⇒ nada muda);
- *  2. grava a nova versão no cofre (refs anteriores intactas);
+ *  2. grava a nova versão no cofre;
  *  3. o caller troca o ponteiro no banco dentro de `confirmarTroca` (ato atômico dele);
- *     se a troca falhar, a versão nova é revogada (best-effort) e a anterior segue servindo;
  *  4. confirmada a troca, as referências anteriores são revogadas (best-effort reportado).
+ *
+ * O passo 2 só deixa "as refs anteriores intactas" em backend de refs VERSIONADAS. Com refs
+ * estáveis a escrita é in-place e a versão anterior deixa de existir ali mesmo — por isso a falha
+ * no passo 3 devolve `materialAnterior` dizendo se houve ou não preservação real.
  */
 export async function rotacionarCertificadoA1(params: {
   vault: FiscalSecretVault
@@ -166,23 +184,36 @@ export async function rotacionarCertificadoA1(params: {
     const refsIdenticas =
       novasRefs.blobRef === params.refsAnteriores.blobRef && novasRefs.senhaRef === params.refsAnteriores.senhaRef
 
+    /** Havia material anterior a ser descartado? Linha sem custódia prévia ⇒ nada a revogar. */
+    const possuiRefsAnteriores = Boolean(
+      String(params.refsAnteriores.blobRef ?? "").trim() || String(params.refsAnteriores.senhaRef ?? "").trim(),
+    )
+
     try {
       await params.confirmarTroca(novasRefs, extraido)
     } catch {
-      // A anterior NUNCA foi revogada aqui. Com refs versionadas, descarta a versão nova
-      // (best-effort); com refs idênticas, o valor in-place já é o novo — não há o que descartar.
+      // A anterior NUNCA foi revogada aqui. Com refs versionadas a versão nova é um objeto
+      // separado e pode ser descartada; com refs idênticas o valor in-place JÁ é o novo — revogar
+      // apagaria o único material existente.
       if (!refsIdenticas) {
         await revogarSegredosCertificado({ vault, storeId, ...novasRefs })
       }
       return {
         ok: false,
         codigo: "troca_nao_confirmada",
-        mensagem: "Não foi possível confirmar a troca do certificado — a versão anterior permanece ativa (fail-closed).",
+        // Verdadeira nos dois backends: afirma o que NÃO mudou (o ponteiro) em vez de prometer
+        // um rollback do material que só o backend versionado executa.
+        mensagem: refsIdenticas
+          ? "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado. Este cofre grava por referência estável, então o material já é o da nova versão: confira o certificado da unidade antes de qualquer emissão."
+          : "Não foi possível confirmar a troca do certificado — o ponteiro no banco não foi alterado e a versão nova foi descartada (fail-closed).",
         bloqueios: [],
+        materialAnterior: refsIdenticas ? "substituido_sem_rollback" : "preservado",
       }
     }
 
-    if (refsIdenticas) {
+    // Refs idênticas (in-place) ou linha sem custódia prévia: não existe versão anterior separada
+    // para revogar. Reportar "concluida" aqui afirmaria uma destruição que nunca aconteceu.
+    if (refsIdenticas || !possuiRefsAnteriores) {
       return { ok: true, refs: novasRefs, extraido, revogacaoAnterior: "nao_aplicavel" }
     }
 

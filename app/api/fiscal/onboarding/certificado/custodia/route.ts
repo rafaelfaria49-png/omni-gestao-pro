@@ -170,6 +170,35 @@ export async function POST(req: Request) {
       )
     }
 
+    /**
+     * Já existe OUTRO certificado ATIVO na unidade, com fingerprint diferente. Num backend de
+     * referência estável (EnvVault: slot canônico por loja) armazenar aqui gravaria no MESMO slot
+     * do certificado em uso, substituindo em silêncio o material de uma linha que continuaria
+     * marcada como ATIVA — a linha nova nasceria inativa e o ativo passaria a apontar para material
+     * que não é o dele. O caminho controlado é rotacionar a linha ativa.
+     *
+     * Bloqueio ANTES do cofre e antes de qualquer escrita de domínio no Prisma (só a trilha de
+     * auditoria é registrada, append-only).
+     */
+    if (contexto.certificados.possuiAtivoComOutraFingerprint) {
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "certificado.custodia.armazenar",
+        mensagem: "Custódia recusada: já há certificado ATIVO com outra fingerprint na unidade — cofre intocado",
+        detalhe: { fingerprint: extraidoPrevio.fingerprintSha1, motivo: "ativo_com_outra_fingerprint" },
+      })
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Esta unidade já tem um certificado ATIVO diferente. Rotacione o certificado ativo para trocar o material — armazenar um novo aqui substituiria o segredo em uso.",
+          codigo: "certificado_ativo_divergente_use_rotacao",
+        },
+        { status: 409 },
+      )
+    }
+
     // Todas as recusas ficaram para trás: agora sim, valida (de novo, no serviço) e grava no cofre.
     const resultado = await armazenarCertificadoA1({ vault, storeId: acl.storeId, pfx, senha })
     pfx = null

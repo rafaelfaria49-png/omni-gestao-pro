@@ -6,11 +6,15 @@
  *  2. reconcilia ANTES do cofre: CNPJ × unidade e fingerprint vinculada a outra loja ⇒ 422 —
  *     segredo rejeitado NUNCA é armazenado (crítico para backends in-place, em que gravar
  *     destrói o material anterior imediatamente);
- *  3. grava a nova versão no cofre — as referências anteriores seguem intactas e servindo;
+ *  3. grava a nova versão no cofre;
  *  4. troca o ponteiro no banco em ÚNICA atualização com guarda otimista (refs + metadados
- *     reais do novo certificado); se a troca falhar, a versão nova é descartada do cofre e a
- *     anterior permanece (fail-closed);
+ *     reais do novo certificado); se a troca falhar, o ponteiro NÃO muda (fail-closed);
  *  5. confirmada a troca, revoga as referências anteriores (best-effort reportado).
+ *
+ * ⚠️ O rollback do passo 4 depende do backend. Com referências VERSIONADAS (ADR-0014) a versão
+ * nova é descartada e a anterior segue servindo. Com referência ESTÁVEL (EnvVault: slot canônico
+ * por loja) o passo 3 é IN-PLACE: o material anterior já foi substituído e não há rollback — a
+ * resposta 409 devolve `materialAnterior: "substituido_sem_rollback"` em vez de prometer o contrário.
  *
  * O status/ativo da linha é preservado: um certificado ATIVO continua ATIVO após a rotação porque
  * a nova versão já passou pela MESMA validação exigida na ativação (vigência, RSA ≥ 2048, cadeia,
@@ -199,16 +203,31 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       if (resultado.codigo === "troca_nao_confirmada") {
         // Só resta o caminho de CONCORRÊNCIA: CNPJ divergente e fingerprint de outra loja já foram
         // recusados na reconciliação ANTES do cofre (422 acima).
+        // `materialAnterior` diz se houve rollback real (refs versionadas) ou se o backend gravou
+        // in-place e a versão anterior já não existe — a trilha não pode afirmar "mantida" às cegas.
+        const preservou = resultado.materialAnterior !== "substituido_sem_rollback"
         await recordFiscalAdminLog({
           session: acl.session,
           storeId: acl.storeId,
           acao: "certificado.custodia.rotacionar",
-          mensagem: motivoTrocaRecusada
-            ? `Rotação recusada (${motivoTrocaRecusada}) — versão anterior mantida (${cert.apelido || cert.id})`
-            : `Rotação não confirmada — versão anterior mantida (${cert.apelido || cert.id})`,
-          detalhe: { certificadoId: cert.id, motivo: motivoTrocaRecusada },
+          mensagem: preservou
+            ? `Rotação recusada (${motivoTrocaRecusada ?? "troca não confirmada"}) — versão anterior mantida (${cert.apelido || cert.id})`
+            : `Rotação recusada (${motivoTrocaRecusada ?? "troca não confirmada"}) — ponteiro inalterado, SEM rollback do material (${cert.apelido || cert.id})`,
+          detalhe: {
+            certificadoId: cert.id,
+            motivo: motivoTrocaRecusada,
+            materialAnterior: resultado.materialAnterior ?? null,
+          },
         })
-        return jsonError(resultado.mensagem, 409)
+        return NextResponse.json(
+          {
+            ok: false,
+            error: resultado.mensagem,
+            codigo: resultado.codigo,
+            materialAnterior: resultado.materialAnterior ?? null,
+          },
+          { status: 409 },
+        )
       }
       if (resultado.bloqueios.length > 0) return jsonBloqueado(resultado.bloqueios, 422)
       return jsonError(resultado.mensagem, 500)
