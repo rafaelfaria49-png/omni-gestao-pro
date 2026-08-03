@@ -6,6 +6,7 @@ import {
   decideAberturaCaixa,
   decideCaixaSessionSync,
   fetchActiveCaixaSession,
+  isCaixaProntoParaFinalizar,
   isCaixaReferenceStale,
   isCaixaSessionRejectionCode,
   reconcileCaixaSession,
@@ -15,6 +16,8 @@ import {
 
 const STORE = "loja-1"
 const OUTRA_LOJA = "loja-2"
+const PDV1 = "term-pdv1"
+const PDV2 = "term-pdv2"
 
 function serverSession(over: Partial<ServerCaixaSession> = {}): ServerCaixaSession {
   return {
@@ -690,7 +693,13 @@ describe("fetchActiveCaixaSession — leitura da sessão ativa", () => {
     )
     expect(r).toEqual({
       ok: true,
-      sessao: { id: "sess-1", storeId: null, saldoInicial: 0, abertaEm: "2026-08-02T12:00:00.000Z" },
+      sessao: {
+        id: "sess-1",
+        storeId: null,
+        terminalId: null,
+        saldoInicial: 0,
+        abertaEm: "2026-08-02T12:00:00.000Z",
+      },
     })
 
     const semId = await fetchActiveCaixaSession(STORE, fetchComSessoes([{ saldoInicial: 10 }]))
@@ -731,5 +740,473 @@ describe("independência — inventory e ordens falhando não impedem a reconcil
     expect(chamadas.some((u) => u.includes("/api/ops/inventory"))).toBe(false)
     expect(chamadas.some((u) => u.includes("/api/ops/ordens"))).toBe(false)
     expect(r.outcome).toMatchObject({ ok: true, status: "adotada", sessaoId: "sess-servidor" })
+  })
+})
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 11. Escopo de terminal â€” F-01 da readiness 002A (cenÃ¡rio S16)
+//
+// SessÃµes de caixa sÃ£o POR TERMINAL. Uma loja com PDV1 e PDV2 abertos tem duas
+// sessÃµes ABERTAS legÃ­timas; a consulta sem `terminalId` devolvia a mais recente
+// e o PDV1 â€” com sessÃ£o vÃ¡lida â€” era reapontado para a sessÃ£o do PDV2.
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+const SESS_PDV1 = "sess-PDV1"
+const SESS_PDV2 = "sess-PDV2"
+
+/** SessÃ£o do PDV1: saldo 111, aberta ANTES da do PDV2. */
+function sessaoPdv1(): ServerCaixaSession {
+  return {
+    id: SESS_PDV1,
+    storeId: STORE,
+    terminalId: PDV1,
+    saldoInicial: 111,
+    abertaEm: "2026-08-02T08:00:00.000Z",
+  }
+}
+
+/** SessÃ£o do PDV2: saldo 500, a MAIS RECENTE (vencia a consulta `take=1`). */
+function sessaoPdv2(): ServerCaixaSession {
+  return {
+    id: SESS_PDV2,
+    storeId: STORE,
+    terminalId: PDV2,
+    saldoInicial: 500,
+    abertaEm: "2026-08-02T14:00:00.000Z",
+  }
+}
+
+/**
+ * `fetch` que espelha `GET /api/ops/caixa/sessoes`: honra o filtro `terminalId`
+ * da URL e ordena por `abertaEm desc` com `take=1`, como o endpoint real.
+ */
+function fetchServidorMultiTerminal(sessoes: ServerCaixaSession[]) {
+  const urls: string[] = []
+  const impl = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    urls.push(url)
+    const filtro = new URL(url, "http://local").searchParams.get("terminalId")
+    const visiveis = sessoes
+      .filter((s) => (filtro ? (s.terminalId ?? "") === filtro : true))
+      .sort((a, b) => (a.abertaEm < b.abertaEm ? 1 : -1))
+      .slice(0, 1)
+    return new Response(JSON.stringify({ sessoes: visiveis }), { status: 200 })
+  }) as unknown as typeof fetch
+  return { impl, urls }
+}
+
+describe("escopo de terminal â€” PDV1 nunca opera a sessÃ£o do PDV2 (F-01)", () => {
+  it("S16: PDV1 com sessÃ£o vÃ¡lida NÃƒO adota a sessÃ£o mais recente do PDV2", async () => {
+    const prev = estadoCliente({ isOpen: true, saldoInicial: 111, sessaoId: SESS_PDV1 })
+    const { impl } = fetchServidorMultiTerminal([sessaoPdv1(), sessaoPdv2()])
+
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: true, sessaoId: SESS_PDV1 },
+      fetchImpl: impl,
+      hydrated: true,
+    })
+
+    expect(r.outcome).toEqual({ ok: true, status: "em-sincronia", sessaoId: SESS_PDV1 })
+    const next = applyCaixaSessionDecision(prev, r.decision!)
+    // Nada mudou: nem sessÃ£o, nem saldo, nem a fila de pendÃªncias.
+    expect(next).toBe(prev)
+    expect(next.caixaSessaoId).toBe(SESS_PDV1)
+    expect(next.caixa.saldoInicial).toBe(111)
+  })
+
+  it("a consulta da sessÃ£o ativa inclui storeId E terminalId", async () => {
+    expect(activeCaixaSessionUrl(STORE, PDV1)).toContain(`lojaId=${STORE}`)
+    expect(activeCaixaSessionUrl(STORE, PDV1)).toContain(`terminalId=${PDV1}`)
+
+    const { impl, urls } = fetchServidorMultiTerminal([sessaoPdv1(), sessaoPdv2()])
+    await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: false, sessaoId: null },
+      fetchImpl: impl,
+      hydrated: true,
+    })
+    expect(urls).toEqual([activeCaixaSessionUrl(STORE, PDV1)])
+    expect(urls[0]).toContain(`terminalId=${PDV1}`)
+
+    // E o terminal tambÃ©m viaja pela consulta direta.
+    const direto = fetchComSessoes([])
+    await fetchActiveCaixaSession(STORE, direto, PDV2)
+    const [url] = (direto as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe(activeCaixaSessionUrl(STORE, PDV2))
+  })
+
+  it("resposta com sessÃ£o de OUTRO terminal Ã© rejeitada (defesa se o filtro falhar)", async () => {
+    const prev = estadoCliente({ isOpen: true, saldoInicial: 111, sessaoId: SESS_PDV1 })
+    // Servidor legado/desatualizado: ignora o filtro e devolve a sessÃ£o do PDV2.
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: true, sessaoId: SESS_PDV1 },
+      fetchImpl: fetchComSessoes([sessaoPdv2()]),
+      hydrated: true,
+    })
+
+    expect(r.decision).toEqual({ action: "keep", reason: "sessao-de-outro-terminal" })
+    expect(r.outcome).toEqual({ ok: true, status: "outro-terminal" })
+    const next = applyCaixaSessionDecision(prev, r.decision!)
+    expect(next).toBe(prev)
+    // Saldo e hora de abertura do PDV2 nÃ£o vazam para o PDV1.
+    expect(next.caixa.saldoInicial).toBe(111)
+    expect(next.caixaSessaoId).toBe(SESS_PDV1)
+  })
+
+  it("sessÃ£o de outro terminal nÃ£o Ã© adotada nem quando o local estÃ¡ FECHADO", () => {
+    const d = decideCaixaSessionSync({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: false, sessaoId: null },
+      server: sessaoPdv2(),
+    })
+    expect(d).toEqual({ action: "keep", reason: "sessao-de-outro-terminal" })
+  })
+
+  it("sem sessÃ£o para o terminal atual: ausÃªncia, sem fallback para a sessÃ£o da loja", async () => {
+    const prev = estadoCliente({ isOpen: false, saldoInicial: 0, sessaoId: null })
+    // SÃ³ o PDV2 tem caixa aberto na loja; o terminal atual Ã© o PDV1.
+    const { impl } = fetchServidorMultiTerminal([sessaoPdv2()])
+
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: false, sessaoId: null },
+      fetchImpl: impl,
+      hydrated: true,
+    })
+
+    expect(r.outcome).toEqual({ ok: true, status: "sem-caixa-aberto" })
+    expect(r.decision).toEqual({ action: "keep", reason: "sem-sessao-em-ambos" })
+    const next = applyCaixaSessionDecision(prev, r.decision!)
+    // NÃ£o abre caixa automaticamente e nÃ£o adota sessÃ£o nenhuma.
+    expect(next).toBe(prev)
+    expect(next.caixa.isOpen).toBe(false)
+    expect(next.caixaSessaoId).toBeNull()
+  })
+
+  it("PDV1 com sessÃ£o jÃ¡ fechada no servidor fecha o LOCAL â€” sem herdar a do PDV2", async () => {
+    const prev = estadoCliente({ isOpen: true, saldoInicial: 111, sessaoId: SESS_PDV1 })
+    const { impl } = fetchServidorMultiTerminal([sessaoPdv2()])
+
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: true, sessaoId: SESS_PDV1 },
+      fetchImpl: impl,
+      hydrated: true,
+    })
+
+    expect(r.decision).toEqual({ action: "close", reason: "servidor-sem-sessao-aberta" })
+    const next = applyCaixaSessionDecision(prev, r.decision!)
+    expect(next.caixa.isOpen).toBe(false)
+    expect(next.caixaSessaoId).toBeNull()
+    // Jamais o saldo do PDV2.
+    expect(next.caixa.saldoInicial).toBe(0)
+    expect(next.sales).toBe(prev.sales)
+  })
+
+  it("compatibilidade: sem terminal selecionado o escopo continua sendo o da loja", async () => {
+    const { impl, urls } = fetchServidorMultiTerminal([sessaoPdv1(), sessaoPdv2()])
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: null,
+      local: { isOpen: false, sessaoId: null },
+      fetchImpl: impl,
+      hydrated: true,
+    })
+    expect(urls[0]).toBe(activeCaixaSessionUrl(STORE))
+    expect(urls[0]).not.toContain("terminalId=")
+    // Ã‰ como o servidor resolve abertura e venda sem `terminalId`: sessÃ£o da loja.
+    expect(r.outcome).toMatchObject({ ok: true, status: "adotada", sessaoId: SESS_PDV2 })
+  })
+
+  it("compatibilidade: sessÃ£o SEM terminal (legado) Ã© adotada pelo terminal atual", () => {
+    const d = decideCaixaSessionSync({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: true, sessaoId: null },
+      server: serverSession({ id: "sess-legado", terminalId: null }),
+    })
+    expect(d).toMatchObject({
+      action: "adopt",
+      reason: "referencia-ausente",
+      sessaoId: "sess-legado",
+    })
+  })
+
+  it("guarda de loja continua vencendo a de terminal (outra loja, mesmo terminal)", () => {
+    const d = decideCaixaSessionSync({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: true, sessaoId: "sess-local" },
+      server: serverSession({ id: "sess-alheia", storeId: OUTRA_LOJA, terminalId: PDV1 }),
+    })
+    expect(d).toEqual({ action: "keep", reason: "sessao-de-outra-loja" })
+  })
+})
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 12. Venda Completa â€” porta de prÃ©-pagamento (F-02 da readiness 002A)
+//
+// A tela `/dashboard/vendas/venda-completa` validava apenas `caixa.isOpen`. Sem
+// `sessaoId` a venda saÃ­a e voltava recusada por `CAIXA_FECHADO`, virando
+// pendÃªncia local. A porta abaixo espelha `handleClickFinalize` /
+// `handleConfirmPayment` com o MESMO contrato dos demais PDVs.
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+type CarrinhoSimulado = ReadonlyArray<{ lineId: string; nome: string; qtd: number }>
+
+const CARRINHO: CarrinhoSimulado = [
+  { lineId: "l1", nome: "PelÃ­cula 3D", qtd: 2 },
+  { lineId: "l2", nome: "Capa Silicone", qtd: 1 },
+]
+
+/** Espelho fiel da porta da Venda Completa (mesmo predicado do hook compartilhado). */
+async function portaVendaCompleta(params: {
+  local: { isOpen: boolean; sessaoId: string | null }
+  terminalId: string | null
+  fetchImpl: typeof fetch
+  carrinho: CarrinhoSimulado
+}): Promise<{
+  pagamentoAberto: boolean
+  vendasEnviadas: number
+  carrinho: CarrinhoSimulado
+  local: { isOpen: boolean; sessaoId: string | null }
+}> {
+  let local = params.local
+  if (!isCaixaProntoParaFinalizar(local)) {
+    // `garantirSessao()`: reconsulta e re-hidrata; NUNCA envia a venda.
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: params.terminalId,
+      local,
+      fetchImpl: params.fetchImpl,
+      hydrated: true,
+    })
+    if (r.decision) {
+      const estado = applyCaixaSessionDecision(
+        {
+          caixa: {
+            isOpen: local.isOpen,
+            saldoInicial: 0,
+            dataAbertura: null,
+            totalEntradas: 0,
+            totalSaidas: 0,
+          },
+          caixaSessaoId: local.sessaoId,
+        },
+        r.decision,
+      )
+      local = { isOpen: estado.caixa.isOpen, sessaoId: estado.caixaSessaoId }
+    }
+    // Quem finaliza de novo Ã© o operador â€” o carrinho fica montado.
+    return { pagamentoAberto: false, vendasEnviadas: 0, carrinho: params.carrinho, local }
+  }
+  return { pagamentoAberto: true, vendasEnviadas: 1, carrinho: params.carrinho, local }
+}
+
+describe("Venda Completa â€” prÃ©-pagamento exige caixa aberto E sessÃ£o do terminal", () => {
+  it("bloqueia sem sessaoId, mesmo com o caixa aberto na tela", async () => {
+    expect(isCaixaProntoParaFinalizar({ isOpen: true, sessaoId: null })).toBe(false)
+    expect(isCaixaProntoParaFinalizar({ isOpen: true, sessaoId: "  " })).toBe(false)
+    expect(isCaixaProntoParaFinalizar({ isOpen: false, sessaoId: "sess-1" })).toBe(false)
+    expect(isCaixaProntoParaFinalizar({ isOpen: true, sessaoId: "sess-1" })).toBe(true)
+
+    const { impl } = fetchServidorMultiTerminal([]) // servidor sem caixa aberto
+    const r = await portaVendaCompleta({
+      local: { isOpen: true, sessaoId: null },
+      terminalId: PDV1,
+      fetchImpl: impl,
+      carrinho: CARRINHO,
+    })
+
+    expect(r.pagamentoAberto).toBe(false)
+    expect(r.vendasEnviadas).toBe(0)
+  })
+
+  it("prossegue depois de uma reconciliaÃ§Ã£o vÃ¡lida do prÃ³prio terminal", async () => {
+    const { impl } = fetchServidorMultiTerminal([sessaoPdv1(), sessaoPdv2()])
+    const bloqueada = await portaVendaCompleta({
+      local: { isOpen: true, sessaoId: null },
+      terminalId: PDV1,
+      fetchImpl: impl,
+      carrinho: CARRINHO,
+    })
+    // 1Âª tentativa: recupera a sessÃ£o DO PDV1 e devolve o controle ao operador.
+    expect(bloqueada.pagamentoAberto).toBe(false)
+    expect(bloqueada.local).toEqual({ isOpen: true, sessaoId: SESS_PDV1 })
+
+    // 2Âª tentativa (aÃ§Ã£o do operador): agora abre o pagamento.
+    const liberada = await portaVendaCompleta({
+      local: bloqueada.local,
+      terminalId: PDV1,
+      fetchImpl: impl,
+      carrinho: bloqueada.carrinho,
+    })
+    expect(liberada.pagamentoAberto).toBe(true)
+    expect(liberada.vendasEnviadas).toBe(1)
+    expect(liberada.local.sessaoId).toBe(SESS_PDV1)
+  })
+
+  it("bloqueia quando sÃ³ o OUTRO terminal tem caixa aberto â€” sem venda e sem adoÃ§Ã£o", async () => {
+    const { impl } = fetchServidorMultiTerminal([sessaoPdv2()])
+    const r = await portaVendaCompleta({
+      local: { isOpen: true, sessaoId: null },
+      terminalId: PDV1,
+      fetchImpl: impl,
+      carrinho: CARRINHO,
+    })
+    expect(r.pagamentoAberto).toBe(false)
+    expect(r.vendasEnviadas).toBe(0)
+    expect(r.local.sessaoId).toBeNull()
+  })
+
+  it("os itens montados permanecem intactos apÃ³s o bloqueio", async () => {
+    const antes = JSON.stringify(CARRINHO)
+    const { impl } = fetchServidorMultiTerminal([])
+    const r = await portaVendaCompleta({
+      local: { isOpen: true, sessaoId: null },
+      terminalId: PDV1,
+      fetchImpl: impl,
+      carrinho: CARRINHO,
+    })
+    expect(r.carrinho).toBe(CARRINHO)
+    expect(JSON.stringify(r.carrinho)).toBe(antes)
+    expect(r.carrinho).toHaveLength(2)
+  })
+
+  it("falha de rede no prÃ©-pagamento bloqueia sem alterar o estado do caixa", async () => {
+    const r = await portaVendaCompleta({
+      local: { isOpen: true, sessaoId: null },
+      terminalId: PDV1,
+      fetchImpl: fetchQueCai(),
+      carrinho: CARRINHO,
+    })
+    expect(r.pagamentoAberto).toBe(false)
+    expect(r.vendasEnviadas).toBe(0)
+    expect(r.local).toEqual({ isOpen: true, sessaoId: null })
+    expect(r.carrinho).toBe(CARRINHO)
+  })
+})
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// 13. As 24 pendÃªncias de sincronizaÃ§Ã£o continuam idÃªnticas
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+type VendaPendente = {
+  id: string
+  pedidoId: string
+  idempotencyKey: string
+  sessaoId: string | null
+  terminalId: string
+  total: number
+  syncPending: true
+}
+
+type EstadoCom24 = CaixaSessionApplicable & {
+  sales: VendaPendente[]
+  devolucoes: Array<{ id: string; syncPending: boolean }>
+  pendingCaixaOperations: Array<{ id: string; syncPending: boolean }>
+}
+
+/** 24 vendas pendentes â€” 1/3 SEM `sessaoId`, como no incidente real. */
+function estadoCom24Pendencias(over: {
+  isOpen: boolean
+  saldoInicial: number
+  sessaoId: string | null
+}): EstadoCom24 {
+  return {
+    caixa: {
+      isOpen: over.isOpen,
+      saldoInicial: over.saldoInicial,
+      dataAbertura: over.isOpen ? new Date("2026-08-02T08:00:00.000Z") : null,
+      totalEntradas: 320,
+      totalSaidas: 40,
+    },
+    caixaSessaoId: over.sessaoId,
+    sales: Array.from({ length: 24 }, (_, i) => ({
+      id: `VDA-2026-${String(i + 1).padStart(4, "0")}`,
+      pedidoId: `${STORE}-${String(i + 1).padStart(6, "0")}`,
+      idempotencyKey: `idem-${STORE}-${i + 1}`,
+      sessaoId: i % 3 === 0 ? null : SESS_PDV1,
+      terminalId: PDV1,
+      total: 10 + i,
+      syncPending: true as const,
+    })),
+    devolucoes: [{ id: "DEV-1", syncPending: true }],
+    pendingCaixaOperations: [{ id: "OP-1", syncPending: true }],
+  }
+}
+
+describe("24 pendÃªncias â€” nenhuma decisÃ£o de caixa altera a fila", () => {
+  const decisoes: Array<[string, Parameters<typeof applyCaixaSessionDecision>[1]]> = [
+    [
+      "adoÃ§Ã£o da sessÃ£o do PRÃ“PRIO terminal",
+      {
+        action: "adopt",
+        reason: "referencia-ausente",
+        sessaoId: SESS_PDV1,
+        saldoInicial: 111,
+        abertaEm: "2026-08-02T08:00:00.000Z",
+        replaced: null,
+      },
+    ],
+    ["fechamento (servidor sem sessÃ£o)", { action: "close", reason: "servidor-sem-sessao-aberta" }],
+    ["recusa por outro terminal", { action: "keep", reason: "sessao-de-outro-terminal" }],
+    ["em sincronia", { action: "keep", reason: "em-sincronia" }],
+  ]
+
+  for (const [nome, decisao] of decisoes) {
+    it(`${nome}: as 24 continuam idÃªnticas (objeto e bytes) e na mesma ordem`, () => {
+      const prev = estadoCom24Pendencias({ isOpen: true, saldoInicial: 111, sessaoId: null })
+      const filaAntes = prev.sales
+      const bytesAntes = JSON.stringify(prev.sales)
+
+      const next = applyCaixaSessionDecision(prev, decisao)
+
+      expect(next.sales).toBe(filaAntes) // mesma referÃªncia
+      expect(JSON.stringify(next.sales)).toBe(bytesAntes) // mesmos bytes
+      expect(next.sales).toHaveLength(24)
+      expect(next.sales.map((s) => s.pedidoId)).toEqual(filaAntes.map((s) => s.pedidoId))
+      expect(next.sales.map((s) => s.idempotencyKey)).toEqual(
+        filaAntes.map((s) => s.idempotencyKey),
+      )
+      // SessÃ£o de ORIGEM preservada â€” inclusive as 8 que nasceram sem sessÃ£o.
+      expect(next.sales.map((s) => s.sessaoId)).toEqual(filaAntes.map((s) => s.sessaoId))
+      expect(next.sales.filter((s) => s.sessaoId === null)).toHaveLength(8)
+      expect(next.sales.every((s) => s.syncPending)).toBe(true)
+      expect(next.devolucoes).toBe(prev.devolucoes)
+      expect(next.pendingCaixaOperations).toBe(prev.pendingCaixaOperations)
+    })
+  }
+
+  it("reconciliaÃ§Ã£o completa (consulta + decisÃ£o) nÃ£o reenvia venda nenhuma", async () => {
+    const prev = estadoCom24Pendencias({ isOpen: true, saldoInicial: 111, sessaoId: SESS_PDV1 })
+    const chamadas: string[] = []
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      chamadas.push(String(input))
+      return new Response(JSON.stringify({ sessoes: [sessaoPdv1()] }), { status: 200 })
+    }) as unknown as typeof fetch
+
+    const r = await reconcileCaixaSession({
+      storeId: STORE,
+      terminalId: PDV1,
+      local: { isOpen: true, sessaoId: SESS_PDV1 },
+      fetchImpl,
+      hydrated: true,
+    })
+    const next = applyCaixaSessionDecision(prev, r.decision!)
+
+    // Uma Ãºnica requisiÃ§Ã£o, e nenhuma delas Ã© de persistÃªncia de venda.
+    expect(chamadas).toEqual([activeCaixaSessionUrl(STORE, PDV1)])
+    expect(chamadas.some((u) => u.includes("venda-persist"))).toBe(false)
+    expect(next.sales).toBe(prev.sales)
+    expect(next.sales).toHaveLength(24)
   })
 })
