@@ -3,10 +3,14 @@
  *
  * Recebe o NOVO `.pfx`+senha em multipart e executa a rotação segura:
  *  1. valida o novo certificado EM MEMÓRIA (inválido/vencido/senha errada ⇒ 422 e NADA muda);
- *  2. grava a nova versão no cofre — as referências anteriores seguem intactas e servindo;
- *  3. troca o ponteiro no banco em ÚNICA atualização (refs + metadados reais do novo certificado);
- *     se a troca falhar, a versão nova é descartada do cofre e a anterior permanece (fail-closed);
- *  4. confirmada a troca, revoga as referências anteriores (best-effort reportado).
+ *  2. reconcilia ANTES do cofre: CNPJ × unidade e fingerprint vinculada a outra loja ⇒ 422 —
+ *     segredo rejeitado NUNCA é armazenado (crítico para backends in-place, em que gravar
+ *     destrói o material anterior imediatamente);
+ *  3. grava a nova versão no cofre — as referências anteriores seguem intactas e servindo;
+ *  4. troca o ponteiro no banco em ÚNICA atualização com guarda otimista (refs + metadados
+ *     reais do novo certificado); se a troca falhar, a versão nova é descartada do cofre e a
+ *     anterior permanece (fail-closed);
+ *  5. confirmada a troca, revoga as referências anteriores (best-effort reportado).
  *
  * O status/ativo da linha é preservado: um certificado ATIVO continua ATIVO após a rotação porque
  * a nova versão já passou pela MESMA validação exigida na ativação (vigência, RSA ≥ 2048, cadeia,
@@ -21,7 +25,7 @@ import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { recordFiscalAdminLog } from "@/lib/fiscal/fiscal-log"
 import { onlyDigits } from "@/lib/fiscal/fiscal-validators"
-import { PFX_TAMANHO_MAXIMO_BYTES, bloqueio, validarArquivoPfx } from "@/lib/fiscal/certificate"
+import { PFX_TAMANHO_MAXIMO_BYTES, bloqueio, inspecionarCertificadoPfx, validarArquivoPfx } from "@/lib/fiscal/certificate"
 import type { OnboardingBloqueio } from "@/lib/fiscal/certificate/onboarding-types"
 import { resolveFiscalSecretProvider, rotacionarCertificadoA1 } from "@/lib/fiscal/vault"
 import { zeroBuffer } from "@/lib/fiscal/vault/pkcs12-loader"
@@ -113,7 +117,48 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
 
     pfx = Buffer.from(await arquivo.arrayBuffer())
 
-    /** Motivo capturado dentro da confirmação (ex.: CNPJ divergente) para resposta precisa. */
+    // PRÉ-INSPEÇÃO em memória (sobre uma cópia — a inspeção zera o buffer que recebe): todas as
+    // recusas acontecem ANTES de qualquer gravação no cofre. Em backends in-place (refs canônicas
+    // graváveis) gravar substitui o material anterior imediatamente — segredo rejeitado NUNCA
+    // pode ser armazenado, sob pena de destruir o segredo ATIVO com material recusado.
+    const pre = inspecionarCertificadoPfx({ pfx: Buffer.from(pfx), senha })
+    if (!pre.extraido || pre.bloqueios.length > 0) {
+      return jsonBloqueado(pre.bloqueios.length > 0 ? pre.bloqueios : [bloqueio("arquivo_invalido")], 422)
+    }
+    const extraidoPrevio = pre.extraido
+
+    // Reconciliação ANTES do cofre: CNPJ do novo certificado × unidade e fingerprint já
+    // vinculada a OUTRA unidade (mesma regra da custódia — a checagem devolve só booleano).
+    const bloqueiosReconciliacao: OnboardingBloqueio[] = []
+    const cnpjLoja = onlyDigits(cfg?.cnpj)
+    if (extraidoPrevio.cnpj && cnpjLoja && onlyDigits(extraidoPrevio.cnpj) !== cnpjLoja) {
+      bloqueiosReconciliacao.push(bloqueio("cnpj_divergente"))
+    }
+    if (extraidoPrevio.fingerprintSha1) {
+      const vinculadoAOutraLoja = await prisma.certificadoDigital.findFirst({
+        where: { fingerprint: extraidoPrevio.fingerprintSha1, NOT: { storeId: acl.storeId } },
+        select: { id: true },
+      })
+      if (vinculadoAOutraLoja) {
+        bloqueiosReconciliacao.push(bloqueio("certificado_de_outra_loja"))
+      }
+    }
+    if (bloqueiosReconciliacao.length > 0) {
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "certificado.custodia.rotacionar",
+        mensagem: `Rotação recusada na reconciliação com a unidade — cofre intocado (${cert.apelido || cert.id})`,
+        detalhe: {
+          certificadoId: cert.id,
+          fingerprint: extraidoPrevio.fingerprintSha1,
+          bloqueios: bloqueiosReconciliacao.map((b) => b.codigo),
+        },
+      })
+      return jsonBloqueado(bloqueiosReconciliacao, 422)
+    }
+
+    /** Motivo capturado dentro da confirmação (concorrência) para resposta precisa. */
     let motivoTrocaRecusada: string | null = null
 
     const resultado = await rotacionarCertificadoA1({
@@ -123,24 +168,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       novaSenha: senha,
       refsAnteriores: { blobRef: cert.blobRef, senhaRef: cert.senhaRef },
       confirmarTroca: async (novasRefs, extraido) => {
-        // CNPJ do novo certificado precisa conferir com a unidade (quando a loja tem CNPJ).
-        const cnpjLoja = onlyDigits(cfg?.cnpj)
-        if (extraido.cnpj && cnpjLoja && onlyDigits(extraido.cnpj) !== cnpjLoja) {
-          motivoTrocaRecusada = "cnpj_divergente"
-          throw new Error("cnpj_divergente")
-        }
-        // Multi-loja: a fingerprint do novo certificado não pode estar vinculada a OUTRA unidade
-        // (mesma regra da custódia inicial — a checagem devolve apenas booleano, nunca dados).
-        if (extraido.fingerprintSha1) {
-          const vinculadoAOutraLoja = await prisma.certificadoDigital.findFirst({
-            where: { fingerprint: extraido.fingerprintSha1, NOT: { storeId: acl.storeId } },
-            select: { id: true },
-          })
-          if (vinculadoAOutraLoja) {
-            motivoTrocaRecusada = "certificado_de_outra_loja"
-            throw new Error("certificado_de_outra_loja")
-          }
-        }
         // Troca do ponteiro com guarda otimista: só atualiza se a linha ainda aponta para as refs
         // lidas no início — uma rotação/upload concorrente faz esta troca falhar (fail-closed),
         // e a versão nova é descartada pelo serviço em vez de ficar órfã silenciosamente.
@@ -170,6 +197,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
         return NextResponse.json({ ok: false, error: resultado.mensagem, codigo: resultado.codigo }, { status: 503 })
       }
       if (resultado.codigo === "troca_nao_confirmada") {
+        // Só resta o caminho de CONCORRÊNCIA: CNPJ divergente e fingerprint de outra loja já foram
+        // recusados na reconciliação ANTES do cofre (422 acima).
         await recordFiscalAdminLog({
           session: acl.session,
           storeId: acl.storeId,
@@ -179,9 +208,6 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             : `Rotação não confirmada — versão anterior mantida (${cert.apelido || cert.id})`,
           detalhe: { certificadoId: cert.id, motivo: motivoTrocaRecusada },
         })
-        if (motivoTrocaRecusada === "cnpj_divergente" || motivoTrocaRecusada === "certificado_de_outra_loja") {
-          return jsonBloqueado([bloqueio(motivoTrocaRecusada)], 422)
-        }
         return jsonError(resultado.mensagem, 409)
       }
       if (resultado.bloqueios.length > 0) return jsonBloqueado(resultado.bloqueios, 422)
