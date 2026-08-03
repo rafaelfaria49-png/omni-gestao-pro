@@ -23,6 +23,11 @@ import { POST as loginPOST } from "./login/route"
 import { POST as logoutPOST } from "./logout/route"
 import { GET as sessaoGET } from "./sessao/route"
 
+// Arquivo bcrypt-bound por desenho (cada login = comparação bcrypt, CPU-bound).
+// Sob a carga paralela da suíte completa o default de 5s por teste estoura
+// (flake de timeout, não de lógica) — o orçamento honesto é por arquivo.
+vi.setConfig({ testTimeout: 30000 })
+
 const SEGREDO = "segredo-teste-rotas-014"
 const SENHA = "senha-super-secreta-1"
 const EMAIL = "contador@escritorio.com"
@@ -125,7 +130,9 @@ describe("POST /auth/login", () => {
       body: { email: "outro@aqui.com", senha: "x-errada-1" },
     }))
     expect(outroEmail.status).toBe(401) // chave e-mail+IP independente
-  })
+    // Timeout ampliado: 7 logins = 7 avaliações bcrypt (CPU-bound); sob a carga
+    // paralela da suíte completa o default de 5s estoura (flake, não lógica).
+  }, 30000)
 
   it("sem CONTADOR_EXTERNO_SESSION_SECRET → 503 fail-closed (teste 23)", async () => {
     delete process.env[ENV_SEGREDO_SESSAO_EXTERNA]

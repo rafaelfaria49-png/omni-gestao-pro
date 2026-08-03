@@ -4,8 +4,10 @@
  */
 import type { Session } from "next-auth"
 import { canAccessStore, getPermissionsFromSession } from "@/lib/auth/enterprise-permissions"
+import type { ContadorScopeExterno } from "@/lib/contador/auth-externa/escopo-externo"
 
 declare const CONTADOR_SCOPE_VALIDADO: unique symbol
+declare const CONTADOR_SCOPE_PORTAL_EXTERNO: unique symbol
 
 /** Escopo nominal produzido exclusivamente pelo gate server-side do Contador HUB. */
 export type ContadorScopeInterno = Readonly<{
@@ -50,4 +52,48 @@ export function avaliarAcessoContador(
 
   // Decisao serializavel e ainda nao nominal; somente o gate com IO aplica o brand interno.
   return Object.freeze({ ok: true, storeId, userId, permissaoContador: true })
+}
+
+/* ───────────────── variante externa read-only (GOAL 015 · auditoria 013 §7.1) ───────────────── */
+
+/**
+ * Escopo nominal do PORTAL EXTERNO read-only.
+ *
+ * SUBTIPO de `ContadorScopeInterno`: os readers read-only (que consomem apenas
+ * `storeId` — ver `readers/index.ts`) o aceitam sem mudança de assinatura, e o
+ * brand adicional `[CONTADOR_SCOPE_PORTAL_EXTERNO]` marca a PROCEDÊNCIA externa
+ * para auditoria de tipos. Nenhum brand existente é enfraquecido: o interno
+ * continua exigindo o gate NextAuth e o externo continua exigindo o gate da
+ * sessão externa (GOAL 014) — esta factory só aceita um `ContadorScopeExterno`
+ * já validado (sessão + vínculo ATIVO conferidos na request), nunca campos
+ * soltos vindos do cliente.
+ *
+ * `permissaoContador: true` é exigido pela FORMA do brand interno; nenhum reader
+ * o consulta (o campo nunca é lido para autorizar — ver uso em toda a base: só
+ * `storeId` é consumido). Chamável exclusivamente por `lib/contador/portal/**`:
+ * código interno NUNCA deve fabricar este escopo (o portal não passa pelos
+ * gates de escrita do HUB, que exigem `CapacidadesContador` derivadas de
+ * NextAuth — o portal opera sempre com capacidades todas falsas).
+ */
+export type ContadorScopeExternoReadOnly = ContadorScopeInterno &
+  Readonly<{
+    /** Papel externo do vínculo (`LEITURA` | `CONFERENCIA`), já validado no gate. */
+    papel: ContadorScopeExterno["papel"]
+    [CONTADOR_SCOPE_PORTAL_EXTERNO]: true
+  }>
+
+/**
+ * ÚNICA produtora de `ContadorScopeExternoReadOnly`. Recebe o escopo externo
+ * nominal (não há como chamá-la com dados não validados sem violar o tipo).
+ */
+export function fabricarEscopoPortalExterno(
+  escopo: ContadorScopeExterno,
+): ContadorScopeExternoReadOnly {
+  return Object.freeze({
+    ok: true,
+    storeId: escopo.storeId,
+    userId: escopo.usuario.id,
+    permissaoContador: true,
+    papel: escopo.papel,
+  }) as ContadorScopeExternoReadOnly
 }

@@ -9,9 +9,11 @@
  *  - sem `CONTADOR_EXTERNO_SESSION_SECRET` → tela honesta de indisponibilidade
  *    (R-9 — o portal é inerte, nunca quebra nem faz fallback).
  */
+import Link from "next/link"
 import { redirect } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { portalExternoV2Habilitado } from "@/lib/contador/portal/flag"
 import { lojasDoEscopoComNome, validarSessaoDaPagina } from "./_sessao"
 import { LogoutButton } from "./logout-button"
 
@@ -49,6 +51,9 @@ export default async function ContadorExternoPage() {
   }
 
   const lojas = await lojasDoEscopoComNome(sessao.usuario.id)
+  // GOAL 015: com a flag OFF a lista continua exatamente como no 014 (sem link);
+  // as páginas de dados respondem 404, então nada aqui pode apontar para elas.
+  const portalV2 = portalExternoV2Habilitado()
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-6 p-4 py-10">
@@ -78,7 +83,16 @@ export default async function ContadorExternoPage() {
             <ul className="divide-y divide-border">
               {lojas.map((loja) => (
                 <li key={loja.storeId} className="flex items-center justify-between gap-4 py-3">
-                  <span className="text-sm font-medium">{loja.nome}</span>
+                  {portalV2 ? (
+                    <Link
+                      href={`/contador-externo/lojas/${encodeURIComponent(loja.storeId)}`}
+                      className="min-w-0 truncate text-sm font-medium hover:underline"
+                    >
+                      {loja.nome}
+                    </Link>
+                  ) : (
+                    <span className="min-w-0 truncate text-sm font-medium">{loja.nome}</span>
+                  )}
                   <Badge variant="secondary">{PAPEL_ROTULO[loja.papel] ?? loja.papel}</Badge>
                 </li>
               ))}

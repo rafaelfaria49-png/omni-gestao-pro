@@ -19,6 +19,11 @@ import { __setRepoAuthExternaParaTestes } from "../_shared"
 import { POST as consultarPOST } from "./consultar/route"
 import { POST as aceitarPOST } from "./aceitar/route"
 
+// Arquivo bcrypt-bound por desenho (cada aceite = hash + comparação). Sob a
+// carga paralela da suíte completa o default de 5s por teste estoura (flake de
+// timeout, não de lógica) — o orçamento honesto é por arquivo.
+vi.setConfig({ testTimeout: 30000 })
+
 const SEGREDO = "segredo-teste-rotas-014"
 const SENHA = "senha-super-secreta-1"
 const EMAIL = "contador@escritorio.com"
@@ -185,7 +190,9 @@ describe("POST /convite/aceitar", () => {
     const sexta = await aceitarPOST(reqAceite({ token: "token-ruim-6", nome: "Ana", senha: SENHA }))
     expect(sexta.status).toBe(429)
     expect(sexta.headers.get("Retry-After")).toBeTruthy()
-  })
+    // Timeout ampliado: 6 aceites = 6 avaliações bcrypt (CPU-bound); sob a carga
+    // paralela da suíte completa o default de 5s estoura (flake, não lógica).
+  }, 30000)
 
   it("sem CONTADOR_EXTERNO_SESSION_SECRET → 503 ANTES de gravar (teste 23, fail-closed)", async () => {
     const { token } = await conviteNovo()
