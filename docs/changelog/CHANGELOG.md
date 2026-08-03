@@ -1,5 +1,29 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-03 — Numeração server-side: rebase e readiness PostgreSQL
+
+- Infraestrutura reaplicada sobre `origin/main` `1ed325912de50750a018903cda9c14be4f4df92d`;
+  a migration aditiva passou a ser `0016_add_sale_numbering_infrastructure`, depois da
+  `0015_contador_identidade_externa` já presente na main.
+- Migration e upgrade de vendas legadas validados em PostgreSQL local 17.10 descartável:
+  3 `pedidoId` preservados e os 8 novos campos de `Venda` mantidos `NULL`.
+- Concorrência real validada em `READ COMMITTED` com 50 transações na mesma loja/ano e
+  20 transações por loja em duas lojas. Em snapshot forte, a criação concorrente inicial
+  propagou `P2002` em `RepeatableRead` e `P2034` em `Serializable`, sem retry interno.
+- A infraestrutura continua dormente: nenhum writer, rota, PDV ou importador foi integrado;
+  a integração controlada permanece para o GOAL 002C.
+
+## 2026-07-30 — Numeração server-side de venda: infraestrutura dormente
+
+- Adicionados `SerieVenda`, código estável nullable por loja e metadados nullable de
+  idempotência/numeração em `Venda`, com unique por tentativa, unique por série/número
+  e FK composta que impede cruzamento de série entre lojas.
+- Adicionado helper server-only que aloca `VDA-{LOJA}-{ANO}-{NNNNNN}` no mesmo
+  `TransactionClient` do futuro writer, usando advisory lock na criação da série e um
+  único incremento atômico no contador.
+- Migration exclusivamente aditiva e sem backfill; nenhum identificador histórico,
+  writer, rota, payload público ou pendência legada foi alterado.
+
 ## 2026-07-28 — Writer v1 de vendas: replay atômico e conflito fail-closed
 
 - `Venda.upsert` foi substituído por criação exclusiva: uma venda já existente nunca é atualizada pelo writer v1. O servidor compara um fingerprint canônico/versionado dos fatos; replay idêntico retorna a venda existente sem repetir itens, estoque, financeiro, títulos ou crédito-vale, enquanto fatos diferentes retornam `PEDIDO_ID_CONFLITO_MESMA_LOJA` (HTTP 409).

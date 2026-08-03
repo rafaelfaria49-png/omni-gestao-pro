@@ -48,6 +48,12 @@ model Store {
    * Plano SaaS oficial por unidade (first-class).
    */
   subscriptionPlan SubscriptionPlan @default(BRONZE) @map("subscriptionPlan")
+  /**
+   * Código estável da numeração comercial de venda (GOAL 002B — aditivo/dormente).
+   * 2–8 caracteres A-Z0-9, único entre lojas e configurado explicitamente.
+   * NULL significa que a loja ainda não pode usar a numeração server-side.
+   */
+  codigoNumeracaoVenda String?          @unique @map("codigoNumeracaoVenda") @db.VarChar(8)
   createdAt        DateTime         @default(now()) @map("createdAt")
   updatedAt        DateTime         @updatedAt @map("updatedAt")
 
@@ -121,6 +127,8 @@ model Store {
   // ─── Contador HUB identidade externa (GOAL 014 — aditivo; só relações inversas) ──
   contadorConvites         ContadorConvite[]
   contadorAcessos          ContadorAcesso[]
+  // ─── Numeração server-side de venda (GOAL 002B — aditivo/dormente) ──
+  seriesVenda              SerieVenda[]
 
   @@index([profile])
   @@map("stores")
@@ -1371,6 +1379,43 @@ model MovimentacaoFinanceira {
 }
 
 /**
+ * Origem do número comercial da venda (GOAL 002B — aditivo/dormente).
+ * NULL identifica o histórico e o writer v1 sem impor backfill.
+ */
+enum VendaNumeracaoOrigem {
+  LEGACY_CLIENT
+  SERVER_V1
+  IMPORTED
+}
+
+/**
+ * Série e contador atômico da numeração comercial por loja e ano civil.
+ * DORMENTE: nenhum writer produtivo usa esta relação no GOAL 002B.
+ */
+model SerieVenda {
+  id            String   @id @default(cuid())
+  storeId       String   @map("storeId")
+  store         Store    @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  /** Ano civil de aceitação no servidor (America/Sao_Paulo). */
+  ano           Int      @map("ano")
+  /** Snapshot write-once de Store.codigoNumeracaoVenda na criação da série. */
+  prefixo       String   @map("prefixo") @db.VarChar(8)
+  /** Próximo número emitível; 1000000 representa série esgotada. */
+  proximoNumero Int      @default(1) @map("proximoNumero")
+  ativo         Boolean  @default(true) @map("ativo")
+  createdAt     DateTime @default(now()) @map("createdAt")
+  updatedAt     DateTime @updatedAt @map("updatedAt")
+  vendas        Venda[]
+
+  @@unique([storeId, ano])
+  @@unique([prefixo, ano])
+  // Alvo da FK composta de Venda: uma venda não pode apontar para série de outra loja.
+  @@unique([id, storeId])
+  @@index([storeId, ativo])
+  @@map("series_venda")
+}
+
+/**
  * Venda (PDV ou importada) opcionalmente ligada a um título em aberto.
  */
 model Venda {
@@ -1381,6 +1426,22 @@ model Venda {
    * Ex.: VDA-2026-0001 — chave de negócio
    */
   pedidoId             String              @unique @map("pedidoId")
+  // ─── Idempotência e numeração server-side (GOAL 002B — nullable/dormente) ─────
+  /** Identidade da tentativa futura; única por loja. NULL no histórico/writer v1. */
+  clientSaleId           String?               @map("clientSaleId") @db.VarChar(128)
+  /** Hash canônico futuro para detectar reuso da chave de tentativa. */
+  idempotencyHash        String?               @map("idempotencyHash") @db.Char(64)
+  /** Versão do canonicalizador do hash. */
+  idempotencyHashVersion Int?                  @map("idempotencyHashVersion")
+  /** Série que alocou o número; a FK composta também inclui storeId. */
+  serieVendaId           String?               @map("serieVendaId")
+  serieVenda             SerieVenda?           @relation(fields: [serieVendaId, storeId], references: [id, storeId], onDelete: Restrict)
+  /** Ano e componente numérico persistidos para consulta/auditoria futuras. */
+  anoNumero              Int?                  @map("anoNumero")
+  numeroSequencial       Int?                  @map("numeroSequencial")
+  numeradaEm             DateTime?             @map("numeradaEm")
+  /** NULL preserva o histórico sem backfill nem coluna obrigatória. */
+  numeracaoOrigem        VendaNumeracaoOrigem? @map("numeracaoOrigem")
   /**
    * Snapshot JSON da venda (formas de pagamento, linhas, etc.) para recuperação fiel.
    */
@@ -1421,12 +1482,15 @@ model Venda {
   fiscalStatus         FiscalStatusVenda   @default(NAO_FISCAL) @map("fiscalStatus")
   notasFiscais         NotaFiscal[]
 
+  @@unique([storeId, clientSaleId])
+  @@unique([serieVendaId, numeroSequencial])
   @@index([storeId])
   @@index([storeId, status])
   @@index([clienteId])
   @@index([contaReceberTituloId])
   @@index([storeId, terminalId])
   @@index([storeId, fiscalStatus])
+  @@index([storeId, anoNumero, numeroSequencial])
   @@map("vendas")
 }
 
