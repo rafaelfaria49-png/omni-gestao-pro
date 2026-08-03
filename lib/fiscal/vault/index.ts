@@ -9,12 +9,35 @@ export {
   FiscalVaultError,
   canonicalEnvRef,
   storeRefSuffix,
+  type FiscalSecretMetadata,
   type FiscalSecretVault,
+  type FiscalVaultAvailability,
+  type FiscalVaultCapabilities,
   type FiscalVaultErrorCode,
   type FiscalCertificadoSegredo,
   type VaultRefKind,
 } from "./fiscal-secret-vault"
-export { EnvVault, createEnvVault, type EnvVaultOptions, type EnvLike } from "./env-vault"
+export { EnvVault, createEnvVault, ENV_VAULT_BACKEND, type EnvVaultOptions, type EnvLike } from "./env-vault"
+
+// GOAL-016C — resolver do Secret Provider (server-only) + serviço de custódia do A1.
+export {
+  PROVIDER_SUPABASE_VAULT,
+  resolveFiscalSecretProvider,
+  type FiscalSecretProviderResolution,
+} from "./provider-resolver"
+export {
+  armazenarCertificadoA1,
+  descreverCustodiaCertificado,
+  revogarSegredosCertificado,
+  rotacionarCertificadoA1,
+  type ArmazenarResultado,
+  type CertificadoRefs,
+  type CustodiaFalha,
+  type CustodiaFalhaCodigo,
+  type DescricaoCustodia,
+  type RevogacaoResultado,
+  type RotacaoResultado,
+} from "./certificado-custodia-service"
 
 // GOAL-008 — leitor PKCS#12, validação do ciclo, alerta de vencimento e varredura de segredos.
 export {

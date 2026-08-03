@@ -46,6 +46,43 @@ export type FiscalCertificadoSegredo = {
 }
 
 /**
+ * Metadados de uma referência de segredo (GOAL-016C). Descreve a referência SEM revelar o
+ * segredo: serve para a UI/API dizer "configurado ou não" e para o ciclo de vida (rotação,
+ * revogação) sem nunca serializar conteúdo.
+ */
+export type FiscalSecretMetadata = {
+  /** A referência opaca consultada (não é o segredo). */
+  ref: string
+  storeId: string
+  /** `true` quando a referência aponta para um segredo que existe no backend. */
+  configurada: boolean
+  /** Tipo inferido da referência (`null` quando não segue o padrão canônico). */
+  kind: VaultRefKind | null
+  /** Nome do backend que respondeu (ex.: `env-piloto`). */
+  backend: string
+}
+
+/** Capacidades do backend de cofre — o que o ambiente atual suporta de fato. */
+export type FiscalVaultCapabilities = {
+  leitura: boolean
+  escrita: boolean
+  rotacao: boolean
+  revogacao: boolean
+}
+
+/**
+ * Disponibilidade do provider (GOAL-016C). `disponivel = false` ⇒ TUDO fail-closed: nenhuma
+ * resolução, nenhuma assinatura, nenhuma emissão. A mensagem é sempre sanitizada (sem segredo).
+ */
+export type FiscalVaultAvailability = {
+  disponivel: boolean
+  backend: string
+  capacidades: FiscalVaultCapabilities
+  /** Explicação sanitizada (limitação do piloto, provider não configurado etc.). */
+  mensagem: string
+}
+
+/**
  * Port do cofre (ADR-0009 D1). Leitura resolve segredo por referência (fail-closed = `null`).
  * Escrita/rotação são admin-only e auditadas pela orquestração; podem não ser suportadas por
  * um backend (EnvVault → provisionamento manual de env), caso em que lançam `operacao_nao_suportada`.
@@ -64,6 +101,25 @@ export interface FiscalSecretVault {
   putCscToken(storeId: string, token: string): Promise<{ cscTokenRef: string }>
   /** Revoga (destrói) o material apontado por uma referência. Pode não ser suportado. */
   revoke(storeId: string, ref: string): Promise<void>
+
+  /**
+   * Descreve os METADADOS de uma referência (GOAL-016C) — nunca o segredo. `null` quando a
+   * referência está vazia/ausente. Lança `ref_fora_de_escopo` se a ref canônica for de outra loja.
+   */
+  describeSecret(storeId: string, ref: string | null | undefined): Promise<FiscalSecretMetadata | null>
+
+  /**
+   * Verifica a disponibilidade e as capacidades do backend (GOAL-016C). NUNCA lança por backend
+   * indisponível — reporta `disponivel = false`, e o caller trata como fail-closed.
+   */
+  checkAvailability(): Promise<FiscalVaultAvailability>
+
+  /**
+   * Rotação do `.pfx`+senha (GOAL-016C · ADR-0014 §2.1): grava uma NOVA versão e devolve as
+   * NOVAS referências. NUNCA toca as referências anteriores — a troca atômica do ponteiro e a
+   * revogação da versão anterior são responsabilidade do caller, APÓS a nova versão confirmada.
+   */
+  rotateCertificadoPfx(storeId: string, pfx: Buffer, senha: string): Promise<{ blobRef: string; senhaRef: string }>
 }
 
 /** Sufixo canônico por loja (uppercase, só A-Z0-9_) — evita cruzar lojas nos nomes de env. */

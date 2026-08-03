@@ -18,7 +18,9 @@ import {
   FiscalVaultError,
   canonicalEnvRef,
   storeRefSuffix,
+  type FiscalSecretMetadata,
   type FiscalSecretVault,
+  type FiscalVaultAvailability,
   type VaultRefKind,
 } from "./fiscal-secret-vault"
 
@@ -34,8 +36,19 @@ export type EnvVaultOptions = {
   allowWrite?: boolean
 }
 
+/** Nome do backend para metadados/disponibilidade (GOAL-016C). */
+export const ENV_VAULT_BACKEND = "env-piloto"
+
 function clean(v: string | null | undefined): string {
   return String(v ?? "").trim()
+}
+
+/** Infere o tipo de segredo a partir do prefixo canônico da env (sem ler o valor). */
+function kindFromRef(ref: string): VaultRefKind | null {
+  if (ref.startsWith("FISCAL_A1_PFX_B64_")) return "pfx"
+  if (ref.startsWith("FISCAL_A1_SENHA_")) return "senha"
+  if (ref.startsWith("FISCAL_CSC_TOKEN_")) return "csc"
+  return null
 }
 
 export class EnvVault implements FiscalSecretVault {
@@ -133,6 +146,59 @@ export class EnvVault implements FiscalSecretVault {
       )
     }
     delete this.env[name]
+  }
+
+  /**
+   * Descreve a referência SEM ler/devolver o segredo (GOAL-016C): só verifica existência.
+   * `null` quando a ref está vazia. Multi-loja: ref canônica de outra loja ⇒ `ref_fora_de_escopo`.
+   */
+  async describeSecret(storeId: string, ref: string | null | undefined): Promise<FiscalSecretMetadata | null> {
+    const id = clean(storeId)
+    if (!id) throw new FiscalVaultError("store_invalida", "storeId é obrigatório.")
+    const name = clean(ref)
+    if (!name) return null
+    this.assertScope(id, name)
+    return {
+      ref: name,
+      storeId: id,
+      configurada: clean(this.env[name]) !== "",
+      kind: kindFromRef(name),
+      backend: ENV_VAULT_BACKEND,
+    }
+  }
+
+  /**
+   * Disponibilidade do EnvVault (GOAL-016C): a LEITURA sempre está disponível (envs de plataforma);
+   * escrita/rotação/revogação dependem de store mutável injetado (`allowWrite`) — no piloto real
+   * o provisionamento é manual e essas capacidades ficam desligadas (fail-closed, sem fingir).
+   */
+  async checkAvailability(): Promise<FiscalVaultAvailability> {
+    return {
+      disponivel: true,
+      backend: ENV_VAULT_BACKEND,
+      capacidades: {
+        leitura: true,
+        escrita: this.allowWrite,
+        rotacao: this.allowWrite,
+        revogacao: this.allowWrite,
+      },
+      mensagem: this.allowWrite
+        ? "EnvVault com store mutável (somente testes/dev)."
+        : "EnvVault do piloto: leitura por env de plataforma; escrita/rotação/revogação por provisionamento manual.",
+    }
+  }
+
+  /**
+   * Rotação (GOAL-016C): grava a NOVA versão e devolve as referências. As referências anteriores
+   * NÃO são revogadas aqui — quem chama troca o ponteiro (no banco) e só depois revoga a versão
+   * anterior, mantendo a janela "nova válida antes de quebrar a antiga".
+   *
+   * Limite honesto do piloto: as refs do EnvVault são canônicas por loja (estáveis entre
+   * versões), então a gravação substitui o valor da env no store mutável. Refs versionadas e
+   * DEK por versão (ADR-0014) são do provider KMS de produção, não deste backend.
+   */
+  async rotateCertificadoPfx(storeId: string, pfx: Buffer, senha: string): Promise<{ blobRef: string; senhaRef: string }> {
+    return this.putCertificadoPfx(storeId, pfx, senha)
   }
 }
 
