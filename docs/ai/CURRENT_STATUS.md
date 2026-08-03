@@ -353,6 +353,29 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
+**Governança de migrations Production — Classe C (03/08/2026)**
+- Auditoria read-only dos projetos Vercel `omni-gestao-pro` e `omni-gestao`, ambos
+  conectados ao mesmo repositório, à branch Production `main` e ao mesmo runner.
+- Os dois projetos mantêm aliases Production próprios, recebem o mesmo fluxo de
+  deployments e apontam para **`DIFFERENT_DATABASES`**. Não existe flag explícita,
+  validação de `VERCEL_PROJECT_ID` ou lock entre projetos antes de
+  `prisma migrate deploy`.
+- `omni-gestao-pro` é o candidato mais forte a canônico: aparece nos documentos e
+  smokes de Production e recebeu tráfego operacional recente de vendas/terminal.
+  A finalidade vigente de `omni-gestao` continua **UNKNOWN**; por isso, projeto e
+  banco canônicos dependem de decisão humana e nenhuma autoridade foi presumida.
+- Modelo recomendado após ratificação: **flag explícita + project ID exato**, com
+  `MIGRATION_RUN` somente no projeto autorizado e `MIGRATION_SKIPPED` em projeto
+  secundário, terceiro projeto, Preview, Development e local.
+- A `0016_add_sale_numbering_infrastructure` permanece aplicada provisoriamente nos
+  dois bancos. Não há dano comprovado e não se autoriza rollback sem catálogo,
+  ledger e contagens read-only.
+- **GOAL 002C segue bloqueado.** Próximo passo é decisão humana sobre projeto/banco
+  canônicos e destino do segundo ambiente; somente depois poderá existir o GOAL
+  `DEPLOY-PRODUCTION-MIGRATION-GOVERNANCE-GUARD-002`.
+- Relatório:
+  `docs/audits/DEPLOY_PRODUCTION_MIGRATION_GOVERNANCE_AUDIT_001.md`.
+
 **Auditoria Production da migration `0016` — Classe C (03/08/2026)**
 - O PR #34 foi integrado em `6a0d141` às 17:17 BRT. Os deployments Production de
   `omni-gestao-pro` (aplicação às 17:19:07 BRT) e `omni-gestao` (aplicação às
