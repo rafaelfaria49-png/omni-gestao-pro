@@ -18,6 +18,7 @@
     "test:fiscal-xsd:integration": "vitest run workers/fiscal-xsd/test/container.integration.test.ts",
     "test:fiscal-xsd:security": "vitest run workers/fiscal-xsd/test/container.security.test.ts",
     "test:fiscal-gate": "vitest run lib/fiscal/dry-run/dry-run-gate.test.ts",
+    "test:vendas-numeracao:integration": "vitest run lib/vendas/server-sale-numbering.integration.test.ts",
     "test:fiscal-c14n:external": "node scripts/fiscal/run-c14n-external-proof.mjs",
     "fiscal:c14n:proof": "npm run test:fiscal-c14n:external",
     "fiscal:xsd:verify-hashes": "node scripts/fiscal/verify-xsd-artifacts.mjs",

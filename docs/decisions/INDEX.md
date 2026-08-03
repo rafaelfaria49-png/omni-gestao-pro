@@ -2,7 +2,7 @@
 title: Decisões Arquiteturais (ADRs) — OmniGestão Pro
 status: vivo
 owner: produto/arquitetura
-last_update: 2026-07-23
+last_update: 2026-07-30
 ---
 
 # 🧭 Decisões Arquiteturais — Índice oficial
@@ -97,6 +97,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 | 0016 | SP e Matriz RafaCell como escopo da primeira homologação NFC-e (resolve Gate G-F5.1) | cross / fiscal | ✅ Aceita | 2026-07-22 | [`ADR-0016-piloto-homologacao-sp-matriz-rafacell.md`](./ADR-0016-piloto-homologacao-sp-matriz-rafacell.md) |
 | 0017 | Estado incerto e reconciliação obrigatória antes de retransmitir | cross / fiscal | ✅ Aceita | 2026-07-23 | [`ADR-0017-estado-incerto-reconciliacao-por-chave.md`](./ADR-0017-estado-incerto-reconciliacao-por-chave.md) |
 | 0018 | Persistência legal do XML assinado/autorizado e do protocolo NFC-e (coluna primária · imutável · espelho opcional) | cross / fiscal | ✅ Aceita | 2026-07-23 | [`ADR-0018-persistencia-legal-xml-e-protocolo.md`](./ADR-0018-persistencia-legal-xml-e-protocolo.md) |
+| 0019 | Numeração server-side de vendas por loja e ano | pdv / multi_loja | ✅ Aceita | 2026-07-30 | [`ADR-0019-numeracao-server-side-vendas.md`](./ADR-0019-numeracao-server-side-vendas.md) |
 
 > **Nota sobre o ADR legado:** `OS_ROUTE_OFICIAL.md` foi escrito antes desta convenção e não segue o template/naming atual. Mantido como histórico. Quando precisar ser referenciado, citar como **ADR-0001 (legado)**. Migração para o naming `ADR-0001-os-route-oficial.md` é uma tarefa **opcional** e exige autorização (renomear histórico pode quebrar links externos).
 
@@ -125,7 +126,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 > Quando houver ADRs suficientes, organizar por HUB aqui.
 
 - **Operações/OS:** ADR-0001 (legado)
-- **PDV:** —
+- **PDV:** ADR-0019 (numeração server-side por loja/ano)
 - **Financeiro:** —
 - **Estoque:** ADR-0007 (modelo de depósitos — aceita)
 - **Marketplace:** —
@@ -134,7 +135,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 - **Marketing IA:** —
 - **Omni Agent:** —
 - **BI:** —
-- **Multi-loja:** ADR-0003 (eliminar fallback `loja-1`) · ADR-0006 (router WhatsApp — aceita) · ADR-0007 (modelo de depósitos — aceita)
+- **Multi-loja:** ADR-0003 (eliminar fallback `loja-1`) · ADR-0006 (router WhatsApp — aceita) · ADR-0007 (modelo de depósitos — aceita) · ADR-0019 (numeração de vendas por loja/ano)
 - **Fiscal:** ADR-0008 (arquitetura oficial do módulo Fiscal — aceita) · ADR-0009 (contrato do cofre fiscal — aceita) · ADR-0010 (validação XSD em worker containerizado — aceita) · ADR-0011 (assinatura XMLDSig em RSA-SHA1/SHA-1, imposta pelo schema — aceita) · ADR-0012 (ST/CSOSN 500 no motor tributário — aceita) · ADR-0013 (gate executável do dry-run — aceita) · ADR-0014 (Supabase Vault em produção — aceita) · ADR-0015 (SEFAZ direta na homologação — aceita) · ADR-0016 (piloto Matriz/SP — aceita) · ADR-0017 (estado incerto/reconciliação — aceita) · ADR-0018 (persistência legal XML + protocolo — aceita)
 - **Governança:** ADR-0002 (congelamento Skill Front Matter v1) · ADR-0004 (SAFE-lite modo padrão)
 
