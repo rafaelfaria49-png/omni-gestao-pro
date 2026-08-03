@@ -72,6 +72,7 @@ import { findPdvProductByScan } from "@/lib/pdv-scan-product"
 import { lookupPdvScanRemote } from "@/lib/pdv-scan-lookup"
 import { filterPdvCatalogBySearch } from "@/lib/pdv-product-search"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
 import { useCaixa } from "../caixa/caixa-provider"
 import { useToast } from "@/hooks/use-toast"
 import { computePdvCartTotals } from "@/lib/pdv-cart-totals"
@@ -949,7 +950,8 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   const { data: session } = useSession()
   const operadorNomeAbertura = usePdvOperadorNome((lojaAtivaId ?? "").trim())
   const operatorLabel = operatorDisplayName({ aberturaNome: operadorNomeAbertura, session })
-  const { caixa } = useCaixa()
+  const { caixa, sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
   const storeIdKey = useMemo(
     () => (lojaAtivaId ?? "").trim(),
     [lojaAtivaId]
@@ -1370,12 +1372,11 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       })
       return
     }
-    if (!caixa.isOpen) {
-      toast({
-        title: "Caixa fechado",
-        description: "Abra o caixa antes de finalizar a venda.",
-        variant: "destructive",
-      })
+    // Caixa fechado na tela ou sem referência de sessão utilizável: reconsulta a
+    // sessão ativa da loja antes de recusar. Mesma regra dos demais PDVs — o
+    // carrinho é mantido e a venda não é enviada; o operador finaliza de novo.
+    if (!caixa.isOpen || !sessaoId?.trim()) {
+      void garantirSessao()
       return
     }
     const discountPct = subtotal > 0 ? (desconto / subtotal) * 100 : 0

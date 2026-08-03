@@ -15,6 +15,13 @@ import { readSelectedTerminal } from "@/lib/pdv-terminal"
 import { emitEvent } from "@/lib/events/event-bus"
 import { initAutomationEngineClient } from "@/lib/automation/automation-engine"
 import { registrarOperacaoCaixaServer } from "@/lib/pdv-caixa-operacao"
+import {
+  applyCaixaSessionDecision,
+  createSingleFlight,
+  isCaixaSessionRejectionCode,
+  reconcileCaixaSession,
+  type CaixaRefreshOutcome,
+} from "@/lib/pdv-caixa-session"
 import { toast } from "@/components/ui/use-toast"
 import type { AccessorySelectionV1, ProdutoAcessoriosMetadataV1 } from "@/lib/acessorios/types"
 import {
@@ -297,6 +304,14 @@ interface OperationsContextType {
   adicionarSaida: (valor: number) => void
   getSaldoAtual: () => number
   setCaixaSessaoId: (id: string | null) => void
+  /**
+   * Reconsulta a sessão de caixa ABERTA da loja atual e re-hidrata o estado local
+   * (servidor é a fonte da verdade). Substitui referência local obsoleta/ausente sem
+   * exigir fechar e abrir outro caixa. Nunca adota caixa de outra loja, nunca decide
+   * antes da hidratação do estado persistido, e não toca no carrinho nem na fila de
+   * vendas pendentes. Chamadas concorrentes compartilham a mesma consulta em voo.
+   */
+  refreshCaixaSession: () => Promise<CaixaRefreshOutcome>
   incrementOsAbertasDia: () => void
   getSaldoCreditoCliente: (cpf: string) => number
   finalizeSaleTransaction: (input: {
@@ -523,10 +538,35 @@ export function OperationsProvider({
   const stateRef = useRef(state)
   const lastSentOpsRef = useRef<string>("")
   const bootstrapDoneRef = useRef(false)
+  /**
+   * Hidratação do estado persistido, como sinal de COMMIT — não de ref.
+   *
+   * `bootstrapDoneRef` é marcado dentro do próprio efeito de bootstrap, então
+   * ainda vale para o commit em que `state` é o PADRÃO: os `setState` de
+   * restauração só aparecem no render seguinte. Quem decidir sobre o caixa
+   * apoiado nele enxerga "caixa fechado, sem sessão" e nunca o que estava
+   * guardado — a regressão A0. Este `useState` só fica preenchido num commit em
+   * que `state` (e, pelo efeito abaixo, `stateRef.current`) já está restaurado.
+   *
+   * Guarda a CHAVE hidratada, não um booleano: numa troca de loja o `storageKey`
+   * muda antes de o estado da nova loja ser restaurado, e um booleano continuaria
+   * `true` — reabrindo A0 justamente na troca de loja.
+   */
+  const [caixaHydratedFor, setCaixaHydratedFor] = useState<string | null>(null)
+  const caixaHydratedForRef = useRef<string | null>(null)
+  const storageKeyRef = useRef(storageKey)
+  const caixaHydrated = caixaHydratedFor === storageKey
 
   useEffect(() => {
     stateRef.current = state
-  }, [state])
+    // Espelhado no mesmo efeito que publica o estado: qualquer fluxo assíncrono
+    // que leia `caixaHydratedForRef` encontra `stateRef` já restaurado.
+    caixaHydratedForRef.current = caixaHydratedFor
+  }, [state, caixaHydratedFor])
+
+  useEffect(() => {
+    storageKeyRef.current = storageKey
+  }, [storageKey])
 
   useEffect(() => {
     try {
@@ -558,6 +598,9 @@ export function OperationsProvider({
       // ignore
     } finally {
       bootstrapDoneRef.current = true
+      // Enfileirado junto com os `setState` de restauração acima: o commit que
+      // marca esta chave como hidratada é o mesmo que traz o caixa restaurado.
+      setCaixaHydratedFor(storageKey)
     }
   }, [storageKey])
 
@@ -599,10 +642,12 @@ export function OperationsProvider({
   }, [storageKey])
 
   useEffect(() => {
-    if (!bootstrapDoneRef.current) return
+    // `caixaHydrated` (e não `bootstrapDoneRef`): antes da hidratação `state.caixa`
+    // ainda é o padrão, e gravar aqui sobrescreveria o snapshot guardado.
+    if (!caixaHydrated) return
     const lojaId = opsLojaIdFromStorageKey(storageKey)
     saveCaixaSnapshot(lojaId, state.caixa)
-  }, [state.caixa, storageKey])
+  }, [caixaHydrated, state.caixa, storageKey])
 
   useEffect(() => {
     setOpsDbReady(false)
@@ -710,57 +755,11 @@ export function OperationsProvider({
           })
         }
 
-        // Reconcilia sessão de caixa com o servidor (best-effort).
-        // Se o server tem sessão ABERTA mas o localStorage diz fechado (ou perdeu o sessaoId),
-        // restaura para evitar sessão órfã e duplicação de abertura.
-        try {
-          const rCaixa = await fetch(
-            `/api/ops/caixa/sessoes?lojaId=${encodeURIComponent(lj)}&status=ABERTA&take=1`,
-            { credentials: "include", headers }
-          )
-          if (!cancelled && rCaixa.ok) {
-            const jCaixa = (await rCaixa.json()) as {
-              sessoes?: Array<{ id: string; saldoInicial: number; abertaEm: string }>
-            }
-            const openSessao = jCaixa.sessoes?.[0] ?? null
-            const localCaixa = stateRef.current.caixa
-            if (openSessao && !localCaixa.isOpen) {
-              // Servidor tem sessão aberta, mas estado local diz fechado — recupera.
-              setState((prev) => ({
-                ...prev,
-                caixaSessaoId: openSessao.id,
-                caixa: {
-                  ...prev.caixa,
-                  isOpen: true,
-                  saldoInicial: openSessao.saldoInicial,
-                  dataAbertura: new Date(openSessao.abertaEm),
-                },
-              }))
-            } else if (!openSessao && localCaixa.isOpen) {
-              // Servidor NÃO tem sessão aberta, mas o estado local diz aberto:
-              // "caixa falso aberto" (ex.: abertura não confirmada no servidor, ou
-              // sessão fechada em outro dispositivo). O servidor é a fonte da verdade —
-              // fecha localmente para o operador não vender sem sessão.
-              // Seguro: este bloco só roda quando o servidor respondeu (rCaixa.ok) e
-              // inventory/ordens carregaram; offline aborta o loadDb antes daqui.
-              // Vendas locais pendentes NÃO são perdidas (continuam em syncPending).
-              setState((prev) => ({
-                ...prev,
-                caixaSessaoId: null,
-                caixa: {
-                  ...prev.caixa,
-                  isOpen: false,
-                  saldoInicial: 0,
-                  dataAbertura: null,
-                  totalEntradas: 0,
-                  totalSaidas: 0,
-                },
-              }))
-            }
-          }
-        } catch {
-          /* ignorar — reconciliação é best-effort */
-        }
+        // A reconciliação da sessão de caixa NÃO vive mais aqui. Ficava depois de
+        // `inventory`/`ordens`, então qualquer 4xx/5xx nessas duas rotas abortava
+        // `loadDb` antes de chegar no caixa e o estado local nunca era reconciliado.
+        // Agora roda em fluxo próprio — `refreshCaixaSession`, abaixo —, independente
+        // de estoque e de OS.
 
         // Reconcilia créditos do cliente com o servidor (best-effort).
         // DB é fonte de verdade: saldos conhecidos no DB sobrescrevem localStorage.
@@ -808,6 +807,84 @@ export function OperationsProvider({
       cancelled = true
     }
   }, [storageKey])
+
+  /**
+   * Reconcilia a sessão de caixa com o servidor — fonte da verdade.
+   *
+   * Independente de estoque/OS de propósito: antes, a reconciliação vivia dentro
+   * do `loadDb` e qualquer falha de `/api/ops/inventory` ou `/api/ops/ordens`
+   * deixava o caixa local desatualizado para sempre (PDV-CAIXA-SESSION-RECOVERY-001).
+   *
+   * Serializado por `createSingleFlight`: cliques repetidos em "Atualizar caixa"
+   * (ou o refresh automático coincidindo com o clique) compartilham a mesma
+   * consulta em voo, em vez de disparar N requisições e N decisões.
+   *
+   * Nunca toca no carrinho nem na fila de vendas (`sales`/`syncPending`): a
+   * recuperação do caixa não pode apagar, renumerar nem reenviar venda alguma.
+   */
+  const caixaSyncSingleFlightRef = useRef(createSingleFlight<CaixaRefreshOutcome>())
+
+  // Troca de loja invalida o serializador: a consulta em voo pertence à loja
+  // anterior e não pode ser reaproveitada como resposta da loja nova.
+  useEffect(() => {
+    caixaSyncSingleFlightRef.current = createSingleFlight<CaixaRefreshOutcome>()
+  }, [storageKey])
+
+  const refreshCaixaSession = useCallback(async (): Promise<CaixaRefreshOutcome> => {
+    const lj = opsLojaIdFromStorageKey(storageKey)
+    return caixaSyncSingleFlightRef.current(async () => {
+      const local = stateRef.current
+      const { outcome, decision } = await reconcileCaixaSession({
+        storeId: lj,
+        // Sessão de caixa é POR TERMINAL: sem este escopo a consulta devolvia a
+        // sessão mais recente da loja e o PDV1 passava a operar (e a fechar) a
+        // sessão do PDV2 — F-01 da readiness 002A. Lido na hora da consulta
+        // porque o operador pode trocar de terminal sem remontar o provider.
+        terminalId: readSelectedTerminal(lj)?.id ?? null,
+        // A0: antes da hidratação, `stateRef.current` ainda é o estado PADRÃO.
+        // Decidir aqui adotaria/sobrescreveria saldo com o caixa "fechado" que
+        // ninguém persistiu — e tornaria o fechamento inalcançável.
+        hydrated: caixaHydratedForRef.current === storageKey,
+        local: { isOpen: local.caixa.isOpen, sessaoId: local.caixaSessaoId },
+        fetchImpl: fetch,
+      })
+
+      // Consulta falhou (rede, HTTP, resposta inválida ou ainda não hidratado):
+      // nada muda no estado local — nunca fechar um caixa que pode estar aberto
+      // no servidor só porque a rede caiu.
+      if (!decision) return outcome
+
+      // A loja ativa mudou enquanto a consulta estava em voo: a resposta é de
+      // outra loja e não pode ser aplicada.
+      if (storageKeyRef.current !== storageKey) {
+        return { ok: false, status: "falha", reason: "loja-trocada" }
+      }
+
+      // Transição feita pelo módulo puro: `sales`, `devolucoes` e demais campos
+      // saem por referência — a fila de pendências não é tocada.
+      setState((prev) => applyCaixaSessionDecision(prev, decision))
+
+      return outcome
+    })
+  }, [storageKey])
+
+  // Reconciliação automática: montagem (só DEPOIS da hidratação), troca de loja,
+  // volta do foco e retorno da rede. Cobre F5, nova aba, novo login e reinício
+  // do computador. Não depende de `opsDbReady` — estoque/OS podem falhar.
+  useEffect(() => {
+    if (!caixaHydrated) return
+    void refreshCaixaSession()
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshCaixaSession()
+    }
+    const onOnline = () => void refreshCaixaSession()
+    document.addEventListener("visibilitychange", onVisible)
+    window.addEventListener("online", onOnline)
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible)
+      window.removeEventListener("online", onOnline)
+    }
+  }, [caixaHydrated, refreshCaixaSession])
 
   useEffect(() => {
     if (!opsDbReady) return
@@ -1591,6 +1668,13 @@ export function OperationsProvider({
                   ? SALE_IDENTITY_CONFLICT_GUIDANCE
                   : `${detail.slice(0, 200)} · Abra "Vendas" e use Reenviar sync para tentar novamente.`,
               })
+              // Recusa por sessão de caixa: a sessão pode ter sido fechada entre a
+              // checagem do PDV e a gravação. Reconsulta a sessão ativa para que a
+              // PRÓXIMA venda já saia certa. NÃO reenvia esta venda — ela fica em
+              // `syncPending` e só volta por ação do operador (evita duplicidade).
+              if (isCaixaSessionRejectionCode(code)) {
+                void refreshCaixaSession()
+              }
             }
           })
           .catch((err: unknown) => {
@@ -1604,7 +1688,7 @@ export function OperationsProvider({
       }
       return { ok: true, saleId }
     },
-    [storageKey]
+    [refreshCaixaSession, storageKey]
   )
 
   const registrarDevolucao = useCallback<OperationsContextType["registrarDevolucao"]>((input) => {
@@ -1829,6 +1913,7 @@ export function OperationsProvider({
       adicionarSaida,
       getSaldoAtual,
       setCaixaSessaoId,
+      refreshCaixaSession,
       incrementOsAbertasDia,
       getSaldoCreditoCliente,
       finalizeSaleTransaction,
@@ -1851,6 +1936,7 @@ export function OperationsProvider({
       adicionarSaida,
       getSaldoAtual,
       setCaixaSessaoId,
+      refreshCaixaSession,
       incrementOsAbertasDia,
       getSaldoCreditoCliente,
       finalizeSaleTransaction,

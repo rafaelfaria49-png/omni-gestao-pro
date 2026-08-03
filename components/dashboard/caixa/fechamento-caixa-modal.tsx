@@ -49,6 +49,7 @@ import { useLojaAtiva } from "@/lib/loja-ativa"
 import { operatorDisplayName } from "@/lib/pdv-operator-label"
 import { usePdvOperadorNome } from "@/lib/pdv-operador-nome"
 import { useTerminalAtivo } from "@/lib/pdv-terminal"
+import { activeCaixaSessionUrl } from "@/lib/pdv-caixa-session"
 import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import { escapeHtml, openThermalHtmlPrint } from "@/lib/thermal-print"
@@ -277,10 +278,12 @@ export function FechamentoCaixaModal({ isOpen, onClose }: FechamentoCaixaModalPr
       }
     }
 
-    // Reconciliação (Regra 5): busca a sessão ABERTA atual da loja no servidor.
+    // Reconciliação (Regra 5): busca a sessão ABERTA atual da loja E DESTE TERMINAL.
+    // Sem o escopo de terminal, um PDV sem `sessaoId` local fechava a sessão do
+    // outro PDV da mesma loja (mesma causa do F-01 da readiness 002A).
     const buscarSessaoAberta = async (): Promise<string | null> => {
       try {
-        const res = await fetch("/api/ops/caixa/sessoes?status=ABERTA&take=1", {
+        const res = await fetch(activeCaixaSessionUrl(lojaId, terminalId), {
           credentials: "include",
           cache: "no-store",
           headers: { "x-assistec-loja-id": lojaId },

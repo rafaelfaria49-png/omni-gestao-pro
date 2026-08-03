@@ -34,6 +34,8 @@ import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useToast } from "@/hooks/use-toast"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useCaixa } from "../caixa/caixa-provider"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
 import { useStoreSettings } from "@/lib/store-settings-provider"
@@ -180,7 +182,9 @@ export function PdvSupermercado({
   const { lojaAtivaId, opsStorageKey, empresaDocumentos, getEnderecoDocumentos } = useLojaAtiva()
   const { pdvParams, blob, save: saveStoreSettings, impressaoConfig } = useStoreSettings()
   const { inventory, setInventory, finalizeSaleTransaction, getSaldoCreditoCliente } = useOperationsStore()
-  
+  const { caixa, sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
+
   const [editAtalhosOpen, setEditAtalhosOpen] = useState(false)
 
   const lojaKey = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
@@ -563,6 +567,22 @@ export function PdvSupermercado({
     }
   }, [pdvParams.formasPagamento])
 
+  /**
+   * Caixa fechado na tela ou sem referência de sessão utilizável: reconsulta a
+   * sessão ativa da loja antes de abrir o pagamento. Mesma regra dos demais PDVs
+   * — o carrinho é mantido e a venda não é enviada; o operador finaliza de novo.
+   *
+   * Sem esta porta, a venda seguia até `venda-persist` e voltava recusada por
+   * `CAIXA_FECHADO`, ficando como pendência local (o cenário das pendências
+   * fantasmas).
+   */
+  const caixaProntoParaFinalizar = useCallback(() => {
+    if (caixa.isOpen && sessaoId?.trim()) return true
+    void garantirSessao()
+    hardFocusSearch()
+    return false
+  }, [caixa.isOpen, garantirSessao, hardFocusSearch, sessaoId])
+
   const openPaymentModal = useCallback(
     (intent: PaymentMethodType | null) => {
       if (cart.length === 0) {
@@ -570,11 +590,12 @@ export function PdvSupermercado({
         hardFocusSearch()
         return
       }
+      if (!caixaProntoParaFinalizar()) return
       setInstantPayIntent(intent)
       setMultipayMode(false)
       setIsPaymentModalOpen(true)
     },
-    [cart.length, hardFocusSearch, toast]
+    [caixaProntoParaFinalizar, cart.length, hardFocusSearch, toast]
   )
 
   /** Pagamento Múltiplo — convergência operacional com PDV Assistência (F12). */
@@ -584,10 +605,11 @@ export function PdvSupermercado({
       hardFocusSearch()
       return
     }
+    if (!caixaProntoParaFinalizar()) return
     setInstantPayIntent(null)
     setMultipayMode(true)
     setIsPaymentModalOpen(true)
-  }, [cart.length, hardFocusSearch, toast])
+  }, [caixaProntoParaFinalizar, cart.length, hardFocusSearch, toast])
 
   const confirmAttrDialog = useCallback(() => {
     if (!attrProduct) return

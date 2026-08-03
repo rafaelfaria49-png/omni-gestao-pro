@@ -45,6 +45,7 @@ import { useSession } from "next-auth/react"
 import { operatorDisplayName } from "@/lib/pdv-operator-label"
 import { usePdvOperadorNome } from "@/lib/pdv-operador-nome"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
 // useCaixa removido no Lote 4 — sangria/suprimento vivem no CaixaStatusBar.
 import { configPadrao, useConfigEmpresa } from "@/lib/config-empresa"
 import { useLojaAtiva } from "@/lib/loja-ativa"
@@ -232,6 +233,7 @@ export function PdvClassic({
     useLojaAtiva()
   const { pdvParams, impressaoConfig, settings, storeId } = useStoreSettings()
   const { caixa, sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
   const { mode: studioThemeMode } = useStudioTheme()
   const classicStudio = studioThemeMode === "classic"
   const lojaKey = lojaAtivaId ?? opsLojaIdFromStorageKey(opsStorageKey)
@@ -1253,28 +1255,19 @@ export function PdvClassic({
       return false
     }
 
-    if (!caixaState.isOpen) {
-      toast({
-        title: "Caixa fechado",
-        description: "Abra o caixa antes de finalizar a venda.",
-        variant: "destructive",
-      })
-      return false
-    }
-
-    if (!sessaoId?.trim()) {
-      toast({
-        title: "Sessão de caixa inválida",
-        description: "Sessão de caixa inválida. Abra ou atualize o caixa antes de finalizar.",
-        variant: "destructive",
-      })
+    // Caixa fechado na tela ou sem referência de sessão utilizável: reconsulta a
+    // sessão ativa da loja no servidor ANTES de recusar. O carrinho é mantido e
+    // a venda NÃO é enviada — recuperada a sessão, quem finaliza de novo é o
+    // operador (uma resposta inconclusiva nunca vira venda duplicada).
+    if (!caixaState.isOpen || !sessaoId?.trim()) {
+      void garantirSessao()
       return false
     }
 
     if (!validateCartAggregatedStock()) return false
 
     return true
-  }, [cart.length, caixa, sessaoId, toast, validateCartAggregatedStock])
+  }, [cart.length, caixa, garantirSessao, sessaoId, toast, validateCartAggregatedStock])
 
   const openPaymentFlow = useCallback(
     (intent: PaymentMethodType | null, multiple: boolean) => {
@@ -1315,12 +1308,9 @@ export function PdvClassic({
           setShellQtyEditOpen(true)
           break
         case "F5": {
+          // Mesma recuperação da finalização: reconsulta antes de recusar.
           if (!caixa.isOpen || !sessaoId?.trim()) {
-            toast({
-              variant: "destructive",
-              title: "Caixa fechado",
-              description: "Abra o caixa antes de receber contas.",
-            })
+            void garantirSessao()
             goBipe()
             return
           }
@@ -1339,11 +1329,7 @@ export function PdvClassic({
         case "F9":
           // Alias legado — mesmo fluxo do F5 (Receber conta).
           if (!caixa.isOpen || !sessaoId?.trim()) {
-            toast({
-              variant: "destructive",
-              title: "Caixa fechado",
-              description: "Abra o caixa antes de receber contas.",
-            })
+            void garantirSessao()
             goBipe()
             return
           }
@@ -1366,7 +1352,7 @@ export function PdvClassic({
           break
       }
     },
-    [cart.length, focusShellBipe, selectedCartLineId, toast, caixa.isOpen, sessaoId, openPaymentFlow]
+    [cart.length, focusShellBipe, garantirSessao, selectedCartLineId, toast, caixa.isOpen, sessaoId, openPaymentFlow]
   )
 
   useEffect(() => {

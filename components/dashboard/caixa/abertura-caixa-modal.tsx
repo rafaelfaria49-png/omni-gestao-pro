@@ -29,6 +29,10 @@ import { appendAuditLog } from "@/lib/audit-log"
 import { useToast } from "@/hooks/use-toast"
 import { escapeHtml, openThermalHtmlPrint } from "@/lib/thermal-print"
 import { useOperationsStore, type InventoryItem } from "@/lib/operations-store"
+import {
+  decideAberturaCaixa,
+  type AberturaCaixaServerResponse,
+} from "@/lib/pdv-caixa-session"
 
 /** Número de itens com divergência de estoque que dispara o toast de aviso. */
 const STOCK_DIFF_THRESHOLD = 3
@@ -83,89 +87,100 @@ export function AberturaCaixaModal({ isOpen, onClose }: AberturaCaixaModalProps)
     setAbrindo(true)
     try {
       const valor = parseFloat(saldoInicial) || 0
-      abrirCaixa(valor)
-
       const nomeOp = operador.trim()
       const nomeLoja = (empresaDocumentos.nomeFantasia || "Loja").trim() || "Administrador"
       const agora = new Date()
       const obsTrim = observacao.trim()
 
+      // ── 1. Registrar sessão no servidor ───────────────────────────────────
+      // O servidor decide PRIMEIRO. O estado local só é marcado como aberto
+      // depois de uma resposta 2xx com `sessaoId` válido.
+      //
+      // Antes, `abrirCaixa(valor)` rodava aqui no topo: uma falha de rede, um
+      // 401/403 ou uma resposta sem `sessaoId` deixavam o cliente em
+      // `isOpen: true` + `sessaoId: null` — "Caixa Aberto" na tela e toda venda
+      // recusada com "Sessão de caixa inválida", virando pendência fantasma.
+      // Essa é a causa produtora do incidente PDV-CAIXA-SESSION-RECOVERY.
+      if (!lojaAtivaId) {
+        toast({
+          variant: "destructive",
+          title: "Loja não identificada",
+          description: "Selecione a unidade antes de abrir o caixa.",
+        })
+        return
+      }
+
+      let resposta: Parameters<typeof decideAberturaCaixa>[0]["resposta"]
+      try {
+        const res = await fetch("/api/ops/caixa/abrir", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            "x-assistec-loja-id": lojaAtivaId,
+          },
+          body: JSON.stringify({
+            saldoInicial: valor,
+            operador: nomeOp,
+            observacao: obsTrim,
+            ...(terminal?.id ? { terminalId: terminal.id } : {}),
+          }),
+        })
+        resposta = res.ok
+          ? { ok: true, body: (await res.json()) as AberturaCaixaServerResponse }
+          : { ok: false, reason: "http", status: res.status }
+      } catch (err: unknown) {
+        console.error("[caixa/abrir] server:", err)
+        resposta = { ok: false, reason: "rede" }
+      }
+
+      const decisao = decideAberturaCaixa({
+        saldoDigitado: valor,
+        operadorDigitado: nomeOp,
+        resposta,
+      })
+
+      if (decisao.action === "recusar") {
+        console.error("[caixa/abrir] recusado:", decisao.reason, decisao.status ?? "")
+        toast({
+          variant: "destructive",
+          title: "Caixa não foi aberto",
+          description:
+            decisao.reason === "rede"
+              ? "Sem resposta do servidor. O caixa continua fechado neste dispositivo — verifique a conexão e tente de novo."
+              : decisao.reason === "http"
+                ? `O servidor recusou a abertura (HTTP ${decisao.status}). Nada foi alterado — tente de novo.`
+                : "O servidor respondeu sem identificar a sessão. Nada foi alterado — tente de novo.",
+        })
+        return
+      }
+
+      // ── 2. Confirmado pelo servidor: só agora o estado local abre ─────────
+      const sid = decisao.sessaoId
+      const saldoConfirmado = decisao.saldoInicial
+      const operadorDaSessao = decisao.operador
+
+      abrirCaixa(saldoConfirmado)
+      setSessaoId(sid)
+
       // Fonte oficial de EXIBIÇÃO do operador (PDV/caixa/comprovantes). Espelha o
       // que será gravado em `SessaoCaixa.operador`. Vazio → cai para a sessão.
-      setPdvOperadorNome(lojaAtivaId, nomeOp)
+      setPdvOperadorNome(lojaAtivaId, operadorDaSessao)
 
       appendAuditLog({
         action: "caixa_aberto",
-        userLabel: `${nomeLoja} (sessão local)`,
-        detail: `Saldo inicial ${fmt(valor)}${nomeOp ? ` | Operador: ${nomeOp}` : ""}${obsTrim ? ` | Obs: ${obsTrim}` : ""}`,
+        userLabel: `${nomeLoja} (sessão ${sid})`,
+        detail: `Saldo inicial ${fmt(saldoConfirmado)}${operadorDaSessao ? ` | Operador: ${operadorDaSessao}` : ""}${obsTrim ? ` | Obs: ${obsTrim}` : ""}`,
       })
 
-      // ── 1. Registrar sessão no servidor ───────────────────────────────────
-      let sid: string | undefined
-      let serverRegistered = false
-      if (lojaAtivaId) {
-        try {
-          const res = await fetch("/api/ops/caixa/abrir", {
-            method: "POST",
-            credentials: "include",
-            headers: {
-              "Content-Type": "application/json",
-              "x-assistec-loja-id": lojaAtivaId,
-            },
-            body: JSON.stringify({
-              saldoInicial: valor,
-              operador: nomeOp,
-              observacao: obsTrim,
-              ...(terminal?.id ? { terminalId: terminal.id } : {}),
-            }),
-          })
-          if (res.ok) {
-            const data = (await res.json()) as {
-              sessaoId?: string
-              alreadyOpen?: boolean
-              sessao?: { saldoInicial?: number; operador?: string }
-            }
-            if (data.sessaoId) {
-              sid = data.sessaoId
-              setSessaoId(data.sessaoId)
-              serverRegistered = true
-              if (data.alreadyOpen) {
-                // Já havia caixa aberto no servidor: adota a sessão e o saldo
-                // existentes (evita duas sessões e divergência de saldo local).
-                const saldoExistente =
-                  typeof data.sessao?.saldoInicial === "number" ? data.sessao.saldoInicial : valor
-                abrirCaixa(saldoExistente)
-                // Exibe o operador que realmente abriu a sessão (não o digitado agora).
-                if (data.sessao?.operador?.trim()) {
-                  setPdvOperadorNome(lojaAtivaId, data.sessao.operador)
-                }
-                toast({
-                  title: "Caixa já estava aberto",
-                  description: "Recuperamos a sessão atual do servidor — use este caixa.",
-                })
-              }
-            }
-          } else {
-            console.error("[caixa/abrir] server HTTP:", res.status)
-          }
-        } catch (err: unknown) {
-          console.error("[caixa/abrir] server:", err)
-        }
-      }
-
-      // Não falhar em silêncio: o caixa abriu localmente, mas o operador precisa
-      // saber que a sessão não foi registrada no servidor (vendas persistem mesmo
-      // assim e o fechamento cria sessão retroativa).
-      if (lojaAtivaId && !serverRegistered) {
+      if (decisao.jaEstavaAberto) {
         toast({
-          variant: "destructive",
-          title: "Caixa aberto localmente",
-          description:
-            "Sessão não confirmada no servidor — verifique a conexão. As vendas continuam sendo salvas e reenviadas automaticamente.",
+          title: "Caixa já estava aberto",
+          description: "Recuperamos a sessão atual do servidor — use este caixa.",
         })
       }
 
-      // ── 2. Reconciliação de estoque ────────────────────────────────────────
+      // ── 3. Reconciliação de estoque ────────────────────────────────────────
       if (lojaAtivaId) {
         try {
           const invRes = await fetch(
@@ -202,10 +217,11 @@ export function AberturaCaixaModal({ isOpen, onClose }: AberturaCaixaModalProps)
         }
       }
 
+      // Comprovante espelha o que o servidor confirmou, não o que foi digitado.
       setComprovante({
         hora: fmtDateTime(agora),
-        saldo: valor,
-        operador: nomeOp,
+        saldo: saldoConfirmado,
+        operador: operadorDaSessao,
         loja: nomeLoja,
         sessaoId: sid,
         observacao: obsTrim || undefined,
