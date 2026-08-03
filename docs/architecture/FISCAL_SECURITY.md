@@ -69,6 +69,19 @@ Mapeia o enum `CertificadoStatus`. Regras:
 > **Piloto/homologação:** `EnvVault`, conforme ADR-0009 D2.
 > **Produção/escala:** `SupabaseVaultStorageVault`, conforme ADR-0014, substituindo a escolha
 > genérica da ADR-0009 D3. A troca de backend não muda schema nem callers.
+>
+> **Estado de implementação (GOAL-016C, branch `fiscal/goal-016c-secret-provider-custodia-a1`):**
+> o port cobre o ciclo completo — `get*`, `put*`, `revoke`, `describeSecret` (metadados sem
+> segredo), `checkAvailability` (disponibilidade/capacidades) e `rotateCertificadoPfx` (nova
+> versão sem tocar refs anteriores). `resolveFiscalSecretProvider` é o ponto único de decisão de
+> backend: `env` ⇒ EnvVault; provider declarado e não implementado ⇒ **indisponível fail-closed,
+> sem fallback**. O serviço `certificado-custodia-service` orquestra armazenar/rotacionar/
+> revogar/descrever: a rotação valida e grava a nova versão ANTES da troca do ponteiro e revoga a
+> anterior só APÓS a confirmação; falha na troca descarta a versão nova e mantém a anterior.
+> Endpoints: `POST /api/fiscal/onboarding/certificado/custodia`,
+> `POST /api/fiscal/certificado/[id]/rotacionar` e `revogar` no PATCH do certificado. No piloto
+> (EnvVault sem store mutável), escrita/rotação/revogação respondem fail-closed e a custódia segue
+> por provisionamento manual das envs.
 
 ### 3.1 Hierarquia criptográfica de produção
 

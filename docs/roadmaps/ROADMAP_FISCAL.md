@@ -245,6 +245,23 @@ sem caller no fluxo de venda e o banco fiscal está vazio.
 
 ## 11. Sprint atual
 
+**GOAL-016C (`FISCAL-GOAL-016C-SECRET-PROVIDER-CUSTODIA-A1-001`) IMPLEMENTADO na branch
+`fiscal/goal-016c-secret-provider-custodia-a1`** — contrato server-only do Secret Provider
+completado sobre o port `FiscalSecretVault` (ADR-0009 D1) com `describeSecret`,
+`checkAvailability` e `rotateCertificadoPfx`; resolver único de backend
+(`resolveFiscalSecretProvider` — `env` no piloto; provider declarado não implementado ⇒
+indisponível fail-closed, sem fallback); serviço de custódia A1
+(`certificado-custodia-service`) com armazenar/rotacionar/revogar/descrever — rotação valida e
+grava a nova versão ANTES de trocar o ponteiro e revoga a anterior só APÓS a confirmação;
+endpoints `POST /api/fiscal/onboarding/certificado/custodia` (upload → valida → cofre → refs
+opacas, `PENDENTE_VALIDACAO`+inativo), `POST /api/fiscal/certificado/[id]/rotacionar` e fluxo
+`revogar` no `PATCH /api/fiscal/certificado/[id]`; GETs expõem bloco `cofre`
+(provider/disponibilidade/capacidades) e `atualizadoEm`. Pipeline **dormente**: `fiscalEnabled`
+intocado, zero emissão/SEFAZ, zero schema/migration; no piloto (EnvVault sem escrita) a custódia
+automática responde 503 fail-closed e o provisionamento manual segue valendo. **Não integrado à
+main**: aguarda revisão independente e gate humano. Próximo gate esperado:
+`FISCAL-GOAL-016D-SEFAZ-ADAPTER-HOMOLOGACAO`, somente após aprovação humana da custódia.
+
 **GOAL-009 conclui somente a decisão arquitetural.** ADR-0014/0015/0016 estão aceitas; o cofre,
 o provider e os recursos Supabase/SEFAZ continuam não implementados e não provisionados. Produção,
 `tpAmb=1` e emissão fiscal real permanecem bloqueados.
