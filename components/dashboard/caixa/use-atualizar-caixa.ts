@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react"
 import { useCaixa } from "./caixa-provider"
 import { useToast } from "@/hooks/use-toast"
-import type { CaixaRefreshOutcome } from "@/lib/pdv-caixa-session"
+import { isCaixaProntoParaFinalizar, type CaixaRefreshOutcome } from "@/lib/pdv-caixa-session"
 
 /**
  * Ação "Atualizar caixa" — única em todos os PDVs.
@@ -82,6 +82,16 @@ export function useAtualizarCaixa(contexto: "manual" | "finalizacao" = "manual")
         return outcome
       }
 
+      if (outcome.status === "outro-terminal") {
+        toast({
+          variant: "destructive",
+          title: "Caixa de outro terminal",
+          description:
+            "O caixa aberto pertence a outro PDV desta loja. Abra o caixa deste terminal — o carrinho foi mantido.",
+        })
+        return outcome
+      }
+
       toast({
         variant: "destructive",
         title: "Nenhum caixa aberto",
@@ -110,7 +120,7 @@ export function useGarantirSessaoCaixa() {
   const { atualizando, atualizarCaixa } = useAtualizarCaixa("finalizacao")
 
   const garantirSessao = useCallback(async (): Promise<"ok" | "recuperada" | "bloqueada"> => {
-    if (caixa.isOpen && sessaoId?.trim()) return "ok"
+    if (isCaixaProntoParaFinalizar({ isOpen: caixa.isOpen, sessaoId })) return "ok"
 
     const outcome = await atualizarCaixa()
     if (outcome?.ok && (outcome.status === "adotada" || outcome.status === "em-sincronia")) {

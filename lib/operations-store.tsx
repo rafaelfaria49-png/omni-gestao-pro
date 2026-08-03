@@ -836,6 +836,11 @@ export function OperationsProvider({
       const local = stateRef.current
       const { outcome, decision } = await reconcileCaixaSession({
         storeId: lj,
+        // Sessão de caixa é POR TERMINAL: sem este escopo a consulta devolvia a
+        // sessão mais recente da loja e o PDV1 passava a operar (e a fechar) a
+        // sessão do PDV2 — F-01 da readiness 002A. Lido na hora da consulta
+        // porque o operador pode trocar de terminal sem remontar o provider.
+        terminalId: readSelectedTerminal(lj)?.id ?? null,
         // A0: antes da hidratação, `stateRef.current` ainda é o estado PADRÃO.
         // Decidir aqui adotaria/sobrescreveria saldo com o caixa "fechado" que
         // ninguém persistiu — e tornaria o fechamento inalcançável.

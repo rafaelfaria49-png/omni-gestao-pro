@@ -14,6 +14,11 @@ export type ServerCaixaSession = {
   id: string
   /** Loja dona da sessão. Ausente em respostas legadas — ver `decideCaixaSessionSync`. */
   storeId?: string | null
+  /**
+   * Terminal (PDV1, PDV2…) que abriu a sessão. `null` = sessão sem terminal
+   * (loja que opera sem seleção de terminal, ou sessão anterior ao multi-terminal).
+   */
+  terminalId?: string | null
   saldoInicial: number
   abertaEm: string
 }
@@ -37,6 +42,8 @@ export type CaixaKeepReason =
   | "sem-sessao-em-ambos"
   /** Servidor respondeu com sessão de OUTRA loja: nunca adotar, nunca fechar às cegas. */
   | "sessao-de-outra-loja"
+  /** Servidor respondeu com sessão de OUTRO terminal da mesma loja: nunca adotar. */
+  | "sessao-de-outro-terminal"
 
 export type CaixaSessionDecision =
   | {
@@ -81,20 +88,44 @@ export function isCaixaReferenceStale(local: LocalCaixaReference): boolean {
 }
 
 /**
+ * Porta única de pré-pagamento de TODOS os PDVs: caixa aberto **e** referência
+ * de sessão utilizável. Sem `sessaoId` a venda é recusada pelo servidor
+ * (`CAIXA_FECHADO`) e vira pendência local — o cenário das pendências fantasmas.
+ */
+export function isCaixaProntoParaFinalizar(local: LocalCaixaReference): boolean {
+  return local.isOpen && !!trimmed(local.sessaoId)
+}
+
+/**
  * Decide o que fazer com o estado local de caixa diante da sessão ativa do servidor.
  *
  * Regras:
- * - servidor com sessão da loja atual vence sempre que a referência local não
- *   corresponde a ela (ausente, obsoleta, ou cliente achando que está fechado);
- * - servidor sem sessão aberta fecha o caixa local (não se vende sem sessão);
+ * - servidor com sessão da loja **e do terminal atual** vence sempre que a
+ *   referência local não corresponde a ela (ausente, obsoleta, ou cliente
+ *   achando que está fechado);
+ * - servidor sem sessão aberta para este terminal fecha o caixa local (não se
+ *   vende sem sessão);
  * - sessão de outra loja nunca é adotada — e também não fecha o caixa local,
- *   porque a resposta é inconsistente com a loja consultada.
+ *   porque a resposta é inconsistente com a loja consultada;
+ * - sessão de OUTRO terminal da mesma loja também nunca é adotada. Sessões de
+ *   caixa são por terminal (`SessaoCaixa.terminalId`, guard de `POST
+ *   /api/ops/caixa/abrir` e resolução de sessão em `lib/ops-upsert-venda.ts`):
+ *   uma loja com PDV1 e PDV2 abertos tem DUAS sessões ABERTAS legítimas, e
+ *   adotar a mais recente jogava as vendas do PDV1 no fechamento do PDV2
+ *   (F-01 da readiness PDV-CAIXA-SESSION-RECOVERY-SPLIT-READINESS-002A).
+ *
+ * Compatibilidade: quando um dos lados **não tem terminal** (cliente que pulou o
+ * gate de terminal, ou sessão aberta sem `terminalId`), o escopo volta a ser o
+ * da loja — é exatamente como o servidor resolve abertura e venda sem
+ * `terminalId`. A guarda só recusa quando os DOIS lados têm terminal e divergem.
  *
  * O chamador é responsável por só entregar aqui um `local` JÁ HIDRATADO do
  * armazenamento persistido — ver `reconcileCaixaSession`.
  */
 export function decideCaixaSessionSync(input: {
   storeId: string
+  /** Terminal ativo neste navegador (`null` quando a loja opera sem terminal). */
+  terminalId?: string | null
   local: LocalCaixaReference
   server: ServerCaixaSession | null
 }): CaixaSessionDecision {
@@ -110,6 +141,12 @@ export function decideCaixaSessionSync(input: {
   const serverStoreId = trimmed(server.storeId)
   if (serverStoreId && serverStoreId !== trimmed(storeId)) {
     return { action: "keep", reason: "sessao-de-outra-loja" }
+  }
+
+  const terminalAtual = trimmed(input.terminalId)
+  const serverTerminalId = trimmed(server.terminalId)
+  if (terminalAtual && serverTerminalId && serverTerminalId !== terminalAtual) {
+    return { action: "keep", reason: "sessao-de-outro-terminal" }
   }
 
   if (!local.isOpen) {
@@ -173,6 +210,7 @@ export type CaixaRefreshOutcome =
   | { ok: true; status: "em-sincronia"; sessaoId: string }
   | { ok: true; status: "sem-caixa-aberto" }
   | { ok: true; status: "outra-loja" }
+  | { ok: true; status: "outro-terminal" }
   | { ok: false; status: "falha"; reason: CaixaRefreshFailureReason }
 
 /**
@@ -195,24 +233,35 @@ function parseServerSession(raw: unknown): ServerCaixaSession | null {
   return {
     id,
     storeId: typeof s.storeId === "string" ? s.storeId : null,
+    terminalId: typeof s.terminalId === "string" ? s.terminalId : null,
     saldoInicial: Number(s.saldoInicial) || 0,
     abertaEm,
   }
 }
 
-/** URL canônica da sessão ativa da loja (a mais recente ABERTA, sem filtro de terminal). */
-export function activeCaixaSessionUrl(lojaId: string): string {
-  return `/api/ops/caixa/sessoes?lojaId=${encodeURIComponent(lojaId)}&status=ABERTA&take=1`
+/**
+ * URL canônica da sessão ativa: a mais recente ABERTA da loja **e do terminal**.
+ *
+ * O `terminalId` é obrigatório sempre que houver terminal selecionado — sem ele
+ * a consulta devolve a sessão mais recente da loja, que pode ser a de outro PDV
+ * (F-01). Sem terminal selecionado a consulta continua no escopo da loja, que é
+ * como o servidor resolve abertura e venda sem `terminalId`.
+ */
+export function activeCaixaSessionUrl(lojaId: string, terminalId?: string | null): string {
+  const base = `/api/ops/caixa/sessoes?lojaId=${encodeURIComponent(lojaId)}&status=ABERTA&take=1`
+  const tid = trimmed(terminalId)
+  return tid ? `${base}&terminalId=${encodeURIComponent(tid)}` : base
 }
 
-/** Consulta a sessão de caixa ABERTA da loja. `fetchImpl` injetável para teste. */
+/** Consulta a sessão de caixa ABERTA da loja/terminal. `fetchImpl` injetável para teste. */
 export async function fetchActiveCaixaSession(
   lojaId: string,
   fetchImpl: typeof fetch,
+  terminalId?: string | null,
 ): Promise<CaixaSessionFetchResult> {
   let res: Response
   try {
-    res = await fetchImpl(activeCaixaSessionUrl(lojaId), {
+    res = await fetchImpl(activeCaixaSessionUrl(lojaId, terminalId), {
       credentials: "include",
       headers: {
         "Content-Type": "application/json",
@@ -251,6 +300,11 @@ export async function fetchActiveCaixaSession(
  */
 export async function reconcileCaixaSession(params: {
   storeId: string
+  /**
+   * Terminal ativo deste navegador. Vai na consulta e na decisão: sem ele o PDV1
+   * era reapontado para a sessão do PDV2 da mesma loja (F-01).
+   */
+  terminalId?: string | null
   local: LocalCaixaReference
   fetchImpl: typeof fetch
   /** `true` somente depois que o estado persistido do caixa foi restaurado. */
@@ -260,13 +314,18 @@ export async function reconcileCaixaSession(params: {
     return { outcome: { ok: false, status: "falha", reason: "nao-hidratado" }, decision: null }
   }
 
-  const fetched = await fetchActiveCaixaSession(params.storeId, params.fetchImpl)
+  const fetched = await fetchActiveCaixaSession(
+    params.storeId,
+    params.fetchImpl,
+    params.terminalId,
+  )
   if (!fetched.ok) {
     return { outcome: { ok: false, status: "falha", reason: fetched.reason }, decision: null }
   }
 
   const decision = decideCaixaSessionSync({
     storeId: params.storeId,
+    terminalId: params.terminalId,
     local: params.local,
     server: fetched.sessao,
   })
@@ -290,6 +349,9 @@ export async function reconcileCaixaSession(params: {
 
   if (decision.reason === "sessao-de-outra-loja") {
     return { outcome: { ok: true, status: "outra-loja" }, decision }
+  }
+  if (decision.reason === "sessao-de-outro-terminal") {
+    return { outcome: { ok: true, status: "outro-terminal" }, decision }
   }
   if (decision.reason === "sem-sessao-em-ambos") {
     return { outcome: { ok: true, status: "sem-caixa-aberto" }, decision }
