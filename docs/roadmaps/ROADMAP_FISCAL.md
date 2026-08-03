@@ -245,6 +245,54 @@ sem caller no fluxo de venda e o banco fiscal está vazio.
 
 ## 11. Sprint atual
 
+**GOAL-016C (`FISCAL-GOAL-016C-SECRET-PROVIDER-CUSTODIA-A1-001`) IMPLEMENTADO na branch
+`fiscal/goal-016c-secret-provider-custodia-a1`** — contrato server-only do Secret Provider
+completado sobre o port `FiscalSecretVault` (ADR-0009 D1) com `describeSecret`,
+`checkAvailability` e `rotateCertificadoPfx`; resolver único de backend
+(`resolveFiscalSecretProvider` — `env` no piloto; provider declarado não implementado ⇒
+indisponível fail-closed, sem fallback); serviço de custódia A1
+(`certificado-custodia-service`) com armazenar/rotacionar/revogar/descrever — rotação valida e
+grava a nova versão ANTES de trocar o ponteiro e revoga a anterior só APÓS a confirmação;
+endpoints `POST /api/fiscal/onboarding/certificado/custodia` (upload → valida → cofre → refs
+opacas, `PENDENTE_VALIDACAO`+inativo), `POST /api/fiscal/certificado/[id]/rotacionar` e fluxo
+`revogar` no `PATCH /api/fiscal/certificado/[id]`; GETs expõem bloco `cofre`
+(provider/disponibilidade/capacidades) e `atualizadoEm`. Pipeline **dormente**: `fiscalEnabled`
+intocado, zero emissão/SEFAZ, zero schema/migration; no piloto (EnvVault sem escrita) a custódia
+automática responde 503 fail-closed e o provisionamento manual segue valendo. **Não integrado à
+main**: aguarda revisão independente e gate humano. Próximo gate esperado:
+`FISCAL-GOAL-016D-SEFAZ-ADAPTER-HOMOLOGACAO`, somente após aprovação humana da custódia.
+
+### Pré-requisitos duros do provider gravável
+
+Correções da revisão independente do PR #33 (`FISCAL-PR33-CONDITIONS-CORRECTION-002`): a garantia
+de rollback é **do backend**, não do serviço. O EnvVault usa **referência canônica por loja** (um
+slot por unidade, não por certificado nem por versão) e grava **in-place** — não há versão anterior
+a preservar. Por isso escrita, rotação e revogação automáticas permanecem **fail-closed** no piloto.
+
+Nenhum provider **gravável** entra em nenhum ambiente antes de TODOS os itens abaixo estarem
+satisfeitos e testados. Cada item é bloqueante e independente:
+
+1. **Referências versionadas por certificado e por versão.** Cada versão recebe ref própria,
+   distinta da anterior, com versões imutáveis (ADR-0014 §2.1) e DEK por versão.
+2. **Proibição de slots estáveis compartilhados.** É vedado provider cuja referência seja derivada
+   apenas de `(tipo, storeId)`. Duas linhas de `CertificadoDigital` da mesma unidade **nunca** podem
+   endereçar o mesmo material.
+3. **Bloqueio do cenário "ativo com outra fingerprint".** Armazenar um certificado enquanto a
+   unidade tem outro ATIVO de fingerprint diferente precisa ser recusado ANTES do cofre (hoje:
+   409 `certificado_ativo_divergente_use_rotacao`). Regressão nesse ponto substitui em silêncio o
+   segredo em uso.
+4. **Rollback testável.** Falha na troca do ponteiro precisa descartar a versão nova e deixar a
+   anterior servindo, provado por teste — não por comentário. Enquanto o backend não entregar isso,
+   o resultado declara `materialAnterior: "substituido_sem_rollback"`.
+5. **Revisão de concorrência entre custódia, rotação e revogação.** Com refs versionadas a guarda
+   otimista `where { blobRef, senhaRef }` volta a ter efeito (hoje, com refs estáveis, ela é
+   no-op: as refs novas são iguais às anteriores). Exige cobertura de: duas rotações simultâneas,
+   rotação concorrente com revogação, e custódia concorrente com rotação.
+6. **Semântica de revogação preservada.** Revogação **lógica** (status `REVOGADO` + `ativo:false`)
+   é sempre aplicada e independe do provider — é ela que garante o fail-closed da assinatura. A
+   **remoção física** é ato separado, condicional, e nunca executada nem sugerida quando o material
+   ainda é referenciado por outra linha viva da unidade.
+
 **GOAL-009 conclui somente a decisão arquitetural.** ADR-0014/0015/0016 estão aceitas; o cofre,
 o provider e os recursos Supabase/SEFAZ continuam não implementados e não provisionados. Produção,
 `tpAmb=1` e emissão fiscal real permanecem bloqueados.

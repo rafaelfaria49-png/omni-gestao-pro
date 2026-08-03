@@ -14,7 +14,7 @@ import { storeIdFromAssistecRequestForRead, storeIdFromAssistecRequestForWrite }
 import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { recordFiscalAdminLog } from "@/lib/fiscal/fiscal-log"
 import { isValidCnpj, onlyDigits } from "@/lib/fiscal/fiscal-validators"
-import { calcularAlertaVencimento } from "@/lib/fiscal/vault"
+import { calcularAlertaVencimento, resolveFiscalSecretProvider } from "@/lib/fiscal/vault"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -46,7 +46,8 @@ function parseDate(raw: string | undefined): Date | null {
 }
 
 /**
- * Lista os certificados da loja com STATUS + ALERTA ESTRUTURADO DE VENCIMENTO (GOAL-008 · itens 7/8).
+ * Lista os certificados da loja com STATUS + ALERTA ESTRUTURADO DE VENCIMENTO (GOAL-008 · itens 7/8)
+ * + bloco `cofre` com provider e disponibilidade do Secret Provider (GOAL-016C).
  * Somente ADMIN, read-only, multi-loja. NUNCA retorna segredo — só metadados + flags de configuração.
  */
 export async function GET(req: Request) {
@@ -60,13 +61,20 @@ export async function GET(req: Request) {
       select: {
         id: true, apelido: true, tipo: true, titularCn: true, cnpjTitular: true,
         serialNumber: true, fingerprint: true, validoDe: true, validoAte: true,
-        status: true, ativo: true, blobRef: true, senhaRef: true, createdAt: true,
+        status: true, ativo: true, blobRef: true, senhaRef: true, createdAt: true, updatedAt: true,
       },
       orderBy: [{ ativo: "desc" }, { createdAt: "desc" }],
     })
     const agora = new Date()
+    const provider = resolveFiscalSecretProvider()
     return NextResponse.json({
       ok: true,
+      cofre: {
+        provider: provider.provider,
+        disponivel: provider.availability.disponivel,
+        capacidades: provider.availability.capacidades,
+        mensagem: provider.availability.mensagem,
+      },
       certificados: certs.map((c) => ({
         id: c.id, apelido: c.apelido, tipo: c.tipo, titularCn: c.titularCn,
         cnpjTitular: c.cnpjTitular, serialNumber: c.serialNumber, fingerprint: c.fingerprint,
@@ -78,6 +86,8 @@ export async function GET(req: Request) {
         senhaConfigured: Boolean((c.senhaRef || "").trim()),
         alerta: calcularAlertaVencimento(c.validoAte, agora),
         createdAt: c.createdAt.toISOString(),
+        /** Última alteração da linha (validação, ativação, rotação, revogação). */
+        atualizadoEm: c.updatedAt.toISOString(),
       })),
     })
   } catch (e) {

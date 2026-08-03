@@ -16,6 +16,7 @@ import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { recordFiscalAdminLog, type FiscalLogAcao } from "@/lib/fiscal/fiscal-log"
 import { createEnvVault, validarCertificadoLoja, type CertificadoValidacao } from "@/lib/fiscal/vault"
+import { resolveFiscalSecretProvider, revogarSegredosCertificado } from "@/lib/fiscal/vault"
 import { CertificadoStatus, type Prisma } from "@/generated/prisma"
 
 export const runtime = "nodejs"
@@ -30,6 +31,17 @@ const patchSchema = z.object({
   ativo: z.boolean().optional(),
   /** Roda a validação do certificado sem ativar (atualiza status para refletir a realidade). */
   validar: z.boolean().optional(),
+  /**
+   * Revoga o certificado (GOAL-016C · ADR-0009 D8). São DOIS atos distintos, nunca confundidos:
+   *  - revogação LÓGICA (sempre aplicada): status REVOGADO + `ativo:false` ⇒ fail-closed imediato
+   *    para assinatura/emissão;
+   *  - remoção FÍSICA do material no cofre (condicional): só quando o provider revoga, a
+   *    verificação de compartilhamento é conclusiva E nenhuma outra linha viva da unidade depende
+   *    do mesmo material. A resposta diz exatamente o que foi e o que não foi executado.
+   * Falha na verificação ou no cofre NÃO derruba a revogação lógica nem vira 500.
+   * Documentos já autorizados permanecem; a revogação só afeta emissões futuras.
+   */
+  revogar: z.boolean().optional(),
   apelido: z.string().trim().max(120).optional(),
   blobRef: z.string().trim().max(300).nullable().optional(),
   senhaRef: z.string().trim().max(200).nullable().optional(),
@@ -91,6 +103,19 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
 
     // ── Fluxo 1: ATIVAÇÃO (ato administrativo explícito) — validate-then-activate, fail-closed ──
     if (body.ativo === true) {
+      // Revogação é TERMINAL — mesma regra já aplicada na custódia e na rotação. Sem esta guarda a
+      // revogação lógica não seria durável: bastaria um PATCH `{ativo:true}` para ressuscitar a
+      // linha e voltar a assinar com material revogado.
+      if (cert.status === "REVOGADO") {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: "Certificado revogado não pode ser reativado (estado terminal). Registre um novo certificado.",
+            codigo: "certificado_revogado",
+          },
+          { status: 409 },
+        )
+      }
       const validacao = await validarPeloCofre(acl.storeId, effBlobRef, effSenhaRef)
 
       if (!validacao.ok) {
@@ -164,7 +189,178 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ ok: true, certificado: updated, validacao })
     }
 
-    // ── Fluxo 2: VALIDAÇÃO sem ativar ──────────────────────────────────────────────────────────
+    // ── Fluxo 2: REVOGAÇÃO (GOAL-016C) — bloqueio lógico imediato; remoção física condicional ───
+    if (body.revogar === true) {
+      if (cert.status === "REVOGADO") {
+        return jsonError("Certificado já está revogado.", 409)
+      }
+      // Revogação ignora overrides de ref do payload: vale SEMPRE a referência da linha (nunca se
+      // revoga material que não é deste certificado, nem se reescreve ref numa linha terminal).
+      await prisma.$transaction(async (tx) => {
+        await tx.certificadoDigital.update({
+          where: { id: certId },
+          data: { status: CertificadoStatus.REVOGADO, ativo: false },
+        })
+        const cfg = await tx.configuracaoFiscalLoja.findUnique({
+          where: { storeId: acl.storeId },
+          select: { storeId: true, certificadoAtivoId: true },
+        })
+        if (cfg && cfg.certificadoAtivoId === certId) {
+          await tx.configuracaoFiscalLoja.update({
+            where: { storeId: acl.storeId },
+            data: { certificadoAtivoId: null },
+          })
+        }
+      })
+
+      /**
+       * A revogação acima é LÓGICA (banco) e já basta para o fail-closed: `REVOGADO` + `ativo:false`
+       * bloqueia assinatura/emissão futuras. A REMOÇÃO FÍSICA do material no cofre é um segundo ato,
+       * separado e opcional — e nunca é afirmada sem ter acontecido.
+       *
+       * A capacidade do provider é consultada para RELATAR com honestidade, JAMAIS para bloquear a
+       * revogação: bloquear deixaria o admin sem meio de derrubar um certificado comprometido.
+       */
+      const refsDaLinha = [cert.blobRef, cert.senhaRef]
+        .map((r) => String(r ?? "").trim())
+        .filter((r) => r.length > 0)
+
+      type RemocaoFisica =
+        | "nao_aplicavel" // a linha não tinha material referenciado
+        | "nao_executada_ref_compartilhada" // outra linha viva usa o mesmo material
+        | "nao_executada_provider_sem_revogacao" // piloto: provisionamento manual
+        | "nao_executada_verificacao_inconclusiva" // não deu para saber se a ref é compartilhada
+        | "pendente" // tentada, mas não confirmada por completo
+        | "executada"
+
+      /**
+       * Outra linha NÃO revogada da unidade ainda aponta para o mesmo material? Em backend de
+       * referência estável (slot canônico por loja) isso é o caso NORMAL — destruir o material, ou
+       * mandar o operador apagar a env, derrubaria o certificado em uso.
+       *
+       * A consulta roda DEPOIS da revogação lógica já commitada. Se ela falhar, a revogação
+       * continua válida: o erro NÃO pode virar 500 nem sugerir que o certificado segue ativo.
+       * Sem resposta confiável, a remoção física simplesmente não é tentada (fail-closed pelo lado
+       * de não destruir segredo).
+       */
+      let refCompartilhada = false
+      let verificacaoInconclusiva = false
+      if (refsDaLinha.length > 0) {
+        try {
+          refCompartilhada =
+            (await prisma.certificadoDigital.count({
+              where: {
+                storeId: acl.storeId,
+                id: { not: certId },
+                status: { not: CertificadoStatus.REVOGADO },
+                OR: refsDaLinha.flatMap((ref) => [{ blobRef: ref }, { senhaRef: ref }]),
+              },
+            })) > 0
+        } catch (e) {
+          verificacaoInconclusiva = true
+          console.error(
+            "[fiscal:certificado:revogar] verificação de referência compartilhada falhou:",
+            e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+          )
+        }
+      }
+
+      const provider = resolveFiscalSecretProvider()
+      const providerRevoga = Boolean(provider.vault) && provider.availability.capacidades.revogacao
+
+      let remocaoFisica: RemocaoFisica = "nao_aplicavel"
+      if (refsDaLinha.length > 0) {
+        if (verificacaoInconclusiva) {
+          remocaoFisica = "nao_executada_verificacao_inconclusiva"
+        } else if (refCompartilhada) {
+          remocaoFisica = "nao_executada_ref_compartilhada"
+        } else if (!providerRevoga || !provider.vault) {
+          remocaoFisica = "nao_executada_provider_sem_revogacao"
+        } else {
+          try {
+            const rev = await revogarSegredosCertificado({
+              vault: provider.vault,
+              storeId: acl.storeId,
+              blobRef: cert.blobRef,
+              senhaRef: cert.senhaRef,
+            })
+            remocaoFisica = rev.pendentes.length > 0 ? "pendente" : "executada"
+          } catch (e) {
+            // Erro inesperado do cofre também não desfaz nem mascara a revogação lógica.
+            remocaoFisica = "pendente"
+            console.error(
+              "[fiscal:certificado:revogar] remoção do material no cofre falhou:",
+              e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+            )
+          }
+        }
+      }
+      const remocaoFisicaTentada = remocaoFisica === "executada" || remocaoFisica === "pendente"
+
+      /** Orientação sanitizada — NUNCA nomeia a referência nem manda apagar secret às cegas. */
+      const ORIENTACAO: Record<RemocaoFisica, string> = {
+        nao_aplicavel: "O certificado foi revogado. Não havia material sob custódia vinculado a esta linha.",
+        nao_executada_ref_compartilhada:
+          "O certificado foi revogado e não emite mais. O material NÃO foi removido do cofre porque outro certificado ativo desta unidade ainda depende dele — não remova o secret manualmente.",
+        nao_executada_provider_sem_revogacao:
+          "O certificado foi revogado e não emite mais. Este ambiente não remove material do cofre em runtime: a remoção física segue por provisionamento manual, sob conferência de quais certificados da unidade ainda usam o material.",
+        nao_executada_verificacao_inconclusiva:
+          "O certificado foi revogado e não emite mais. A remoção do material NÃO foi tentada porque não foi possível confirmar com segurança se a referência é compartilhada com outro certificado desta unidade — não remova o secret manualmente sem essa conferência.",
+        pendente:
+          "O certificado foi revogado e não emite mais. A remoção do material do cofre foi tentada e ficou pendente de confirmação.",
+        executada: "O certificado foi revogado e o material correspondente foi removido do cofre.",
+      }
+
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "certificado.revogar",
+        mensagem: `Certificado revogado (${cert.apelido || cert.id}) — emissões futuras bloqueadas`,
+        detalhe: { certificadoId: certId, remocaoFisica },
+      })
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "secret.revoke",
+        mensagem:
+          remocaoFisica === "executada"
+            ? `Material do certificado removido do cofre (${cert.apelido || cert.id})`
+            : `Revogação lógica aplicada; remoção física do material NÃO executada (${cert.apelido || cert.id})`,
+        detalhe: {
+          certificadoId: certId,
+          provider: provider.provider,
+          providerRevoga,
+          remocaoFisica,
+          remocaoFisicaTentada,
+          refCompartilhada,
+          verificacaoInconclusiva,
+          refsVinculadas: refsDaLinha.length,
+        },
+      })
+
+      const updated = await prisma.certificadoDigital.findUnique({
+        where: { id: certId },
+        select: { id: true, apelido: true, ativo: true, status: true },
+      })
+      return NextResponse.json({
+        ok: true,
+        certificado: updated,
+        revogacao: {
+          // Inequívoco para o caller: o que valeu, o que não pode mais acontecer e o que NÃO foi
+          // tentado no cofre. Nenhum campo carrega erro interno, referência ou detalhe do Prisma.
+          logica: "aplicada",
+          reativacaoPermitida: false,
+          emissaoPermitida: false,
+          remocaoFisica,
+          remocaoFisicaTentada,
+          refCompartilhada,
+          verificacaoInconclusiva,
+          orientacao: ORIENTACAO[remocaoFisica],
+        },
+      })
+    }
+
+    // ── Fluxo 3: VALIDAÇÃO sem ativar ──────────────────────────────────────────────────────────
     if (body.validar === true) {
       const validacao = await validarPeloCofre(acl.storeId, effBlobRef, effSenhaRef)
       // Passou ⇒ mantém pendente (aguardando ativação explícita); falhou ⇒ reflete o status real.
@@ -187,7 +383,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ ok: true, validado: validacao.ok, validacao, certificado: updated })
     }
 
-    // ── Fluxo 3: DESATIVAÇÃO / atualização de metadados (sem validação) ─────────────────────────
+    // ── Fluxo 4: DESATIVAÇÃO / atualização de metadados (sem validação) ─────────────────────────
     let acao: FiscalLogAcao = "certificado.update"
     await prisma.$transaction(async (tx) => {
       const data: Prisma.CertificadoDigitalUpdateInput = { ...refData }
@@ -225,6 +421,15 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     })
     return NextResponse.json({ ok: true, certificado: updated })
   } catch (e) {
-    return jsonError(e instanceof Error ? e.message : "Falha ao atualizar certificado", 500)
+    // Erro interno NUNCA vaza para o cliente: mensagem do Prisma, stack, referência de cofre,
+    // senha ou PFX ficam só no log server-side. O cliente recebe texto fixo + código estável.
+    console.error(
+      "[fiscal:certificado:patch] erro inesperado:",
+      e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+    )
+    return NextResponse.json(
+      { ok: false, error: "Falha ao atualizar certificado.", codigo: "erro_inesperado" },
+      { status: 500 },
+    )
   }
 }

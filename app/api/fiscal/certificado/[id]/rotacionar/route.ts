@@ -1,0 +1,285 @@
+/**
+ * Rotação do certificado A1 (GOAL-016C · ADR-0014 §2.1).
+ *
+ * Recebe o NOVO `.pfx`+senha em multipart e executa a rotação segura:
+ *  1. valida o novo certificado EM MEMÓRIA (inválido/vencido/senha errada ⇒ 422 e NADA muda);
+ *  2. reconcilia ANTES do cofre: CNPJ × unidade e fingerprint vinculada a outra loja ⇒ 422 —
+ *     segredo rejeitado NUNCA é armazenado (crítico para backends in-place, em que gravar
+ *     destrói o material anterior imediatamente);
+ *  3. grava a nova versão no cofre;
+ *  4. troca o ponteiro no banco em ÚNICA atualização com guarda otimista (refs + metadados
+ *     reais do novo certificado); se a troca falhar, o ponteiro NÃO muda (fail-closed);
+ *  5. confirmada a troca, revoga as referências anteriores (best-effort reportado).
+ *
+ * ⚠️ O rollback do passo 4 depende do backend. Com referências VERSIONADAS (ADR-0014) a versão
+ * nova é descartada e a anterior segue servindo. Com referência ESTÁVEL (EnvVault: slot canônico
+ * por loja) o passo 3 é IN-PLACE: o material anterior já foi substituído e não há rollback — a
+ * resposta 409 devolve `materialAnterior: "substituido_sem_rollback"` em vez de prometer o contrário.
+ *
+ * O status/ativo da linha é preservado: um certificado ATIVO continua ATIVO após a rotação porque
+ * a nova versão já passou pela MESMA validação exigida na ativação (vigência, RSA ≥ 2048, cadeia,
+ * CNPJ presente) — e o CNPJ do novo certificado precisa conferir com a unidade.
+ *
+ * Segurança: resposta, erros e auditoria NUNCA carregam `.pfx`, senha, PEM ou chave. NÃO liga
+ * `fiscalEnabled` e NÃO transmite nada à SEFAZ.
+ */
+import { NextResponse } from "next/server"
+import { prisma, prismaEnsureConnected } from "@/lib/prisma"
+import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
+import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
+import { recordFiscalAdminLog } from "@/lib/fiscal/fiscal-log"
+import { onlyDigits } from "@/lib/fiscal/fiscal-validators"
+import { PFX_TAMANHO_MAXIMO_BYTES, bloqueio, inspecionarCertificadoPfx, validarArquivoPfx } from "@/lib/fiscal/certificate"
+import type { OnboardingBloqueio } from "@/lib/fiscal/certificate/onboarding-types"
+import { resolveFiscalSecretProvider, rotacionarCertificadoA1 } from "@/lib/fiscal/vault"
+import { zeroBuffer } from "@/lib/fiscal/vault/pkcs12-loader"
+
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+export const revalidate = 0
+
+const MULTIPART_OVERHEAD_BYTES = 64 * 1024
+
+function jsonError(msg: string, status: number) {
+  return NextResponse.json({ ok: false, error: msg }, { status })
+}
+
+function jsonBloqueado(bloqueios: OnboardingBloqueio[], status: number) {
+  return NextResponse.json({ ok: false, error: bloqueios[0]?.mensagem ?? "Certificado recusado.", bloqueios }, { status })
+}
+
+function parseIsoDate(iso: string | null): Date | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const storeId = storeIdFromAssistecRequestForWrite(req)
+  const acl = await requireFiscalAdmin(storeId)
+  if (!acl.ok) return jsonError(acl.error, acl.status)
+
+  const { id } = await ctx.params
+  const certId = String(id ?? "").trim()
+  if (!certId) return jsonError("Certificado não informado.", 400)
+
+  const contentLength = Number(req.headers.get("content-length") ?? 0)
+  if (Number.isFinite(contentLength) && contentLength > PFX_TAMANHO_MAXIMO_BYTES + MULTIPART_OVERHEAD_BYTES) {
+    return jsonBloqueado([bloqueio("arquivo_muito_grande")], 413)
+  }
+
+  let form: FormData
+  try {
+    form = await req.formData()
+  } catch {
+    return jsonError("Envio inválido — use multipart/form-data.", 400)
+  }
+
+  const arquivo = form.get("certificado")
+  const senha = String(form.get("senha") ?? "")
+  if (!(arquivo instanceof File)) return jsonBloqueado([bloqueio("arquivo_ausente")], 400)
+  if (!senha) return jsonBloqueado([bloqueio("senha_ausente")], 400)
+
+  const bloqueiosArquivo = validarArquivoPfx({
+    nome: arquivo.name,
+    tamanho: arquivo.size,
+    contentType: arquivo.type,
+  })
+  if (bloqueiosArquivo.length > 0) {
+    return jsonBloqueado(bloqueiosArquivo, bloqueiosArquivo[0]!.codigo === "arquivo_muito_grande" ? 413 : 415)
+  }
+
+  const provider = resolveFiscalSecretProvider()
+  if (!provider.vault || !provider.availability.capacidades.rotacao) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          "A rotação automática não está disponível neste ambiente. A troca do certificado segue por provisionamento manual do cofre (fail-closed).",
+        codigo: "custodia_indisponivel",
+        custodia: { provider: provider.provider, disponivel: false, rotacao: false },
+      },
+      { status: 503 },
+    )
+  }
+  const vault = provider.vault
+
+  let pfx: Buffer | null = null
+  try {
+    await prismaEnsureConnected()
+    const cert = await prisma.certificadoDigital.findFirst({
+      where: { id: certId, storeId: acl.storeId },
+      select: { id: true, apelido: true, ativo: true, status: true, blobRef: true, senhaRef: true },
+    })
+    if (!cert) return jsonError("Certificado não encontrado nesta unidade.", 404)
+    if (cert.status === "REVOGADO") return jsonError("Certificado revogado não pode ser rotacionado — registre um novo.", 409)
+
+    const cfg = await prisma.configuracaoFiscalLoja.findUnique({
+      where: { storeId: acl.storeId },
+      select: { cnpj: true },
+    })
+
+    pfx = Buffer.from(await arquivo.arrayBuffer())
+
+    // PRÉ-INSPEÇÃO em memória (sobre uma cópia — a inspeção zera o buffer que recebe): todas as
+    // recusas acontecem ANTES de qualquer gravação no cofre. Em backends in-place (refs canônicas
+    // graváveis) gravar substitui o material anterior imediatamente — segredo rejeitado NUNCA
+    // pode ser armazenado, sob pena de destruir o segredo ATIVO com material recusado.
+    const pre = inspecionarCertificadoPfx({ pfx: Buffer.from(pfx), senha })
+    if (!pre.extraido || pre.bloqueios.length > 0) {
+      return jsonBloqueado(pre.bloqueios.length > 0 ? pre.bloqueios : [bloqueio("arquivo_invalido")], 422)
+    }
+    const extraidoPrevio = pre.extraido
+
+    // Reconciliação ANTES do cofre: CNPJ do novo certificado × unidade e fingerprint já
+    // vinculada a OUTRA unidade (mesma regra da custódia — a checagem devolve só booleano).
+    const bloqueiosReconciliacao: OnboardingBloqueio[] = []
+    const cnpjLoja = onlyDigits(cfg?.cnpj)
+    if (extraidoPrevio.cnpj && cnpjLoja && onlyDigits(extraidoPrevio.cnpj) !== cnpjLoja) {
+      bloqueiosReconciliacao.push(bloqueio("cnpj_divergente"))
+    }
+    if (extraidoPrevio.fingerprintSha1) {
+      const vinculadoAOutraLoja = await prisma.certificadoDigital.findFirst({
+        where: { fingerprint: extraidoPrevio.fingerprintSha1, NOT: { storeId: acl.storeId } },
+        select: { id: true },
+      })
+      if (vinculadoAOutraLoja) {
+        bloqueiosReconciliacao.push(bloqueio("certificado_de_outra_loja"))
+      }
+    }
+    if (bloqueiosReconciliacao.length > 0) {
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "certificado.custodia.rotacionar",
+        mensagem: `Rotação recusada na reconciliação com a unidade — cofre intocado (${cert.apelido || cert.id})`,
+        detalhe: {
+          certificadoId: cert.id,
+          fingerprint: extraidoPrevio.fingerprintSha1,
+          bloqueios: bloqueiosReconciliacao.map((b) => b.codigo),
+        },
+      })
+      return jsonBloqueado(bloqueiosReconciliacao, 422)
+    }
+
+    /** Motivo capturado dentro da confirmação (concorrência) para resposta precisa. */
+    let motivoTrocaRecusada: string | null = null
+
+    const resultado = await rotacionarCertificadoA1({
+      vault,
+      storeId: acl.storeId,
+      novoPfx: pfx,
+      novaSenha: senha,
+      refsAnteriores: { blobRef: cert.blobRef, senhaRef: cert.senhaRef },
+      confirmarTroca: async (novasRefs, extraido) => {
+        // Troca do ponteiro com guarda otimista: só atualiza se a linha ainda aponta para as refs
+        // lidas no início — uma rotação/upload concorrente faz esta troca falhar (fail-closed),
+        // e a versão nova é descartada pelo serviço em vez de ficar órfã silenciosamente.
+        const trocado = await prisma.certificadoDigital.updateMany({
+          where: { id: cert.id, storeId: acl.storeId, blobRef: cert.blobRef, senhaRef: cert.senhaRef },
+          data: {
+            blobRef: novasRefs.blobRef,
+            senhaRef: novasRefs.senhaRef,
+            titularCn: extraido.titularCn,
+            cnpjTitular: onlyDigits(extraido.cnpj),
+            serialNumber: extraido.serialNumber,
+            fingerprint: extraido.fingerprintSha1,
+            validoDe: parseIsoDate(extraido.validoDe),
+            validoAte: parseIsoDate(extraido.validoAte),
+          },
+        })
+        if (trocado.count !== 1) {
+          motivoTrocaRecusada = "concorrencia"
+          throw new Error("concorrencia_na_troca")
+        }
+      },
+    })
+    pfx = null
+
+    if (!resultado.ok) {
+      if (resultado.codigo === "custodia_indisponivel") {
+        return NextResponse.json({ ok: false, error: resultado.mensagem, codigo: resultado.codigo }, { status: 503 })
+      }
+      if (resultado.codigo === "troca_nao_confirmada") {
+        // Só resta o caminho de CONCORRÊNCIA: CNPJ divergente e fingerprint de outra loja já foram
+        // recusados na reconciliação ANTES do cofre (422 acima).
+        // `materialAnterior` diz se houve rollback real (refs versionadas) ou se o backend gravou
+        // in-place e a versão anterior já não existe — a trilha não pode afirmar "mantida" às cegas.
+        const preservou = resultado.materialAnterior !== "substituido_sem_rollback"
+        await recordFiscalAdminLog({
+          session: acl.session,
+          storeId: acl.storeId,
+          acao: "certificado.custodia.rotacionar",
+          mensagem: preservou
+            ? `Rotação recusada (${motivoTrocaRecusada ?? "troca não confirmada"}) — versão anterior mantida (${cert.apelido || cert.id})`
+            : `Rotação recusada (${motivoTrocaRecusada ?? "troca não confirmada"}) — ponteiro inalterado, SEM rollback do material (${cert.apelido || cert.id})`,
+          detalhe: {
+            certificadoId: cert.id,
+            motivo: motivoTrocaRecusada,
+            materialAnterior: resultado.materialAnterior ?? null,
+          },
+        })
+        return NextResponse.json(
+          {
+            ok: false,
+            error: resultado.mensagem,
+            codigo: resultado.codigo,
+            materialAnterior: resultado.materialAnterior ?? null,
+          },
+          { status: 409 },
+        )
+      }
+      if (resultado.bloqueios.length > 0) return jsonBloqueado(resultado.bloqueios, 422)
+      return jsonError(resultado.mensagem, 500)
+    }
+
+    await recordFiscalAdminLog({
+      session: acl.session,
+      storeId: acl.storeId,
+      acao: "secret.rotate",
+      mensagem: `Certificado A1 rotacionado no cofre (${cert.apelido || cert.id})`,
+      detalhe: {
+        certificadoId: cert.id,
+        provider: provider.provider,
+        fingerprint: resultado.extraido.fingerprintSha1,
+        validoAte: resultado.extraido.validoAte,
+        revogacaoAnterior: resultado.revogacaoAnterior,
+      },
+    })
+    await recordFiscalAdminLog({
+      session: acl.session,
+      storeId: acl.storeId,
+      acao: "certificado.custodia.rotacionar",
+      mensagem: `Rotação concluída — ponteiro atualizado (${cert.apelido || cert.id})`,
+      detalhe: { certificadoId: cert.id, revogacaoAnterior: resultado.revogacaoAnterior },
+    })
+
+    const updated = await prisma.certificadoDigital.findUnique({
+      where: { id: cert.id },
+      select: { id: true, apelido: true, ativo: true, status: true, validoAte: true, fingerprint: true },
+    })
+
+    return NextResponse.json({
+      ok: true,
+      certificado: updated
+        ? { ...updated, validoAte: updated.validoAte ? updated.validoAte.toISOString() : null }
+        : null,
+      custodia: {
+        provider: provider.provider,
+        rotacionada: true,
+        revogacaoAnterior: resultado.revogacaoAnterior,
+      },
+      transmissao: "nenhuma",
+    })
+  } catch (e) {
+    // Mensagem genérica ao cliente; log server-side SANITIZADO (sem payload/material).
+    console.error(
+      "[fiscal:rotacionar] erro inesperado:",
+      e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+    )
+    return jsonBloqueado([bloqueio("erro_inesperado")], 500)
+  } finally {
+    zeroBuffer(pfx)
+    pfx = null
+  }
+}

@@ -69,6 +69,67 @@ Mapeia o enum `CertificadoStatus`. Regras:
 > **Piloto/homologação:** `EnvVault`, conforme ADR-0009 D2.
 > **Produção/escala:** `SupabaseVaultStorageVault`, conforme ADR-0014, substituindo a escolha
 > genérica da ADR-0009 D3. A troca de backend não muda schema nem callers.
+>
+> **Estado de implementação (GOAL-016C, branch `fiscal/goal-016c-secret-provider-custodia-a1`):**
+> o port cobre o ciclo completo — `get*`, `put*`, `revoke`, `describeSecret` (metadados sem
+> segredo), `checkAvailability` (disponibilidade/capacidades) e `rotateCertificadoPfx`.
+> `resolveFiscalSecretProvider` é o ponto único de decisão de backend: `env` ⇒ EnvVault; provider
+> declarado e não implementado ⇒ **indisponível fail-closed, sem fallback**. O serviço
+> `certificado-custodia-service` orquestra armazenar/rotacionar/revogar/descrever: a rotação valida
+> e grava a nova versão ANTES da troca do ponteiro e revoga a anterior só APÓS a confirmação.
+> Endpoints: `POST /api/fiscal/onboarding/certificado/custodia`,
+> `POST /api/fiscal/certificado/[id]/rotacionar` e `revogar` no PATCH do certificado.
+
+### 3.0 ⚠️ Garantia de rollback — o que vale, e sob qual backend
+
+A frase **"a versão anterior permanece intacta"** NÃO é uma propriedade do serviço de custódia.
+É uma propriedade **do backend**, e só existe sob duas condições, ambas da ADR-0014 §2.1:
+
+1. **referências versionadas** — cada versão tem ref própria, distinta da anterior;
+2. **versões imutáveis** — gravar uma versão nova nunca sobrescreve a anterior.
+
+| Backend | Modelo de referência | Rollback na falha de troca |
+|---|---|---|
+| `EnvVault` (piloto, ADR-0009 D2) | **Referência canônica por LOJA** — `FISCAL_A1_PFX_B64_<LOJA>` / `FISCAL_A1_SENHA_<LOJA>`; um slot por unidade, **não** por certificado nem por versão | **Não existe.** A escrita é *in-place*: no instante da gravação o material anterior já foi substituído. O serviço devolve `materialAnterior: "substituido_sem_rollback"` e não revoga nada (revogar apagaria o único material existente) |
+| `SupabaseVaultStorageVault` (produção, ADR-0014) | Ref versionada por certificado e por versão, com DEK por versão | Real: a versão nova é descartada e a anterior segue servindo — `materialAnterior: "preservado"` |
+
+**A decisão de descartar é por COMPARAÇÃO DE REFS, nunca por suposição de backend.** A versão nova
+só é descartada com prova de objeto separado: as **duas** referências anteriores existiam e as
+**duas** novas são distintas delas. Daí os três valores de `materialAnterior`:
+
+| Valor | Quando | O que o serviço faz |
+|---|---|---|
+| `preservado` | Havia refs anteriores completas e as novas são distintas das duas | Descarta a versão nova; a anterior segue servindo |
+| `substituido_sem_rollback` | Havia refs anteriores, mas há reuso total ou parcial (caso do EnvVault) | **Não descarta nada** — apagar a ref nova destruiria o único material, possivelmente compartilhado |
+| `nao_aplicavel` | A linha **não tinha** refs anteriores | **Não descarta nada** — não havia material a preservar, e a ref nova pode ser um slot compartilhado |
+
+A mesma comparação governa o caminho de sucesso: só é revogada a referência anterior que **não** é
+reutilizada pelas novas. Em reuso parcial (mesmo `blobRef`, `senhaRef` nova), revogar o blob
+anterior apagaria o material recém-gravado — ele fica de fora.
+
+Consequências operacionais **no piloto**, todas honradas em código:
+
+- O EnvVault **não oferece custódia, rotação nem revogação automáticas**. `put*`, `rotateCertificadoPfx`
+  e `revoke` lançam `operacao_nao_suportada`; a escrita permanece **fail-closed** e as rotas de
+  custódia e rotação respondem **503** antes de tocar cofre ou banco.
+- O provisionamento e a remoção de material seguem **manuais**, por secret de plataforma.
+- Como o slot é por loja, **várias linhas de `CertificadoDigital` da mesma unidade compartilham a
+  mesma referência**. Por isso a revogação separa **revogação lógica** (sempre aplicada: `REVOGADO`
+  + `ativo:false` ⇒ fail-closed imediato para assinatura) de **remoção física** (condicional), e
+  nunca orienta apagar um secret ainda referenciado por outra linha viva da unidade.
+- A revogação lógica é **incondicional**: a capacidade do provider é consultada para *relatar*,
+  jamais para bloquear — bloquear deixaria o admin sem meio de derrubar um certificado comprometido.
+  A verificação de compartilhamento e a remoção do material rodam **depois** da transação já
+  commitada; se qualquer uma falhar, a rota responde **200** com o estado real
+  (`nao_executada_verificacao_inconclusiva` ou `pendente`) em vez de 500. Um erro na etapa auxiliar
+  nunca pode sugerir que o certificado revogado continua valendo.
+- A custódia recusa (**409**) armazenar um certificado quando a unidade já tem outro **ATIVO com
+  fingerprint diferente**: gravar substituiria em silêncio o material em uso. O caminho é rotacionar
+  a linha ativa.
+
+**Requisito duro para qualquer provider gravável futuro:** referências versionadas **por certificado
+e por versão**. Provider com slot estável compartilhado entre linhas está **proibido** — ver
+pré-requisitos em [`ROADMAP_FISCAL`](../roadmaps/ROADMAP_FISCAL.md#pré-requisitos-duros-do-provider-gravável).
 
 ### 3.1 Hierarquia criptográfica de produção
 

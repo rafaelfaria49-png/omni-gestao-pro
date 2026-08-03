@@ -107,6 +107,16 @@ type CertRow = {
   blobConfigured: boolean;
   senhaConfigured: boolean;
   createdAt: string;
+  /** Última alteração da linha (validação, ativação, rotação, revogação) — GOAL-016C. */
+  atualizadoEm?: string;
+};
+
+/** Bloco `cofre` da API (GOAL-016C): provider do Secret Provider e capacidades do ambiente. */
+type CofreInfo = {
+  provider: string;
+  disponivel: boolean;
+  capacidades: { leitura: boolean; escrita: boolean; rotacao: boolean; revogacao: boolean };
+  mensagem: string;
 };
 
 type SerieRow = { id: string; modelo: string; ambiente: string; serie: number; proximoNumero: number; ativo: boolean };
@@ -157,6 +167,7 @@ function FiscalSectionContent() {
   const [form, setForm] = useState<FiscalConfig>(() => emptyForm());
   const [serieFiscalPadrao, setSerieFiscalPadrao] = useState<number>(1);
   const [certs, setCerts] = useState<CertRow[]>([]);
+  const [cofre, setCofre] = useState<CofreInfo | null>(null);
   const [series, setSeries] = useState<SerieRow[]>([]);
 
   const [certModal, setCertModal] = useState(false);
@@ -194,6 +205,7 @@ function FiscalSectionContent() {
         config?: FiscalConfig | null;
         certificados?: CertRow[];
         series?: SerieRow[];
+        cofre?: CofreInfo;
         error?: string;
       };
       if (!res.ok) {
@@ -203,6 +215,7 @@ function FiscalSectionContent() {
       }
       setForm(j.config ? { ...emptyForm(), ...j.config } : emptyForm());
       setCerts(Array.isArray(j.certificados) ? j.certificados : []);
+      setCofre(j.cofre ?? null);
       const ser = Array.isArray(j.series) ? j.series : [];
       setSeries(ser);
       const def = ser.find((s) => s.modelo === (j.config?.modeloFiscal ?? "NFCE") && s.ambiente === (j.config?.ambiente ?? "HOMOLOGACAO"));
@@ -544,6 +557,16 @@ function FiscalSectionContent() {
               "Configurado" exige TUDO junto — blobRef + senhaRef + status ATIVO + ativo=true.
               Metadados sem custódia NÃO contam como certificado instalado.
             */}
+            {cofre ? (
+              <p className="mb-4 rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+                Cofre de segredos: <span className="font-mono">{cofre.provider}</span>
+                {" · "}
+                {cofre.disponivel ? "disponível" : "indisponível (fail-closed)"}
+                {" · "}
+                {cofre.capacidades.escrita ? "custódia automática ativa" : "custódia por provisionamento manual"}
+                {cofre.mensagem ? ` — ${cofre.mensagem}` : ""}
+              </p>
+            ) : null}
             {!algumCertificadoInstalado(certs) ? (
               <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
                 <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
@@ -574,7 +597,11 @@ function FiscalSectionContent() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-semibold text-foreground">{c.apelido || c.titularCn || "Certificado"}</p>
-                        <Badge variant={c.ativo ? "default" : "outline"}>{c.ativo ? "Ativo" : "Inativo"}</Badge>
+                        {c.status === "REVOGADO" ? (
+                          <Badge variant="destructive">Revogado</Badge>
+                        ) : (
+                          <Badge variant={c.ativo ? "default" : "outline"}>{c.ativo ? "Ativo" : "Inativo"}</Badge>
+                        )}
                         <Badge variant="secondary">{c.tipo}</Badge>
                         {!certificadoTemCustodia(c) ? <Badge variant="outline">Não armazenado</Badge> : null}
                         {(() => {
@@ -590,6 +617,7 @@ function FiscalSectionContent() {
                         {c.validoAte ? `Válido até ${new Date(c.validoAte).toLocaleDateString("pt-BR")}` : "Validade não informada"}
                         {" · "}
                         {c.blobConfigured ? "blob ✓" : "blob —"} / {c.senhaConfigured ? "senha-ref ✓" : "senha-ref —"}
+                        {c.atualizadoEm ? ` · Atualizado em ${new Date(c.atualizadoEm).toLocaleDateString("pt-BR")}` : ""}
                       </p>
                       {!certificadoTemCustodia(c) ? (
                         <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
@@ -599,16 +627,19 @@ function FiscalSectionContent() {
                       ) : null}
                     </div>
                     <div className="shrink-0">
-                      {/* Sem custódia a ativação falharia em `blobRef_ausente` — não oferecer o botão. */}
-                      <Button
-                        type="button"
-                        variant={c.ativo ? "ghost" : "outline"}
-                        size="sm"
-                        disabled={!c.ativo && !certificadoTemCustodia(c)}
-                        onClick={() => void toggleCert(c)}
-                      >
-                        {c.ativo ? "Desativar" : "Ativar"}
-                      </Button>
+                      {/* Sem custódia a ativação falharia em `blobRef_ausente` — não oferecer o botão.
+                          Revogado é terminal: não reativa — registre um novo certificado. */}
+                      {c.status === "REVOGADO" ? null : (
+                        <Button
+                          type="button"
+                          variant={c.ativo ? "ghost" : "outline"}
+                          size="sm"
+                          disabled={!c.ativo && !certificadoTemCustodia(c)}
+                          onClick={() => void toggleCert(c)}
+                        >
+                          {c.ativo ? "Desativar" : "Ativar"}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 ))}

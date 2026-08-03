@@ -27,6 +27,7 @@ import {
   isValidUf,
 } from "@/lib/fiscal/fiscal-validators"
 import { recordFiscalAdminLog } from "@/lib/fiscal/fiscal-log"
+import { resolveFiscalSecretProvider } from "@/lib/fiscal/vault"
 import { AmbienteFiscal, ModeloFiscal, type Prisma } from "@/generated/prisma"
 
 export const runtime = "nodejs"
@@ -87,14 +88,22 @@ export async function GET(req: Request) {
         select: {
           id: true, apelido: true, tipo: true, titularCn: true, cnpjTitular: true,
           serialNumber: true, fingerprint: true, validoDe: true, validoAte: true,
-          status: true, ativo: true, blobRef: true, senhaRef: true, createdAt: true,
+          status: true, ativo: true, blobRef: true, senhaRef: true, createdAt: true, updatedAt: true,
         },
         orderBy: [{ ativo: "desc" }, { createdAt: "desc" }],
       }),
     ])
+    const provider = resolveFiscalSecretProvider()
     return NextResponse.json({
       ok: true,
       config: sanitizeFiscalConfigForClient(row),
+      // Bloco `cofre` (GOAL-016C): provider do Secret Provider + disponibilidade/capacidades.
+      cofre: {
+        provider: provider.provider,
+        disponivel: provider.availability.disponivel,
+        capacidades: provider.availability.capacidades,
+        mensagem: provider.availability.mensagem,
+      },
       series: series.map((s) => ({
         id: s.id, modelo: s.modelo, ambiente: s.ambiente, serie: s.serie,
         proximoNumero: s.proximoNumero, ativo: s.ativo,
@@ -109,6 +118,8 @@ export async function GET(req: Request) {
         blobConfigured: Boolean((c.blobRef || "").trim()),
         senhaConfigured: Boolean((c.senhaRef || "").trim()),
         createdAt: c.createdAt.toISOString(),
+        /** Última alteração da linha (validação, ativação, rotação, revogação). */
+        atualizadoEm: c.updatedAt.toISOString(),
       })),
     })
   } catch (e) {
