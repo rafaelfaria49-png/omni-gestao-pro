@@ -5,7 +5,8 @@
  *  - caminho feliz: segredo gravado SOMENTE no cofre (env mutável de teste); a linha do
  *    `CertificadoDigital` recebe REFERÊNCIAS OPACAS + metadados, `PENDENTE_VALIDACAO` e inativo;
  *  - API sem vazamento: resposta, erros e auditoria NUNCA carregam `.pfx`, senha ou chave;
- *  - CNPJ divergente / fingerprint de outra loja ⇒ 422 e o material é DESFEITO do cofre;
+ *  - CNPJ divergente / fingerprint de outra loja / revogado / ativo ⇒ recusa ANTES do cofre
+ *    (pré-inspeção + reconciliação em memória): segredo rejeitado nunca é armazenado;
  *  - certificado vencido / senha incorreta ⇒ 422 sanitizado, nada gravado;
  *  - provider sem escrita ⇒ 503 fail-closed, nada gravado;
  *  - pipeline DORMENTE: `fiscalEnabled` e `ConfiguracaoFiscalLoja` jamais são tocados;
@@ -242,10 +243,45 @@ describe("POST custodia — caminho feliz", () => {
     expect(res.status).toBe(200)
     expect(h.certs.length).toBe(1) // mesma linha atualizada, sem duplicar
   })
+
+  it("reenvio sobre linha REVOGADA ⇒ 409 (revogação é terminal) e cofre intacto", async () => {
+    seedLoja()
+    const t = validTestPfx()
+    const r1 = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    expect(r1.status).toBe(200)
+    // Revoga a linha (simulado) e tenta reenviar o mesmo certificado.
+    h.certs[0]!.status = "REVOGADO"
+    h.certs[0]!.ativo = false
+    const res = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    const j = await corpoJson(res)
+    expect(res.status).toBe(409)
+    expect(j.codigo).toBe("certificado_revogado")
+    expect(h.certs.length).toBe(1)
+    expect(h.certs[0]!.status).toBe("REVOGADO") // NÃO ressuscitou
+    // A guarda roda ANTES do cofre: nada novo foi gravado e o segredo anterior ficou preservado.
+    expect(Object.keys(h.envVault).sort()).toEqual(["FISCAL_A1_PFX_B64_LOJA_1", "FISCAL_A1_SENHA_LOJA_1"])
+    expect(h.envVault["FISCAL_A1_PFX_B64_LOJA_1"]).toBe(t.pfx.toString("base64"))
+  })
+
+  it("reenvio sobre certificado ATIVO ⇒ 409 orientando rotação e cofre intacto", async () => {
+    seedLoja()
+    const t = validTestPfx()
+    const r1 = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    expect(r1.status).toBe(200)
+    h.certs[0]!.status = "ATIVO"
+    h.certs[0]!.ativo = true
+    const res = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))
+    const j = await corpoJson(res)
+    expect(res.status).toBe(409)
+    expect(j.codigo).toBe("certificado_ativo_use_rotacao")
+    expect(h.certs[0]!.status).toBe("ATIVO") // não derrubou o certificado em uso
+    // Guarda antes do cofre: o material em uso segue preservado, nada órfão.
+    expect(Object.keys(h.envVault).sort()).toEqual(["FISCAL_A1_PFX_B64_LOJA_1", "FISCAL_A1_SENHA_LOJA_1"])
+  })
 })
 
 describe("POST custodia — rejeições fail-closed", () => {
-  it("CNPJ divergente da unidade ⇒ 422 e material DESFEITO do cofre", async () => {
+  it("CNPJ divergente da unidade ⇒ 422 ANTES do cofre (nada gravado)", async () => {
     seedLoja("99999999000199") // CNPJ da loja diferente do certificado
     const t = validTestPfx()
     const res = await POST(requestComPfx(Buffer.from(t.pfx), t.senha))

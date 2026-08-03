@@ -48,8 +48,12 @@ export type RotacaoResultado =
       ok: true
       refs: CertificadoRefs
       extraido: CertificadoExtraido
-      /** `pendente` quando o provider não revogou a versão anterior (ex.: piloto sem escrita). */
-      revogacaoAnterior: "concluida" | "pendente"
+      /**
+       * `pendente` quando o provider não revogou a versão anterior (ex.: piloto sem escrita);
+       * `nao_aplicavel` quando as refs são as mesmas (backend de refs canônicas/estáveis, como o
+       * EnvVault) — nesse caso a nova versão SUBSTITUI o valor in-place e não há o que revogar.
+       */
+      revogacaoAnterior: "concluida" | "pendente" | "nao_aplicavel"
     }
   | CustodiaFalha
 
@@ -152,17 +156,34 @@ export async function rotacionarCertificadoA1(params: {
       throw e
     }
 
+    /**
+     * Backend de refs canônicas/estáveis (ex.: EnvVault): a "nova versão" substitui o valor
+     * IN-PLACE e as refs devolvidas são as mesmas das anteriores. Nesse caso NÃO há versão
+     * separada para descartar ou revogar — revogar apagaria o segredo recém-gravado. A garantia
+     * plena de "anterior servindo até a confirmação" exige provider com refs versionadas
+     * (ADR-0014); com refs estáveis, a troca do ponteiro é trivialmente consistente (mesma ref).
+     */
+    const refsIdenticas =
+      novasRefs.blobRef === params.refsAnteriores.blobRef && novasRefs.senhaRef === params.refsAnteriores.senhaRef
+
     try {
       await params.confirmarTroca(novasRefs, extraido)
     } catch {
-      // A anterior NUNCA foi tocada — descarta a versão nova (best-effort) e falha fechado.
-      await revogarSegredosCertificado({ vault, storeId, ...novasRefs })
+      // A anterior NUNCA foi revogada aqui. Com refs versionadas, descarta a versão nova
+      // (best-effort); com refs idênticas, o valor in-place já é o novo — não há o que descartar.
+      if (!refsIdenticas) {
+        await revogarSegredosCertificado({ vault, storeId, ...novasRefs })
+      }
       return {
         ok: false,
         codigo: "troca_nao_confirmada",
         mensagem: "Não foi possível confirmar a troca do certificado — a versão anterior permanece ativa (fail-closed).",
         bloqueios: [],
       }
+    }
+
+    if (refsIdenticas) {
+      return { ok: true, refs: novasRefs, extraido, revogacaoAnterior: "nao_aplicavel" }
     }
 
     const revogacao = await revogarSegredosCertificado({

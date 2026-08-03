@@ -129,9 +129,23 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
           motivoTrocaRecusada = "cnpj_divergente"
           throw new Error("cnpj_divergente")
         }
-        // Troca do ponteiro em única atualização — metadados passam a refletir o novo certificado.
-        await prisma.certificadoDigital.update({
-          where: { id: cert.id },
+        // Multi-loja: a fingerprint do novo certificado não pode estar vinculada a OUTRA unidade
+        // (mesma regra da custódia inicial — a checagem devolve apenas booleano, nunca dados).
+        if (extraido.fingerprintSha1) {
+          const vinculadoAOutraLoja = await prisma.certificadoDigital.findFirst({
+            where: { fingerprint: extraido.fingerprintSha1, NOT: { storeId: acl.storeId } },
+            select: { id: true },
+          })
+          if (vinculadoAOutraLoja) {
+            motivoTrocaRecusada = "certificado_de_outra_loja"
+            throw new Error("certificado_de_outra_loja")
+          }
+        }
+        // Troca do ponteiro com guarda otimista: só atualiza se a linha ainda aponta para as refs
+        // lidas no início — uma rotação/upload concorrente faz esta troca falhar (fail-closed),
+        // e a versão nova é descartada pelo serviço em vez de ficar órfã silenciosamente.
+        const trocado = await prisma.certificadoDigital.updateMany({
+          where: { id: cert.id, storeId: acl.storeId, blobRef: cert.blobRef, senhaRef: cert.senhaRef },
           data: {
             blobRef: novasRefs.blobRef,
             senhaRef: novasRefs.senhaRef,
@@ -143,6 +157,10 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             validoAte: parseIsoDate(extraido.validoAte),
           },
         })
+        if (trocado.count !== 1) {
+          motivoTrocaRecusada = "concorrencia"
+          throw new Error("concorrencia_na_troca")
+        }
       },
     })
     pfx = null
@@ -161,8 +179,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
             : `Rotação não confirmada — versão anterior mantida (${cert.apelido || cert.id})`,
           detalhe: { certificadoId: cert.id, motivo: motivoTrocaRecusada },
         })
-        if (motivoTrocaRecusada === "cnpj_divergente") {
-          return jsonBloqueado([bloqueio("cnpj_divergente")], 422)
+        if (motivoTrocaRecusada === "cnpj_divergente" || motivoTrocaRecusada === "certificado_de_outra_loja") {
+          return jsonBloqueado([bloqueio(motivoTrocaRecusada)], 422)
         }
         return jsonError(resultado.mensagem, 409)
       }
@@ -209,7 +227,11 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       transmissao: "nenhuma",
     })
   } catch (e) {
-    void e
+    // Mensagem genérica ao cliente; log server-side SANITIZADO (sem payload/material).
+    console.error(
+      "[fiscal:rotacionar] erro inesperado:",
+      e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+    )
     return jsonBloqueado([bloqueio("erro_inesperado")], 500)
   } finally {
     zeroBuffer(pfx)

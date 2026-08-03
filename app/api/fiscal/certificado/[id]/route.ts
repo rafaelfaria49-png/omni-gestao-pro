@@ -176,11 +176,12 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       if (cert.status === "REVOGADO") {
         return jsonError("Certificado já está revogado.", 409)
       }
-      // Bloqueio imediato: a linha deixa de servir novas emissões ANTES de qualquer limpeza.
+      // Revogação ignora overrides de ref do payload: vale SEMPRE a referência da linha (nunca se
+      // revoga material que não é deste certificado, nem se reescreve ref numa linha terminal).
       await prisma.$transaction(async (tx) => {
         await tx.certificadoDigital.update({
           where: { id: certId },
-          data: { ...refData, status: CertificadoStatus.REVOGADO, ativo: false },
+          data: { status: CertificadoStatus.REVOGADO, ativo: false },
         })
         const cfg = await tx.configuracaoFiscalLoja.findUnique({
           where: { storeId: acl.storeId },
@@ -200,10 +201,10 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
         ? await revogarSegredosCertificado({
             vault: provider.vault,
             storeId: acl.storeId,
-            blobRef: effBlobRef,
-            senhaRef: effSenhaRef,
+            blobRef: cert.blobRef,
+            senhaRef: cert.senhaRef,
           })
-        : { revogadas: [], pendentes: [effBlobRef, effSenhaRef].filter((r): r is string => Boolean(r)) }
+        : { revogadas: [], pendentes: [cert.blobRef, cert.senhaRef].filter((r): r is string => Boolean(r)) }
       const revogacaoStatus = revogacaoSegredos.pendentes.length > 0 ? "pendente_provisionamento" : "concluida"
 
       await recordFiscalAdminLog({

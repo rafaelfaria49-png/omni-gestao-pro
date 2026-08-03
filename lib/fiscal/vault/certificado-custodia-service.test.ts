@@ -269,6 +269,57 @@ describe("custodia A1 — rotação", () => {
     if (r.ok) return
     expect(r.codigo).toBe("custodia_indisponivel")
   })
+
+  it("refs canônicas idênticas (EnvVault gravável): rotação in-place NÃO se autodestrói", async () => {
+    // Regressão da revisão independente: com refs estáveis, revogar "a anterior" apagaria a nova.
+    const env: Record<string, string | undefined> = {}
+    const vault = new EnvVault({ env, allowWrite: true })
+    const antigo = validTestPfx()
+    const refsAntigas = await vault.putCertificadoPfx(LOJA, Buffer.from(antigo.pfx), antigo.senha)
+
+    const novo = validTestPfx({ senha: "senha-in-place-016c" })
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      refsAnteriores: refsAntigas,
+      confirmarTroca: async () => {},
+    })
+
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.refs.blobRef).toBe(refsAntigas.blobRef) // refs estáveis
+    expect(r.revogacaoAnterior).toBe("nao_aplicavel") // NADA revogado
+    // O valor novo continua resolvível — a rotação não apagou o que acabou de gravar.
+    expect(await vault.getCertificadoSenha(LOJA, refsAntigas.senhaRef)).toBe(novo.senha)
+  })
+
+  it("refs idênticas + troca não confirmada: NADA é revogado (valor in-place preservado)", async () => {
+    const env: Record<string, string | undefined> = {}
+    const vault = new EnvVault({ env, allowWrite: true })
+    const antigo = validTestPfx()
+    const refsAntigas = await vault.putCertificadoPfx(LOJA, Buffer.from(antigo.pfx), antigo.senha)
+
+    const novo = validTestPfx({ senha: "senha-falha-in-place-016c" })
+    const r = await rotacionarCertificadoA1({
+      vault,
+      storeId: LOJA,
+      novoPfx: Buffer.from(novo.pfx),
+      novaSenha: novo.senha,
+      refsAnteriores: refsAntigas,
+      confirmarTroca: async () => {
+        throw new Error("falha de banco simulada")
+      },
+    })
+
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.codigo).toBe("troca_nao_confirmada")
+    // Sem refs versionadas não há "versão nova separada" para descartar — e revogar destruiria
+    // o segredo. O serviço NÃO revoga nada nesse backend.
+    expect(await vault.getCertificadoSenha(LOJA, refsAntigas.senhaRef)).toBe(novo.senha)
+  })
 })
 
 describe("custodia A1 — revogação e descrição", () => {

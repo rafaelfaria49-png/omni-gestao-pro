@@ -97,8 +97,18 @@ export class EnvVault implements FiscalSecretVault {
     }
   }
 
+  /**
+   * Senha do `.pfx` — NUNCA trimada: espaços nas bordas podem ser parte legítima da senha.
+   * (A REFERÊNCIA continua normalizada; só o VALOR do segredo é preservado byte a byte.)
+   */
   async getCertificadoSenha(storeId: string, senhaRef: string | null | undefined): Promise<string | null> {
-    return this.resolveRaw(storeId, senhaRef)
+    const id = clean(storeId)
+    if (!id) throw new FiscalVaultError("store_invalida", "storeId é obrigatório para resolver segredo fiscal.")
+    const name = clean(senhaRef)
+    if (!name) return null
+    this.assertScope(id, name)
+    const value = this.env[name]
+    return value === undefined || value === "" ? null : value
   }
 
   async getCscToken(storeId: string, cscTokenRef: string | null | undefined): Promise<string | null> {
@@ -122,8 +132,10 @@ export class EnvVault implements FiscalSecretVault {
   }
 
   async putCertificadoPfx(storeId: string, pfx: Buffer, senha: string): Promise<{ blobRef: string; senhaRef: string }> {
+    // Senha preservada byte a byte (sem trim) — apenas vazia é rejeitada, ANTES de gravar o blob.
+    if (senha === "") throw new FiscalVaultError("ref_ausente", "Senha do certificado não pode ser vazia.", clean(storeId) || null)
     const blobRef = this.writeOrThrow(storeId, "pfx", pfx.toString("base64"))
-    const senhaRef = this.writeOrThrow(storeId, "senha", clean(senha))
+    const senhaRef = this.writeOrThrow(storeId, "senha", senha)
     return { blobRef, senhaRef }
   }
 

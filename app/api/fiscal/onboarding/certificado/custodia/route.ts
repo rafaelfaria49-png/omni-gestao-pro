@@ -28,6 +28,7 @@ import { onlyDigits } from "@/lib/fiscal/fiscal-validators"
 import {
   PFX_TAMANHO_MAXIMO_BYTES,
   bloqueio,
+  inspecionarCertificadoPfx,
   validarArquivoPfx,
 } from "@/lib/fiscal/certificate"
 import { carregarContextoOnboarding, cnpjConhecidoDaLoja } from "@/lib/fiscal/certificate/onboarding-context"
@@ -118,7 +119,58 @@ export async function POST(req: Request) {
   try {
     pfx = Buffer.from(await arquivo.arrayBuffer())
 
-    // Valida + grava no cofre (o serviço zera o buffer ao final, inclusive em erro).
+    // PRÉ-INSPEÇÃO em memória (sobre uma cópia — a inspeção zera o buffer que recebe): todas as
+    // recusas acontecem ANTES de qualquer gravação no cofre. Segredo rejeitado nunca é armazenado.
+    const pre = inspecionarCertificadoPfx({ pfx: Buffer.from(pfx), senha })
+    if (!pre.extraido || pre.bloqueios.length > 0) {
+      return jsonBloqueado(pre.bloqueios.length > 0 ? pre.bloqueios : [bloqueio("arquivo_invalido")], 422)
+    }
+    const extraidoPrevio = pre.extraido
+
+    // Reconciliação multi-loja ANTES do cofre: CNPJ × unidade e fingerprint de outra unidade.
+    await prismaEnsureConnected()
+    const contexto = await carregarContextoOnboarding({
+      storeId: acl.storeId,
+      fingerprint: extraidoPrevio.fingerprintSha1,
+    })
+
+    const bloqueiosReconciliacao: OnboardingBloqueio[] = []
+    const cnpjLoja = cnpjConhecidoDaLoja(contexto)
+    if (extraidoPrevio.cnpj && cnpjLoja && onlyDigits(extraidoPrevio.cnpj) !== cnpjLoja) {
+      bloqueiosReconciliacao.push(bloqueio("cnpj_divergente"))
+    }
+    if (contexto.certificados.fingerprintVinculadaAOutraLoja) {
+      bloqueiosReconciliacao.push(bloqueio("certificado_de_outra_loja"))
+    }
+    if (bloqueiosReconciliacao.length > 0) {
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "certificado.custodia.armazenar",
+        mensagem: "Custódia recusada na reconciliação com a unidade — nada gravado no cofre",
+        detalhe: { fingerprint: extraidoPrevio.fingerprintSha1, bloqueios: bloqueiosReconciliacao.map((b) => b.codigo) },
+      })
+      return jsonBloqueado(bloqueiosReconciliacao, 422)
+    }
+
+    // Revogação é TERMINAL: reenviar a mesma fingerprint NÃO ressuscita a linha.
+    const existente = contexto.certificadoMesmaFingerprint
+    if (existente && String(existente.status).toUpperCase() === "REVOGADO") {
+      return NextResponse.json(
+        { ok: false, error: "Este certificado está revogado nesta unidade (estado terminal). Registre um novo certificado.", codigo: "certificado_revogado" },
+        { status: 409 },
+      )
+    }
+
+    // Reenvio sobre certificado ATIVO derrubaria a linha em uso — o caminho correto é a ROTAÇÃO.
+    if (existente?.ativo === true) {
+      return NextResponse.json(
+        { ok: false, error: "Este certificado está ativo nesta unidade. Use a rotação para trocar o material sem quebrar a referência.", codigo: "certificado_ativo_use_rotacao" },
+        { status: 409 },
+      )
+    }
+
+    // Todas as recusas ficaram para trás: agora sim, valida (de novo, no serviço) e grava no cofre.
     const resultado = await armazenarCertificadoA1({ vault, storeId: acl.storeId, pfx, senha })
     pfx = null
 
@@ -135,36 +187,6 @@ export async function POST(req: Request) {
 
     const { refs, extraido } = resultado
 
-    // Reconciliação multi-loja: CNPJ × unidade e fingerprint vinculada a outra unidade.
-    await prismaEnsureConnected()
-    const contexto = await carregarContextoOnboarding({
-      storeId: acl.storeId,
-      fingerprint: extraido.fingerprintSha1,
-    })
-
-    const bloqueiosReconciliacao: OnboardingBloqueio[] = []
-    const cnpjLoja = cnpjConhecidoDaLoja(contexto)
-    if (extraido.cnpj && cnpjLoja && onlyDigits(extraido.cnpj) !== cnpjLoja) {
-      bloqueiosReconciliacao.push(bloqueio("cnpj_divergente"))
-    }
-    if (contexto.certificados.fingerprintVinculadaAOutraLoja) {
-      bloqueiosReconciliacao.push(bloqueio("certificado_de_outra_loja"))
-    }
-    if (bloqueiosReconciliacao.length > 0) {
-      // Incompatível: desfaz a gravação no cofre (best-effort) — nada órfão, nada registrado.
-      await revogarSegredosCertificado({ vault, storeId: acl.storeId, ...refs })
-      await recordFiscalAdminLog({
-        session: acl.session,
-        storeId: acl.storeId,
-        acao: "certificado.custodia.armazenar",
-        mensagem: "Custódia recusada na reconciliação com a unidade — material descartado do cofre",
-        detalhe: { fingerprint: extraido.fingerprintSha1, bloqueios: bloqueiosReconciliacao.map((b) => b.codigo) },
-      })
-      return jsonBloqueado(bloqueiosReconciliacao, 422)
-    }
-
-    // Registro: mesma fingerprint nesta unidade ⇒ atualiza refs + metadados (rotação por reenvio);
-    // senão, cria a linha. Sempre `PENDENTE_VALIDACAO` + inativo — ativação é ato separado.
     const metadata = {
       apelido: (apelido || extraido.nomeEmpresarial || "Certificado A1").slice(0, 120),
       tipo: "A1",
@@ -178,7 +200,6 @@ export async function POST(req: Request) {
       senhaRef: refs.senhaRef,
     }
 
-    const existente = contexto.certificadoMesmaFingerprint
     let certificado
     try {
       certificado = existente
@@ -192,8 +213,14 @@ export async function POST(req: Request) {
             select: { id: true, apelido: true, status: true, ativo: true, validoAte: true },
           })
     } catch {
-      // Banco falhou depois da gravação no cofre: desfaz as refs novas (best-effort).
-      await revogarSegredosCertificado({ vault, storeId: acl.storeId, ...refs })
+      // Banco falhou depois da gravação no cofre: desfaz as refs novas SOMENTE se forem diferentes
+      // das que a linha já tinha (refs idênticas = valor in-place já era desta linha — revogar
+      // destruiria o segredo em uso).
+      const refsDiferentes =
+        !existente || existente.blobRef !== refs.blobRef || existente.senhaRef !== refs.senhaRef
+      if (refsDiferentes) {
+        await revogarSegredosCertificado({ vault, storeId: acl.storeId, ...refs })
+      }
       throw new Error("Falha ao registrar o certificado — gravação no cofre desfeita (fail-closed).")
     }
 
@@ -255,8 +282,12 @@ export async function POST(req: Request) {
       transmissao: "nenhuma",
     })
   } catch (e) {
-    // Mensagem genérica: erro inesperado nunca carrega material do certificado.
-    void e
+    // Mensagem genérica ao cliente: erro inesperado nunca carrega material do certificado.
+    // Log server-side SANITIZADO (nome/mensagem do erro — nossos erros nunca embutem segredo).
+    console.error(
+      "[fiscal:custodia] erro inesperado:",
+      e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 300) : "erro desconhecido",
+    )
     return jsonBloqueado([bloqueio("erro_inesperado")], 500)
   } finally {
     zeroBuffer(pfx)
