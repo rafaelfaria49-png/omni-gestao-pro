@@ -4,6 +4,11 @@ import { opsLojaIdFromRequest } from "@/lib/ops-api-gate"
 import { apiGuardEnterpriseOrOps } from "@/lib/auth/api-enterprise-guard"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
 import { classifyLineOrigem, type OrigemVendaKey } from "@/lib/caixa-fechamento-resumo"
+import {
+  escolherEscopoVendas,
+  financeiroDasVendasWhere,
+  somarVendasAtivas,
+} from "@/lib/caixa/sessao-vendas-escopo"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -141,57 +146,17 @@ export async function GET(req: Request) {
     const qtdRecebimentosContas = sessao.operacoes.filter((o) => o.tipo === "recebimento_cr").length
     const totalDevolucoes = sessao.devolucoes.reduce((s, d) => s + d.valorTotal, 0)
 
-    // Total de vendas a partir do ledger financeiro (MovimentacaoFinanceira origem="venda").
-    // Usa o intervalo da sessão (abertaEm → fechadaEm ou agora para sessões abertas).
     const fimPeriodo = sessao.fechadaEm ?? new Date()
-    const movFinAgg = await prisma.movimentacaoFinanceira.aggregate({
-      where: {
-        storeId: lojaId,
-        origem: "venda",
-        tipo: "entrada",
-        createdAt: { gte: sessao.abertaEm, lte: fimPeriodo },
-      },
-      _sum: { valor: true },
-      _count: true,
-    })
-    const totalVendas = Math.round((movFinAgg._sum.valor ?? 0) * 100) / 100
-    const totalVendasCount = movFinAgg._count
 
-    // Vendas reais desta sessão (filtro por terminal — mais preciso que janela temporal).
-    // Quando a sessão tem terminalId, agrega só vendas deste terminal no período.
-    let totalVendasTerminal: number | null = null
-    let totalVendasCountTerminal: number | null = null
-    if (sessao.terminalId) {
-      const agg = await prisma.venda.aggregate({
-        where: {
-          storeId: lojaId,
-          terminalId: sessao.terminalId,
-          status: { not: "cancelada" },
-          at: { gte: sessao.abertaEm, lte: fimPeriodo },
-        },
-        _sum: { total: true },
-        _count: { id: true },
-      })
-      totalVendasTerminal = Math.round((agg._sum.total ?? 0) * 100) / 100
-      totalVendasCountTerminal = agg._count.id
-    }
-
-    // Info do terminal (gracioso se a tabela ainda não existir).
-    const terminal = sessao.terminalId
-      ? await withPrismaSafe(
-          async (db) =>
-            (await db.pdvTerminal.findFirst({
-              where: { id: sessao.terminalId!, storeId: lojaId },
-              select: { id: true, code: true, name: true },
-            })) as { id: string; code: string; name: string } | null,
-          null as { id: string; code: string; name: string } | null,
-        )
-      : null
-
-    // Lista de vendas da sessão (GOAL CAIXA-SESSAO-DETALHE-VENDAS-003 — base p/ Conferência
-    // de Caixa). Preferência: casar por `payload.sessaoId` (mesma regra do client
-    // `filterSalesDaSessao`); sem isso (sessão legada), cai para terminalId + janela de tempo
-    // — mesma heurística já usada acima em `totalVendasTerminal`. Não inventa FK nova.
+    // Vendas da sessão (GOAL CAIXA-SESSAO-DETALHE-VENDAS-003 — base p/ Conferência de
+    // Caixa). Preferência: casar por `payload.sessaoId` (mesma regra do client
+    // `filterSalesDaSessao`); sem isso (sessão legada), cai para terminalId + janela de
+    // tempo. Não inventa FK nova.
+    //
+    // Resolvido ANTES dos totais de propósito: lista e totais precisam sair do MESMO
+    // conjunto. Enquanto os totais usavam só a janela `abertaEm..fechadaEm`, uma venda
+    // registrada segundos antes do POST de abertura aparecia na lista e ficava fora do
+    // fechamento — ver `lib/caixa/sessao-vendas-escopo.ts`.
     const vendasItensSelect = { inventoryId: true, lineTotal: true } as const
     const vendaSelect = {
       id: true,
@@ -209,9 +174,10 @@ export async function GET(req: Request) {
       select: vendaSelect,
       orderBy: { at: "asc" },
     })
-    const vendaRows =
+    const { vendas: vendaRows, modo: escopoVendasModo } = escolherEscopoVendas(
+      vendasPorSessaoId,
       vendasPorSessaoId.length > 0
-        ? vendasPorSessaoId
+        ? []
         : await prisma.venda.findMany({
             where: {
               storeId: lojaId,
@@ -220,7 +186,41 @@ export async function GET(req: Request) {
             },
             select: vendaSelect,
             orderBy: { at: "asc" },
-          })
+          }),
+    )
+
+    // Total de vendas a partir do ledger financeiro (MovimentacaoFinanceira origem="venda"),
+    // ligado às vendas da sessão por `referenciaId = pedidoId` — e não mais por janela de
+    // `createdAt`, que excluía venda legítima da própria sessão.
+    const vendasAtivas = somarVendasAtivas(vendaRows)
+    const financeiroWhere = financeiroDasVendasWhere(lojaId, vendasAtivas.pedidoIds)
+    const movFinAgg = financeiroWhere
+      ? await prisma.movimentacaoFinanceira.aggregate({
+          where: financeiroWhere,
+          _sum: { valor: true },
+          _count: true,
+        })
+      : { _sum: { valor: null as number | null }, _count: 0 }
+    const totalVendas = Math.round((movFinAgg._sum.valor ?? 0) * 100) / 100
+    const totalVendasCount = movFinAgg._count
+
+    // Mesmo conjunto, agora somado pelo valor da própria venda (inclui o que não gera
+    // entrada imediata no ledger, como a parcela à prazo).
+    const totalVendasTerminal = sessao.terminalId ? vendasAtivas.total : null
+    const totalVendasCountTerminal = sessao.terminalId ? vendasAtivas.count : null
+
+    // Info do terminal (gracioso se a tabela ainda não existir).
+    const terminal = sessao.terminalId
+      ? await withPrismaSafe(
+          async (db) =>
+            (await db.pdvTerminal.findFirst({
+              where: { id: sessao.terminalId!, storeId: lojaId },
+              select: { id: true, code: true, name: true },
+            })) as { id: string; code: string; name: string } | null,
+          null as { id: string; code: string; name: string } | null,
+        )
+      : null
+
     const vendas: VendaSessaoDetalheItem[] = vendaRows.map((v) => ({
       id: v.id,
       numero: v.pedidoId,
@@ -249,6 +249,8 @@ export async function GET(req: Request) {
         totalVendasCount,
         totalVendasTerminal,
         totalVendasCountTerminal,
+        /** Como o conjunto foi resolvido: `vinculo` (payload.sessaoId) ou `janela` (legado). */
+        escopoVendasModo,
       },
     })
   } catch (e) {

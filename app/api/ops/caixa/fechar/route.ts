@@ -4,6 +4,11 @@ import { opsLojaIdFromRequestForWrite } from "@/lib/ops-api-gate"
 import { apiGuardEnterpriseOrOps } from "@/lib/auth/api-enterprise-guard"
 import type { Prisma } from "@/generated/prisma"
 import { z } from "zod"
+import {
+  escolherEscopoVendas,
+  financeiroDasVendasWhere,
+  somarVendasAtivas,
+} from "@/lib/caixa/sessao-vendas-escopo"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -64,7 +69,7 @@ export async function POST(req: Request) {
     // Busca observação anterior e horário de abertura para calcular totalVendas server-side
     const prev = await prisma.sessaoCaixa.findUnique({
       where: { id: sessaoId },
-      select: { observacao: true, abertaEm: true },
+      select: { observacao: true, abertaEm: true, terminalId: true },
     })
     const obsMerge =
       observacao.trim() && prev?.observacao?.trim()
@@ -73,17 +78,39 @@ export async function POST(req: Request) {
 
     // Calcula totalVendas a partir do ledger financeiro para auditoria fiel.
     // O valor do cliente (localStorage) pode divergir; o server-side é o canônico.
+    //
+    // O escopo é o MESMO de `sessao-detalhe`: vendas ligadas à sessão por
+    // `payload.sessaoId` (janela + terminal só como fallback legado). Usar apenas a
+    // janela `abertaEm..agora` deixava de fora venda registrada segundos antes do POST
+    // de abertura — e este snapshot é congelado no payload, nunca recalculado depois.
+    // Ver `lib/caixa/sessao-vendas-escopo.ts`.
     const agora = new Date()
-    const movFinAgg = await prisma.movimentacaoFinanceira.aggregate({
-      where: {
-        storeId: lojaId,
-        origem: "venda",
-        tipo: "entrada",
-        createdAt: { gte: prev?.abertaEm ?? agora, lte: agora },
-      },
-      _sum: { valor: true },
-      _count: true,
+    const vendasPorSessaoId = await prisma.venda.findMany({
+      where: { storeId: lojaId, payload: { path: ["sessaoId"], equals: sessaoId } },
+      select: { pedidoId: true, total: true, status: true },
     })
+    const { vendas: vendasDaSessao } = escolherEscopoVendas(
+      vendasPorSessaoId,
+      vendasPorSessaoId.length > 0
+        ? []
+        : await prisma.venda.findMany({
+            where: {
+              storeId: lojaId,
+              at: { gte: prev?.abertaEm ?? agora, lte: agora },
+              ...(prev?.terminalId ? { terminalId: prev.terminalId } : {}),
+            },
+            select: { pedidoId: true, total: true, status: true },
+          }),
+    )
+    const vendasAtivas = somarVendasAtivas(vendasDaSessao)
+    const financeiroWhere = financeiroDasVendasWhere(lojaId, vendasAtivas.pedidoIds)
+    const movFinAgg = financeiroWhere
+      ? await prisma.movimentacaoFinanceira.aggregate({
+          where: financeiroWhere,
+          _sum: { valor: true },
+          _count: true,
+        })
+      : { _sum: { valor: null as number | null }, _count: 0 }
     const totalVendasServer = Math.round((movFinAgg._sum.valor ?? 0) * 100) / 100
 
     // Mescla payload do cliente com totais server-side.
