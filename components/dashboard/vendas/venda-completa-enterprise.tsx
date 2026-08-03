@@ -53,6 +53,9 @@ import { VendaEsperaModal } from "./venda-espera-modal"
 import { avulsoInventoryId, isAvulsoSaleLine } from "@/lib/os-pdv-virtual-lines"
 import { readSelectedTerminal } from "@/lib/pdv-terminal"
 import { CaixaStatusBar } from "../caixa/caixa-status-bar"
+import { useCaixa } from "../caixa/caixa-provider"
+import { useGarantirSessaoCaixa } from "../caixa/use-atualizar-caixa"
+import { isCaixaProntoParaFinalizar } from "@/lib/pdv-caixa-session"
 import {
   getHeldSales,
   saveHeldSale,
@@ -158,6 +161,11 @@ function pagamentoLabelMethod(p: PaymentMethod): string {
 
 export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
   const { inventory, setInventory, caixa, finalizeSaleTransaction, getSaldoCreditoCliente } = useOperationsStore()
+  // Mesma porta de pré-pagamento dos demais PDVs: caixa aberto E sessão do
+  // terminal atual. Sem isso a venda saía daqui e voltava recusada por
+  // `CAIXA_FECHADO`, virando pendência local (F-02 da readiness 002A).
+  const { sessaoId } = useCaixa()
+  const { garantirSessao } = useGarantirSessaoCaixa()
   const { empresaDocumentos, lojaAtivaId } = useLojaAtiva()
   const { pdvParams } = useStoreSettings()
   const { toast } = useToast()
@@ -581,8 +589,12 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
       toast({ title: "Total inválido", description: "O valor total precisa ser maior que zero.", variant: "destructive" })
       return
     }
-    if (!caixa.isOpen) {
-      toast({ title: "Caixa fechado", description: "Abra o caixa antes de registrar uma venda.", variant: "destructive" })
+    // Caixa fechado na tela ou sem referência de sessão utilizável: reconsulta a
+    // sessão do terminal atual antes de recusar. O carrinho é mantido e a venda
+    // NÃO é enviada — recuperada a sessão, quem finaliza de novo é o operador
+    // (uma resposta inconclusiva nunca vira venda duplicada).
+    if (!isCaixaProntoParaFinalizar({ isOpen: caixa.isOpen, sessaoId })) {
+      void garantirSessao()
       return
     }
     setIsPaymentOpen(true)
@@ -593,6 +605,14 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
     if (!selectedCliente || cart.length === 0 || total <= 0) return
     if (payments.length === 0) {
       toast({ title: "Selecione a forma de pagamento", variant: "destructive" })
+      return
+    }
+    // Segunda porta: a sessão pode ter fechado (ou sido reconciliada para
+    // "sem caixa") com o modal de pagamento já aberto. Bloqueia ANTES de
+    // `finalizeSaleTransaction` — nenhuma venda é criada, nenhuma pendência
+    // nasce, e o carrinho e as formas digitadas continuam montados.
+    if (!isCaixaProntoParaFinalizar({ isOpen: caixa.isOpen, sessaoId })) {
+      void garantirSessao()
       return
     }
 
