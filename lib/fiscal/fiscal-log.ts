@@ -23,6 +23,15 @@ export type FiscalLogAcao =
    * ativado. Ação própria para que a trilha não sugira instalação de certificado.
    */
   | "identidade_importada_certificado_custodia_pendente"
+  // GOAL-016C — ciclo de vida do segredo no cofre (ADR-0009 D7). Detalhe NUNCA contém segredo.
+  | "secret.set"
+  | "secret.rotate"
+  | "secret.revoke"
+  | "secret.access"
+  | "certificado.custodia.armazenar"
+  | "certificado.custodia.rotacionar"
+  | "certificado.custodia.indisponivel"
+  | "certificado.revogar"
 
 function operadorFromSession(session: Session | null): string {
   const u = session?.user

@@ -16,6 +16,7 @@ import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { recordFiscalAdminLog, type FiscalLogAcao } from "@/lib/fiscal/fiscal-log"
 import { createEnvVault, validarCertificadoLoja, type CertificadoValidacao } from "@/lib/fiscal/vault"
+import { resolveFiscalSecretProvider, revogarSegredosCertificado } from "@/lib/fiscal/vault"
 import { CertificadoStatus, type Prisma } from "@/generated/prisma"
 
 export const runtime = "nodejs"
@@ -30,6 +31,12 @@ const patchSchema = z.object({
   ativo: z.boolean().optional(),
   /** Roda a validação do certificado sem ativar (atualiza status para refletir a realidade). */
   validar: z.boolean().optional(),
+  /**
+   * Revoga o certificado (GOAL-016C · ADR-0009 D8): status REVOGADO + inativo + destruição do
+   * material no cofre (best-effort — no piloto, a remoção manual da env é reportada como
+   * pendente). Documentos já autorizados permanecem; a revogação só afeta emissões futuras.
+   */
+  revogar: z.boolean().optional(),
   apelido: z.string().trim().max(120).optional(),
   blobRef: z.string().trim().max(300).nullable().optional(),
   senhaRef: z.string().trim().max(200).nullable().optional(),
@@ -164,7 +171,69 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ ok: true, certificado: updated, validacao })
     }
 
-    // ── Fluxo 2: VALIDAÇÃO sem ativar ──────────────────────────────────────────────────────────
+    // ── Fluxo 2: REVOGAÇÃO (GOAL-016C) — bloqueia imediatamente, depois destrói o material ──────
+    if (body.revogar === true) {
+      if (cert.status === "REVOGADO") {
+        return jsonError("Certificado já está revogado.", 409)
+      }
+      // Bloqueio imediato: a linha deixa de servir novas emissões ANTES de qualquer limpeza.
+      await prisma.$transaction(async (tx) => {
+        await tx.certificadoDigital.update({
+          where: { id: certId },
+          data: { ...refData, status: CertificadoStatus.REVOGADO, ativo: false },
+        })
+        const cfg = await tx.configuracaoFiscalLoja.findUnique({
+          where: { storeId: acl.storeId },
+          select: { storeId: true, certificadoAtivoId: true },
+        })
+        if (cfg && cfg.certificadoAtivoId === certId) {
+          await tx.configuracaoFiscalLoja.update({
+            where: { storeId: acl.storeId },
+            data: { certificadoAtivoId: null },
+          })
+        }
+      })
+
+      // Destruição do material no cofre (best-effort reportado — no piloto, a remoção da env é manual).
+      const provider = resolveFiscalSecretProvider()
+      const revogacaoSegredos = provider.vault
+        ? await revogarSegredosCertificado({
+            vault: provider.vault,
+            storeId: acl.storeId,
+            blobRef: effBlobRef,
+            senhaRef: effSenhaRef,
+          })
+        : { revogadas: [], pendentes: [effBlobRef, effSenhaRef].filter((r): r is string => Boolean(r)) }
+      const revogacaoStatus = revogacaoSegredos.pendentes.length > 0 ? "pendente_provisionamento" : "concluida"
+
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "certificado.revogar",
+        mensagem: `Certificado revogado (${cert.apelido || cert.id}) — emissões futuras bloqueadas`,
+        detalhe: { certificadoId: certId, revogacaoSegredos: revogacaoStatus },
+      })
+      await recordFiscalAdminLog({
+        session: acl.session,
+        storeId: acl.storeId,
+        acao: "secret.revoke",
+        mensagem: `Material do certificado revogado no cofre (${cert.apelido || cert.id})`,
+        detalhe: {
+          certificadoId: certId,
+          provider: provider.provider,
+          revogacaoSegredos: revogacaoStatus,
+          refsPendentes: revogacaoSegredos.pendentes.length,
+        },
+      })
+
+      const updated = await prisma.certificadoDigital.findUnique({
+        where: { id: certId },
+        select: { id: true, apelido: true, ativo: true, status: true },
+      })
+      return NextResponse.json({ ok: true, certificado: updated, revogacaoSegredos: revogacaoStatus })
+    }
+
+    // ── Fluxo 3: VALIDAÇÃO sem ativar ──────────────────────────────────────────────────────────
     if (body.validar === true) {
       const validacao = await validarPeloCofre(acl.storeId, effBlobRef, effSenhaRef)
       // Passou ⇒ mantém pendente (aguardando ativação explícita); falhou ⇒ reflete o status real.
@@ -187,7 +256,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       return NextResponse.json({ ok: true, validado: validacao.ok, validacao, certificado: updated })
     }
 
-    // ── Fluxo 3: DESATIVAÇÃO / atualização de metadados (sem validação) ─────────────────────────
+    // ── Fluxo 4: DESATIVAÇÃO / atualização de metadados (sem validação) ─────────────────────────
     let acao: FiscalLogAcao = "certificado.update"
     await prisma.$transaction(async (tx) => {
       const data: Prisma.CertificadoDigitalUpdateInput = { ...refData }
