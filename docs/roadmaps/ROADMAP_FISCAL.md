@@ -4,7 +4,7 @@ hub: fiscal
 status: vivo
 owner: produto/arquitetura
 last_update: 2026-08-03
-sprint_atual: GOAL-016C integrado na main (PR #33) · GOAL-016D planejado e NÃO iniciado; zero homologação, zero produção
+sprint_atual: GOAL-016C integrado na main (PR #33) · GOAL-016D planejado, revisado em cruzado (parecer B) e NÃO iniciado; zero homologação, zero produção
 ---
 
 # 🧾 Roadmap Fiscal — OmniGestão Pro
@@ -185,11 +185,13 @@ sem caller no fluxo de venda e o banco fiscal está vazio.
 - [x] Paridade fiscal do `upsertProduto` (Cadastros V2) — `metadata.fiscal` canônica (PR #8,
   merge `b307337`); contrato `lib/produto-fiscal.ts` reutilizado; **N3 no eixo cadastro**;
   `fiscalRegime` não canônico; sem schema/migration/emissão.
-- [ ] `lib/fiscal/provider/<impl>`: provider real (homologação) registrado no resolver.
-  **Planejado** pelo GOAL-016D em 5 slices (016D-A…E) — ver
+- [ ] `lib/fiscal/provider/<impl>`: provider real (homologação) — **atrás do contrato P2**, não do
+  resolver de P1. **Planejado** pelo GOAL-016D em 6 slices (016D-A0…E) — ver
   [`FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`](../fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md).
-  **Nenhum slice iniciado.** O `REGISTRY` só ganha `SEFAZ_DIRETO` em 016D-D, sob gate **G-F5.3** e
-  somente após o `emitir` de P1 ser provado **inerte** (D11).
+  **Nenhum slice iniciado.** ⛔ **Decisão revista pela revisão cruzada (F-3):** o `REGISTRY` de
+  `FiscalProvider`/P1 **nunca** ganha `SEFAZ_DIRETO` — `resolveFiscalProvider` continua devolvendo
+  `provider_nao_implementado`. O adapter real é alcançado por **instanciação server-side direta**,
+  sob gates **G-F5.2/G-F5.3** e os novos **G-H1…G-H6**.
 - [x] Gate G-F5: primeira integração = **SEFAZ direta em homologação**, sem gateway/PAA →
   ADR-0015.
 - [x] Gate G-F5.1: primeiro piloto = **Matriz RafaCell/Taguaí, SP, SEFAZ-SP, NFC-e 65,
@@ -263,39 +265,66 @@ primeiro adapter SEFAZ-SP de homologação:
 [`FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`](../fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md).
 **Zero código, zero segredo, zero chamada SEFAZ, zero schema/migration.**
 
-**Divisão aprovada em 5 slices** — nenhum iniciado:
+**Divisão aprovada em 6 slices** — nenhum iniciado:
 
 | Slice | Objetivo | Gate | Depende de insumo humano? |
 |---|---|---|---|
-| **016D-A** | Contrato + adapter de transporte **offline** (guards, allow-list, resolver de endpoint e de certificado) | — | 🟢 **não** |
+| **016D-A0** 🆕 | Resolver do certificado ativo por loja, **offline, sem contato com segredo** | — | 🟢 **não** |
+| **016D-A** | Contrato + adapter de transporte **offline** (guards, allow-list, resolver de endpoint) | — | 🟢 **não** |
 | **016D-B** | Fixtures SOAP, parser estrito e matriz de `cStat` | — | 🟢 não (H-9/H-10 afetam só a fidelidade) |
-| **016D-C** | `statusServico` real em homologação (primeiro contato externo) | 🔒 **G-F5.2** | 🟥 A1 + senha |
-| **016D-D** | Autorização controlada de **uma** NFC-e sintética | 🔒 **G-F5.3** | 🟥 todos |
-| **016D-E** | Consulta e reconciliação de estado incerto | 🟡 leve | 016D-D concluído · **D12** |
+| **016D-C** | `statusServico` real em homologação (primeiro contato externo) | 🔒 **G-F5.2** + **G-H1/G-H2/G-H3/G-H6** | 🟥 A1 + senha |
+| **016D-D** | Autorização controlada de **uma** NFC-e sintética | 🔒 **G-F5.3** + **G-H4/G-H5/G-H6** | 🟥 todos |
+| **016D-E** | Consulta e reconciliação de estado incerto | 🟡 leve + **G-H6** | 016D-D concluído · **D12** |
 
 **Descobertas estruturantes da auditoria** (detalhe no plano §2):
 
 - existem **duas** superfícies de provider — `FiscalProvider` (snapshot) e
   `UncertainStateFiscalProvider` (**bytes exatos**). O envelope exigido pela ADR-0015 §2.2 **já é** o
   segundo; o `SefazDiretoProvider` implementa **ele**, não uma mutação de `FiscalProvider.emitir`;
-- **cinco travas** impedem provider real no caminho P2, incluindo `readonly simulado: true` —
-  barreira de **compilador**. Nenhum slice antes de 016D-D as toca;
-- ⚠️ **mas a rota P1 direta não tem equivalente:** `FiscalProvider.simulado` é `boolean` (não
-  literal) e `emitirNotaFiscalVenda` chega a `provider.emitir` **sem passar pela fila nem pelo
-  coordenador**. Fechado pela decisão **D11** (o `emitir` de P1 do `SefazDiretoProvider` é
-  **inerte** e isso é provado por teste antes de registrar `SEFAZ_DIRETO`);
+- ⚠️ **correção da revisão cruzada (F-1):** `readonly simulado: true` **não é barreira de
+  compilador**. Um provider real que declare `simulado = true` **compila e transmite**, e por isso
+  T2/T3 (`if (!provider.simulado)`) **também passam**. `simulado` é rótulo de trilha e **não pode ser
+  tratado como controle de segurança**. As proteções **mecânicas** efetivas são: **T4**
+  (`provider === "STUB_HOMOLOGACAO"` lido da configuração persistida), o **`REGISTRY` sem
+  `SEFAZ_DIRETO`** e a **ausência de cliente HTTP** em `lib/fiscal/**`;
+- ⚠️ **correção da revisão cruzada (F-2):** **T5 está inerte** no caminho `payload.version >= 2` —
+  `uncertain-state-job-executor.ts` devolve `simulado: true` e
+  `externalTransmissionAttempted: false` **literais** em todos os 7 retornos. Corrigir a derivação
+  desses campos é **critério de aceite** de 016D-A/016D-B, antes de qualquer transmissão real;
+- ⚠️ **a rota P1 direta não tem equivalente:** `FiscalProvider.simulado` é `boolean` e
+  `emitirNotaFiscalVenda` chega a `provider.emitir` **sem passar pela fila nem pelo coordenador** —
+  e o pipeline **consome numeração** e grava `fiscalStatus=EMITINDO` **antes** disso, sem gate de
+  `fiscalEnabled` (F-3). Fechado pela decisão **D11 endurecida**: ⛔ **`SEFAZ_DIRETO` NUNCA é
+  registrado no `REGISTRY` de P1**; `statusServico` usa **instanciação server-side direta**. Isso
+  elimina o risco **por construção**, em vez de mitigá-lo por teste de inércia;
 - ⚠️ **`cStat 656` não tinha mecanismo de parada:** o union `UNCERTAIN` não distingue throttle e
   **todo** incerto agenda um job `CONSULTA` — o oposto de "parar imediatamente". Fechado pela
-  decisão **D12** (código `THROTTLED`, aditivo, dono é o slice 016D-B);
-- **falta o resolver** `storeId → certificadoAtivoId → CertificadoDigital → {blobRef, senhaRef}`;
-- **nenhum WSDL** no repositório (só XSDs `PL_010e_v1.02`) ⇒ `SOAPAction` é pendência **H-9/H-10**;
+  decisão **D12** (códigos `THROTTLED` **e** `PROCESSING`, aditivos, dono é o slice 016D-B), com
+  **pausa no escopo da loja** e **resultado dedicado** que não permite retry, consulta infinita nem
+  reprocessamento;
+- ⚠️ **existe caller administrativo de fila já deployado** — `app/api/internal/fiscal/queue`
+  (F-6). Hoje **fail-closed** (503 sem segredo; jobs v2 sem wiring morrem). **Não** recebe wiring do
+  `SefazDiretoProvider` no piloto; 016D-D cria caminho separado de **nota única**;
+- **falta o resolver** `storeId → certificadoAtivoId → CertificadoDigital → {blobRef, senhaRef}` —
+  agora slice próprio **016D-A0**;
+- **nenhum WSDL** no repositório (só XSDs `PL_010e_v1.02`) ⇒ `SOAPAction` é pendência **H-9/H-10**.
+  Confirmado por leitura: o **MOC 7.00 não menciona `SOAPAction`** em nenhum ponto;
 - `xmlBytesSha256` **não é coluna** — vive no payload do job `EMISSAO`.
 
-**Parâmetros oficiais revalidados em 2026-08-03** (MOC 7.00 + SEFAZ-SP): TLS 1.2 com **autenticação
-mútua**; SOAP 1.2 Document/Literal; **leiaute 4.00 eliminou o `nfeCabecMsg` do SOAP Header**;
-máximo de **50 NF-e por lote**; `indSinc=1` só com **1 NF-e no lote** e se a SEFAZ implementar;
-**15 s** mínimos antes de consultar o lote e **3 min** entre consultas de status. Endpoints de SP
-**sem drift** desde o GOAL-015.
+**Parâmetros oficiais revalidados em 2026-08-03** (MOC 7.00 + SEFAZ-SP), **reconferidos em fonte
+primária pela revisão cruzada**: TLS 1.2 com **autenticação mútua**; SOAP 1.2 Document/Literal;
+**leiaute 4.00 eliminou o `nfeCabecMsg` do SOAP Header**; máximo de **50 NF-e por lote**;
+`indSinc=1` só com **1 NF-e no lote** e se a SEFAZ implementar; **15 s** mínimos antes de consultar o
+lote e **3 min** entre consultas de status. Endpoints de SP **sem drift** desde o GOAL-015 — os 12
+(6 de homologação + 6 de produção) conferem caractere a caractere.
+
+> ⚠️ **Correção F-7 — limite do `656` NÃO é fonte confirmada.** A afirmação anterior de *"20
+> consultas/hora, bloqueio do CNPJ por 1 hora"* **não se sustenta** no MOC 7.00: o manual não publica
+> número algum e declara que a SEFAZ *"a seu critério, poderá implantar as regras de validação de
+> Consumo Indevido"*. A única regra de "1 hora" do MOC pertence à **Distribuição DF-e (`consNSU`)**,
+> outro Web Service. Vira a pendência **H-12**. Permanece confirmado e vinculante apenas o **piso de
+> 3 minutos** entre consultas de status (e os 15 s antes do `RetAutorizacao`). O rate limit do
+> 016D-E nasce **configurável, conservador e fail-closed**, sem número fixo.
 
 > ⚠️ **Novo conflito documental C-7:** a SEFAZ-SP distribui **MOC 6.0 (set/2015)** na página de
 > downloads da NFC-e, anterior ao leiaute 4.00. O vigente é **MOC 7.00 (nov/2020)**. O nacional
@@ -304,6 +333,22 @@ máximo de **50 NF-e por lote**; `indSinc=1` só com **1 NF-e no lote** e se a S
 
 **Estado inalterado:** `fiscalEnabled = false` em todas as lojas · banco fiscal vazio · **zero
 homologação realizada** · **zero produção** · gate Fiscal global **aberto** · N6=0 · N7=0.
+
+### GOAL-016D — revisão cruzada de outra família (2026-08-03)
+
+Parecer **B — APROVADO COM AJUSTES DOCUMENTAIS PEQUENOS**. Read-only: **zero código, zero segredo,
+zero chamada SEFAZ**. Verificação `arquivo:linha` de 16 citações (**16/16 conferem**), 10 itens de
+validação estrutural (**10/10 confirmados**) e revalidação das fontes **em fonte primária**.
+
+**Dez achados, todos incorporados ao plano:** **F-1** `simulado` não é barreira de compilador ·
+**F-2** T5 inerte e auditoria literal · **F-3** `emitir` inerte não evita consumo de numeração ·
+**F-4** `PROCESSING` inexistente e sem dono · **F-5** `THROTTLED` sem resultado de fila definido ·
+**F-6** rota administrativa de fila já existente · **F-7** limite do `656` não confirmado ·
+**F-8** acesso do 016D-C implícito · **F-9** H-6/H-7/H-8 fora da tabela · **F-10** terminologia do A1.
+
+**Mudanças estruturais decorrentes:** ⛔ **`SEFAZ_DIRETO` nunca entra no `REGISTRY` de P1** (elimina
+a rota de transmissão acidental por construção) · 🆕 slice **016D-A0** (resolver do A1, isolado) ·
+🆕 seis gates humanos **G-H1…G-H6** · 🆕 pendência **H-12**.
 
 ### Histórico — GOAL-016C (implementação)
 
@@ -412,12 +457,23 @@ demais lojas, UFs e qualquer produção permanecem fail-closed.
 - **BL-FISCAL-4:** 🔴 **INSUMOS HUMANOS DO PILOTO** — consolidados pelo GOAL-016D §5.
   Pendentes: **H-1** CNPJ · **H-2** CRT/regime · **H-3** credenciamento + CSC de homologação
   (+ `idCSC`) · **IE** · **série fiscal** para `(storeId, 65, HOMOLOGACAO)` · **`Store.id`** real da
-  Matriz · **certificado A1 de homologação + senha**. **Nenhum bloqueia 016D-A/016D-B**; a partir de
+  Matriz · **certificado A1 da empresa + senha** — *o mesmo segredo de produção, tratado com rigor de
+  produção mesmo em `tpAmb=2`; não existe "A1 de homologação" na ICP-Brasil* (F-10).
+  **Nenhum bloqueia 016D-A0/016D-A/016D-B**; a partir de
   **016D-C** o A1 é obrigatório e em **016D-D** todos são.
 - **BL-FISCAL-5:** 🟡 **ARTEFATOS OFICIAIS AUSENTES** — **H-9** (`SOAPAction` por serviço) e
   **H-10** (WSDL dos 6 serviços NFC-e 4.00 de SP). Não estão no repositório e obtê-los por `?wsdl`
   seria chamar a SEFAZ, vedado no GOAL de planejamento. Limitam a fidelidade das fixtures (016D-B) e
   bloqueiam 016D-C. **H-11** (SEFAZ-SP implementa `indSinc=1`?) resolve-se por observação em 016D-D.
+- **BL-FISCAL-6:** 🟡 **LIMITE DE CONSUMO INDEVIDO NÃO CONFIRMADO** — **H-12** (F-7). O MOC 7.00 não
+  publica teto nem duração de bloqueio para o `cStat 656`, deixando a regra a critério de cada SEFAZ.
+  **Não bloqueia nenhum slice**: o rate limit de 016D-E nasce configurável e conservador, com piso
+  nos 3 minutos comprovados. Bloqueia apenas a fixação de um número.
+- **BL-FISCAL-7:** 🟡 **GATES HUMANOS DE EXECUÇÃO EXTERNA** — **G-H1** (origem autorizada) · **G-H2**
+  (infraestrutura exata de saída do pacote) · **G-H3** (teto/janela do 016D-C) · **G-H4** (posse do
+  `FISCAL_QUEUE_INTERNAL_SECRET`) · **G-H5** (teto de transmissões do 016D-D) · **G-H6** (autorização
+  nova por repetição após falha). Criados pela revisão cruzada; **nascem abertos**. Bloqueiam
+  016D-C em diante; **não** bloqueiam 016D-A0/A/B.
 
 > Tracking vivo de blockers gerais: `docs/status/BLOCKERS.md`.
 
