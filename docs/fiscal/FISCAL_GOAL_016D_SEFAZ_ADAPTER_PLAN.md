@@ -865,7 +865,7 @@ graph LR
 > fecha o elo com os dez códigos de erro fail-closed da tabela abaixo + `resolveFiscalSecretProvider`
 > só para a checagem de disponibilidade (nunca `get`/`put`/`rotate`/`revoke`). Zero leitura de
 > segredo, zero escrita Prisma, zero caller produtivo — consumido apenas pelo slice **016D-A**,
-> que segue **não iniciado**. 32 testes cobrindo os casos obrigatórios abaixo, isolamento por
+> que segue **não iniciado**. 36/36 testes focados aprovados, cobrindo os casos obrigatórios abaixo, isolamento por
 > `storeId` sem existence oracle (certificado inexistente e de outra loja produzem o mesmo código)
 > e ausência de vazamento de `blobRef`/`senhaRef` nas falhas.
 
