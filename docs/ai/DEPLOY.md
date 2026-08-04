@@ -91,9 +91,19 @@ Os únicos eventos emitidos pelo runner para migrations são
 `MIGRATION_SUCCEEDED` e `MIGRATION_FAILED`. Nenhum project ID, secret,
 datasource ou domínio é incluído nesses logs.
 
-Nesta entrega, `MIGRATION_AUTHORITY_ENABLED` **não foi configurada na Vercel**.
-Portanto, inclusive no canônico, o comportamento operacional continua sendo
-`MIGRATION_SKIPPED` até uma mudança Vercel separada e autorizada.
+`MIGRATION_AUTHORITY_ENABLED` está **configurada na Vercel desde 04/08/2026**,
+somente no projeto canônico `omni-gestao-pro`, escopo **Production**, no nível do
+projeto (não é Shared Environment Variable). O projeto legado e os demais
+projetos do time seguem sem a flag.
+
+O contrato foi comprovado em deployments controlados do mesmo commit: o canônico
+emitiu `MIGRATION_RUN` → `MIGRATION_SUCCEEDED` com um único `migrate deploy`, e o
+legado emitiu `MIGRATION_SKIPPED` sem baseline e sem `migrate deploy`. Evidência:
+`docs/audits/DEPLOY_PRODUCTION_MIGRATION_AUTHORITY_ACTIVATION_006.md`.
+
+Consequência operacional: todo deployment Production do canônico passa a executar
+`prisma migrate deploy` automaticamente. Migrations só devem chegar à `main` já
+revisadas.
 
 ---
 

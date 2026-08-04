@@ -353,7 +353,51 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
-**Guard de autoridade de migrations Production — implementado localmente, configuração Vercel pendente (04/08/2026)**
+**Readiness do writer de numeração server-side (GOAL 002C) — Classe B, liberado com gates (04/08/2026)**
+- Auditoria read-only sobre `origin/main@69fb419`. **Zero** alteração de código, testes,
+  configuração, SQL, migration, deploy ou Vercel. Writer **não** implementado.
+- O bloqueio **Classe C** anterior (dois projetos Production migrando bancos diferentes)
+  está **resolvido** pela ativação da autoridade de migrations (bloco abaixo).
+- Writer canônico identificado: `lib/ops-upsert-venda.ts#upsertVendaInTransaction`, motor
+  único de `/api/ops/venda-persist` e `/api/ops/sync-legacy-vendas` — **ponto único de
+  integração** recomendado.
+- Fontes atuais de numeração: **três** — `nextSaleId` no navegador (MAX+1 sobre
+  `localStorage`, reinicia por loja), `count()+1` fora de transação em
+  `criarVendaDeOSAction` (prefixo `VND-`) e número externo do importador avançado.
+- Fronteira transacional: a transação existente de `venda-persist`
+  (`maxWait 15s` / `timeout 20s`, **READ COMMITTED** por default) já é a correta;
+  `allocateSaleNumber` pode ser chamado dentro dela sem mudança de isolamento.
+- P2034 ⇒ retry **da transação inteira**, com limite. P2002 ⇒ classificação por constraint;
+  `(storeId, clientSaleId)` vira replay idempotente, nunca retry cego.
+- **Gates bloqueantes (P0):** G1 — nenhuma superfície versionada configura
+  `Store.codigoNumeracaoVenda` (o writer falharia em 100% das vendas); G2 — sem gate de
+  runtime canônico o writer também ficaria ativo no projeto legado, que usa banco distinto;
+  G3 — `mergeSalesById` casa local↔remoto por `id`, então número server-side sem
+  `clientSaleId` reintroduz pendência fantasma e permite duplicação por reenvio.
+  G4 (P1) — a suíte de concorrência é opt-in e precisa ser executada contra PostgreSQL real.
+- Recomendação: **liberar o 002C** condicionado a G1–G4, fatiado em 002C-0..002C-3.
+  Implementação monolítica **não** recomendada.
+- Relatório: `docs/audits/PDV_NUMERACAO_SERVER_WRITER_002C_READINESS_001.md`.
+
+**Autoridade de migrations Production — ATIVA e comprovada em Production (04/08/2026)**
+- `MIGRATION_AUTHORITY_ENABLED` foi criada **somente** em `omni-gestao-pro`, escopo
+  **Production**, no nível do projeto (não Shared). Legado e demais projetos do time
+  seguem sem a flag.
+- Redeploys controlados do mesmo commit `69fb419` comprovaram decisões opostas:
+  canônico `MIGRATION_RUN: 1` → `MIGRATION_SUCCEEDED: 1` com **um único**
+  `prisma migrate deploy` (`No pending migrations to apply.`, baseline no-op);
+  legado `MIGRATION_SKIPPED: 1`, `MIGRATION_RUN: 0`, `migrate deploy: 0`. Os dois
+  deployments ficaram `Ready`.
+- Zero alteração de código, Git, schema, migrations, SQL, `migrate resolve`,
+  rollback ou acesso direto ao banco. `0016` mantida nos dois bancos.
+- Consequência operacional: todo deployment Production do canônico passa a executar
+  `migrate deploy` automaticamente — migrations só devem chegar à `main` revisadas.
+- Governança de migrations **fechada**. Próximo passo: **readiness do GOAL 002C**
+  (ainda não iniciado).
+- Relatório:
+  `docs/audits/DEPLOY_PRODUCTION_MIGRATION_AUTHORITY_ACTIVATION_006.md`.
+
+**Guard de autoridade de migrations Production — implementação do contrato (04/08/2026)**
 - O proprietário confirmou `omni-gestao-pro` como projeto Production canônico;
   `omni-gestao`/`omni-gestao-pi.vercel.app` permanece legado e ativo por tráfego
   residual de PWA/assets/páginas públicas, sem operação de negócio comprovada.
@@ -367,12 +411,11 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 - A disponibilidade de `VERCEL_PROJECT_ID`, `VERCEL_ENV` e
   `VERCEL_PROJECT_PRODUCTION_URL` no build foi confirmada pelas System Environment
   Variables, habilitadas no projeto canônico. IDs e valores sensíveis não são logados.
-- **A configuração Vercel ainda não foi realizada:** a flag não existe no projeto.
-  Assim, o canônico também permanece em `MIGRATION_SKIPPED` até um GOAL operacional
-  separado; nenhum deploy ou migration foi executado nesta entrega.
+- Nesta entrega o contrato foi apenas implementado no código; a flag ainda não
+  existia na Vercel e nenhum deploy ou migration foi executado. A ativação
+  operacional ocorreu no GOAL seguinte (bloco acima).
 - A `0016_add_sale_numbering_infrastructure` permanece provisoriamente aplicada nos
   dois bancos. Não houve rollback, SQL ou nova verificação física.
-- **GOAL 002C segue bloqueado.**
 
 **Governança de migrations Production — auditoria Classe C (03/08/2026)**
 - Auditoria read-only dos projetos Vercel `omni-gestao-pro` e `omni-gestao`, ambos
