@@ -24,8 +24,18 @@ import { isSegmentoContadorExterno } from "@/lib/contador/auth-externa/proxy-pub
 
 const { auth } = NextAuth(authConfig)
 
-const SUBSCRIPTION_SECRET =
-  process.env.ASSISTEC_SUBSCRIPTION_SECRET || "assistec-dev-secret-change-in-production"
+/**
+ * Segredo do selo (PLAT-SEC-SEAL-003B) — sem fallback. Ausente/vazio ⇒ `""`, e
+ * `verifySubscriptionCookieValue` recusa qualquer selo (`missing_server_secret`),
+ * levando ao redirect para `/meu-plano`. Falha fechada, por desenho.
+ *
+ * Duplica a leitura de `lib/api-auth.getSubscriptionSecret()` de propósito: este
+ * arquivo roda no runtime Edge e não pode importar aquele módulo, que depende de
+ * `next/headers`.
+ */
+function getSubscriptionSecret(): string {
+  return process.env.ASSISTEC_SUBSCRIPTION_SECRET?.trim() ?? ""
+}
 
 const ADMIN_COOKIE = "assistec_admin_session"
 
@@ -105,7 +115,7 @@ export const proxy = auth(async (req) => {
   }
 
   const cookie = req.cookies.get(SUBSCRIPTION_COOKIE_NAME)?.value
-  const verified = await verifySubscriptionCookieValue(cookie, SUBSCRIPTION_SECRET)
+  const verified = await verifySubscriptionCookieValue(cookie, getSubscriptionSecret())
   const now = await getTrustedTimeMs()
 
   const redirectPlano = () => {
