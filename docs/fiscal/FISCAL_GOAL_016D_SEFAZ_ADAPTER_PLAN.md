@@ -8,7 +8,7 @@
 | **Branch / worktree** | `fiscal/goal-016d-sefaz-adapter-plan` · `C:\tmp\omni-gestao-fiscal-016d-sefaz-plan` |
 | **Data da auditoria** | **2026-08-03** (toda consulta oficial desta página foi feita nesta data) |
 | **Escopo do piloto** | Matriz RafaCell Assistec · Taguaí/SP · SEFAZ-SP · NFC-e modelo 65 · `HOMOLOGACAO` · `tpAmb=2` |
-| **Decisões-mãe** | ADR-0015 (SEFAZ direta) · ADR-0016 (piloto SP) · ADR-0017 (estado incerto) · ADR-0018 (XML legal) · ADR-0014 (KMS) |
+| **Decisões-mãe** | ADR-0015 (SEFAZ direta) · ADR-0016 (piloto SP) · ADR-0017 (estado incerto) · ADR-0018 (XML legal) · ADR-0014 (KMS) · **ADR-0020** (fronteira provider SEFAZ direto / P2-only) |
 | **Estado** | 🟡 **PLANEJADO — NÃO INICIADO.** Nenhum slice implementado |
 | **Revisões** | Sonnet 5 (independente, §9) · **revisão cruzada de outra família** (§9.1) — parecer **B**, dez achados **F-1…F-10** incorporados |
 | **Slices** | **seis**: `016D-A0` · `016D-A` · `016D-B` · `016D-C` · `016D-D` · `016D-E` |
@@ -746,22 +746,27 @@ envelope imutável, assinado, validado, com hash e correlação — mas o **mét
 🟩 **Regra do projeto:** ADR aceita **não se reescreve** (mesma disciplina da ratificação da ADR-0015
 em 2026-07-23, feita *"sem ADR nova e sem alteração do histórico"*). Portanto:
 
-- ⛔ **este GOAL não altera a ADR-0015**;
-- 🟥 **antes de 016D-A0/016D-A serem codificados**, é obrigatório abrir uma **ADR própria**
-  registrando as quatro decisões mínimas:
+- ⛔ **este plano e a ADR-0020 não alteram a ADR-0015**;
+- ✅ **Pré-requisito documental cumprido (FU-1b + ADR-0020):** em 2026-08-04 o GOAL
+  `FISCAL-GOAL-016D-ADR-PROVIDER-BOUNDARY-001` inventariou **somente** ADRs versionados em
+  `origin/main` (`892f47e…`, maior ocupado = **0019**, **sem duplicata versionada**) e publicou
+  [`ADR-0020-fronteira-provider-sefaz-direto-estado-incerto.md`](../decisions/ADR-0020-fronteira-provider-sefaz-direto-estado-incerto.md).
+  WIPs untracked de outras worktrees **não** reservam número e **não** foram tocados.
+- A ADR-0020 formaliza, no mínimo:
   1. o envelope assinado/validado é entregue por `UncertainStateFiscalProvider.transmit` (**P2**);
   2. **`SEFAZ_DIRETO` nunca é registrado no `REGISTRY` de `FiscalProvider`/P1**; `statusServico` é
      alcançado por instanciação direta (D11 regras 1–2);
   3. `uf` e `correlationId` são adicionados de forma **aditiva** a `FiscalDocumentIdentity`;
   4. `PROCESSING` e `THROTTLED` são adicionados de forma **aditiva** ao union `UNCERTAIN` (D12);
-- ⚠️ **O número da ADR não é fixado aqui.** O maior ADR versionado nesta branch é **ADR-0019**, mas a
-  worktree primária mantém arquivos **não versionados** `ADR-0010/0011/0012` com nomes fiscais que
-  **duplicam** `ADR-0014/0015/0016`. 🟥 **Reconciliar a numeração real com esses WIPs divergentes é
-  pré-requisito de abrir a ADR** — atribuir um número antes disso arrisca colisão;
+  5. `simulado` não é controle de segurança; trilha de auditoria reflete desfecho real;
+  6. bytes/chave/hash imutáveis; produção/`tpAmb=1`/`fiscalEnabled`/DANFCE/cancelamento/
+     inutilização/contingência fora de escopo.
+- 🟥 **016D-A0/016D-A continuam bloqueados de código** até a ADR-0020 estar na `main` (merge humano
+  do PR documental) e o slice respectivo ser autorizado — este GOAL **não** inicia implementação.
 - ⚠️ [`NFCE_ARCHITECTURE.md §3.1`](../architecture/NFCE_ARCHITECTURE.md) — doc vivo que rege
   `lib/fiscal/provider/*` — ainda descreve a evolução em termos do `FiscalProviderRequest`/snapshot
-  e **não foi tocado por este GOAL** (fora do escopo declarado em §0). **Follow-up registrado**,
-  a ser feito junto com a ADR acima.
+  e **não foi tocado por este GOAL** (fora do escopo declarado em §0). **Follow-up registrado**
+  para alinhamento posterior à ADR-0020.
 
 ---
 

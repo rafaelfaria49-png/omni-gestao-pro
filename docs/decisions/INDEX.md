@@ -2,7 +2,7 @@
 title: Decisões Arquiteturais (ADRs) — OmniGestão Pro
 status: vivo
 owner: produto/arquitetura
-last_update: 2026-07-30
+last_update: 2026-08-04
 ---
 
 # 🧭 Decisões Arquiteturais — Índice oficial
@@ -98,6 +98,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 | 0017 | Estado incerto e reconciliação obrigatória antes de retransmitir | cross / fiscal | ✅ Aceita | 2026-07-23 | [`ADR-0017-estado-incerto-reconciliacao-por-chave.md`](./ADR-0017-estado-incerto-reconciliacao-por-chave.md) |
 | 0018 | Persistência legal do XML assinado/autorizado e do protocolo NFC-e (coluna primária · imutável · espelho opcional) | cross / fiscal | ✅ Aceita | 2026-07-23 | [`ADR-0018-persistencia-legal-xml-e-protocolo.md`](./ADR-0018-persistencia-legal-xml-e-protocolo.md) |
 | 0019 | Numeração server-side de vendas por loja e ano | pdv / multi_loja | ✅ Aceita | 2026-07-30 | [`ADR-0019-numeracao-server-side-vendas.md`](./ADR-0019-numeracao-server-side-vendas.md) |
+| 0020 | Fronteira do Provider SEFAZ Direto e Estado Incerto (P2-only · REGISTRY sem `SEFAZ_DIRETO` · `PROCESSING`/`THROTTLED`) | cross / fiscal | ✅ Aceita | 2026-08-04 | [`ADR-0020-fronteira-provider-sefaz-direto-estado-incerto.md`](./ADR-0020-fronteira-provider-sefaz-direto-estado-incerto.md) |
 
 > **Nota sobre o ADR legado:** `OS_ROUTE_OFICIAL.md` foi escrito antes desta convenção e não segue o template/naming atual. Mantido como histórico. Quando precisar ser referenciado, citar como **ADR-0001 (legado)**. Migração para o naming `ADR-0001-os-route-oficial.md` é uma tarefa **opcional** e exige autorização (renomear histórico pode quebrar links externos).
 
@@ -136,7 +137,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 - **Omni Agent:** —
 - **BI:** —
 - **Multi-loja:** ADR-0003 (eliminar fallback `loja-1`) · ADR-0006 (router WhatsApp — aceita) · ADR-0007 (modelo de depósitos — aceita) · ADR-0019 (numeração de vendas por loja/ano)
-- **Fiscal:** ADR-0008 (arquitetura oficial do módulo Fiscal — aceita) · ADR-0009 (contrato do cofre fiscal — aceita) · ADR-0010 (validação XSD em worker containerizado — aceita) · ADR-0011 (assinatura XMLDSig em RSA-SHA1/SHA-1, imposta pelo schema — aceita) · ADR-0012 (ST/CSOSN 500 no motor tributário — aceita) · ADR-0013 (gate executável do dry-run — aceita) · ADR-0014 (Supabase Vault em produção — aceita) · ADR-0015 (SEFAZ direta na homologação — aceita) · ADR-0016 (piloto Matriz/SP — aceita) · ADR-0017 (estado incerto/reconciliação — aceita) · ADR-0018 (persistência legal XML + protocolo — aceita)
+- **Fiscal:** ADR-0008 (arquitetura oficial do módulo Fiscal — aceita) · ADR-0009 (contrato do cofre fiscal — aceita) · ADR-0010 (validação XSD em worker containerizado — aceita) · ADR-0011 (assinatura XMLDSig em RSA-SHA1/SHA-1, imposta pelo schema — aceita) · ADR-0012 (ST/CSOSN 500 no motor tributário — aceita) · ADR-0013 (gate executável do dry-run — aceita) · ADR-0014 (Supabase Vault em produção — aceita) · ADR-0015 (SEFAZ direta na homologação — aceita) · ADR-0016 (piloto Matriz/SP — aceita) · ADR-0017 (estado incerto/reconciliação — aceita) · ADR-0018 (persistência legal XML + protocolo — aceita) · ADR-0020 (fronteira provider SEFAZ direto / P2-only / estado incerto — aceita)
 - **Governança:** ADR-0002 (congelamento Skill Front Matter v1) · ADR-0004 (SAFE-lite modo padrão)
 
 ---
