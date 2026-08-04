@@ -14,7 +14,10 @@ import {
   STEP_GENERATE,
   STEP_BUILD,
 } from './vercel-build.mjs';
-import { CANONICAL_VERCEL_PROJECT_ID } from './migration-authority-guard.mjs';
+import {
+  CANONICAL_VERCEL_PROJECT_ID,
+  MIGRATION_GUARD_ACTION,
+} from './migration-authority-guard.mjs';
 import { BASELINE_MIGRATIONS, diffContemDDL } from './prisma-baseline.mjs';
 
 const label = ([cmd, args]) => `${cmd} ${args.join(' ')}`;
@@ -23,6 +26,20 @@ const AUTHORIZED_ENV = Object.freeze({
   VERCEL_PROJECT_ID: CANONICAL_VERCEL_PROJECT_ID,
   MIGRATION_AUTHORITY_ENABLED: 'true',
 });
+
+const INVALID_GUARD_RESULTS = [
+  ['action desconhecida', { action: 'pause' }],
+  ['action desconhecida em minúsculas', { action: 'unexpected' }],
+  ['action vazia', { action: '' }],
+  ['retorno null', null],
+  ['retorno undefined', undefined],
+  ['objeto vazio', {}],
+  ['objeto sem action', { reason: 'unexpected-test-fixture' }],
+  ['action numérica', { action: 1 }],
+  ['shape string inesperado', 'run'],
+  ['shape array inesperado', [{ action: MIGRATION_GUARD_ACTION.RUN }]],
+  ['retorno assíncrono inesperado', Promise.resolve({ action: MIGRATION_GUARD_ACTION.RUN })],
+];
 
 test('local, preview e development não chamam baseline nem migrate', () => {
   for (const env of [{}, { VERCEL_ENV: 'preview' }, { VERCEL_ENV: 'development' }]) {
@@ -157,6 +174,94 @@ test('estado bloqueado falha antes de qualquer processo', () => {
   assert.equal(code, 1);
   assert.deepEqual(calls, []);
   assert.deepEqual(logs, [MIGRATION_LOG.BLOCKED]);
+});
+
+test('runner bloqueia fail-closed todo retorno inválido do guard', async (t) => {
+  for (const [name, decision] of INVALID_GUARD_RESULTS) {
+    await t.test(name, () => {
+      const calls = [];
+      const logs = [];
+      const evaluate = () => decision;
+
+      assert.deepEqual(buildSteps({}, evaluate), []);
+      assert.equal(
+        main({
+          env: {},
+          evaluate,
+          run: (step) => (calls.push(label(step)), 0),
+          log: (message) => logs.push(message),
+        }),
+        1,
+      );
+      assert.deepEqual(calls, []);
+      assert.deepEqual(logs, [MIGRATION_LOG.BLOCKED]);
+    });
+  }
+});
+
+test('runner bloqueia fail-closed quando a avaliação do guard lança exceção', () => {
+  const calls = [];
+  const logs = [];
+  const evaluate = () => {
+    throw new Error('unexpected guard failure test fixture');
+  };
+
+  assert.deepEqual(buildSteps({}, evaluate), []);
+  assert.equal(
+    main({
+      env: {},
+      evaluate,
+      run: (step) => (calls.push(label(step)), 0),
+      log: (message) => logs.push(message),
+    }),
+    1,
+  );
+  assert.deepEqual(calls, []);
+  assert.deepEqual(logs, [MIGRATION_LOG.BLOCKED]);
+});
+
+test('fronteira do runner aceita somente BLOCK, SKIP e RUN exatos', async (t) => {
+  const scenarios = [
+    {
+      action: MIGRATION_GUARD_ACTION.BLOCK,
+      code: 1,
+      calls: [],
+      logs: [MIGRATION_LOG.BLOCKED],
+    },
+    {
+      action: MIGRATION_GUARD_ACTION.SKIP,
+      code: 0,
+      calls: [STEP_GENERATE, STEP_BUILD],
+      logs: [MIGRATION_LOG.SKIPPED],
+    },
+    {
+      action: MIGRATION_GUARD_ACTION.RUN,
+      code: 0,
+      calls: [STEP_BASELINE, STEP_MIGRATE, STEP_GENERATE, STEP_BUILD],
+      logs: [MIGRATION_LOG.RUN, MIGRATION_LOG.SUCCEEDED],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    await t.test(scenario.action, () => {
+      const calls = [];
+      const logs = [];
+      const evaluate = () => ({ action: scenario.action });
+
+      assert.deepEqual(buildSteps({}, evaluate), scenario.calls);
+      assert.equal(
+        main({
+          env: {},
+          evaluate,
+          run: (step) => (calls.push(step), 0),
+          log: (message) => logs.push(message),
+        }),
+        scenario.code,
+      );
+      assert.deepEqual(calls, scenario.calls);
+      assert.deepEqual(logs, scenario.logs);
+    });
+  }
 });
 
 test('baseline: lista congelada cobre 0001–0014 e nunca inclui a 0015', () => {

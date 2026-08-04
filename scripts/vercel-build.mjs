@@ -31,13 +31,34 @@ export const MIGRATION_LOG = Object.freeze({
   FAILED: 'MIGRATION_FAILED',
 });
 
-export function buildSteps(env = process.env) {
-  const decision = evaluateMigrationAuthority(env);
-  if (decision.action === MIGRATION_GUARD_ACTION.BLOCK) return [];
-  if (decision.action === MIGRATION_GUARD_ACTION.RUN) {
+function resolveMigrationAction(env, evaluate) {
+  try {
+    const decision = evaluate(env);
+    if (decision === null || typeof decision !== 'object' || Array.isArray(decision)) {
+      return null;
+    }
+
+    const { action } = decision;
+    if (
+      action === MIGRATION_GUARD_ACTION.RUN ||
+      action === MIGRATION_GUARD_ACTION.SKIP ||
+      action === MIGRATION_GUARD_ACTION.BLOCK
+    ) {
+      return action;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildSteps(env = process.env, evaluate = evaluateMigrationAuthority) {
+  const action = resolveMigrationAction(env, evaluate);
+  if (action === MIGRATION_GUARD_ACTION.RUN) {
     return [STEP_BASELINE, STEP_MIGRATE, STEP_GENERATE, STEP_BUILD];
   }
-  return [STEP_GENERATE, STEP_BUILD];
+  if (action === MIGRATION_GUARD_ACTION.SKIP) return [STEP_GENERATE, STEP_BUILD];
+  return [];
 }
 
 function defaultRun([cmd, args]) {
@@ -59,17 +80,22 @@ function runSafely(run, step) {
   }
 }
 
-export function main({ env = process.env, run = defaultRun, log = console.log } = {}) {
-  const decision = evaluateMigrationAuthority(env);
+export function main({
+  env = process.env,
+  run = defaultRun,
+  log = console.log,
+  evaluate = evaluateMigrationAuthority,
+} = {}) {
+  const action = resolveMigrationAction(env, evaluate);
 
-  if (decision.action === MIGRATION_GUARD_ACTION.BLOCK) {
+  if (action === MIGRATION_GUARD_ACTION.BLOCK || action === null) {
     log(MIGRATION_LOG.BLOCKED);
     return 1;
   }
 
-  if (decision.action === MIGRATION_GUARD_ACTION.SKIP) {
+  if (action === MIGRATION_GUARD_ACTION.SKIP) {
     log(MIGRATION_LOG.SKIPPED);
-  } else {
+  } else if (action === MIGRATION_GUARD_ACTION.RUN) {
     log(MIGRATION_LOG.RUN);
     for (const step of [STEP_BASELINE, STEP_MIGRATE]) {
       const code = runSafely(run, step);
