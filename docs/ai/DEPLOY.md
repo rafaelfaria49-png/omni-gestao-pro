@@ -32,12 +32,12 @@ npm run build
 ## 2. Deploy via Git
 
 ```bash
-git add .
+git add <caminhos explícitos>
 git commit -m "feat: descrição da mudança"
-git push origin master
+git push origin main
 ```
 
-**Branch principal:** `master`
+**Branch principal:** `main`
 **Deploy automático:** Vercel detecta push e faz deploy automaticamente.
 
 ---
@@ -53,11 +53,47 @@ npx prisma migrate dev --name "nome_da_migration"
 # Atualizar cliente Prisma
 npx prisma generate
 
-# Verificar banco em produção
-npx prisma migrate deploy
+# Verificar migrations localmente sem aplicar em Production
+npx prisma migrate status
 ```
 
-> ⚠️ Migrations de produção devem ser revisadas antes de aplicar.
+> ⚠️ Não execute `prisma migrate deploy` manualmente em Production. O único
+> executor automático autorizado é `scripts/vercel-build.mjs`, protegido pelo
+> contrato fail-closed abaixo.
+
+### Autoridade de migrations na Vercel
+
+O projeto Production canônico é `omni-gestao-pro`. O projeto
+`omni-gestao`/`omni-gestao-pi.vercel.app` é legado, permanece ativo por causa de
+tráfego residual e não possui autoridade de migration.
+
+O runner exige simultaneamente:
+
+1. `VERCEL_ENV === "production"`;
+2. `MIGRATION_AUTHORITY_ENABLED === "true"`;
+3. `VERCEL_PROJECT_ID` igual à constante server-only versionada em
+   `scripts/migration-authority-guard.mjs`;
+4. decisão interna reconhecida pelo guard.
+
+Nome e domínio não concedem autoridade. `VERCEL_PROJECT_PRODUCTION_URL` é
+metadado informativo e não participa da autorização.
+
+| Ambiente/identidade | Resultado |
+|---|---|
+| local, Development ou Preview | `MIGRATION_SKIPPED`; build continua |
+| Production canônico sem flag | `MIGRATION_SKIPPED`; build continua |
+| Production canônico com flag exata | `MIGRATION_RUN`; baseline e `migrate deploy` executam uma vez |
+| Production legado ou terceiro projeto | `MIGRATION_SKIPPED`; build continua, mesmo com flag |
+| tentativa explícita com project ID ausente ou ambiente/flag inválidos | `MIGRATION_GUARD_BLOCKED`; build falha fechado |
+
+Os únicos eventos emitidos pelo runner para migrations são
+`MIGRATION_RUN`, `MIGRATION_SKIPPED`, `MIGRATION_GUARD_BLOCKED`,
+`MIGRATION_SUCCEEDED` e `MIGRATION_FAILED`. Nenhum project ID, secret,
+datasource ou domínio é incluído nesses logs.
+
+Nesta entrega, `MIGRATION_AUTHORITY_ENABLED` **não foi configurada na Vercel**.
+Portanto, inclusive no canônico, o comportamento operacional continua sendo
+`MIGRATION_SKIPPED` até uma mudança Vercel separada e autorizada.
 
 ---
 
@@ -73,6 +109,10 @@ NEXTAUTH_URL=          # URL da aplicação
 ```
 
 Em produção, configurar no painel da Vercel (Settings → Environment Variables).
+
+As System Environment Variables precisam permanecer habilitadas para disponibilizar
+`VERCEL_ENV`, `VERCEL_PROJECT_ID` e `VERCEL_PROJECT_PRODUCTION_URL` ao build.
+Não copie valores de banco ou project IDs para documentação/logs.
 
 ---
 

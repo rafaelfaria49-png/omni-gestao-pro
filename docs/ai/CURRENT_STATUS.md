@@ -353,26 +353,44 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
-**Governança de migrations Production — Classe C (03/08/2026)**
+**Guard de autoridade de migrations Production — implementado localmente, configuração Vercel pendente (04/08/2026)**
+- O proprietário confirmou `omni-gestao-pro` como projeto Production canônico;
+  `omni-gestao`/`omni-gestao-pi.vercel.app` permanece legado e ativo por tráfego
+  residual de PWA/assets/páginas públicas, sem operação de negócio comprovada.
+- `scripts/migration-authority-guard.mjs` implementa o contrato fail-closed:
+  `VERCEL_ENV=production` + flag exata `MIGRATION_AUTHORITY_ENABLED=true` + igualdade
+  com o `VERCEL_PROJECT_ID` canônico versionado em constante server-only.
+- Nome e domínio não autorizam migration. Projeto legado, terceiro projeto, Preview,
+  Development e local emitem `MIGRATION_SKIPPED` e continuam o build. Project ID
+  ausente ou flag/environment inválidos bloqueiam uma tentativa explícita com
+  `MIGRATION_GUARD_BLOCKED`.
+- A disponibilidade de `VERCEL_PROJECT_ID`, `VERCEL_ENV` e
+  `VERCEL_PROJECT_PRODUCTION_URL` no build foi confirmada pelas System Environment
+  Variables, habilitadas no projeto canônico. IDs e valores sensíveis não são logados.
+- **A configuração Vercel ainda não foi realizada:** a flag não existe no projeto.
+  Assim, o canônico também permanece em `MIGRATION_SKIPPED` até um GOAL operacional
+  separado; nenhum deploy ou migration foi executado nesta entrega.
+- A `0016_add_sale_numbering_infrastructure` permanece provisoriamente aplicada nos
+  dois bancos. Não houve rollback, SQL ou nova verificação física.
+- **GOAL 002C segue bloqueado.**
+
+**Governança de migrations Production — auditoria Classe C (03/08/2026)**
 - Auditoria read-only dos projetos Vercel `omni-gestao-pro` e `omni-gestao`, ambos
   conectados ao mesmo repositório, à branch Production `main` e ao mesmo runner.
 - Os dois projetos mantêm aliases Production próprios, recebem o mesmo fluxo de
   deployments e apontam para **`DIFFERENT_DATABASES`**. Não existe flag explícita,
   validação de `VERCEL_PROJECT_ID` ou lock entre projetos antes de
   `prisma migrate deploy`.
-- `omni-gestao-pro` é o candidato mais forte a canônico: aparece nos documentos e
-  smokes de Production e recebeu tráfego operacional recente de vendas/terminal.
-  A finalidade vigente de `omni-gestao` continua **UNKNOWN**; por isso, projeto e
-  banco canônicos dependem de decisão humana e nenhuma autoridade foi presumida.
-- Modelo recomendado após ratificação: **flag explícita + project ID exato**, com
-  `MIGRATION_RUN` somente no projeto autorizado e `MIGRATION_SKIPPED` em projeto
-  secundário, terceiro projeto, Preview, Development e local.
+- `omni-gestao-pro` era o candidato mais forte e foi posteriormente confirmado pelo
+  proprietário como projeto canônico. O banco canônico e a disposição final do banco
+  legado continuam sujeitos à decisão humana e ao escopo operacional correspondente.
+- O modelo recomendado de **flag explícita + project ID exato** foi implementado no
+  código; sua ativação na Vercel continua pendente e fora deste GOAL.
 - A `0016_add_sale_numbering_infrastructure` permanece aplicada provisoriamente nos
   dois bancos. Não há dano comprovado e não se autoriza rollback sem catálogo,
   ledger e contagens read-only.
-- **GOAL 002C segue bloqueado.** Próximo passo é decisão humana sobre projeto/banco
-  canônicos e destino do segundo ambiente; somente depois poderá existir o GOAL
-  `DEPLOY-PRODUCTION-MIGRATION-GOVERNANCE-GUARD-002`.
+- **GOAL 002C segue bloqueado.** O guard de código não escolhe o banco canônico,
+  não altera os dois bancos e não define o destino do ambiente legado.
 - Relatório:
   `docs/audits/DEPLOY_PRODUCTION_MIGRATION_GOVERNANCE_AUDIT_001.md`.
 
