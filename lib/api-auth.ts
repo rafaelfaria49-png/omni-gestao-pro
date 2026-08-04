@@ -1,34 +1,32 @@
 import { cookies } from "next/headers"
-import {
-  SUBSCRIPTION_COOKIE_NAME,
-  verifySubscriptionCookieValue,
-} from "@/lib/subscription-seal"
+import { getSessionEntitlement } from "@/lib/auth/session-entitlement"
 
 const ADMIN_COOKIE = "assistec_admin_session"
 
 /**
- * Segredo do selo de assinatura (PLAT-SEC-SEAL-003B).
+ * @deprecated Gate legado (GOAL 003D-lite). O nome é histórico: **já não lê o
+ * cookie `assistec_sub_v1`**. Um selo isolado nunca concede acesso — a decisão
+ * passou a ser `getSessionEntitlement()` (sessão NextAuth + utilizador ativo).
  *
- * Sem fallback: variável ausente/vazia devolve `""`, e `verifySubscriptionCookieValue`
- * responde `missing_server_secret` — ou seja, nenhum selo é aceito e nenhum selo é
- * emitido. Falha fechada, por desenho.
+ * Mantém a forma `{ ok, vencimento, plano, status }` só para não obrigar a migrar
+ * de uma vez os ~15 chamadores (incluindo `lib/marketplace/api-gate.ts`, fora do
+ * escopo deste GOAL). Novos consumidores devem usar `getSessionEntitlement()`.
  *
- * Lido a cada chamada (nunca em escopo de módulo) para que o valor não fique
- * congelado no import — o que impediria testar o caminho de segredo ausente.
+ * ⚠️ `status`/`vencimento` são o marcador de entitlement não verificado — ver
+ * `ENTITLEMENT_NAO_VERIFICADO_VENCIMENTO`. Não são dados comerciais reais.
  */
-export function getSubscriptionSecret(): string {
-  return process.env.ASSISTEC_SUBSCRIPTION_SECRET?.trim() ?? ""
-}
-
 export async function getVerifiedSubscriptionFromCookies(): Promise<
   | { ok: true; vencimento: string; plano: string; status: string }
   | { ok: false }
 > {
-  const jar = await cookies()
-  const v = jar.get(SUBSCRIPTION_COOKIE_NAME)?.value
-  const r = await verifySubscriptionCookieValue(v, getSubscriptionSecret())
-  if (!r.ok) return { ok: false }
-  return { ok: true, vencimento: r.vencimento, plano: r.plano, status: r.status }
+  const entitlement = await getSessionEntitlement()
+  if (!entitlement.ok) return { ok: false }
+  return {
+    ok: true,
+    vencimento: entitlement.vencimento,
+    plano: entitlement.plano,
+    status: entitlement.status,
+  }
 }
 
 export async function isAdminSession(): Promise<boolean> {

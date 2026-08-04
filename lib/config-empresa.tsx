@@ -412,16 +412,14 @@ export function ConfigEmpresaProvider({ children }: { children: ReactNode }) {
     }
   }, [config, configPersistOk])
 
-  useEffect(() => {
-    if (!configPersistOk) return
-    const { vencimento, plano, status } = config.assinatura
-    void fetch("/api/subscription/seal", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vencimento, plano, status }),
-    }).catch(() => {})
-  }, [configPersistOk, config.assinatura.vencimento, config.assinatura.plano, config.assinatura.status])
+  /**
+   * GOAL 003D-lite: removida a emissão automática de selo a partir do
+   * localStorage. O acesso passou a depender da sessão NextAuth
+   * (`lib/auth/proxy-session-gate.ts`), então o cliente não precisa — e não pode
+   * — declarar o próprio plano, status ou vencimento ao servidor. Emitir selo é
+   * operação administrativa em `POST /api/subscription/seal`, com os dados vindos
+   * do registo de billing (PLAT-SEC-SEAL-003B).
+   */
 
   const updateEmpresa = useCallback((empresa: Partial<ConfiguracaoEmpresa>) => {
     setConfig(prev => ({

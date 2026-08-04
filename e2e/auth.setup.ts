@@ -36,15 +36,11 @@ setup("autenticar e gravar sessão", async ({ page }) => {
     throw new Error("E2E: o servidor de desenvolvimento não respondeu em GET /login dentro do tempo.")
   }
 
-  /** Selo de assinatura (httpOnly) — necessário para o proxy não redirecionar /dashboard → /meu-plano. */
-  const seal = await page.request.post("/api/subscription/seal", {
-    data: { vencimento: "2099-12-31", plano: "bronze", status: "ativa" },
-  })
-  if (!seal.ok()) {
-    const body = await seal.text().catch(() => "")
-    throw new Error(`E2E: POST /api/subscription/seal falhou (${seal.status()}). ${body.slice(0, 200)}`)
-  }
-
+  /**
+   * GOAL 003D-lite: o setup deixou de emitir selo anonimamente (o endpoint já não
+   * aceita — PLAT-SEC-SEAL-003B — e o proxy já não exige selo). A entrada em
+   * `/dashboard` passou a depender apenas do login real abaixo.
+   */
   await page.goto("/login")
   await expect(page.getByRole("heading", { name: /OmniGestão Pro/i })).toBeVisible()
 

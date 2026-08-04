@@ -4,9 +4,9 @@ import {
   SUBSCRIPTION_COOKIE_NAME,
   isVencimentoExpired,
   verifySubscriptionCookieValue,
+  getSubscriptionSecret,
   type VerifySubscriptionResult,
 } from "@/lib/subscription-seal"
-import { getSubscriptionSecret } from "@/lib/api-auth"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 
 export const runtime = "nodejs"

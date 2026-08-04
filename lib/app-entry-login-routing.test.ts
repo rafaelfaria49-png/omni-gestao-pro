@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
 import manifest from "../app/manifest"
+import { isPublicPath, resolveProxyEntry } from "@/lib/auth/proxy-session-gate"
 
 /** Rota canônica de entrada operacional do sistema. */
 const LOGIN_ROUTE = "/login"
@@ -89,7 +90,14 @@ describe("proxy — sessão expirada e rota privada sem sessão", () => {
   })
 
   it("o login canônico é público no proxy (sem isso, haveria loop de redirect)", () => {
-    expect(src()).toMatch(/pathname === "\/login"/)
+    // GOAL 003D-lite: a classificação de rotas saiu de `proxy.ts` para o módulo
+    // puro `lib/auth/proxy-session-gate.ts`. Como esse módulo NÃO arrasta
+    // NextAuth/Prisma, o invariante passou a ser verificado por comportamento —
+    // mais forte que a asserção estática que existia aqui.
+    expect(isPublicPath("/login")).toBe(true)
+    expect(resolveProxyEntry({ pathname: "/login", pageParam: null, hasSession: false })).toEqual({
+      kind: "allow",
+    })
   })
 })
 
@@ -102,8 +110,16 @@ describe("landing comercial — continua pública", () => {
   })
 
   it("o proxy deixa / passar — a landing NÃO é redirecionada para o login", () => {
-    const src = read("proxy.ts")
-    expect(src).toMatch(/if \(pathname === "\/"\)[\s\S]*?return NextResponse\.next\(\)/)
+    // Ver nota acima: invariante agora verificado por comportamento no módulo puro.
+    expect(resolveProxyEntry({ pathname: "/", pageParam: null, hasSession: false })).toEqual({
+      kind: "allow",
+    })
+  })
+
+  it("a landing segue pública mesmo com um `?page=` desconhecido", () => {
+    expect(
+      resolveProxyEntry({ pathname: "/", pageParam: "promo-qualquer", hasSession: false }),
+    ).toEqual({ kind: "allow" })
   })
 })
 

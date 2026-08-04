@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { requireAdmin } from "@/lib/require-admin"
-import { getSubscriptionSecret } from "@/lib/api-auth"
 import {
   SUBSCRIPTION_COOKIE_NAME,
   createSubscriptionCookieValue,
+  getSubscriptionSecret,
 } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 

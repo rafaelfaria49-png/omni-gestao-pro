@@ -24,7 +24,7 @@ Ou exporte manualmente `ADMIN_DEFAULT_PASSWORD` antes de `npm run test:e2e`.
 ## Comportamento importante
 
 - O `playwright.config.ts` carrega `.env` na raiz (via `dotenv`) para `ADMIN_DEFAULT_PASSWORD`, `NEXTAUTH_URL`, etc.
-- O setup chama `POST /api/subscription/seal` para definir o cookie de assinatura; sem isto o proxy redireciona `/dashboard` para `/meu-plano`.
+- O setup **não** emite selo de assinatura: desde o GOAL 003D-lite o proxy exige apenas sessão NextAuth para entrar em `/dashboard`. Não reintroduza `POST /api/subscription/seal` no setup — o endpoint é administrativo e recusa chamadas anónimas.
 - **Host:** o Playwright normaliza `localhost` → `127.0.0.1` no `baseURL` para evitar `::1` / ECONNREFUSED no Windows; em dev o `next.config.mjs` inclui `allowedDevOrigins: ['127.0.0.1']` para o HMR. Alinhe `NEXTAUTH_URL` com a mesma origem se notar redirecionamentos estranhos no login.
 - O wizard **Boas-vindas! Vamos configurar sua loja** é fechado com «Voltar depois» nos specs (o dismiss fica em `sessionStorage`, não no `storageState`).
 

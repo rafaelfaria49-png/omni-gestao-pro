@@ -5,6 +5,23 @@
 
 export const SUBSCRIPTION_COOKIE_NAME = "assistec_sub_v1"
 
+/**
+ * Segredo do selo (PLAT-SEC-SEAL-003B).
+ *
+ * Sem fallback: variável ausente/vazia devolve `""`, e `verifySubscriptionCookieValue`
+ * responde `missing_server_secret` — nenhum selo é aceito, nenhum selo é emitido.
+ * Falha fechada, por desenho.
+ *
+ * Lido a cada chamada (nunca em escopo de módulo) para que o valor não fique
+ * congelado no import — o que impediria testar o caminho de segredo ausente.
+ *
+ * Vive aqui, e não em `lib/api-auth.ts`, para que ler o segredo não arraste a
+ * stack de autenticação (`next-auth`) para quem só precisa assinar/verificar.
+ */
+export function getSubscriptionSecret(): string {
+  return process.env.ASSISTEC_SUBSCRIPTION_SECRET?.trim() ?? ""
+}
+
 const encoder = new TextEncoder()
 
 function base64UrlEncode(data: BufferSource): string {
