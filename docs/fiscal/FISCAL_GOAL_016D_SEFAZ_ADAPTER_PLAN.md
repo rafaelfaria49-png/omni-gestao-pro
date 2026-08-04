@@ -859,6 +859,16 @@ graph LR
 
 ### 016D-A0 — Resolver do certificado ativo por loja `[offline, sem contato com segredo]`
 
+> ✅ **Implementado** (2026-08-04, branch `fiscal/goal-016d-a0-active-certificate-resolver`,
+> GOAL `FISCAL-GOAL-016D-A0-ACTIVE-CERTIFICATE-RESOLVER-001`). `resolveActiveCertificate` em
+> [`lib/fiscal/certificate/resolve-active-certificate.ts`](../../lib/fiscal/certificate/resolve-active-certificate.ts)
+> fecha o elo com os dez códigos de erro fail-closed da tabela abaixo + `resolveFiscalSecretProvider`
+> só para a checagem de disponibilidade (nunca `get`/`put`/`rotate`/`revoke`). Zero leitura de
+> segredo, zero escrita Prisma, zero caller produtivo — consumido apenas pelo slice **016D-A**,
+> que segue **não iniciado**. 36/36 testes focados aprovados, cobrindo os casos obrigatórios abaixo, isolamento por
+> `storeId` sem existence oracle (certificado inexistente e de outra loja produzem o mesmo código)
+> e ausência de vazamento de `blobRef`/`senhaRef` nas falhas.
+
 | | |
 |---|---|
 | **Objetivo** | Fechar o **elo faltante** de §2.9: resolver `storeId → certificadoAtivoId → CertificadoDigital → {blobRef, senhaRef}`, **server-side**, fail-closed. Devolve **apenas referências opacas** — nunca material de certificado |
@@ -869,7 +879,7 @@ graph LR
 | **Gate humano** | ❌ nenhum |
 | **Risco** | 🟢 **baixo** — código novo, dormente, sem caller. Toca o perímetro do segredo apenas por **referência** |
 | **Critério de aceite** | `tsc` limpo · testes verdes · resolver devolve **só** `{blobRef, senhaRef}` opacos · **nenhum** `.pfx` ou senha em teste, fixture ou log · isolamento por `storeId` provado · nenhum caller produtivo |
-| **Ponto de parada** | O elo existe e é fail-closed. **Nada o consome ainda** |
+| **Ponto de parada** | ✅ O elo existe e é fail-closed. **Nada o consome ainda** — 016D-A permanece não iniciado |
 
 ---
 

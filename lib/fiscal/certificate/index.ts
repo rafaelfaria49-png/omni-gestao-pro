@@ -67,3 +67,13 @@ export type {
   OrigemCampo,
   ReconciliacaoLoja,
 } from "./onboarding-types"
+
+// GOAL-016D-A0 — resolver do certificado ativo por loja (storeId → blobRef/senhaRef opacos).
+export {
+  resolveActiveCertificate,
+  type ResolveActiveCertificateErrorCode,
+  type ResolveActiveCertificateFailure,
+  type ResolveActiveCertificateParams,
+  type ResolveActiveCertificateResult,
+  type ResolveActiveCertificateSuccess,
+} from "./resolve-active-certificate"
