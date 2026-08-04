@@ -353,6 +353,32 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
+**Readiness do writer de numeração server-side (GOAL 002C) — Classe B, liberado com gates (04/08/2026)**
+- Auditoria read-only sobre `origin/main@69fb419`. **Zero** alteração de código, testes,
+  configuração, SQL, migration, deploy ou Vercel. Writer **não** implementado.
+- O bloqueio **Classe C** anterior (dois projetos Production migrando bancos diferentes)
+  está **resolvido** pela ativação da autoridade de migrations (bloco abaixo).
+- Writer canônico identificado: `lib/ops-upsert-venda.ts#upsertVendaInTransaction`, motor
+  único de `/api/ops/venda-persist` e `/api/ops/sync-legacy-vendas` — **ponto único de
+  integração** recomendado.
+- Fontes atuais de numeração: **três** — `nextSaleId` no navegador (MAX+1 sobre
+  `localStorage`, reinicia por loja), `count()+1` fora de transação em
+  `criarVendaDeOSAction` (prefixo `VND-`) e número externo do importador avançado.
+- Fronteira transacional: a transação existente de `venda-persist`
+  (`maxWait 15s` / `timeout 20s`, **READ COMMITTED** por default) já é a correta;
+  `allocateSaleNumber` pode ser chamado dentro dela sem mudança de isolamento.
+- P2034 ⇒ retry **da transação inteira**, com limite. P2002 ⇒ classificação por constraint;
+  `(storeId, clientSaleId)` vira replay idempotente, nunca retry cego.
+- **Gates bloqueantes (P0):** G1 — nenhuma superfície versionada configura
+  `Store.codigoNumeracaoVenda` (o writer falharia em 100% das vendas); G2 — sem gate de
+  runtime canônico o writer também ficaria ativo no projeto legado, que usa banco distinto;
+  G3 — `mergeSalesById` casa local↔remoto por `id`, então número server-side sem
+  `clientSaleId` reintroduz pendência fantasma e permite duplicação por reenvio.
+  G4 (P1) — a suíte de concorrência é opt-in e precisa ser executada contra PostgreSQL real.
+- Recomendação: **liberar o 002C** condicionado a G1–G4, fatiado em 002C-0..002C-3.
+  Implementação monolítica **não** recomendada.
+- Relatório: `docs/audits/PDV_NUMERACAO_SERVER_WRITER_002C_READINESS_001.md`.
+
 **Autoridade de migrations Production — ATIVA e comprovada em Production (04/08/2026)**
 - `MIGRATION_AUTHORITY_ENABLED` foi criada **somente** em `omni-gestao-pro`, escopo
   **Production**, no nível do projeto (não Shared). Legado e demais projetos do time
