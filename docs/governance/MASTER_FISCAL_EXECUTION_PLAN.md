@@ -88,6 +88,21 @@ reconciliação. Fonte:
 [`FISCAL_GOAL_005_SCOPE_RECONCILIATION.md`](../fiscal/FISCAL_GOAL_005_SCOPE_RECONCILIATION.md).
 **GOAL-005 técnico não iniciado.**
 
+**Reconciliação de 2026-08-03 (GOAL-016D).** `origin/main` = `0de82ab` — **GOAL-016C integrado**
+(PR #33): custódia A1 e Secret Provider server-only na linha principal, com EnvVault **somente
+leitura** e provisionamento **manual**. **GOAL-016D produziu apenas planejamento** e está
+**NÃO INICIADO**. O estado das fases **não mudou**: F5 continua N1 (contrato + stub), F6–F12 em N0,
+`fiscalEnabled = false`, banco fiscal vazio, **zero transmissão SEFAZ**, **zero homologação**,
+**zero produção**, N6=0 e N7=0. Gate Fiscal global permanece **ABERTO**. Novos rótulos criados por
+este GOAL: gates **G-F5.2** e **G-F5.3** (§4), decisões **D11/D12/D13** e pendências
+**H-9/H-10/H-11** — todos **nascem abertos**, sem histórico retroativo. A revisão independente
+encontrou três lacunas reais, corrigidas dentro deste GOAL: a rota P1 direta
+(`emitirNotaFiscalVenda`) **não** tem barreira de tipo equivalente à de P2 ⇒ **D11**; `cStat 656`
+não tinha mecanismo de parada e o contrato atual **agendaria outra consulta** ⇒ **D12**; e a
+divergência contra a ADR-0015 §2.2 (que nomeia `emitir`) exige **ADR própria antes de 016D-A** ⇒
+**D13**. Fonte:
+[`FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`](../fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md).
+
 ---
 
 ## 3. Fases de execução (ordem exata)
@@ -154,6 +169,21 @@ Cada fase é uma sprint pequena, com Gate humano antes de começar e antes de me
 > `SefazDiretoProvider`; o `REGISTRY` de `lib/fiscal/provider/resolver.ts` tem uma única fábrica
 > (`STUB_HOMOLOGACAO`). **Esta fase não pode ser marcada como concluída** enquanto não houver
 > documento autorizado em homologação.
+>
+> **Atualização em 2026-08-03 (GOAL-016D — planejamento).** A F5 ganhou **plano técnico executável**
+> em [`FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`](../fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md),
+> reconciliado com o código de `origin/main` = `0de82ab` e com fontes oficiais revalidadas na data.
+> **Nada foi implementado**: continua sem `SefazDiretoProvider`, sem transmissão e sem homologação.
+> A execução fica dividida em **5 slices** — `016D-A` contrato/adapter offline · `016D-B` fixtures
+> SOAP, parser e matriz de `cStat` · `016D-C` `statusServico` real · `016D-D` autorização de uma
+> NFC-e sintética · `016D-E` consulta e reconciliação. **016D-A e 016D-B não dependem de nenhum
+> insumo humano**; o A1 passa a ser obrigatório em 016D-C e todos os insumos em 016D-D.
+>
+> A auditoria do GOAL-016D registrou que o **envelope de XML assinado exigido pelo §2.2 da ADR-0015
+> já existe** no repositório: é o contrato `UncertainStateFiscalProvider` (ADR-0017), que transporta
+> `exactBytes` + `bytesSha256`. Portanto o `SefazDiretoProvider` implementa **esse** contrato, e
+> `FiscalProvider` permanece como superfície de configuração/status. Faltam apenas dois campos
+> aditivos (`uf` e `correlationId`) — **sem schema, sem migration**.
 
 - **Objetivo:** implementar `SefazDiretoProvider` atrás do contrato `FiscalProvider` e transmitir
   exclusivamente aos Web Services oficiais de homologação (ADR-0015).
@@ -257,6 +287,8 @@ Cada fase é uma sprint pequena, com Gate humano antes de começar e antes de me
 | **G-C5** ✅ | **Estratégia do provider e transporte fiscal** | **SEFAZ direta ratificada** em 2026-07-23 → ADR-0015 + [`FISCAL_PROVIDER_DOSSIE_001.md`](../fiscal/FISCAL_PROVIDER_DOSSIE_001.md). ⚠️ Rótulo **criado pelo GOAL-014**; ver nota abaixo |
 | G-F5 ✅ | Integração externa (**decisão**) | **SEFAZ direta na homologação inicial**, atrás de `FiscalProvider` → ADR-0015, **ratificada** em 2026-07-23. **Decisão ≠ execução** — a fase F5 está aberta e não implementada |
 | G-F5.1 ✅ | Escopo da primeira homologação | **Matriz RafaCell Assistec/Taguaí, SP, SEFAZ-SP, NFC-e 65, `tpAmb=2`** → ADR-0016 |
+| **G-F5.2** 🔒 | **Primeira chamada externa** (slice 016D-C) | Autorizar o **primeiro pacote de rede da história do projeto** — `NFeStatusServico4` em homologação. Não cria documento, não consome numeração. ⚠️ Rótulo **criado pelo GOAL-016D** em 2026-08-03, **nasce aberto**, sem histórico retroativo |
+| **G-F5.3** 🔒 | **Primeira transmissão de documento** (slice 016D-D) | Autorizar a transmissão de **uma** NFC-e sintética de homologação. ⚠️ Rótulo **criado pelo GOAL-016D** em 2026-08-03, **nasce aberto**, sem histórico retroativo. Distinto do G-F5 (decisão de provider), do G-F5.2 (primeira chamada externa) e do G-F7 (ligar a emissão) |
 | G-F7 | Ligar emissão | Aprovar ativação na loja-piloto (homologação) |
 | G-F12 | Produção | Aprovar virada `HOMOLOGACAO → PRODUCAO` por loja |
 
@@ -415,6 +447,10 @@ A fundação fiscal já existe; novas fases devem **evitar** mexer no schema. Se
 - Estratégia do provider (G-C5, decidido): `docs/fiscal/FISCAL_PROVIDER_DOSSIE_001.md` — matriz
   A/B/C em 15 dimensões, custos públicos, gatilhos T1–T4 e insumos humanos pendentes.
 - Escopo do piloto (G-F5.1, decidido): `docs/decisions/ADR-0016-piloto-homologacao-sp-matriz-rafacell.md`.
+- Parâmetros oficiais da SEFAZ-SP (G-C8): `docs/fiscal/FISCAL_SEFAZ_DOSSIE_UF_001.md`.
+- **Plano da F5 (GOAL-016D, planejado — não iniciado):**
+  `docs/fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md` — auditoria do código, revalidação oficial,
+  10 decisões técnicas, gates/insumos e divisão em 5 slices.
   - **Nota de nomenclatura:** o comentário `schema.prisma:2077` cita `FISCAL_SCHEMA_DESIGN_v01.md`
     e `venda-fiscal-state-machine.ts:13` cita `NFCE_ARCHITECTURE §17/§18`. Os docs oficiais foram
     criados **sem sufixo `_v01`** (versionamento via git/ADR, padrão do projeto). Os comentários

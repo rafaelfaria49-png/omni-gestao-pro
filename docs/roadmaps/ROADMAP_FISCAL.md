@@ -3,8 +3,8 @@ title: Roadmap Fiscal (NFC-e/SAT/NF-e) — OmniGestão Pro
 hub: fiscal
 status: vivo
 owner: produto/arquitetura
-last_update: 2026-07-22
-sprint_atual: GOAL-009 arquitetural — ADR-0014/0015/0016 aceitas; zero implementação, provisionamento ou produção
+last_update: 2026-08-03
+sprint_atual: GOAL-016C integrado na main (PR #33) · GOAL-016D planejado e NÃO iniciado; zero homologação, zero produção
 ---
 
 # 🧾 Roadmap Fiscal — OmniGestão Pro
@@ -186,6 +186,10 @@ sem caller no fluxo de venda e o banco fiscal está vazio.
   merge `b307337`); contrato `lib/produto-fiscal.ts` reutilizado; **N3 no eixo cadastro**;
   `fiscalRegime` não canônico; sem schema/migration/emissão.
 - [ ] `lib/fiscal/provider/<impl>`: provider real (homologação) registrado no resolver.
+  **Planejado** pelo GOAL-016D em 5 slices (016D-A…E) — ver
+  [`FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`](../fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md).
+  **Nenhum slice iniciado.** O `REGISTRY` só ganha `SEFAZ_DIRETO` em 016D-D, sob gate **G-F5.3** e
+  somente após o `emitir` de P1 ser provado **inerte** (D11).
 - [x] Gate G-F5: primeira integração = **SEFAZ direta em homologação**, sem gateway/PAA →
   ADR-0015.
 - [x] Gate G-F5.1: primeiro piloto = **Matriz RafaCell/Taguaí, SP, SEFAZ-SP, NFC-e 65,
@@ -245,8 +249,65 @@ sem caller no fluxo de venda e o banco fiscal está vazio.
 
 ## 11. Sprint atual
 
-**GOAL-016C (`FISCAL-GOAL-016C-SECRET-PROVIDER-CUSTODIA-A1-001`) IMPLEMENTADO na branch
-`fiscal/goal-016c-secret-provider-custodia-a1`** — contrato server-only do Secret Provider
+### GOAL-016C — ✅ INTEGRADO NA `main` (2026-08-03)
+
+**PR #33 mergeado**; `origin/main` = `0de82ab`. A custódia A1 e o contrato server-only do Secret
+Provider estão na linha principal. O EnvVault permanece **somente leitura** e o provisionamento do
+piloto continua **manual** — escrita, rotação e revogação automáticas respondem **503 fail-closed**.
+Os **6 pré-requisitos duros do provider gravável** (abaixo) permanecem integralmente válidos.
+
+### GOAL-016D — 🟡 PLANEJADO, **NÃO INICIADO** (2026-08-03)
+
+`FISCAL-GOAL-016D-SEFAZ-ADAPTER-HOMOLOGACAO-PLAN-001` produziu **somente o plano técnico** do
+primeiro adapter SEFAZ-SP de homologação:
+[`FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`](../fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md).
+**Zero código, zero segredo, zero chamada SEFAZ, zero schema/migration.**
+
+**Divisão aprovada em 5 slices** — nenhum iniciado:
+
+| Slice | Objetivo | Gate | Depende de insumo humano? |
+|---|---|---|---|
+| **016D-A** | Contrato + adapter de transporte **offline** (guards, allow-list, resolver de endpoint e de certificado) | — | 🟢 **não** |
+| **016D-B** | Fixtures SOAP, parser estrito e matriz de `cStat` | — | 🟢 não (H-9/H-10 afetam só a fidelidade) |
+| **016D-C** | `statusServico` real em homologação (primeiro contato externo) | 🔒 **G-F5.2** | 🟥 A1 + senha |
+| **016D-D** | Autorização controlada de **uma** NFC-e sintética | 🔒 **G-F5.3** | 🟥 todos |
+| **016D-E** | Consulta e reconciliação de estado incerto | 🟡 leve | 016D-D concluído · **D12** |
+
+**Descobertas estruturantes da auditoria** (detalhe no plano §2):
+
+- existem **duas** superfícies de provider — `FiscalProvider` (snapshot) e
+  `UncertainStateFiscalProvider` (**bytes exatos**). O envelope exigido pela ADR-0015 §2.2 **já é** o
+  segundo; o `SefazDiretoProvider` implementa **ele**, não uma mutação de `FiscalProvider.emitir`;
+- **cinco travas** impedem provider real no caminho P2, incluindo `readonly simulado: true` —
+  barreira de **compilador**. Nenhum slice antes de 016D-D as toca;
+- ⚠️ **mas a rota P1 direta não tem equivalente:** `FiscalProvider.simulado` é `boolean` (não
+  literal) e `emitirNotaFiscalVenda` chega a `provider.emitir` **sem passar pela fila nem pelo
+  coordenador**. Fechado pela decisão **D11** (o `emitir` de P1 do `SefazDiretoProvider` é
+  **inerte** e isso é provado por teste antes de registrar `SEFAZ_DIRETO`);
+- ⚠️ **`cStat 656` não tinha mecanismo de parada:** o union `UNCERTAIN` não distingue throttle e
+  **todo** incerto agenda um job `CONSULTA` — o oposto de "parar imediatamente". Fechado pela
+  decisão **D12** (código `THROTTLED`, aditivo, dono é o slice 016D-B);
+- **falta o resolver** `storeId → certificadoAtivoId → CertificadoDigital → {blobRef, senhaRef}`;
+- **nenhum WSDL** no repositório (só XSDs `PL_010e_v1.02`) ⇒ `SOAPAction` é pendência **H-9/H-10**;
+- `xmlBytesSha256` **não é coluna** — vive no payload do job `EMISSAO`.
+
+**Parâmetros oficiais revalidados em 2026-08-03** (MOC 7.00 + SEFAZ-SP): TLS 1.2 com **autenticação
+mútua**; SOAP 1.2 Document/Literal; **leiaute 4.00 eliminou o `nfeCabecMsg` do SOAP Header**;
+máximo de **50 NF-e por lote**; `indSinc=1` só com **1 NF-e no lote** e se a SEFAZ implementar;
+**15 s** mínimos antes de consultar o lote e **3 min** entre consultas de status. Endpoints de SP
+**sem drift** desde o GOAL-015.
+
+> ⚠️ **Novo conflito documental C-7:** a SEFAZ-SP distribui **MOC 6.0 (set/2015)** na página de
+> downloads da NFC-e, anterior ao leiaute 4.00. O vigente é **MOC 7.00 (nov/2020)**. O nacional
+> prevalece. O portal **SVRS** é via oficial suplente e funcional (o portal nacional entra em loop
+> de redirecionamento).
+
+**Estado inalterado:** `fiscalEnabled = false` em todas as lojas · banco fiscal vazio · **zero
+homologação realizada** · **zero produção** · gate Fiscal global **aberto** · N6=0 · N7=0.
+
+### Histórico — GOAL-016C (implementação)
+
+**GOAL-016C (`FISCAL-GOAL-016C-SECRET-PROVIDER-CUSTODIA-A1-001`)** — contrato server-only do Secret Provider
 completado sobre o port `FiscalSecretVault` (ADR-0009 D1) com `describeSecret`,
 `checkAvailability` e `rotateCertificadoPfx`; resolver único de backend
 (`resolveFiscalSecretProvider` — `env` no piloto; provider declarado não implementado ⇒
@@ -258,9 +319,9 @@ opacas, `PENDENTE_VALIDACAO`+inativo), `POST /api/fiscal/certificado/[id]/rotaci
 `revogar` no `PATCH /api/fiscal/certificado/[id]`; GETs expõem bloco `cofre`
 (provider/disponibilidade/capacidades) e `atualizadoEm`. Pipeline **dormente**: `fiscalEnabled`
 intocado, zero emissão/SEFAZ, zero schema/migration; no piloto (EnvVault sem escrita) a custódia
-automática responde 503 fail-closed e o provisionamento manual segue valendo. **Não integrado à
-main**: aguarda revisão independente e gate humano. Próximo gate esperado:
-`FISCAL-GOAL-016D-SEFAZ-ADAPTER-HOMOLOGACAO`, somente após aprovação humana da custódia.
+automática responde 503 fail-closed e o provisionamento manual segue valendo. **Integrado à `main`
+pelo PR #33** (`origin/main` = `0de82ab`) após revisão independente e gate humano — o texto acima
+descreve a implementação, não o estado de integração.
 
 ### Pré-requisitos duros do provider gravável
 
@@ -348,6 +409,15 @@ demais lojas, UFs e qualquer produção permanecem fail-closed.
 - **BL-FISCAL-3:** 🟡 **ESCOPO RESOLVIDO** por ADR-0016 (Matriz/Taguaí, SP, SEFAZ-SP, NFC-e 65,
   `tpAmb=2`). Antes da F5 ainda faltam credenciamento confirmado e preflight completo da
   configuração real, sem registrar valores nesta documentação.
+- **BL-FISCAL-4:** 🔴 **INSUMOS HUMANOS DO PILOTO** — consolidados pelo GOAL-016D §5.
+  Pendentes: **H-1** CNPJ · **H-2** CRT/regime · **H-3** credenciamento + CSC de homologação
+  (+ `idCSC`) · **IE** · **série fiscal** para `(storeId, 65, HOMOLOGACAO)` · **`Store.id`** real da
+  Matriz · **certificado A1 de homologação + senha**. **Nenhum bloqueia 016D-A/016D-B**; a partir de
+  **016D-C** o A1 é obrigatório e em **016D-D** todos são.
+- **BL-FISCAL-5:** 🟡 **ARTEFATOS OFICIAIS AUSENTES** — **H-9** (`SOAPAction` por serviço) e
+  **H-10** (WSDL dos 6 serviços NFC-e 4.00 de SP). Não estão no repositório e obtê-los por `?wsdl`
+  seria chamar a SEFAZ, vedado no GOAL de planejamento. Limitam a fidelidade das fixtures (016D-B) e
+  bloqueiam 016D-C. **H-11** (SEFAZ-SP implementa `indSinc=1`?) resolve-se por observação em 016D-D.
 
 > Tracking vivo de blockers gerais: `docs/status/BLOCKERS.md`.
 
@@ -356,6 +426,9 @@ demais lojas, UFs e qualquer produção permanecem fail-closed.
 - Auditorias: `docs/audits/AUDITORIA_PRE_FISCAL_READINESS_v01.md`,
   `docs/audits/AUDITORIA_FISCAL_GAPS_v01.md`.
 - Plano mestre: `docs/governance/MASTER_FISCAL_EXECUTION_PLAN.md`.
+- Plano do primeiro adapter SEFAZ (GOAL-016D, **planejado — não iniciado**):
+  `docs/fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`.
+- Parâmetros oficiais SEFAZ-SP (GOAL-015): `docs/fiscal/FISCAL_SEFAZ_DOSSIE_UF_001.md`.
 - Decisões do GOAL-009: `docs/decisions/ADR-0014-supabase-vault-backend-kms-fiscal.md`,
   `docs/decisions/ADR-0015-sefaz-direta-homologacao-inicial.md` e
   `docs/decisions/ADR-0016-piloto-homologacao-sp-matriz-rafacell.md`.
