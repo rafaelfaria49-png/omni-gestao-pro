@@ -353,6 +353,41 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
+**Contratos da numeração server-side (GOAL 002C-0) — decididos e testados, SEM call site (04/08/2026)**
+- [`ADR-0021`](../decisions/ADR-0021-identidade-tecnica-e-numero-comercial-da-venda.md) fixa a
+  separação: **`clientSaleId`** é a identidade técnica criada no cliente, estável entre
+  retries, única por `storeId`, nunca exibida; **`pedidoId`** é o número comercial alocado
+  **só** pelo servidor no fluxo v2, dentro da transação.
+- Replay é reconhecido por **`(storeId, clientSaleId)`** — nunca por `pedidoId`. Mesma chave
+  devolve a venda existente, sem alocar número novo e sem duplicar estoque, caixa,
+  financeiro ou eventos. Qualquer divergência é conflito fail-closed.
+- Helpers **puros** novos: `lib/vendas/sale-identity-contracts.ts` (valida/normaliza
+  `clientSaleId`, classifica forma de `pedidoId`, decide create × replay × conflito, e
+  representa v1 × v2 sem Prisma) e `lib/vendas/store-sale-numbering-code.ts` (valida
+  `codigoNumeracaoVenda` e recusa vazio, inválido e duplicado). Nenhum deles gera
+  `clientSaleId` nem aceita `pedidoId` como fallback.
+- **Gate de runtime** server-only `lib/vendas/sale-numbering-runtime-gate.ts`: v2 exige
+  `VERCEL_ENV === "production"` **+** projeto canônico **+**
+  `SALE_SERVER_NUMBERING_ENABLED === "true"` exato. Qualquer ausência, `TRUE`, `1`, espaço,
+  newline, ambiente desconhecido, projeto legado ou terceiro projeto ⇒ **writer v1**.
+  Polaridade **fail-open** deliberada: o gate nunca impede uma venda do fluxo v1.
+- O ID canônico de projeto é **reexportado** de `scripts/migration-authority-guard.mjs` por
+  `lib/deploy/canonical-deployment.ts` — fonte única, sem cópia. **O guard de migrations não
+  foi alterado**; a dependência é unidirecional (app → guard).
+- **Zero alteração de comportamento:** `lib/ops-upsert-venda.ts`, `venda-persist`,
+  `sync-legacy-vendas`, `operations-store.tsx`, `operations-sales-merge.ts` e os 6 PDVs
+  seguem intocados — provado por teste estático que proíbe call site em cada um deles.
+  A flag **não** foi configurada em ambiente algum. Schema, migration e allocator intactos.
+- Validação: `vitest` das suítes de numeração **97 passed** (63 novos + 34 do 002B) ·
+  suíte completa **4522 passed | 2 expected fail | 152 skipped**, com 1 falha
+  **pré-existente e ambiental** (`tools/fiscal-dry-run-integrity-proof/proof.test.ts`,
+  verificador Java externo ausente — reproduzida no commit base sem estas mudanças) ·
+  `tsc --noEmit` ✅ (0 erros) · `eslint` dos arquivos alterados ✅ · `build` ✅ ·
+  `git diff --check` ✅ · secret scan ✅.
+- **Gates que continuam abertos:** G1 (provisionamento de `Store.codigoNumeracaoVenda` — o
+  writer ainda falharia em 100% das vendas) e G4 (suíte de concorrência contra PostgreSQL
+  real). Próximo: **002C-1** (writer atrás do gate, `clientSaleId` opcional).
+
 **Readiness do writer de numeração server-side (GOAL 002C) — Classe B, liberado com gates (04/08/2026)**
 - Auditoria read-only sobre `origin/main@69fb419`. **Zero** alteração de código, testes,
   configuração, SQL, migration, deploy ou Vercel. Writer **não** implementado.
