@@ -885,6 +885,42 @@ graph LR
 
 ### 016D-A — Contrato e adapter de transporte **offline**
 
+> ✅ **Implementado** (2026-08-04, branch `fiscal/goal-016d-a-sefaz-adapter-offline`, GOAL
+> `FISCAL-GOAL-016D-A-SEFAZ-ADAPTER-OFFLINE-001`, base `origin/main` = `c6f2c89` — o 016D-A0
+> entrou em `69fb419`, ancestral desta base).
+> `SefazDiretoProvider` em [`lib/fiscal/provider/sefaz/`](../../lib/fiscal/provider/sefaz/):
+> catálogo fechado D3 (host exato, `https:`, produção catalogada como **negada**), os dez
+> guards D4 na ordem canônica, envelope SOAP 1.2 sem `Header`/`nfeCabecMsg` com **bytes
+> fiscais preservados por concatenação**, e transporte **injetável** cujo default recusa sem
+> abrir socket. `uf`/`correlationId` entram de forma **aditiva** e o adapter bloqueia quando
+> ausentes. `simulado` passou a `boolean` (F-1: rótulo de trilha, nunca controle) — o adapter
+> se declara **não simulado** e o coordenador o bloqueia com `REAL_PROVIDER_BLOCKED` antes de
+> `transmit`. F-2 fechado: `simulado`/`externalTransmissionAttempted` **derivam** de
+> proveniência tipada; nenhum caminho deste slice produz tentativa externa. `SEFAZ_DIRETO`
+> **continua fora do `REGISTRY`** de P1 (teste permanente). Dormente: zero caller produtivo,
+> zero rede, zero segredo. Matriz de `cStat`, `PROCESSING` e `THROTTLED` seguem no **016D-B**.
+>
+> **Validação:** 319 testes focados verdes (`provider` + `emission` + `certificate` + `vault`),
+> dos quais **79 novos** deste slice · `npm run typecheck` limpo · ESLint limpo ·
+> `npm run build` com `MIGRATION_SKIPPED` (zero `migrate deploy`, zero baseline, zero banco).
+>
+> **Revisão independente** (modelo distinto, contexto frio) — parecer *APPROVE-WITH-FIXES*,
+> seis achados, **todos os cinco acionáveis corrigidos dentro do escopo antes do commit**:
+>
+> | # | Sev. | Achado | Correção |
+> |---|---|---|---|
+> | 1 | MAJOR | `readTpAmbFromSignedXml` pegava a **primeira** ocorrência: um `<tpAmb>2</tpAmb>` em comentário/CDATA mascararia um `tpAmb` real `1` (produção) | Comentários e CDATA removidos da cópia antes da busca; valor só aceito com **exatamente uma** ocorrência — ambiguidade bloqueia |
+> | 2 | MAJOR | Proveniência de rede em estado mutável de instância: sob reuso concorrente, uma execução offline podia **apagar** o registro de uma transmissão real (sub-reporte) | Flag tornada **monotônica** — sobe para `true` e nunca volta; escolhe o lado seguro da assimetria |
+> | 3 | MINOR | Barreira estrutural do catálogo (`endpoint_invalido`) sem cobertura — passaria por `return true` | `sefazEndpointIntegro` exportada e exercitada com oito entradas malformadas |
+> | 4 | MINOR | Nenhum teste ligava o adapter real ao executor real de fila | Teste ponta a ponta: `real_provider_blocked`, `transmit` nunca chamado, zero efeito colateral |
+> | 5 | NIT | `throw` inalcançável após `Promise<never>` sem intenção documentada | Comentado como código morto **intencional**, com o ponto de extensão de 016D-B/C |
+> | 6 | NIT | Casts `as never`/`as unknown as` — **somente em teste**, para simular entrada inválida | Aceito; zero cast inseguro em código de produção |
+>
+> ⚠️ **Herdado para o 016D-C:** `SefazTransportOutcome.externalTransmissionAttempted` e
+> `SefazAdapterBlockedError.externalTransmissionAttempted` são o literal `false`; ao existir
+> transporte com rede, ambos precisam ser alargados para `boolean` e o caminho de sucesso
+> genuíno precisa ser construído em `transmit`/`consult` (hoje `Promise<never>`).
+
 | | |
 |---|---|
 | **Objetivo** | Criar `SefazDiretoProvider` que **não abre socket**: guards D4, catálogo D3, resolver de endpoint e montagem do envelope SOAP — com o transporte **injetado** e, por padrão, um transporte que **recusa** qualquer chamada. **Consome** o resolver de certificado entregue pelo 016D-A0 |
@@ -894,7 +930,7 @@ graph LR
 | **Gate humano** | ❌ nenhum (a ADR do D13 é pré-requisito documental, não gate de execução) |
 | **Risco** | 🟢 **baixo** — código novo, dormente, sem caller |
 | **Critério de aceite** | `tsc` limpo · testes verdes · **zero** import de cliente HTTP no caminho default · **T4 intacta** · ⛔ **`REGISTRY` de P1 não ganha `SEFAZ_DIRETO` — nem neste slice nem em nenhum outro (D11 regra 1)** · inércia de P1 provada por teste · 🆕 **F-2 obrigatório:** `simulado` e `externalTransmissionAttempted` do `FiscalQueueExecutionResult` **derivam do provider/desfecho real**; deixam de ser literais em `uncertain-state-job-executor.ts` |
-| **Ponto de parada** | Adapter existe, é testável e **não consegue** falar com ninguém |
+| **Ponto de parada** | ✅ Adapter existe, é testável e **não consegue** falar com ninguém — 016D-B não iniciado |
 
 ---
 

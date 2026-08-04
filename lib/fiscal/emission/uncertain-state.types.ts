@@ -10,6 +10,17 @@ export type FiscalDocumentIdentity = FiscalDocumentLocator & {
   serie: number
   numero: number
   chaveAcesso: string
+  /**
+   * UF do emitente (ADR-0020 §2.6 — **aditivo**). Opcional para preservar todos os
+   * construtores existentes; o adapter SEFAZ (016D-A) **bloqueia antes do transporte**
+   * quando ausente. Não reconstrói XML, chave nem hash.
+   */
+  uf?: string
+  /**
+   * Correlação idempotente da execução (ADR-0020 §2.6 — **aditivo**). Mesma regra: opcional
+   * no contrato, obrigatório no adapter real antes do transporte.
+   */
+  correlationId?: string
 }
 
 export type PersistedFiscalDocument = FiscalDocumentIdentity & {
@@ -102,11 +113,38 @@ export class AuthorizedDivergenceError extends Error {
 }
 
 /**
- * Contrato exclusivo do drill/adapter. Não representa transporte SOAP nem
- * autoriza provider real neste GOAL.
+ * Proveniência TIPADA de uma execução fiscal (GOAL-016D-A · plano 016D F-2).
+ *
+ * Existe para que a trilha de auditoria (`simulado` / `externalTransmissionAttempted` do
+ * `FiscalQueueExecutionResult`) **derive do que realmente aconteceu**, em vez de literais
+ * fixos. Literais mentiriam no instante em que houvesse transmissão real — exatamente o
+ * achado F-2 do plano 016D.
+ */
+export type FiscalExecutionProvenance = {
+  /** O provider chegou a ser invocado (`transmit`/`consult`)? Bloqueio antes ⇒ `false`. */
+  readonly providerInvoked: boolean
+  /** O provider que executou declara-se simulado? */
+  readonly providerSimulado: boolean
+  /** Algum transporte REALMENTE iniciou contato externo? Offline ⇒ sempre `false`. */
+  readonly externalTransmissionAttempted: boolean
+}
+
+/**
+ * Contrato do provider de transmissão segura (P2 — ADR-0017/ADR-0020).
+ *
+ * ⚠️ `simulado` é **rótulo de trilha, NUNCA controle de segurança** (plano 016D F-1). O tipo
+ * é `boolean` — e não o literal `true` — justamente para que um provider real possa se
+ * declarar **honestamente** como não simulado. A barreira mecânica é o coordenador
+ * (`transmitWithUncertainStateSafety` ⇒ `REAL_PROVIDER_BLOCKED`), que continua bloqueando
+ * qualquer provider não simulado ANTES de chamar `transmit`.
  */
 export interface UncertainStateFiscalProvider {
-  readonly simulado: true
+  readonly simulado: boolean
+  /**
+   * Proveniência de rede da ÚLTIMA execução deste provider. Ausente ⇒ provider puramente em
+   * memória (jamais alcança rede) ⇒ o caller deriva `false`.
+   */
+  readonly reportExternalTransmissionAttempted?: () => boolean
   transmit(input: {
     document: FiscalDocumentIdentity
     exactBytes: Uint8Array
