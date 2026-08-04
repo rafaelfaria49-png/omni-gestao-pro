@@ -2,7 +2,7 @@
 title: Dívida Técnica — Tracking vivo
 status: vivo
 owner: produto + Sonnet
-last_update: 2026-07-30
+last_update: 2026-08-03
 fonte_overview: docs/ai/CURRENT_STATUS_OVERVIEW.md §5
 ---
 
@@ -46,6 +46,7 @@ fonte_overview: docs/ai/CURRENT_STATUS_OVERVIEW.md §5
 | DT-11 | Painel inicial com mocks misturados | BI | P0 | ⏳ | herdada | SPRINT_NN_BI | Confunde decisão de negócio |
 | DT-12 | Mocks no `lib/utils.ts` Lovable excluídos do tsc | Lovable | P3 | 🚫 | herdada | aceito | Decisão de isolamento documentada no CLAUDE.md |
 | DT-18 | `Venda.storeId` mantém `@default("loja-1")` no schema | PDV / Multi-loja | P2 | ⏳ | 2026-07-30 | GOAL 002C (API v2 de venda) | Preservado no GOAL 002B por sua remoção não ser aditiva. O helper novo exige `storeId` explícito e não usa fallback; remover o default só após provar todos os writers/importadores |
+| DT-19 | Dois projetos Vercel Production executam migrations em bancos distintos sem autoridade única | Deploy / Banco | P0 | ⏳ | 2026-08-03 | decisão canônica + `DEPLOY-PRODUCTION-MIGRATION-GOVERNANCE-GUARD-002` | `omni-gestao-pro` e `omni-gestao` compartilham repo/main/runner, mas usam `DIFFERENT_DATABASES`; projeto/banco canônicos e finalidade do segundo projeto permanecem decisão humana. GOAL 002C bloqueado. Auditoria: `docs/audits/DEPLOY_PRODUCTION_MIGRATION_GOVERNANCE_AUDIT_001.md` |
 
 ---
 

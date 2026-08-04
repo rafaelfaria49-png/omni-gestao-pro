@@ -2,7 +2,7 @@
 title: CURRENT_STATUS · Overview enxuto
 status: vivo
 owner: produto + Sonnet (atualiza a cada sprint encerrada)
-last_update: 2026-06-02
+last_update: 2026-08-03
 fonte_detalhada: docs/ai/CURRENT_STATUS.md
 ---
 
@@ -87,6 +87,7 @@ fonte_detalhada: docs/ai/CURRENT_STATUS.md
 | 4 | Sem multi-depósito Estoque (DT-08) | Estoque | P0 (bloqueia Marketplace) — Fase 0 arquitetura ✅; Fase 1 a abrir |
 | 5 | Rota legada `/dashboard/os` paralela | OS | P1 |
 | 6 | Pool de executores Omni Agent pequeno | Omni Agent | P1 |
+| 7 | Dois projetos Vercel Production com autoridade implícita de migration em bancos distintos — DT-19 | Deploy/Banco | P0 — Classe C; decisão canônica e guard bloqueiam GOAL 002C |
 
 > Detalhe e tracking vivo em `docs/status/DIVIDA_TECNICA.md`. (DT-03 + DT-14: `loja-1` server-side **100% pago**; DT-13 + DT-15: client **de componentes** pago; **client-side ainda não 100%** — resta **F-11** provider-fonte + F-04 webhook — ver §3 de lá.)
 

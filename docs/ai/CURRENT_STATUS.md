@@ -353,7 +353,47 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
-**Numeração server-side de venda — infraestrutura DORMENTE (30/07/2026)**
+**Governança de migrations Production — Classe C (03/08/2026)**
+- Auditoria read-only dos projetos Vercel `omni-gestao-pro` e `omni-gestao`, ambos
+  conectados ao mesmo repositório, à branch Production `main` e ao mesmo runner.
+- Os dois projetos mantêm aliases Production próprios, recebem o mesmo fluxo de
+  deployments e apontam para **`DIFFERENT_DATABASES`**. Não existe flag explícita,
+  validação de `VERCEL_PROJECT_ID` ou lock entre projetos antes de
+  `prisma migrate deploy`.
+- `omni-gestao-pro` é o candidato mais forte a canônico: aparece nos documentos e
+  smokes de Production e recebeu tráfego operacional recente de vendas/terminal.
+  A finalidade vigente de `omni-gestao` continua **UNKNOWN**; por isso, projeto e
+  banco canônicos dependem de decisão humana e nenhuma autoridade foi presumida.
+- Modelo recomendado após ratificação: **flag explícita + project ID exato**, com
+  `MIGRATION_RUN` somente no projeto autorizado e `MIGRATION_SKIPPED` em projeto
+  secundário, terceiro projeto, Preview, Development e local.
+- A `0016_add_sale_numbering_infrastructure` permanece aplicada provisoriamente nos
+  dois bancos. Não há dano comprovado e não se autoriza rollback sem catálogo,
+  ledger e contagens read-only.
+- **GOAL 002C segue bloqueado.** Próximo passo é decisão humana sobre projeto/banco
+  canônicos e destino do segundo ambiente; somente depois poderá existir o GOAL
+  `DEPLOY-PRODUCTION-MIGRATION-GOVERNANCE-GUARD-002`.
+- Relatório:
+  `docs/audits/DEPLOY_PRODUCTION_MIGRATION_GOVERNANCE_AUDIT_001.md`.
+
+**Auditoria Production da migration `0016` — Classe C (03/08/2026)**
+- O PR #34 foi integrado em `6a0d141` às 17:17 BRT. Os deployments Production de
+  `omni-gestao-pro` (aplicação às 17:19:07 BRT) e `omni-gestao` (aplicação às
+  17:22:49 BRT) executaram `prisma migrate deploy` e aplicaram a `0016`.
+- A comparação segura das identidades determinou **`DIFFERENT_DATABASES`**. Os dois
+  projetos Production migraram destinos distintos; isso aciona a **Classe C**.
+- A inspeção SQL direta foi interrompida no ponto de parada: catálogo,
+  `_prisma_migrations` e contagens agregadas permanecem não verificados. O código
+  publicado continua dormente, com zero call sites do helper e zero uso dos campos
+  novos na UI.
+- Decisão operacional: não fazer rollback automático nem alterar Production. O
+  **GOAL 002C está bloqueado** até um trabalho separado de governança do pipeline e
+  verificação read-only dos dois bancos:
+  `DEPLOY-PRODUCTION-MIGRATION-GOVERNANCE-AUDIT-001`.
+- Relatório:
+  `docs/audits/PDV_NUMERACAO_002B_PRODUCTION_MIGRATION_STATE_AUDIT_001.md`.
+
+**Numeração server-side de venda — código DORMENTE; schema aplicado em Production (30/07/2026)**
 - Migration aditiva `0016_add_sale_numbering_infrastructure`, aplicada depois da
   `0015_contador_identidade_externa`: `series_venda`,
   `Store.codigoNumeracaoVenda` e 8 campos **nullable** em `Venda`; sem backfill,
@@ -365,8 +405,10 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
   número é reservado num único incremento atômico; rollback do caller reverte o contador.
 - Formato futuro: `VDA-{CODIGO_LOJA}-{ANO}-{NNNNNN}`, ano civil do servidor em
   `America/Sao_Paulo`, teto 999.999 e falha fechada sem configuração/na exaustão.
-- **Nada foi ativado:** nenhum writer/rota/PDV/importador chama o helper; nenhuma loja
-  recebeu código; `pedidoId` do writer v1 e das vendas históricas permanece intacto.
+- **O código não foi ativado:** nenhum writer/rota/PDV/importador chama o helper e a
+  UI não usa os campos novos. O estado dos dados Production não foi consultado nesta
+  auditoria e não permite afirmar que nenhuma loja recebeu código ou que todos os
+  campos novos permanecem nulos.
 - A suíte PostgreSQL real é opt-in via `SALE_NUMBERING_TEST_DATABASE_URL` e recusa host
   remoto. Fakes cobrem apenas contrato/rollback simulado, nunca são tratados como prova
   de lock ou concorrência real.
@@ -382,8 +424,9 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 - A cadeia histórica bruta de migrations continua sem bootstrap integral por falha
   preexistente na `0005`; a prova partiu de banco vazio materializado pelo
   `schema-pre-0015.prisma`, registrou o baseline `0001..0014` e aplicou fisicamente
-  `0015` + `0016`. Isso não autoriza migration de produção.
-- Próximo passo permanece **GOAL 002C**: idempotência/API e integração controlada.
+  `0015` + `0016`. A aplicação Production posterior ocorreu automaticamente pelo
+  pipeline dos dois projetos, não por essa prova local.
+- O **GOAL 002C permanece bloqueado** pela auditoria Production Classe C.
 
 **Writer legado v1 — replay atômico e conflito permanente (28/07/2026)**
 - `Venda` passou a ser **create-only**: não existe mais `upsert` permissivo no caminho compartilhado.
