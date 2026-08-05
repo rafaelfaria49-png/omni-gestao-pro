@@ -353,6 +353,46 @@ Módulo operacional principal da assistência técnica. Últimas melhorias **con
 
 ### PDV
 
+**Provisionamento do código de numeração por loja (GOAL 002C-0b) — gate G1 FECHADO, writer v2 continua desligado (05/08/2026)**
+- Superfície administrativa **na gestão de unidades já existente** (`GestaoUnidadesSaas`,
+  usada por `/dashboard/unidades` e por Configurações V3 → Lojas): novo bloco
+  `components/dashboard/configuracoes/numeracao-venda-lojas.tsx` lista **cada loja
+  acessível** com nome, id, código atual e estado **Configurado / Não configurado**, e
+  oferece a ação de configurar ou substituir. **Nenhuma segunda área de gestão de lojas.**
+- Escrita concentrada em **um** serviço canônico server-only
+  `lib/vendas/store-sale-numbering-provision.ts`, exposto por
+  `PUT /api/stores/numeracao-venda` (`requireAdmin` + ACL da loja pela sessão) e lido por
+  `GET` na mesma rota (mesma política de leitura de `/api/stores`). A loja é **resolvida no
+  servidor**; nada validado no cliente é confiado.
+- Validação passa **exclusivamente** por `planStoreSaleNumberingCodes` (contrato 002C-0), com
+  os códigos ocupados lidos **na mesma transação** da escrita. Só a coluna
+  `codigoNumeracaoVenda` é atualizada; a unique global da migration 0016 continua sendo a
+  proteção final e **P2002 vira conflito** (409), sem revelar a loja ocupante quando ela está
+  fora do escopo do operador. Alteração efetiva registra auditoria do módulo
+  (`store.codigoNumeracaoVenda`, área `pdv`); repetir o mesmo valor é **idempotente** e não
+  audita.
+- **Nenhuma geração automática**: sem MAX, count, nome da loja ou aleatoriedade — o código vem
+  do operador e o campo nasce vazio. A UI mostra apenas o **prefixo comercial honesto**
+  (`VDA-{CODIGO}-{ANO}-{SEQUÊNCIA}`), sem simular ano ou número.
+- **Imutabilidade após uso** ancorada em evidência de schema: existir `SerieVenda` para a loja.
+  `SerieVenda.prefixo` é snapshot **write-once** do código e `Venda` referencia a série por FK
+  composta `Restrict` — trocar o código depois disso quebraria a série (é o que
+  `assertSerieUsavel` recusa). Vendas ligadas à série são exibidas como reforço, nunca como
+  critério extra; **nada é inferido do formato de `pedidoId` das vendas v1**. Não existe ação
+  para apagar o código.
+- **Zero alteração operacional:** writer v1, gate de runtime, allocator, `venda-persist`,
+  `sync-legacy-vendas`, PDVs, `mergeSalesById`, recibos, `prisma/schema.prisma` e migrations
+  intactos. Configurar o código **não ativa** a numeração server-side, e a flag do writer v2
+  **não** foi configurada em ambiente algum — a ativação depende dos slices 002C-1..3.
+- Validação: `vitest lib/vendas` **287 passed | 16 skipped** (31 novos do serviço) ·
+  `vitest app/api/stores` **15 passed** (novos da rota) · suíte completa
+  **4568 passed | 2 expected fail | 152 skipped**, com a mesma falha **pré-existente e
+  ambiental** de `tools/fiscal-dry-run-integrity-proof/proof.test.ts` (verificador Java
+  externo ausente) · `tsc --noEmit` ✅ (0 erros) · `eslint` dos arquivos alterados ✅
+  (0 erros) · `build` ✅ · `git diff --check` ✅ · secret scan ✅.
+- **Gate que continua aberto:** G4 (suíte de concorrência contra PostgreSQL real).
+  Próximo: **002C-1** (writer atrás do gate, `clientSaleId` opcional).
+
 **Contratos da numeração server-side (GOAL 002C-0) — decididos e testados, SEM call site (04/08/2026)**
 - [`ADR-0021`](../decisions/ADR-0021-identidade-tecnica-e-numero-comercial-da-venda.md) fixa a
   separação: **`clientSaleId`** é a identidade técnica criada no cliente, estável entre
