@@ -72,9 +72,21 @@ export type FiscalQueuePauseSnapshot = {
  * `cStat 103/105` precisa **voltar a consultar**. Tratá-lo como `uncertain` o mandaria para
  * `waitForConsultation`, que estaciona com `proximaTentativaEm: null` — ou seja, a consulta
  * ficaria esperando por ela mesma, para sempre, e o documento morreria em `TRANSMITINDO`.
+ *
+ * ⚠️ `"unresolved"` cobre o caso em que a transmissão é incerta **e a `CONSULTA` que a
+ * resolveria não pôde ser criada**. `uncertain` afirmaria, em log e em estado, que se aguarda
+ * uma consulta deduplicada — afirmação FALSA aqui, e é a falsidade que faz o documento sumir
+ * sem alarme. Ver `parkUnresolvedTransmission`.
  */
 export type FiscalQueueExecutionResult = {
-  kind: "success" | "transient" | "terminal" | "uncertain" | "throttled" | "processing"
+  kind:
+    | "success"
+    | "transient"
+    | "terminal"
+    | "uncertain"
+    | "throttled"
+    | "processing"
+    | "unresolved"
   code: string
   mensagem: string
   /** Sempre true no GOAL-011. Resultado false é bloqueado pelo worker. */
@@ -84,6 +96,15 @@ export type FiscalQueueExecutionResult = {
    * pois o único executor permitido usa STUB_HOMOLOGACAO.
    */
   externalTransmissionAttempted: boolean
+  /**
+   * O provider chegou a ser invocado NESTA execução? Deriva da proveniência tipada coletada
+   * pelo coordenador — não é autodeclaração do executor.
+   *
+   * O worker usa isto para distinguir uma repetição SEGURA (consulta que falhou depois de o
+   * provider responder ou lançar) de uma execução que sequer chegou lá. Ausente ⇒ desconhecido
+   * ⇒ tratado como `false`, o lado conservador.
+   */
+  providerInvoked?: boolean
   detalhe?: Record<string, unknown>
 }
 
@@ -198,6 +219,27 @@ export type FiscalQueueWorkerPorts = {
     recibo: string | null
     payload: FiscalQueuePayload
   }) => Promise<boolean>
+  /**
+   * Estaciona uma transmissão incerta cuja **`CONSULTA` não pôde ser criada**.
+   *
+   * Distinta de `waitForConsultation` porque a afirmação que aquela porta grava — "estacionado
+   * até consulta deduplicada" — seria **mentira** aqui: não existe consulta alguma a aguardar.
+   * Um estado inerte com log honesto é recuperável por um humano; um estado inerte com log
+   * enganoso é um documento que some sem ninguém procurar.
+   *
+   * O estado gravado é o mesmo (`AGUARDANDO_RETRY` + `proximaTentativaEm: null`): não elegível
+   * pelo worker, não reprocessável pela rota administrativa. O que muda é a **auditoria**, que
+   * é `ERROR` e diz exatamente o que faltou.
+   *
+   * Porta ausente ou escrita não confirmada ⇒ fail-closed: lock preservado.
+   */
+  parkUnresolvedTransmission?: (input: {
+    job: FiscalQueueJob
+    workerId: string
+    now: Date
+    error: string
+    payload: FiscalQueuePayload
+  }) => Promise<boolean>
   execute: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>
   audit: (event: FiscalQueueAuditEvent) => Promise<void>
 }
@@ -229,6 +271,10 @@ export type DrainFiscalQueueItemResult = {
     | "reconsulta"
     /** Reagendamento da reconsulta não confirmado — lock não liberado, drenagem abortada. */
     | "reconsulta_falhou"
+    /** Transmissão incerta SEM consulta garantida: estacionada com alarme, drenagem abortada. */
+    | "sem_consulta"
+    /** Nem o estacionamento do caso acima foi confirmado — lock não liberado. */
+    | "sem_consulta_falhou"
   takeover: boolean
   tentativas: number
   mensagem: string
@@ -252,5 +298,14 @@ export type DrainFiscalQueueReport = {
   processingRescheduled: number
   /** Reagendamentos de reconsulta não confirmados. Drenagem abortou. */
   processingRescheduleFailed: number
+  /**
+   * Transmissões incertas estacionadas **sem consulta garantida**.
+   *
+   * Qualquer valor > 0 exige diagnóstico humano: existe documento cujo desfecho é desconhecido
+   * e para o qual nenhuma autoridade automática foi criada.
+   */
+  unresolvedWithoutConsultation: number
+  /** Estacionamentos do caso acima que sequer puderam ser persistidos. */
+  unresolvedParkFailed: number
   items: DrainFiscalQueueItemResult[]
 }

@@ -41,10 +41,19 @@ export type UncertainStateJobExecutorDependencies = {
  */
 export function auditFlagsFromProvenance(
   provenance: FiscalExecutionProvenance,
-): Pick<FiscalQueueExecutionResult, "simulado" | "externalTransmissionAttempted"> {
+): Pick<
+  FiscalQueueExecutionResult,
+  "simulado" | "externalTransmissionAttempted" | "providerInvoked"
+> {
   return {
     simulado: provenance.providerInvoked ? provenance.providerSimulado : true,
     externalTransmissionAttempted: provenance.externalTransmissionAttempted,
+    /**
+     * Propagado ao contrato da fila para que o worker possa distinguir uma repetição SEGURA
+     * (consulta que já falou com o provider) de uma execução que nem chegou lá — sem precisar
+     * inspecionar `detalhe`, que é um saco de chaves não tipado.
+     */
+    providerInvoked: provenance.providerInvoked,
   }
 }
 
@@ -100,17 +109,38 @@ function desfechoDeExcecaoComProveniencia(
 ): FiscalQueueExecutionResult | null {
   const provenance = fiscalExecutionProvenanceOf(error)
   if (!provenance || !provenance.providerInvoked) return null
+  const auditoria = auditFlagsFromProvenance(provenance)
+  const mensagem = mensagemDeErroSegura(error)
+
+  if (tipo === "CONSULTA") {
+    return {
+      kind: "transient",
+      code: "consulta_interrompida",
+      mensagem,
+      ...auditoria,
+      detalhe: { providerInvoked: provenance.providerInvoked },
+    }
+  }
+
+  /**
+   * ⚠️ `unresolved` quando a consulta NÃO pôde ser garantida (resíduo 3).
+   *
+   * `uncertain` afirma — no estado e no log — que se aguarda uma consulta deduplicada. Sem
+   * consulta alguma existindo, essa afirmação é o que faz o documento sumir em silêncio: o
+   * operador lê "aguardando consulta" e supõe processo em curso. O `kind` dedicado leva ao
+   * estacionamento com auditoria `ERROR` explícita.
+   */
   const consultaGarantida = fiscalConsultationEnsuredOf(error)
   return {
-    kind: tipo === "CONSULTA" ? "transient" : "uncertain",
-    code: "execucao_fiscal_interrompida",
-    mensagem: mensagemDeErroSegura(error),
-    ...auditFlagsFromProvenance(provenance),
+    kind: consultaGarantida ? "uncertain" : "unresolved",
+    code: consultaGarantida
+      ? "execucao_fiscal_interrompida"
+      : "transmissao_incerta_sem_consulta",
+    mensagem,
+    ...auditoria,
     detalhe: {
       providerInvoked: provenance.providerInvoked,
-      // `false` numa EMISSAO significa documento possivelmente entregue e SEM autoridade
-      // automática para resolvê-lo — condição que exige alarme, não silêncio.
-      ...(tipo === "CONSULTA" ? {} : { consultationEnsured: consultaGarantida }),
+      consultationEnsured: consultaGarantida,
     },
   }
 }
@@ -185,10 +215,22 @@ export function createUncertainStateJobExecutor(
           },
         }
       }
-      /** Consulta que não resolveu nada: permanece incerta, sem autorizar retransmissão. */
+      /**
+       * Consulta que não resolveu nada — SOAP Fault, resposta ilegível, `108/109`, `UNKNOWN`.
+       *
+       * ⚠️ `kind: "transient"`, não `"uncertain"` (resíduo 2 da revisão cruzada). Como
+       * `uncertain`, este job ia para `waitForConsultation` e ficava `AGUARDANDO_RETRY` com
+       * `proximaTentativaEm: null` — inelegível para sempre. A consulta voltava a **esperar por
+       * si mesma** e a nota morria em `TRANSMITINDO`, agora por serviço fora do ar em vez de
+       * por lote em processamento: o mesmo defeito, outra porta de entrada.
+       *
+       * Repetir uma consulta é LEITURA: não duplica documento, não consome numeração e é a
+       * única forma de o desfecho aparecer. E **não** autoriza retransmissão da EMISSAO — só
+       * `NOT_FOUND` explícito faz isso, via `authorizeExactRetransmission`.
+       */
       if (outcome.kind === "uncertain") {
         return {
-          kind: "uncertain",
+          kind: "transient",
           code: "consulta_nao_conclusiva",
           mensagem: outcome.message,
           ...auditoria,

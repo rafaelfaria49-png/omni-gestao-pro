@@ -277,6 +277,80 @@ async function processThrottled(input: {
   }
 }
 
+/**
+ * Estaciona uma transmissão incerta cuja `CONSULTA` não pôde ser criada, com alarme honesto.
+ *
+ * Resíduo 3 da revisão cruzada. O caminho genérico de incerteza afirma — na mensagem do worker
+ * e no log do adapter Prisma — que o job "aguarda consulta deduplicada". Quando a consulta não
+ * existe, essa frase é a diferença entre um documento que alguém vai procurar e um que some em
+ * silêncio: o estado é idêntico, e o operador que lê o log conclui que há um processo em curso.
+ *
+ * Aqui o estado é o mesmo (inerte, não elegível, não reprocessável) e o log é `ERROR` dizendo
+ * exatamente o que faltou. A drenagem é interrompida em seguida: uma consulta que não pôde ser
+ * persistida é forte indício de que a próxima também não será.
+ */
+async function processSemConsulta(input: {
+  job: FiscalQueueJob
+  takeover: boolean
+  ports: FiscalQueueWorkerPorts
+  workerId: string
+  now: Date
+  error: string
+  payload: FiscalQueuePayload
+}): Promise<DrainFiscalQueueItemResult> {
+  const { job, takeover, ports, workerId, now } = input
+  const base = { jobId: job.id, storeId: job.storeId, takeover, tentativas: job.tentativas }
+
+  await safeAudit(ports, {
+    job,
+    acao: "fiscal.queue.uncertain.without_consultation",
+    nivel: "ERROR",
+    mensagem:
+      "Transmissão de desfecho desconhecido SEM consulta confirmada; nenhuma autoridade " +
+      "automática resolverá este documento. Exige diagnóstico humano.",
+    detalhe: { workerId, consultationEnsured: false },
+  })
+
+  if (!ports.parkUnresolvedTransmission) {
+    await safeAudit(ports, {
+      job,
+      acao: "fiscal.queue.uncertain.park_unavailable",
+      nivel: "ERROR",
+      mensagem: "Fila sem porta de estacionamento honesto; job mantido sob lock.",
+      detalhe: { workerId },
+    })
+    return {
+      ...base,
+      status: "sem_consulta_falhou",
+      mensagem: "Transmissão incerta sem consulta e sem porta de estacionamento.",
+    }
+  }
+
+  const estacionado = await ports
+    .parkUnresolvedTransmission({
+      job,
+      workerId,
+      now,
+      error: input.error,
+      payload: input.payload,
+    })
+    .catch(() => false)
+
+  if (!estacionado) {
+    return {
+      ...base,
+      status: "sem_consulta_falhou",
+      mensagem: "Estacionamento da transmissão incerta não confirmado; nada foi liberado.",
+    }
+  }
+  return {
+    ...base,
+    status: "sem_consulta",
+    mensagem:
+      "Transmissão incerta estacionada SEM consulta confirmada; retomada exige diagnóstico humano.",
+  }
+}
+
 async function processLease(input: {
   lease: FiscalQueueLease
   ports: FiscalQueueWorkerPorts
@@ -424,18 +498,29 @@ async function processLease(input: {
    *    - `throttled` — pausa a loja e estaciona sem reprocesso (rebaixá-lo é justamente o que
    *      agrava o `656`);
    *    - `processing` — reagenda a consulta do mesmo recibo, sem retransmitir;
+   *    - `unresolved` — estaciona com alarme, sem reprocesso;
    *    - `uncertain` **que já registrou tentativa externa** — estaciona sem retry e sem
    *      reprocesso; convertê-lo em `FALHA` deixaria um operador retransmitir um documento que
    *      pode ter chegado à SEFAZ.
+   * 3. **Repetição de CONSULTA não é rebaixada.** Consultar é LEITURA: repetir é seguro, barato
+   *    e é a única forma de o documento sair do limbo. Rebaixar a consulta que falhou produziria
+   *    `FALHA`, e a nota ficaria `TRANSMITINDO` sem ninguém consultando. A liberação exige
+   *    `providerInvoked` — que deriva da proveniência tipada, não de autodeclaração — e **não
+   *    vale para `EMISSAO`**, onde repetir pode duplicar o documento.
    *
    * `externalTransmissionAttempted: true` é deliberadamente conservador: sinaliza contato
    * externo POSSÍVEL, forçando reconciliação humana em vez de presumir que nada saiu.
    */
+  const repeticaoDeConsultaSegura =
+    job.tipo === "CONSULTA" &&
+    execution.kind === "transient" &&
+    execution.providerInvoked === true
   const maisRestritivoQueTerminal =
     execution.kind === "throttled" ||
     execution.kind === "processing" ||
+    execution.kind === "unresolved" ||
     (execution.kind === "uncertain" && execution.externalTransmissionAttempted)
-  if (!maisRestritivoQueTerminal && !execution.simulado) {
+  if (!maisRestritivoQueTerminal && !repeticaoDeConsultaSegura && !execution.simulado) {
     execution = {
       kind: "terminal" as const,
       code: "provider_real_bloqueado",
@@ -494,6 +579,23 @@ async function processLease(input: {
       now,
       payload,
       execution,
+    })
+  }
+
+  /**
+   * Transmissão incerta cuja `CONSULTA` NÃO pôde ser criada. Caminho próprio porque o
+   * estacionamento genérico grava, em log e em semântica, que se aguarda uma consulta
+   * deduplicada — afirmação falsa aqui, e é a falsidade que faz o documento sumir sem alarme.
+   */
+  if (execution.kind === "unresolved") {
+    return await processSemConsulta({
+      job,
+      takeover,
+      ports: input.ports,
+      workerId: input.workerId,
+      now,
+      error,
+      payload,
     })
   }
 
@@ -624,6 +726,8 @@ export async function drainFiscalQueue(
     throttlePauseFailed: 0,
     processingRescheduled: 0,
     processingRescheduleFailed: 0,
+    unresolvedWithoutConsultation: 0,
+    unresolvedParkFailed: 0,
     items: [],
   }
 
@@ -661,6 +765,8 @@ export async function drainFiscalQueue(
     else if (item.status === "pausa_falhou") report.throttlePauseFailed += 1
     else if (item.status === "reconsulta") report.processingRescheduled += 1
     else if (item.status === "reconsulta_falhou") report.processingRescheduleFailed += 1
+    else if (item.status === "sem_consulta") report.unresolvedWithoutConsultation += 1
+    else if (item.status === "sem_consulta_falhou") report.unresolvedParkFailed += 1
     else report.lockLost += 1
 
     /**
@@ -679,6 +785,14 @@ export async function drainFiscalQueue(
      * cada repetição é mais uma chamada à SEFAZ sem desfecho registrado.
      */
     if (item.status === "reconsulta_falhou") break
+
+    /**
+     * Documento incerto sem consulta garantida — nos DOIS desfechos, com ou sem estacionamento
+     * confirmado. A drenagem para: a causa mais provável é indisponibilidade de persistência, e
+     * seguir emitindo produziria mais documentos na mesma condição, cada um exigindo o mesmo
+     * diagnóstico humano.
+     */
+    if (item.status === "sem_consulta" || item.status === "sem_consulta_falhou") break
   }
 
   return report

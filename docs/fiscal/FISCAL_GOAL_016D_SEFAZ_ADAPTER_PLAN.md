@@ -1173,6 +1173,49 @@ graph LR
 > termina em `FALHA` e exige reprocessamento humano — fail-closed, sem retransmissão, porém não
 > auto-recuperável. Uma cadência mais larga entre reconsultas e o rate limit pertencem ao
 > **016D-E**.
+>
+> ---
+>
+> #### Correção 003 — recuperação de consultas inconclusivas
+>
+> ✅ **Aplicada** (GOAL `FISCAL-PR44-CONSULTATION-RECOVERY-CORRECTION-003`, mesma branch). Três
+> resíduos apontados pela revisão cruzada da correção 002; os três eram reais.
+>
+> **O padrão comum.** `waitForConsultation` grava `AGUARDANDO_RETRY` + `proximaTentativaEm:
+> null`, e `eligibleWhere` exige `not: null` **e** vencido para readquirir nesse status — logo o
+> estado é **absorvente**, e `reprocessFailedFiscalJob` só alcança `FALHA`. Quem cai ali não roda
+> nunca mais e não dispara alarme. A correção 002 fechou uma porta de entrada (`103/105`); esta
+> fecha as outras duas, e trata o caso oposto.
+>
+> **Resíduo 1 — exceção em `CONSULTA` era rebaixada a `terminal`.** O executor já devolvia
+> `transient` com proveniência real, mas o freio do GOAL-011 (`!execution.simulado`) o convertia
+> em `terminal` ⇒ `FALHA`, e a nota ficava `TRANSMITINDO` sem ninguém consultando. O freio passa
+> a preservar a repetição quando `job.tipo === "CONSULTA"` **e** `providerInvoked === true` —
+> flag agora **tipada** em `FiscalQueueExecutionResult`, derivada da proveniência, não de
+> `detalhe`. ⛔ A liberação **não** vale para `EMISSAO`.
+>
+> **Resíduo 2 — consulta inconclusiva esperava por si mesma.** SOAP Fault, XML ilegível,
+> `108/109` e `UNKNOWN` saíam como `uncertain` e caíam no estado absorvente. Passam a `transient`
+> com o backoff existente: repetir uma **leitura** não duplica documento, não consome numeração e
+> é a única forma de o desfecho aparecer. ⛔ Não autoriza retransmissão — só `NOT_FOUND`
+> explícito chama `authorizeExactRetransmission`. `PROCESSING`, `THROTTLED`, `NOT_FOUND`,
+> `AUTHORIZED` e `REJECTED` permanecem exatamente como estavam.
+>
+> **Resíduo 3 — `consultationEnsured: false` usava o caminho genérico.** O estacionamento comum
+> afirma, em log e em semântica, que se aguarda uma consulta deduplicada; sem consulta alguma
+> existindo, essa frase é o que faz o documento sumir em silêncio — o operador lê "aguardando
+> consulta" e supõe processo em curso. Novo `kind: "unresolved"` + porta
+> `parkUnresolvedTransmission`: mesmo estado inerte (não elegível, não reprocessável), auditoria
+> **`ERROR`** dizendo exatamente o que faltou, status `sem_consulta` e contador
+> `unresolvedWithoutConsultation` no relatório, e **drenagem interrompida** em seguida. Falha ao
+> estacionar ⇒ lock preservado e `unresolvedParkFailed`. A frase *"até consulta deduplicada"*
+> nunca é usada nesse caminho. `withExecutionResult` marca `uncertainAt` também para
+> `unresolved`, de modo que `canStartFiscalTransmission` continue bloqueando novo envio.
+>
+> **Validação da correção 003:** `vitest lib/fiscal` **853 verdes / 16 skip** (19 novos) ·
+> typecheck limpo · ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero
+> `migrate deploy`, zero baseline, zero conexão com banco) · `git diff --check` limpo · zero
+> schema, zero migration, zero rede, zero segredo, zero caller produtivo novo.
 
 ---
 

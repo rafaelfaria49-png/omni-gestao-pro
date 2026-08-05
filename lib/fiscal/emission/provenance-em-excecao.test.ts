@@ -261,10 +261,15 @@ describe("a CONSULTA que resolve o estado incerto é GARANTIDA na exceção", ()
     const resultado = await executar(job())
 
     // A falha de persistência não engole a exceção original nem inventa sucesso...
-    expect(resultado.kind).toBe("uncertain")
     expect(resultado.detalhe?.consultationEnsured).toBe(false)
     // ...e continua sem retransmitir.
     expect(resultado.externalTransmissionAttempted).toBe(true)
+    /**
+     * ⚠️ `unresolved`, não `uncertain` (resíduo 3). `uncertain` levaria ao estacionamento
+     * genérico, que afirma aguardar uma consulta deduplicada — e não existe consulta alguma.
+     */
+    expect(resultado.kind).toBe("unresolved")
+    expect(resultado.code).toBe("transmissao_incerta_sem_consulta")
   })
 
   it("erro ANTES da invocação do provider não cria consulta alguma", async () => {

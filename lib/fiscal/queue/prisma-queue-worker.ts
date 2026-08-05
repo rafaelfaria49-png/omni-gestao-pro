@@ -600,6 +600,41 @@ export function createPrismaFiscalQueueWorkerPorts(
       }
       return updated.count === 1
     },
+    /**
+     * Estacionamento HONESTO de transmissão incerta sem consulta confirmada (correção 003).
+     *
+     * O estado gravado é idêntico ao de `waitForConsultation` — e é proposital: inerte nas duas
+     * pontas (não elegível em `eligibleWhere`, não reprocessável em `reprocessFailedFiscalJob`).
+     * O que muda é a **auditoria**: nível `ERROR` e uma mensagem que diz o que realmente
+     * aconteceu, em vez de "aguardando consulta deduplicada" — frase que, sem consulta alguma
+     * existindo, faria um operador supor um processo em curso e nunca procurar o documento.
+     */
+    parkUnresolvedTransmission: async ({ job, workerId, now, error, payload }) => {
+      const updated = await client.fiscalEmissaoJob.updateMany({
+        where: ownedLockWhere(job.id, workerId, now),
+        data: {
+          status: "AGUARDANDO_RETRY",
+          payload,
+          ultimoErro: error,
+          proximaTentativaEm: null,
+          lockOwner: null,
+          lockedAt: null,
+          lockExpiresAt: null,
+        },
+      })
+      if (updated.count === 1) {
+        await bestEffortAudit(client, {
+          job,
+          acao: "fiscal.queue.transmission.unresolved",
+          nivel: "ERROR",
+          mensagem:
+            "Transmissão de desfecho desconhecido estacionada SEM consulta confirmada; " +
+            "nenhuma autoridade automática resolverá este documento.",
+          detalhe: { workerId, consultationEnsured: false },
+        })
+      }
+      return updated.count === 1
+    },
     waitForConsultation: async ({ job, workerId, now, error, payload }) => {
       const updated = await client.fiscalEmissaoJob.updateMany({
         where: ownedLockWhere(job.id, workerId, now),
