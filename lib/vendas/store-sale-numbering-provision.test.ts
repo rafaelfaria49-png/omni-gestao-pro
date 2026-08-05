@@ -434,6 +434,18 @@ describe("GOAL 002C-0b — contrato estático da superfície de provisionamento"
     }
   })
 
+  it("leitura e escrita da rota passam pelo mesmo gate administrativo", () => {
+    const route = read("app/api/stores/numeracao-venda/route.ts")
+    // Nenhum handler pode cair no gate de sessão simples: ele aceita qualquer papel.
+    expect(route).not.toContain("requireStoresSession")
+    for (const handler of ["export async function GET", "export async function PUT"]) {
+      const inicio = route.indexOf(handler)
+      expect(inicio, handler).toBeGreaterThanOrEqual(0)
+      const corpo = route.slice(inicio, inicio + 200)
+      expect(corpo, handler).toContain("await requireAdmin()")
+    }
+  })
+
   it("a superfície administrativa reusa a gestão de unidades existente", () => {
     const gestao = read("components/dashboard/configuracoes/gestao-unidades-saas.tsx")
     expect(gestao).toContain("NumeracaoVendaLojas")

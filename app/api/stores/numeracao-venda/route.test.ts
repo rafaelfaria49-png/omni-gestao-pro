@@ -63,9 +63,39 @@ describe("GET /api/stores/numeracao-venda", () => {
     expect(h.readStatuses).not.toHaveBeenCalled()
   })
 
-  it("recorta as lojas pela permissão da sessão", async () => {
+  it("recusa papel sem permissão administrativa, sem devolver códigos", async () => {
+    h.auth.mockResolvedValue(sessao({ role: "OPERADOR" }))
+
+    const res = await GET()
+    const body = (await res.json()) as { stores?: unknown }
+
+    expect(res.status).toBe(403)
+    expect(body.stores).toBeUndefined()
+    expect(h.storeFindMany).not.toHaveBeenCalled()
+    expect(h.readStatuses).not.toHaveBeenCalled()
+  })
+
+  it("recusa GERENTE, que alcança a página de unidades mas não é ADMIN", async () => {
+    h.auth.mockResolvedValue(sessao({ role: "GERENTE" }))
+
+    const res = await GET()
+
+    expect(res.status).toBe(403)
+    expect(h.readStatuses).not.toHaveBeenCalled()
+  })
+
+  it("aceita SUPER_ADMIN", async () => {
+    h.auth.mockResolvedValue(sessao({ role: "SUPER_ADMIN" }))
+
+    const res = await GET()
+
+    expect(res.status).toBe(200)
+    expect(h.readStatuses).toHaveBeenCalledWith(["loja-1", "loja-2"])
+  })
+
+  it("recorta as lojas pela permissão da sessão administrativa", async () => {
     h.auth.mockResolvedValue(
-      sessao({ role: "OPERADOR", storeAccess: "restricted", allowedStoreIds: ["loja-2"] }),
+      sessao({ storeAccess: "restricted", allowedStoreIds: ["loja-2"] }),
     )
 
     const res = await GET()

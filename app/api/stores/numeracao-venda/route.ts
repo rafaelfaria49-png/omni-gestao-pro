@@ -2,11 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { requireAdmin } from "@/lib/require-admin"
 import { canAccessStore } from "@/lib/auth/enterprise-permissions"
-import {
-  denyIfNoStoreAccess,
-  filterStoresForSession,
-  requireStoresSession,
-} from "@/lib/stores-api-access"
+import { denyIfNoStoreAccess, filterStoresForSession } from "@/lib/stores-api-access"
 import { recordConfigAuditFromSession } from "@/lib/config-audit/record"
 import {
   provisionStoreSaleNumberingCode,
@@ -17,8 +13,14 @@ import type { StoreSaleNumberingCodeRejectionReason } from "@/lib/vendas/store-s
 /**
  * Superfície versionada de provisionamento de `Store.codigoNumeracaoVenda` (GOAL 002C-0b).
  *
- * GET  — estado por loja acessível (leitura: mesma política de `/api/stores`).
+ * GET  — estado por loja acessível (leitura: `requireAdmin` + ACL da loja).
  * PUT  — configura/substitui o código (escrita: `requireAdmin` + ACL da loja).
+ *
+ * Leitura e escrita compartilham o MESMO gate administrativo: o código é insumo de
+ * configuração fiscal/comercial da rede, não dado operacional. `admin.unidades` é
+ * verdadeiro também para GERENTE (ver `lib/auth/enterprise-permissions.ts`), então a
+ * página que hospeda esta superfície NÃO é suficiente como controle de acesso — a rota
+ * precisa decidir sozinha, e decide fechado.
  *
  * Configurar o código NÃO ativa a numeração server-side: o writer v2 continua
  * desconectado e a flag de ambiente que o habilitaria continua ausente.
@@ -40,7 +42,7 @@ const INVALID_MESSAGES: Record<StoreSaleNumberingCodeRejectionReason, string> = 
 }
 
 export async function GET() {
-  const gate = await requireStoresSession()
+  const gate = await requireAdmin()
   if (!gate.ok) return gate.res
 
   try {

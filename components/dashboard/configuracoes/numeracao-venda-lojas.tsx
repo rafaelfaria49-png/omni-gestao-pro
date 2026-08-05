@@ -49,6 +49,8 @@ export function NumeracaoVendaLojas() {
 
   const [loading, setLoading] = useState(true)
   const [readError, setReadError] = useState(false)
+  /** 401/403: estado terminal e honesto — sem retry e sem exibir códigos antigos. */
+  const [forbidden, setForbidden] = useState(false)
   const [rows, setRows] = useState<NumeracaoRow[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
@@ -64,11 +66,19 @@ export function NumeracaoVendaLojas() {
         cache: "no-store",
         signal,
       })
+      // Sem permissão administrativa: descarta o que estava em memória e para aqui.
+      // Nenhum retry é oferecido — repetir a chamada devolveria 403 de novo.
+      if (r.status === 401 || r.status === 403) {
+        setRows([])
+        setForbidden(true)
+        return
+      }
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const j = (await r.json()) as { stores?: NumeracaoRow[] }
       setRows(Array.isArray(j.stores) ? j.stores : [])
     } catch (e) {
       if ((e as { name?: string })?.name === "AbortError") return
+      setRows([])
       setReadError(true)
     } finally {
       setLoading(false)
@@ -165,6 +175,17 @@ export function NumeracaoVendaLojas() {
           <div className="flex flex-col items-center gap-3 py-8">
             <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground/50" />
             <p className="text-sm text-muted-foreground">Carregando numeração…</p>
+          </div>
+        ) : forbidden ? (
+          <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border px-6 py-10 text-center">
+            <Lock className="h-6 w-6 text-muted-foreground/70" />
+            <div className="space-y-1">
+              <p className="font-semibold text-foreground">Acesso restrito</p>
+              <p className="text-sm text-muted-foreground">
+                A numeração de venda por unidade é configurada apenas por administradores
+                (ADMIN ou SUPER_ADMIN).
+              </p>
+            </div>
           </div>
         ) : readError ? (
           <div className="flex flex-col items-center gap-4 rounded-xl border border-destructive/20 bg-destructive/5 px-6 py-8 text-center">
