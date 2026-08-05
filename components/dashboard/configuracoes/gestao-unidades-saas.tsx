@@ -18,6 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { NumeracaoVendaLojas } from "@/components/dashboard/configuracoes/numeracao-venda-lojas"
 import { useToast } from "@/hooks/use-toast"
 import { useLojaAtiva } from "@/lib/loja-ativa"
 import { isWhitelistedProtectedStore } from "@/lib/store-defaults"
@@ -616,6 +617,9 @@ export function GestaoUnidadesSaas({ embed = false }: GestaoUnidadesSaasProps) {
           </div>
         </div>
       )}
+
+      {/* ── Numeração de venda por unidade (GOAL 002C-0b — não ativa o writer v2) ── */}
+      <NumeracaoVendaLojas />
 
       {/* ── Premium delete confirmation modal ── */}
       <AlertDialog
