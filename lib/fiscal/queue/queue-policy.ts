@@ -108,7 +108,14 @@ export function withExecutionResult(
   input: {
     now: Date
     code: string
-    kind: "success" | "transient" | "terminal" | "uncertain"
+    kind:
+      | "success"
+      | "transient"
+      | "terminal"
+      | "uncertain"
+      | "throttled"
+      | "processing"
+      | "unresolved"
     externalTransmissionAttempted: boolean
     detalhe?: Record<string, unknown>
   },
@@ -123,8 +130,14 @@ export function withExecutionResult(
       ...transmission,
       external: input.externalTransmissionAttempted,
       completedAt: input.kind === "success" ? input.now.toISOString() : null,
+      /**
+       * `unresolved` marca `uncertainAt` junto com `uncertain`: a transmissão é incerta nos
+       * dois casos — o que os distingue é apenas se a CONSULTA pôde ser criada. Sem esta
+       * marca, `canStartFiscalTransmission` liberaria uma nova transmissão caso o job voltasse
+       * a rodar, que é exatamente o que não pode acontecer com desfecho desconhecido.
+       */
       uncertainAt:
-        input.kind === "uncertain"
+        input.kind === "uncertain" || input.kind === "unresolved"
           ? input.now.toISOString()
           : transmission.uncertainAt ?? null,
     },

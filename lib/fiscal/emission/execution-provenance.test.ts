@@ -127,6 +127,9 @@ describe("auditFlagsFromProvenance — derivação, não literal", () => {
     expect(auditFlagsFromProvenance(PROVIDER_NOT_INVOKED_PROVENANCE)).toEqual({
       simulado: true,
       externalTransmissionAttempted: false,
+      // `providerInvoked` passou a ser propagado ao contrato da fila (correção 003): é o que
+      // permite ao worker distinguir repetição segura de consulta de execução que nem começou.
+      providerInvoked: false,
     })
   })
 

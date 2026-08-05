@@ -48,6 +48,56 @@ export type FinalizedFiscalDocument = FiscalDocumentIdentity & {
   xmlAssinado: string
 }
 
+/**
+ * Consequências fiscais EXPLÍCITAS de uma rejeição (GOAL-016D-B · D12).
+ *
+ * Existe para que `requiresInutilizacao` deixe de ser o literal `true` que o coordenador
+ * aplicava a qualquer rejeição. Quem decide é a matriz de `cStat`
+ * (`lib/fiscal/provider/sefaz/sefaz-cstat-matrix.ts`); o coordenador obedece.
+ *
+ * Campo **opcional** no resultado: produtores anteriores ao 016D-B (stub de homologação,
+ * `UncertainStateTestStub`, drills) não o enviam e mantêm o comportamento histórico. Um
+ * produtor com matriz nunca omite.
+ */
+export type FiscalRejectionConsequences = {
+  readonly terminal: boolean
+  readonly numeroConsumido: boolean
+  readonly requiresInutilizacao: boolean
+  readonly requiresConsultation: boolean
+}
+
+/**
+ * Desfecho incerto com **lote em processamento** — `cStat 103/105` (GOAL-016D-B · D12.1).
+ *
+ * Não é falha, não é timeout e não é rejeição: o lote JÁ está com a SEFAZ. Obriga consulta do
+ * mesmo recibo e **proíbe** retransmissão — retransmitir aqui duplicaria o documento.
+ */
+export type ProcessingFiscalResult = {
+  outcome: "UNCERTAIN"
+  code: "PROCESSING"
+  message: string
+  cStat: string
+  xMotivo: string
+  /** `nRec` do lote. Sem ele não há o que consultar — o parser rebaixa para `UNKNOWN`. */
+  recibo: string
+  /** Literal: um `PROCESSING` sem consulta obrigatória seria um documento abandonado. */
+  requiresConsultation: true
+}
+
+/**
+ * Desfecho incerto com **consumo indevido** — `cStat 656` (GOAL-016D-B · D12.2).
+ *
+ * Parada dura. ⛔ Não agenda consulta (consultar é o que agrava o `656`), ⛔ não agenda retry,
+ * ⛔ não é terminal. A nota permanece `TRANSMITINDO` e a retomada é **humana**.
+ */
+export type ThrottledFiscalResult = {
+  outcome: "UNCERTAIN"
+  code: "THROTTLED"
+  message: string
+  cStat: string
+  xMotivo: string
+}
+
 export type FiscalTransmissionResult =
   | AuthorizedFiscalResult
   | {
@@ -55,10 +105,13 @@ export type FiscalTransmissionResult =
       code: "TIMEOUT" | "CONNECTION_LOST" | "UNKNOWN"
       message: string
     }
+  | ProcessingFiscalResult
+  | ThrottledFiscalResult
   | {
       outcome: "REJECTED"
       cStat: string
       xMotivo: string
+      consequences?: FiscalRejectionConsequences
     }
 
 export type FiscalConsultationResult =
@@ -68,10 +121,18 @@ export type FiscalConsultationResult =
       cStat: string
       xMotivo: string
     }
+  | ProcessingFiscalResult
+  | ThrottledFiscalResult
+  | {
+      outcome: "UNCERTAIN"
+      code: "TIMEOUT" | "CONNECTION_LOST" | "UNKNOWN"
+      message: string
+    }
   | {
       outcome: "REJECTED"
       cStat: string
       xMotivo: string
+      consequences?: FiscalRejectionConsequences
     }
 
 /**
@@ -233,12 +294,18 @@ export interface UncertainStatePersistence {
   /**
    * Mantém a nota em TRANSMITINDO e cria/reencontra o job CONSULTA na mesma
    * unidade atômica. Nunca agenda retransmissão.
+   *
+   * `recibo` (GOAL-016D-B · D12.1) é **aditivo e opcional**: quando o desfecho é
+   * `PROCESSING`, o `nRec` do lote é persistido no payload existente do job de EMISSÃO —
+   * sem schema novo, sem coluna nova. A deduplicação continua sendo por documento, de modo
+   * que `103`/`105` repetidos reencontram a MESMA consulta em vez de enfileirar outra.
    */
   recordUncertainAndEnsureConsultation(input: {
     document: PersistedFiscalDocument
     code: string
     message: string
     now: Date
+    recibo?: string | null
   }): Promise<{ consultationJobId: string; created: boolean }>
   markAuthorized(input: {
     document: PersistedFiscalDocument
@@ -285,8 +352,40 @@ export type SafeEmissionOutcomeKind =
   | {
       kind: "rejected"
       document: PersistedFiscalDocument
-      requiresInutilizacao: true
+      /**
+       * ⚠️ `boolean`, não o literal `true` (GOAL-016D-B). Rejeições diferem: `110` (denegação)
+       * é terminal e consome o número, mas **não** pede inutilização. Fixar `true` no tipo
+       * obrigava toda rejeição a pedir uma ação fiscal destrutiva.
+       */
+      requiresInutilizacao: boolean
       bytesSha256: string
+    }
+  /**
+   * `cStat 103/105` — lote com a SEFAZ (D12.1). A nota permanece `TRANSMITINDO`, a consulta
+   * deduplicada do MESMO documento/recibo é criada ou reencontrada, e **nada é retransmitido**.
+   */
+  | {
+      kind: "processing"
+      document: PersistedFiscalDocument
+      consultationJobId: string
+      consultationJobCreated: boolean
+      recibo: string
+      cStat: string
+      xMotivo: string
+      bytesSha256: string
+      message: string
+    }
+  /**
+   * `cStat 656` — consumo indevido (D12.2). Nenhuma consulta é agendada, nenhum retry é
+   * calculado. A pausa da loja e o estacionamento do job pertencem à fila.
+   */
+  | {
+      kind: "throttled"
+      document: PersistedFiscalDocument
+      cStat: string
+      xMotivo: string
+      bytesSha256: string
+      message: string
     }
   | {
       kind: "blocked"
@@ -312,4 +411,37 @@ export type ConsultationOutcome = ConsultationOutcomeKind & {
 export type ConsultationOutcomeKind =
   | { kind: "authorized"; document: PersistedFiscalDocument }
   | { kind: "not_found"; document: PersistedFiscalDocument; retransmissionAuthorized: true }
-  | { kind: "rejected"; document: PersistedFiscalDocument; requiresInutilizacao: true }
+  | { kind: "rejected"; document: PersistedFiscalDocument; requiresInutilizacao: boolean }
+  /** `103/105` em consulta: nova consulta do MESMO recibo — jamais nova transmissão. */
+  | {
+      kind: "processing"
+      document: PersistedFiscalDocument
+      consultationJobId: string
+      consultationJobCreated: boolean
+      recibo: string
+      cStat: string
+      xMotivo: string
+      message: string
+    }
+  /** `656` em consulta: pausa a loja e **não** agenda nova consulta. */
+  | {
+      kind: "throttled"
+      document: PersistedFiscalDocument
+      cStat: string
+      xMotivo: string
+      message: string
+    }
+  /**
+   * Consulta que não resolveu nada (SOAP Fault, serviço fora do ar, resposta ilegível).
+   *
+   * ⚠️ Este ramo existe porque a ausência dele era um **fail-open**: `runConsultation` tratava
+   * "não é AUTHORIZED nem REJECTED" como `NOT_FOUND` e chamava
+   * `authorizeExactRetransmission`. Qualquer desfecho novo — inclusive `THROTTLED` — passaria a
+   * autorizar retransmissão sem que a SEFAZ tivesse dito que o documento não existe.
+   */
+  | {
+      kind: "uncertain"
+      document: PersistedFiscalDocument
+      code: string
+      message: string
+    }

@@ -9,6 +9,8 @@ import {
   type FiscalExecutionProvenance,
   type FiscalExecutionProvenanceSink,
   type FiscalExternalExecutionCapability,
+  type FiscalRejectionConsequences,
+  type FiscalTransmissionResult,
   type PersistedFiscalDocument,
   type SafeEmissionOutcome,
   type SafeEmissionOutcomeKind,
@@ -59,15 +61,78 @@ export function fiscalExecutionProvenanceOf(error: unknown): FiscalExecutionProv
 }
 
 function attachProvenance(error: unknown, provenance: FiscalExecutionProvenance): unknown {
+  /**
+   * ⚠️ Valor primitivo lançado (`throw "socket closed"`) é normalizado para `Error` antes de
+   * receber a marca. Sem isso, um provider mal escrito faria a proveniência desaparecer em
+   * silêncio — e o erro cairia no fallback genérico, que retransmite. O canal de proveniência
+   * não pode depender da educação de quem lança.
+   */
+  const alvo = typeof error === "object" && error !== null ? error : new Error(String(error))
+  Object.defineProperty(alvo, "fiscalExecutionProvenance", {
+    value: provenance,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  })
+  return alvo
+}
+
+/**
+ * Marca, no erro, se a CONSULTA que resolve o estado incerto pôde ser garantida.
+ *
+ * Sem isso o executor não tem como distinguir "documento estacionado com uma consulta a
+ * caminho" de "documento estacionado sem ninguém para resolvê-lo" — e os dois exigem tratamento
+ * e alarme diferentes.
+ */
+const CONSULTA_GARANTIDA = "fiscalConsultationEnsured"
+
+function marcarConsultaGarantida(error: unknown, garantida: boolean): void {
   if (typeof error === "object" && error !== null) {
-    Object.defineProperty(error, "fiscalExecutionProvenance", {
-      value: provenance,
+    Object.defineProperty(error, CONSULTA_GARANTIDA, {
+      value: garantida,
       enumerable: false,
       configurable: true,
       writable: true,
     })
   }
-  return error
+}
+
+export function fiscalConsultationEnsuredOf(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  return (error as Record<string, unknown>)[CONSULTA_GARANTIDA] === true
+}
+
+/**
+ * Garante a CONSULTA deduplicada quando o provider foi invocado e **lançou**.
+ *
+ * Achado BLOQUEANTE da revisão cruzada da correção 002: o caminho de exceção devolvia
+ * `uncertain` sem nunca criar o job `CONSULTA` — enquanto todo o resto do coordenador o cria
+ * antes de qualquer `uncertain`. O worker então estacionava o job com `proximaTentativaEm:
+ * null` e **não existia autoridade alguma** capaz de resolver a nota: nem consulta, nem retry,
+ * nem rota administrativa (que só alcança `FALHA`). A nota ficava presa em `TRANSMITINDO` para
+ * sempre — justamente o documento que pode ter chegado à SEFAZ.
+ *
+ * A escrita é best-effort **quanto a propagar**: a exceção original é o fato primário e segue
+ * subindo. O que ela produz é a MARCA, para que o executor possa alarmar quando a consulta não
+ * pôde ser criada.
+ */
+async function garantirConsultaAposExcecao(input: {
+  persistence: UncertainStatePersistence
+  document: PersistedFiscalDocument
+  now: Date
+  message: string
+}): Promise<boolean> {
+  try {
+    await input.persistence.recordUncertainAndEnsureConsultation({
+      document: input.document,
+      code: "PROVIDER_EXCEPTION",
+      message: input.message,
+      now: input.now,
+    })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -91,6 +156,20 @@ function externalExecutionBlock(
       "Execução de provider externo não autorizada: capability ausente ou negada " +
       `(${efetiva.concedidaPor}).`,
   }
+}
+
+/**
+ * Comportamento HISTÓRICO para rejeições sem decisão de matriz (GOAL-012).
+ *
+ * O stub de homologação e o `UncertainStateTestStub` não sabem nada de `cStat` real e sempre
+ * produziram "número consumido, exige inutilização". Preservar esse default mantém os drills
+ * existentes válidos. Produtores com matriz (016D-B em diante) SEMPRE enviam `consequences` e
+ * nunca chegam aqui — é o que impede que `110` (denegação) herde uma inutilização indevida.
+ */
+const REJEICAO_SEM_MATRIZ_EXIGE_INUTILIZACAO = true
+
+function exigeInutilizacao(consequences: FiscalRejectionConsequences | undefined): boolean {
+  return consequences?.requiresInutilizacao ?? REJEICAO_SEM_MATRIZ_EXIGE_INUTILIZACAO
 }
 
 export function fiscalXmlBytes(xmlAssinado: string): Uint8Array {
@@ -256,12 +335,36 @@ async function runTransmission(
   // A partir daqui o provider É invocado. O atalho idempotente acima retorna ANTES desta
   // marcação — é por isso que a proveniência deriva do que foi executado, não da posição.
   recorder.markProviderInvoked(input.provider.simulado)
-  const result = await input.provider.transmit({
-    document,
-    exactBytes: exact.bytes,
-    bytesSha256: exact.sha256,
-    provenance: recorder,
-  })
+  let result: FiscalTransmissionResult
+  try {
+    result = await input.provider.transmit({
+      document,
+      exactBytes: exact.bytes,
+      bytesSha256: exact.sha256,
+      provenance: recorder,
+    })
+  } catch (bruto) {
+    /**
+     * Falha DEPOIS de o provider ter sido invocado: o desfecho é DESCONHECIDO e o documento
+     * pode ter chegado à SEFAZ. A consulta deduplicada é a única autoridade capaz de resolver
+     * isso, e precisa existir antes de o job ser estacionado — do contrário a nota fica presa
+     * em `TRANSMITINDO` sem ninguém para desempatá-la.
+     *
+     * O erro é normalizado aqui para que a marca e a proveniência pousem no MESMO objeto,
+     * inclusive quando o provider lança um primitivo.
+     */
+    const error = typeof bruto === "object" && bruto !== null ? bruto : new Error(String(bruto))
+    marcarConsultaGarantida(
+      error,
+      await garantirConsultaAposExcecao({
+        persistence: input.persistence,
+        document,
+        now,
+        message: "Provider lançou exceção após a invocação; desfecho desconhecido.",
+      }),
+    )
+    throw error
+  }
   if (result.outcome === "AUTHORIZED") {
     await input.persistence.markAuthorized({
       document,
@@ -277,18 +380,61 @@ async function runTransmission(
     }
   }
   if (result.outcome === "REJECTED") {
+    const requiresInutilizacao = exigeInutilizacao(result.consequences)
     await input.persistence.markRejected({
       document,
       result,
       now,
       source: "TRANSMISSION",
-      requiresInutilizacao: true,
+      requiresInutilizacao,
     })
     return {
       kind: "rejected",
       document,
-      requiresInutilizacao: true,
+      requiresInutilizacao,
       bytesSha256: exact.sha256,
+    }
+  }
+  /**
+   * `656` — consumo indevido (D12.2). ⛔ Sai ANTES de
+   * `recordUncertainAndEnsureConsultation`: cair no ramo genérico de incerteza criaria um job
+   * `CONSULTA`, ou seja, mais uma chamada — exatamente o *looping* que o `656` denuncia.
+   * Nada é persistido aqui: a nota já está `TRANSMITINDO` e a pausa/estacionamento pertencem
+   * à fila, que os aplica antes de liberar o lock.
+   */
+  if (result.outcome === "UNCERTAIN" && result.code === "THROTTLED") {
+    return {
+      kind: "throttled",
+      document,
+      cStat: result.cStat,
+      xMotivo: result.xMotivo,
+      bytesSha256: exact.sha256,
+      message: result.message,
+    }
+  }
+  /**
+   * `103/105` — lote recebido/em processamento (D12.1). A nota permanece `TRANSMITINDO` e a
+   * consulta deduplicada do MESMO documento é criada ou reencontrada, com o recibo persistido
+   * no payload existente. ⛔ Nenhuma retransmissão: o lote já está com a SEFAZ.
+   */
+  if (result.outcome === "UNCERTAIN" && result.code === "PROCESSING") {
+    const emProcessamento = await input.persistence.recordUncertainAndEnsureConsultation({
+      document,
+      code: result.code,
+      message: result.message,
+      now,
+      recibo: result.recibo,
+    })
+    return {
+      kind: "processing",
+      document,
+      consultationJobId: emProcessamento.consultationJobId,
+      consultationJobCreated: emProcessamento.created,
+      recibo: result.recibo,
+      cStat: result.cStat,
+      xMotivo: result.xMotivo,
+      bytesSha256: exact.sha256,
+      message: result.message,
     }
   }
   const consultation = await input.persistence.recordUncertainAndEnsureConsultation({
@@ -353,14 +499,60 @@ async function runConsultation(
     return { kind: "authorized", document }
   }
   if (result.outcome === "REJECTED") {
+    const requiresInutilizacao = exigeInutilizacao(result.consequences)
     await input.persistence.markRejected({
       document,
       result,
       now,
       source: "CONSULTATION",
-      requiresInutilizacao: true,
+      requiresInutilizacao,
     })
-    return { kind: "rejected", document, requiresInutilizacao: true }
+    return { kind: "rejected", document, requiresInutilizacao }
+  }
+  /**
+   * ⚠️ A partir daqui **cada desfecho é tratado explicitamente**, e `NOT_FOUND` deixou de ser
+   * o `else` (GOAL-016D-B).
+   *
+   * A versão anterior autorizava retransmissão exata para tudo que não fosse `AUTHORIZED` nem
+   * `REJECTED`. Com o contrato ampliado, um `THROTTLED` ou um SOAP Fault cairiam ali e
+   * liberariam um novo envio sem que a SEFAZ jamais tivesse dito que o documento não existe —
+   * um fail-OPEN no ponto mais caro da máquina de estado.
+   */
+  if (result.outcome === "UNCERTAIN" && result.code === "THROTTLED") {
+    // ⛔ Nenhuma nova consulta é agendada: insistir é a causa documentada do `656`.
+    return {
+      kind: "throttled",
+      document,
+      cStat: result.cStat,
+      xMotivo: result.xMotivo,
+      message: result.message,
+    }
+  }
+  if (result.outcome === "UNCERTAIN" && result.code === "PROCESSING") {
+    // Lote ainda em processamento: reencontra a MESMA consulta do documento/recibo. A nota
+    // segue `TRANSMITINDO` e nenhuma transmissão nova é autorizada.
+    const emProcessamento = await input.persistence.recordUncertainAndEnsureConsultation({
+      document,
+      code: result.code,
+      message: result.message,
+      now,
+      recibo: result.recibo,
+    })
+    return {
+      kind: "processing",
+      document,
+      consultationJobId: emProcessamento.consultationJobId,
+      consultationJobCreated: emProcessamento.created,
+      recibo: result.recibo,
+      cStat: result.cStat,
+      xMotivo: result.xMotivo,
+      message: result.message,
+    }
+  }
+  if (result.outcome === "UNCERTAIN") {
+    // Consulta que não resolveu nada. O documento continua incerto e **nenhuma** retransmissão
+    // é autorizada: só `NOT_FOUND` explícito da SEFAZ pode fazer isso.
+    return { kind: "uncertain", document, code: result.code, message: result.message }
   }
   await input.persistence.authorizeExactRetransmission({ document, now })
   return { kind: "not_found", document, retransmissionAuthorized: true }

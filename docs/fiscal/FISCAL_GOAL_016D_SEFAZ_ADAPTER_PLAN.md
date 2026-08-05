@@ -1028,6 +1028,195 @@ graph LR
 | **Critério de aceite** | Todo `cStat` fora da matriz cai em `UNCERTAIN` **por teste** · **D12 implementado e provado nos dois códigos** · `THROTTLED` possui **resultado dedicado** que não é `transient`, `uncertain` nem `terminal` (F-5) · nenhuma fixture contém CNPJ, IE, CSC ou chave reais · parser nunca devolve XML no erro · 🆕 **F-2 obrigatório:** teste provando que **uma chamada externa nunca é auditada como simulada** — `simulado`/`externalTransmissionAttempted` refletem a execução real |
 | **Ponto de parada** | Parser e matriz completos, exercitados **só** por fixtures |
 
+> #### ✅ 016D-B entregue — parser SOAP, matriz de `cStat`, `PROCESSING` e `THROTTLED`
+>
+> **Base:** `9d4d485` (merge do PR #41 / 016D-A). Branch `fiscal/goal-016d-b-soap-parser-cstat`.
+>
+> **Matriz** — [`sefaz-cstat-matrix.ts`](../../lib/fiscal/provider/sefaz/sefaz-cstat-matrix.ts),
+> versão `016D-B.1`: mapa estático congelado com `100 · 103 · 104 · 105 · 108 · 109 · 110 · 204 ·
+> 217 · 656`, **sem faixa numérica e sem fallback para rejeição**. Cada entrada declara as quatro
+> consequências fiscais (terminalidade · consumo de número · inutilização · consulta) e os
+> serviços em que o código é legítimo — `217` só existe em consulta. ⚠️ **`110` é terminal e
+> consome o número, porém `requiresInutilizacao: false`**: denegada já está registrada na SEFAZ, e
+> pedir inutilização seria ação destrutiva indevida. Nenhuma entrada da matriz exige inutilização
+> (teste permanente); o literal `true` do coordenador virou default HISTÓRICO explícito, alcançado
+> apenas por produtores sem matriz (stub GOAL-012, drills).
+>
+> **Parser** — [`sefaz-response-parser.ts`](../../lib/fiscal/provider/sefaz/sefaz-response-parser.ts):
+> UTF-8 estrito · BOM recusado · DTD/ENTITY recusados · **CDATA recusada por completo** · teto de
+> 2 MB · exatamente um `Envelope`/`Body` SOAP 1.2 · SOAP Fault identificado **antes** do wrapper ·
+> wrapper `nfeResultMsg` e namespace conferidos contra o **serviço informado pelo chamador**,
+> nunca inferido da resposta. O `cStat` é lido em **caminho estrutural namespace-qualificado**,
+> exigindo unicidade; `104` **desce** determinística a `protNFe/infProt`. Chamariz, comentário,
+> namespace falso e tag duplicada não alteram classificação. `100` exige protocolo **e** XML
+> autorizado extraído **verbatim** — o parser **não monta `nfeProc`**; faltando qualquer um,
+> `UNCERTAIN/INCOMPLETE_AUTHORIZATION`. ⚠️ Consequência honesta: como nenhum WS do piloto devolve
+> `nfeProc`, um `100` real classifica hoje como incompleto — a montagem pertence a 016D-C/016D-D.
+>
+> **D12 implementado nos dois códigos.** `PROCESSING` (`103/105`) mantém `TRANSMITINDO`, persiste
+> o `nRec` no payload existente (**sem schema, sem migration**) e reencontra a MESMA consulta
+> deduplicada; **nunca retransmite**. `THROTTLED` (`656`) tem `kind` **dedicado** na fila — não
+> `transient`, não `uncertain`, não `terminal` —, **pausa a loja antes de liberar o lock**,
+> estaciona o job em estado inerte (não elegível pelo worker, não reprocessável pela rota
+> administrativa), **não cria `CONSULTA`, não calcula backoff e não tem auto-unpause**. Pausa que
+> não persiste ⇒ **fail-closed**: lock não liberado e drenagem abortada.
+>
+> **Correção de fail-open encontrada no caminho:** `runConsultation` tratava "não é `AUTHORIZED`
+> nem `REJECTED`" como `NOT_FOUND` e chamava `authorizeExactRetransmission`. Com o contrato
+> ampliado, um SOAP Fault — ou o próprio `THROTTLED` — liberaria retransmissão sem que a SEFAZ
+> tivesse dito que o documento não existe. Todo desfecho passou a ser tratado explicitamente.
+>
+> **F-2 reforçado:** o freio `if (!execution.simulado)` do `queue-worker` reescrevia a trilha para
+> `simulado: true`, ou seja, auditava uma execução REAL como simulada. Passa a preservar
+> `simulado: false`, e **não rebaixa `throttled` a `terminal`** (rebaixar tornaria o `656`
+> reprocessável ⇒ retransmissão por operador).
+>
+> **Invariantes preservados:** transporte default offline · zero caller produtivo do
+> `SefazDiretoProvider` · capability externa negada · `SEFAZ_DIRETO` fora do `REGISTRY` P1 ·
+> produtor de XML inalterado · `fiscalEnabled` inalterado · zero socket, zero segredo, zero
+> migration. Fixtures 100% sintéticas (CNPJ `999…` inválido, `nProt`/`nRec` com prefixo `999`,
+> apenas `tpAmb=2`).
+>
+> ⚠️ **H-9/H-10 seguem abertas** e limitam a **fidelidade de wire** das fixtures (nome do wrapper
+> e `SOAPAction` viriam do WSDL, cuja consulta é vedada neste GOAL) — não a lógica de
+> classificação. ⚠️ O bloqueio de contrato do **produtor de XML** (declaração `<?xml?>` em
+> `serializeXmlDocument`) **não foi tocado**: continua pré-requisito de 016D-C/016D-D.
+>
+> **Validação:** `npx vitest run lib/fiscal` — **785 verdes / 16 skip**, dos quais **51 novos**
+> deste slice · `npm run typecheck` limpo · ESLint limpo em `provider/sefaz`, `emission` e
+> `queue` · `npm run build` com `MIGRATION_SKIPPED` (zero `migrate deploy`, zero baseline, zero
+> conexão com banco) · `git diff --check` limpo.
+>
+> **Revisão independente** (contexto frio, modelo distinto) — parecer *REQUEST-CHANGES*, quatro
+> achados. ⚠️ A família Fable estava **indisponível por falta de crédito** (5ª ocorrência
+> consecutiva nesta frente fiscal); a revisão foi feita por outro modelo, com contexto frio e o
+> diff integral. **Os três achados acionáveis foram corrigidos antes do commit:**
+>
+> | # | Sev. | Achado | Correção |
+> |---|---|---|---|
+> | 1 | 🔴 **BLOQUEANTE** | `extrairNfeProcVerbatim` varria o **texto inteiro** atrás de `<nfeProc>` e o devolvia sem conferir a quem pertencia. Uma resposta com `cStat=100`/`nProt` do documento **A** carregando o `nfeProc` do documento **B** produzia `AUTHORIZED` com o XML de B — que `markAuthorized` grava de forma **imutável** na nota de A. **Reproduzido por teste antes de corrigir** | O `nfeProc` passou a ser localizado por **caminho estrutural** (filho direto do payload) e só é aceito com `nProt`, `chNFe` e `cStat` internos **iguais aos já lidos**, e `infNFe/@Id` = `NFe` + chave. Divergência ⇒ `INCOMPLETE_AUTHORIZATION`. Duas chaves na mesma resposta ⇒ `AMBIGUOUS_RESPONSE`. Novo `chaveAcessoEsperada` **opcional** no contexto recusa resposta de outro documento (`DOCUMENT_MISMATCH`) |
+> | 2 | 🟡 MAJOR | `nProt`/`nRec` não eram validados: entidades XML decodificam antes do parser, então `999&lt;x&gt;1` virava `999<x>1` e seria gravado em `NotaFiscal.protocolo` — coluna **imutável** — e nos logs | Validação estrita `^\d{1,20}$` (o leiaute 4.00 define ambos como numéricos). Formato inesperado ⇒ desfecho cai fechado, em vez de persistir lixo irreversível |
+> | 3 | 🟢 MINOR | `markRejected` gravava "Inutilização futura no GOAL-019" mesmo quando `requiresInutilizacao === false`, contradizendo o `detalhe` do próprio evento | Mensagem passou a acompanhar a decisão da matriz |
+> | 4 | ⚪ NIT | Dependência implícita do `uncertain-reconciler` receber snapshot de pausa fresco | **Não corrigido** — arquivo fora do diff e do escopo deste GOAL; registrado para quando o reconciler ganhar cron real |
+>
+> O revisor confirmou por leitura de código: `REGISTRY` de P1 sem `SEFAZ_DIRETO`; a única rota
+> produtiva (`app/api/internal/fiscal/queue`) chama `createPrismaFiscalQueueWorkerPorts()` **sem**
+> `executeGoal012`, tornando todo este slice comprovadamente inalcançável; `pauseStoreForThrottling`
+> grava com a **mesma** `acao`/`detalhe` que `readFiscalQueuePauseSnapshot` lê (a pausa **não** é
+> decorativa); `parkThrottled` produz estado inelegível em `eligibleWhere` e irreprocessável em
+> `reprocessFailedFiscalJob`.
+>
+> ---
+>
+> #### Correção 002 — bloqueios da revisão cruzada do PR #44
+>
+> ✅ **Aplicada** (GOAL `FISCAL-PR44-CROSS-FAMILY-BLOCKERS-CORRECTION-002`, mesma branch). Quatro
+> bloqueios apontados; os quatro eram reais.
+>
+> **Bloqueio 1 — `PROCESSING` em CONSULTA ficava inerte.** Um job `CONSULTA` que recebia
+> `103/105` era classificado `uncertain`, ia para `waitForConsultation` e virava
+> `AGUARDANDO_RETRY` com **`proximaTentativaEm: null`** — que `eligibleWhere` nunca readquire.
+> **A consulta passava a esperar por si mesma** e o documento morria em `TRANSMITINDO`, sem
+> autorização, sem rejeição e sem alarme. Corrigido com `kind: "processing"` dedicado + porta
+> `rescheduleProcessingConsultation`: o MESMO job volta a `AGUARDANDO_RETRY` com
+> `proximaTentativaEm ≥ now + 15 s` (piso do MOC 7.00 §5.7, aplicado no worker para que porta
+> alguma possa antecipá-lo), preservando `dedupeKey` e `nRec`, numa única escrita CAS pelo mesmo
+> `lockOwner`. Porta ausente ou escrita não confirmada ⇒ lock preservado e drenagem abortada. A
+> primeira resposta `103` da **EMISSAO** segue inalterada.
+>
+> **Bloqueio 2 — exceção após contato externo perdia a proveniência.** Erros lançados por
+> `transmit`/`consult` subiam ao `catch` genérico do worker, que fabricava `simulado: true`,
+> `externalTransmissionAttempted: false` e `kind: "transient"` — ou seja, **retry automático** de
+> um documento possivelmente entregue. O executor passa a ler `fiscalExecutionProvenanceOf` e a
+> devolver `uncertain` com as flags reais. ⚠️ Só quando `providerInvoked === true`: o coordenador
+> anexa proveniência a qualquer erro seu, inclusive a falhas de banco anteriores a qualquer
+> chamada — ali não há ambiguidade, e estacionar transformaria indisponibilidade momentânea em
+> intervenção manual. Mensagens ganham redação extra de identificadores longos.
+>
+> **Bloqueio 3 — teto de 2 MB só valia para `Uint8Array`.** Entrada `string` ia direto ao parser,
+> e `string.length` não substitui bytes: 1,5 milhão de caracteres CJK ocupam ~4,5 MB em UTF-8.
+> Medição agora é em bytes UTF-8, **antes** do parse, com atalhos que evitam codificar corpos
+> absurdos. Provado por teste que `parseXml` não é chamado acima do teto.
+>
+> **Bloqueio 4 — `chaveAcessoEsperada` era opcional.** Passa a ser **obrigatória** e validada em
+> runtime (44 dígitos). Ausente/inválida ⇒ `MISSING_DOCUMENT_CONTEXT`; divergente ⇒
+> `DOCUMENT_MISMATCH`. A chave declarada pela resposta **nunca** é autoridade de escopo: é apenas
+> conferida contra a do chamador, que é também a usada para validar o vínculo do `nfeProc`.
+>
+> **Freio do GOAL-011 ajustado:** deixa de rebaixar a `terminal` os desfechos que já são MAIS
+> restritivos que ele — `throttled`, `processing` e `uncertain` com tentativa externa registrada.
+> Rebaixar produzia `FALHA`, que a rota administrativa reprocessa: o freio estaria *abrindo* um
+> caminho de retransmissão.
+>
+> **Revisão independente da correção 002** (contexto frio, modelo distinto) — parecer
+> *REQUEST-CHANGES*, dois achados, **ambos corrigidos antes do commit**. ⚠️ Fable indisponível
+> por falta de crédito pela **6ª** vez consecutiva nesta frente.
+>
+> | # | Sev. | Achado | Correção |
+> |---|---|---|---|
+> | 1 | 🔴 **BLOQUEANTE** | O caminho de exceção devolvia `uncertain` **sem nunca garantir o job `CONSULTA`** — a única função do coordenador a fazê-lo. O worker estacionava o job com `proximaTentativaEm: null` e não restava autoridade alguma: nem consulta, nem retry, nem rota administrativa (que só alcança `FALHA`). A nota ficava presa em `TRANSMITINDO` **para sempre**, justamente no cenário de documento possivelmente entregue. `reconcileAgedTransmittingNotes`, que varreria isso, **não tem caller produtivo** | O `catch` em torno de `provider.transmit` passa a garantir a consulta deduplicada antes de propagar, e marca no erro se conseguiu. O executor expõe `detalhe.consultationEnsured` — `false` é condição de alarme, não de silêncio |
+> | 2 | 🟢 MINOR | `attachProvenance` só marcava erros que fossem objeto: um provider que fizesse `throw "socket closed"` após tocar a rede perdia a proveniência e caía no fallback `transient` ⇒ **retry automático** | Valor primitivo é normalizado para `Error` antes de receber marca e proveniência |
+>
+> ⚠️ **Assimetria deliberada descoberta na correção do achado 1:** exceção em job **`EMISSAO`**
+> produz `uncertain` (repetir pode duplicar o documento; a `CONSULTA` garantida resolve);
+> exceção em job **`CONSULTA`** produz `transient` (consultar é leitura — repetir é seguro e é o
+> que se quer). Classificar a consulta como `uncertain` a mandaria para `waitForConsultation`,
+> ou seja, ela ficaria **esperando por si mesma** — o defeito do bloqueio 1 reencenado, e uma
+> regressão frente ao comportamento anterior. O que a correção muda no caminho `CONSULTA` não é
+> o `kind`, é a **honestidade das flags**.
+>
+> **Validação da correção 002:** `vitest lib/fiscal` **834 verdes / 16 skip** (49 novos) ·
+> typecheck limpo · ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero
+> `migrate deploy`, zero baseline, zero conexão com banco) · `git diff --check` limpo.
+>
+> **Residual conhecido, não corrigido aqui:** um job `CONSULTA` que esgote `maxTentativas` (10)
+> termina em `FALHA` e exige reprocessamento humano — fail-closed, sem retransmissão, porém não
+> auto-recuperável. Uma cadência mais larga entre reconsultas e o rate limit pertencem ao
+> **016D-E**.
+>
+> ---
+>
+> #### Correção 003 — recuperação de consultas inconclusivas
+>
+> ✅ **Aplicada** (GOAL `FISCAL-PR44-CONSULTATION-RECOVERY-CORRECTION-003`, mesma branch). Três
+> resíduos apontados pela revisão cruzada da correção 002; os três eram reais.
+>
+> **O padrão comum.** `waitForConsultation` grava `AGUARDANDO_RETRY` + `proximaTentativaEm:
+> null`, e `eligibleWhere` exige `not: null` **e** vencido para readquirir nesse status — logo o
+> estado é **absorvente**, e `reprocessFailedFiscalJob` só alcança `FALHA`. Quem cai ali não roda
+> nunca mais e não dispara alarme. A correção 002 fechou uma porta de entrada (`103/105`); esta
+> fecha as outras duas, e trata o caso oposto.
+>
+> **Resíduo 1 — exceção em `CONSULTA` era rebaixada a `terminal`.** O executor já devolvia
+> `transient` com proveniência real, mas o freio do GOAL-011 (`!execution.simulado`) o convertia
+> em `terminal` ⇒ `FALHA`, e a nota ficava `TRANSMITINDO` sem ninguém consultando. O freio passa
+> a preservar a repetição quando `job.tipo === "CONSULTA"` **e** `providerInvoked === true` —
+> flag agora **tipada** em `FiscalQueueExecutionResult`, derivada da proveniência, não de
+> `detalhe`. ⛔ A liberação **não** vale para `EMISSAO`.
+>
+> **Resíduo 2 — consulta inconclusiva esperava por si mesma.** SOAP Fault, XML ilegível,
+> `108/109` e `UNKNOWN` saíam como `uncertain` e caíam no estado absorvente. Passam a `transient`
+> com o backoff existente: repetir uma **leitura** não duplica documento, não consome numeração e
+> é a única forma de o desfecho aparecer. ⛔ Não autoriza retransmissão — só `NOT_FOUND`
+> explícito chama `authorizeExactRetransmission`. `PROCESSING`, `THROTTLED`, `NOT_FOUND`,
+> `AUTHORIZED` e `REJECTED` permanecem exatamente como estavam.
+>
+> **Resíduo 3 — `consultationEnsured: false` usava o caminho genérico.** O estacionamento comum
+> afirma, em log e em semântica, que se aguarda uma consulta deduplicada; sem consulta alguma
+> existindo, essa frase é o que faz o documento sumir em silêncio — o operador lê "aguardando
+> consulta" e supõe processo em curso. Novo `kind: "unresolved"` + porta
+> `parkUnresolvedTransmission`: mesmo estado inerte (não elegível, não reprocessável), auditoria
+> **`ERROR`** dizendo exatamente o que faltou, status `sem_consulta` e contador
+> `unresolvedWithoutConsultation` no relatório, e **drenagem interrompida** em seguida. Falha ao
+> estacionar ⇒ lock preservado e `unresolvedParkFailed`. A frase *"até consulta deduplicada"*
+> nunca é usada nesse caminho. `withExecutionResult` marca `uncertainAt` também para
+> `unresolved`, de modo que `canStartFiscalTransmission` continue bloqueando novo envio.
+>
+> **Validação da correção 003:** `vitest lib/fiscal` **853 verdes / 16 skip** (19 novos) ·
+> typecheck limpo · ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero
+> `migrate deploy`, zero baseline, zero conexão com banco) · `git diff --check` limpo · zero
+> schema, zero migration, zero rede, zero segredo, zero caller produtivo novo.
+
 ---
 
 ### 016D-C — `statusServico` em homologação `[🔒 primeiro contato real]`

@@ -11,6 +11,7 @@ import {
   createUncertainStateJobExecutor,
   type UncertainStateJobExecutorDependencies,
 } from "../emission/uncertain-state-job-executor"
+import { sanitizeFiscalQueueError } from "./queue-policy"
 import type {
   FiscalQueueAuditEvent,
   FiscalQueueExecutionResult,
@@ -148,7 +149,15 @@ export async function readFiscalQueuePauseSnapshot(
   }
 }
 
-function eligibleWhere(now: Date, pausedStoreIds: string[]): Record<string, unknown> {
+/**
+ * Filtro de elegibilidade da fila.
+ *
+ * Exportado para que a regra de `AGUARDANDO_RETRY` seja **verificável por teste**: é ela que
+ * distingue um job estacionado à espera de humano (`proximaTentativaEm: null`) de um job
+ * reagendado para reconsultar (`proximaTentativaEm` futuro). Um erro aqui não aparece em
+ * nenhum outro lugar — o job simplesmente nunca mais roda.
+ */
+export function eligibleWhere(now: Date, pausedStoreIds: string[]): Record<string, unknown> {
   return {
     ...(pausedStoreIds.length > 0 ? { storeId: { notIn: pausedStoreIds } } : {}),
     OR: [
@@ -484,6 +493,144 @@ export function createPrismaFiscalQueueWorkerPorts(
           nivel: "ERROR",
           mensagem: "Job fiscal enviado para dead-letter.",
           detalhe: { workerId, errorCode: error },
+        })
+      }
+      return updated.count === 1
+    },
+    /**
+     * Pausa da loja após `cStat 656` (GOAL-016D-B · D12.2).
+     *
+     * Grava exatamente o evento que `readFiscalQueuePauseSnapshot` já lê — mesma `acao`, mesmo
+     * `detalhe.paused` — de modo que a próxima aquisição exclua a loja. Escrever o evento
+     * inline (em vez de chamar `setFiscalQueuePause`) evita o ciclo de import
+     * `prisma-queue-worker → queue-admin → prisma-queue-worker`.
+     *
+     * ⛔ **Não** é best-effort: diferente de `bestEffortAudit`, a falha propaga como `false` e
+     * a fila mantém o job sob lock. Nenhum `auto-unpause` é criado — a retomada exige
+     * `setFiscalQueuePause({ paused: false })` por um humano, com ator e motivo registrados.
+     */
+    pauseStoreForThrottling: async ({ job, workerId, now, cStat, reason }) => {
+      try {
+        await client.fiscalLog.create({
+          data: {
+            storeId: job.storeId,
+            vendaId: job.vendaId,
+            notaFiscalId: job.notaFiscalId,
+            jobId: job.id,
+            nivel: "ERROR",
+            acao: STORE_PAUSE_ACTION,
+            cStat,
+            mensagem: "Fila fiscal da loja pausada por consumo indevido (656).",
+            operador: `fiscal-queue:${workerId}`,
+            detalhe: {
+              paused: true,
+              scope: "store",
+              reason: sanitizeFiscalQueueError(reason, 300),
+              cStat,
+              changedAt: now.toISOString(),
+              retomada: "somente por ação humana explícita após diagnóstico",
+            },
+          },
+        })
+        return true
+      } catch {
+        return false
+      }
+    },
+    /**
+     * Estaciona o job estrangulado. `AGUARDANDO_RETRY` + `proximaTentativaEm: null` é o único
+     * estado inerte disponível sem tocar no schema, e é inerte nas DUAS pontas:
+     *  - o worker não o adquire (`eligibleWhere` exige `proximaTentativaEm` não nulo e vencido);
+     *  - a rota administrativa não o reprocessa (`reprocessFailedFiscalJob` só aceita `FALHA`).
+     */
+    parkThrottled: async ({ job, workerId, now, error, payload }) => {
+      const updated = await client.fiscalEmissaoJob.updateMany({
+        where: ownedLockWhere(job.id, workerId, now),
+        data: {
+          status: "AGUARDANDO_RETRY",
+          payload,
+          ultimoErro: error,
+          proximaTentativaEm: null,
+          lockOwner: null,
+          lockedAt: null,
+          lockExpiresAt: null,
+        },
+      })
+      return updated.count === 1
+    },
+    /**
+     * Reagenda a PRÓPRIA `CONSULTA` após `cStat 103/105` (GOAL-016D-B · D12.1).
+     *
+     * Uma única escrita CAS pelo mesmo `lockOwner`: status, nova data e liberação do lock
+     * entram juntos, de modo que não existe instante em que o job esteja solto sem a data
+     * futura gravada. `updated.count !== 1` significa que o lock já era de outro worker — nada
+     * foi tocado, e o chamador mantém o desfecho fail-closed.
+     *
+     * ⛔ Não cria job: `dedupeKey`, `tipo` e `notaFiscalId` permanecem os do próprio registro.
+     * O `nRec` é preservado no payload para que a próxima execução consulte o MESMO lote.
+     */
+    rescheduleProcessingConsultation: async ({
+      job,
+      workerId,
+      now,
+      nextAttemptAt,
+      recibo,
+      payload,
+    }) => {
+      const updated = await client.fiscalEmissaoJob.updateMany({
+        where: ownedLockWhere(job.id, workerId, now),
+        data: {
+          status: "AGUARDANDO_RETRY",
+          payload: recibo ? { ...payload, recibo } : payload,
+          ultimoErro: null,
+          proximaTentativaEm: nextAttemptAt,
+          lockOwner: null,
+          lockedAt: null,
+          lockExpiresAt: null,
+        },
+      })
+      if (updated.count === 1) {
+        await bestEffortAudit(client, {
+          job,
+          acao: "fiscal.queue.processing.reschedule.persisted",
+          nivel: "INFO",
+          mensagem: "Consulta reagendada para o mesmo recibo, sem criar job novo.",
+          detalhe: { workerId, nextAttemptAt: nextAttemptAt.toISOString(), reciboRegistrado: Boolean(recibo) },
+        })
+      }
+      return updated.count === 1
+    },
+    /**
+     * Estacionamento HONESTO de transmissão incerta sem consulta confirmada (correção 003).
+     *
+     * O estado gravado é idêntico ao de `waitForConsultation` — e é proposital: inerte nas duas
+     * pontas (não elegível em `eligibleWhere`, não reprocessável em `reprocessFailedFiscalJob`).
+     * O que muda é a **auditoria**: nível `ERROR` e uma mensagem que diz o que realmente
+     * aconteceu, em vez de "aguardando consulta deduplicada" — frase que, sem consulta alguma
+     * existindo, faria um operador supor um processo em curso e nunca procurar o documento.
+     */
+    parkUnresolvedTransmission: async ({ job, workerId, now, error, payload }) => {
+      const updated = await client.fiscalEmissaoJob.updateMany({
+        where: ownedLockWhere(job.id, workerId, now),
+        data: {
+          status: "AGUARDANDO_RETRY",
+          payload,
+          ultimoErro: error,
+          proximaTentativaEm: null,
+          lockOwner: null,
+          lockedAt: null,
+          lockExpiresAt: null,
+        },
+      })
+      if (updated.count === 1) {
+        await bestEffortAudit(client, {
+          job,
+          acao: "fiscal.queue.transmission.unresolved",
+          nivel: "ERROR",
+          mensagem:
+            "Transmissão de desfecho desconhecido estacionada SEM consulta confirmada; " +
+            "nenhuma autoridade automática resolverá este documento.",
+          detalhe: { workerId, consultationEnsured: false },
         })
       }
       return updated.count === 1
