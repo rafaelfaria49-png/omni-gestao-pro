@@ -1,9 +1,11 @@
-import { readTransmissionState } from "../queue/queue-policy"
+import { readTransmissionState, sanitizeFiscalQueueError } from "../queue/queue-policy"
 import type {
   FiscalQueueExecutionResult,
   FiscalQueueJob,
 } from "../queue/queue.types"
 import {
+  fiscalConsultationEnsuredOf,
+  fiscalExecutionProvenanceOf,
   reconcileUncertainDocument,
   transmitWithUncertainStateSafety,
 } from "./uncertain-state-coordinator"
@@ -46,6 +48,73 @@ export function auditFlagsFromProvenance(
   }
 }
 
+/**
+ * Redação extra para mensagens de ERRO (bloqueio 2 da revisão cruzada do PR #44).
+ *
+ * `sanitizeFiscalQueueError` já remove markup e segredos nomeados, mas uma exceção de runtime
+ * pode carregar identificadores nus — chave de acesso (44 dígitos), protocolo/recibo (15). Eles
+ * não são segredo, porém não têm por que viajar numa mensagem de falha, e a trilha estruturada
+ * já os registra nos campos próprios. Sequências longas de dígitos são substituídas.
+ */
+function mensagemDeErroSegura(error: unknown): string {
+  return sanitizeFiscalQueueError(
+    sanitizeFiscalQueueError(error).replace(/\d{12,}/g, "[identificador_removido]"),
+  )
+}
+
+/**
+ * Converte uma exceção do coordenador em desfecho de fila **preservando a proveniência real**
+ * (bloqueio 2 da revisão cruzada do PR #44).
+ *
+ * O defeito corrigido: exceções lançadas por `transmit`/`consult` subiam sem tratamento até o
+ * `catch` genérico do `queue-worker`, que fabricava `simulado: true` e
+ * `externalTransmissionAttempted: false`. Uma tentativa externa que falhou **depois** de tocar
+ * a rede era registrada como execução simulada que nunca saiu da máquina — e caía em
+ * `transient`, portanto em **retry com backoff**: retransmissão automática de um documento que
+ * pode ter chegado à SEFAZ.
+ *
+ * O coordenador anexa a proveniência ao erro (`attachProvenance`). Havendo-a **e tendo o
+ * provider sido de fato invocado**, as flags de auditoria passam a derivar do que aconteceu.
+ *
+ * ⚠️ A condição `providerInvoked` não é detalhe: o coordenador anexa proveniência a QUALQUER
+ * erro seu, inclusive a uma falha de banco em `load`, anterior a qualquer chamada ao provider.
+ * Nesse caso não existe ambiguidade alguma — nada foi enviado —, e estacionar o job à espera de
+ * consulta humana transformaria uma indisponibilidade momentânea em intervenção manual. O erro
+ * volta a subir e o fallback legado do worker (`transient`, com backoff) trata como sempre
+ * tratou, sem inventar tentativa externa.
+ *
+ * ⚠️ **O `kind` depende do tipo de job**, e a assimetria é deliberada:
+ *
+ *  - **`EMISSAO`** ⇒ `uncertain`. Repetir uma transmissão cujo desfecho é desconhecido pode
+ *    duplicar o documento; o job estaciona e a CONSULTA — garantida pelo coordenador no mesmo
+ *    `catch` — é quem resolve.
+ *  - **`CONSULTA`** ⇒ `transient`. Consultar é leitura: repetir é seguro e é exatamente o que
+ *    se quer. Marcá-la como `uncertain` a mandaria para `waitForConsultation`, ou seja, a
+ *    consulta ficaria **esperando por si mesma** com `proximaTentativaEm: null` — o mesmo
+ *    defeito do bloqueio 1, e uma regressão frente ao comportamento anterior, que a repetia.
+ *    O que a correção muda aqui não é o `kind`, é a **honestidade das flags**.
+ */
+function desfechoDeExcecaoComProveniencia(
+  error: unknown,
+  tipo: FiscalQueueJob["tipo"],
+): FiscalQueueExecutionResult | null {
+  const provenance = fiscalExecutionProvenanceOf(error)
+  if (!provenance || !provenance.providerInvoked) return null
+  const consultaGarantida = fiscalConsultationEnsuredOf(error)
+  return {
+    kind: tipo === "CONSULTA" ? "transient" : "uncertain",
+    code: "execucao_fiscal_interrompida",
+    mensagem: mensagemDeErroSegura(error),
+    ...auditFlagsFromProvenance(provenance),
+    detalhe: {
+      providerInvoked: provenance.providerInvoked,
+      // `false` numa EMISSAO significa documento possivelmente entregue e SEM autoridade
+      // automática para resolvê-lo — condição que exige alarme, não silêncio.
+      ...(tipo === "CONSULTA" ? {} : { consultationEnsured: consultaGarantida }),
+    },
+  }
+}
+
 export function createUncertainStateJobExecutor(
   dependencies: UncertainStateJobExecutorDependencies,
 ): (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult> {
@@ -66,12 +135,19 @@ export function createUncertainStateJobExecutor(
       notaFiscalId: job.notaFiscalId,
     }
     if (job.tipo === "CONSULTA") {
-      const outcome = await reconcileUncertainDocument({
-        locator,
-        persistence: dependencies.persistence,
-        provider: dependencies.provider,
-        now: dependencies.now?.(),
-      })
+      let outcome
+      try {
+        outcome = await reconcileUncertainDocument({
+          locator,
+          persistence: dependencies.persistence,
+          provider: dependencies.provider,
+          now: dependencies.now?.(),
+        })
+      } catch (error) {
+        const comProveniencia = desfechoDeExcecaoComProveniencia(error, job.tipo)
+        if (comProveniencia) return comProveniencia
+        throw error
+      }
       // Proveniência coletada pelo coordenador NESTA consulta.
       const auditoria = auditFlagsFromProvenance(outcome.provenance)
       /**
@@ -87,10 +163,17 @@ export function createUncertainStateJobExecutor(
           detalhe: { consultationOutcome: "THROTTLED", cStat: outcome.cStat },
         }
       }
-      /** `103/105` em consulta: mesma consulta do mesmo recibo, jamais nova transmissão. */
+      /**
+       * `103/105` em consulta: **reconsulta** do mesmo recibo, jamais nova transmissão.
+       *
+       * ⚠️ `kind: "processing"`, não `"uncertain"` (bloqueio 1 da revisão cruzada do PR #44).
+       * Como `uncertain`, este job ia para `waitForConsultation` e ficava `AGUARDANDO_RETRY`
+       * com `proximaTentativaEm: null` — inelegível para sempre. A consulta passava a esperar
+       * por si mesma e o documento morria em `TRANSMITINDO`.
+       */
       if (outcome.kind === "processing") {
         return {
-          kind: "uncertain",
+          kind: "processing",
           code: "consulta_lote_em_processamento",
           mensagem: outcome.message,
           ...auditoria,
@@ -143,20 +226,30 @@ export function createUncertainStateJobExecutor(
     }
 
     const transmission = readTransmissionState(job.payload)
-    const outcome = await transmitWithUncertainStateSafety({
-      locator,
-      persistence: dependencies.persistence,
-      preparer: dependencies.preparer,
-      provider: dependencies.provider,
-      now: dependencies.now?.(),
-      retryAuthorizedByConsultation:
-        transmission.consultationOutcome === "NOT_FOUND" &&
-        Boolean(transmission.retryAuthorizedAt) &&
-        (
-          !transmission.retryAuthorizationConsumedAt ||
-          transmission.retryAuthorizationConsumedAt === transmission.lastStartedAt
-        ),
-    })
+    let outcome
+    try {
+      outcome = await transmitWithUncertainStateSafety({
+        locator,
+        persistence: dependencies.persistence,
+        preparer: dependencies.preparer,
+        provider: dependencies.provider,
+        now: dependencies.now?.(),
+        retryAuthorizedByConsultation:
+          transmission.consultationOutcome === "NOT_FOUND" &&
+          Boolean(transmission.retryAuthorizedAt) &&
+          (
+            !transmission.retryAuthorizationConsumedAt ||
+            transmission.retryAuthorizationConsumedAt === transmission.lastStartedAt
+          ),
+      })
+    } catch (error) {
+      // Exceção APÓS o provider ter sido invocado: a proveniência anexada pelo coordenador diz
+      // se houve contato externo. Sem esse tratamento, o `catch` do worker converteria uma
+      // transmissão possivelmente entregue em `transient` — ou seja, retry automático.
+      const comProveniencia = desfechoDeExcecaoComProveniencia(error, job.tipo)
+      if (comProveniencia) return comProveniencia
+      throw error
+    }
     if (outcome.kind === "blocked") {
       // Bloqueio ANTES do transporte: nenhum contato externo — `false` derivado, não literal.
       return {

@@ -20,8 +20,9 @@ import * as F from "./__fixtures__/sefaz-soap-fixtures"
 function classificar(
   body: string | Uint8Array,
   servico: SefazServico = "NFeAutorizacao4",
+  chaveAcessoEsperada: string = F.CHAVE_SINTETICA,
 ): SefazResponseClassification {
-  return parseSefazSoapResponse({ servico, body })
+  return parseSefazSoapResponse({ servico, body, chaveAcessoEsperada })
 }
 
 describe("parser SOAP — caminho feliz e suas lacunas", () => {

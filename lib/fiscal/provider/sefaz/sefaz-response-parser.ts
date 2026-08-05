@@ -46,6 +46,14 @@
  * do slice que fizer o transporte real (016D-C/016D-D) e exige GOAL próprio; antecipá-la aqui
  * seria exatamente "inventar XML autorizado".
  *
+ * ## Escopo do documento é do CHAMADOR
+ *
+ * `chaveAcessoEsperada` é **obrigatória** e validada em runtime (44 dígitos). Ela é a única
+ * autoridade de escopo: a chave declarada pela resposta é apenas **conferida** contra ela, e
+ * nunca a substitui. Sem esse contexto o parser recusa a leitura inteira
+ * (`MISSING_DOCUMENT_CONTEXT`) — porque uma resposta perfeitamente bem-formada de OUTRO
+ * documento é indistinguível de uma correta quando não se sabe o que se esperava.
+ *
  * ## Segredo e vazamento
  *
  * Nenhuma saída deste módulo contém o corpo da resposta, o envelope, o XML do documento ou
@@ -87,6 +95,24 @@ export const SEFAZ_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 /** Tamanho máximo do `xMotivo` propagado. O resto é descartado, não truncado silenciosamente. */
 const MAX_XMOTIVO = 255
+
+/** Chave de acesso da NF-e/NFC-e: exatamente 44 dígitos. */
+const CHAVE_ACESSO = /^\d{44}$/
+
+/**
+ * Excede o teto quando medido em **bytes UTF-8**?
+ *
+ * Dois atalhos evitam materializar a codificação de um corpo absurdo:
+ *  - UTF-8 usa no mínimo 1 byte por unidade UTF-16 ⇒ `length > teto` já reprova;
+ *  - usa no máximo 3 bytes por unidade (o par substituto vira 4 bytes para 2 unidades) ⇒
+ *    `length * 3 <= teto` já aprova.
+ * Só a faixa intermediária paga a medição exata.
+ */
+function excedeTetoUtf8(valor: string): boolean {
+  if (valor.length > SEFAZ_MAX_RESPONSE_BYTES) return true
+  if (valor.length * 3 <= SEFAZ_MAX_RESPONSE_BYTES) return false
+  return new TextEncoder().encode(valor).byteLength > SEFAZ_MAX_RESPONSE_BYTES
+}
 
 export type SefazResponseOutcome =
   | "AUTHORIZED"
@@ -332,10 +358,14 @@ export function parseSefazSoapResponse(input: {
   servico: SefazServico
   body: Uint8Array | string
   /**
-   * Chave de acesso que o chamador espera. **Opcional** para preservar os construtores atuais;
-   * quando informada, uma resposta sobre outro documento é recusada como divergência.
+   * Chave de acesso do documento que o chamador está processando. **Obrigatória.**
+   *
+   * É a única autoridade de escopo do parser. Sem ela não existe prova de que a resposta —
+   * por mais bem-formada que esteja — pertence ao documento em curso, e um `AUTHORIZED`
+   * poderia carimbar a nota errada. A chave declarada DENTRO da resposta nunca substitui esta:
+   * ela é apenas conferida contra esta.
    */
-  chaveAcessoEsperada?: string
+  chaveAcessoEsperada: string
 }): SefazResponseClassification {
   const { servico } = input
 
@@ -348,11 +378,36 @@ export function parseSefazSoapResponse(input: {
     )
   }
 
+  // ── 0. Contexto do documento, antes de qualquer leitura da resposta ──────────────────────
+  // Validação em runtime, não só no tipo: o parser é alcançável de fronteiras onde o
+  // compilador não protege (JSON, `any`, chamador JS).
+  if (typeof input.chaveAcessoEsperada !== "string" || !CHAVE_ACESSO.test(input.chaveAcessoEsperada)) {
+    return incerto(
+      servico,
+      "MISSING_DOCUMENT_CONTEXT",
+      "Chave de acesso esperada ausente ou inválida; classificação recusada sem contexto do documento.",
+    )
+  }
+  const chaveAcessoEsperada = input.chaveAcessoEsperada
+
   // ── 1. Bytes → texto, sob regras estritas ────────────────────────────────────────────────
   let texto: string
   if (typeof input.body === "string") {
     if (input.body.charCodeAt(0) === 0xfeff) {
       return incerto(servico, "MALFORMED_RESPONSE", "Resposta SEFAZ inicia com BOM inesperado.")
+    }
+    /**
+     * ⚠️ O teto é de **bytes**, não de caracteres. `string.length` conta unidades UTF-16: um
+     * corpo de 1,5 milhão de caracteres CJK ocupa ~4,5 MB em UTF-8 e passaria por um teste
+     * baseado em `length`. A verificação ocorre ANTES do parse — o custo do XXE/bilhão de
+     * risadas está justamente em parsear, não em medir.
+     */
+    if (excedeTetoUtf8(input.body)) {
+      return incerto(
+        servico,
+        "MALFORMED_RESPONSE",
+        "Resposta SEFAZ excede o limite de corpo aceito; leitura abortada.",
+      )
     }
     texto = input.body
   } else {
@@ -481,7 +536,7 @@ export function parseSefazSoapResponse(input: {
     )
   }
 
-  return classificarPayload({ servico, contrato, payload, texto, chaveAcessoEsperada: input.chaveAcessoEsperada })
+  return classificarPayload({ servico, contrato, payload, texto, chaveAcessoEsperada })
 }
 
 function classificarPayload(input: {
@@ -489,7 +544,7 @@ function classificarPayload(input: {
   contrato: SefazResponseContract
   payload: C14nElement
   texto: string
-  chaveAcessoEsperada?: string
+  chaveAcessoEsperada: string
 }): SefazResponseClassification {
   const { servico, contrato, payload } = input
 
@@ -565,7 +620,7 @@ function classificarProtocoloDoLote(input: {
   payload: C14nElement
   texto: string
   cStatLote: string
-  chaveAcessoEsperada?: string
+  chaveAcessoEsperada: string
 }): SefazResponseClassification {
   const { servico, payload } = input
   const protNFe = unico(payload, "protNFe", NFE_NS)
@@ -639,7 +694,7 @@ function finalizar(input: {
   /** Escopo onde o `cStat` vencedor foi lido: o payload root, ou `infProt` após a descida. */
   escopo: C14nElement
   cStat: string
-  chaveAcessoEsperada?: string
+  chaveAcessoEsperada: string
 }): SefazResponseClassification {
   const { servico, contrato, payload, escopo, cStat } = input
   const xMotivo = lerXMotivo(escopo)
@@ -689,11 +744,10 @@ function finalizar(input: {
   const chaveAcesso = chaveNoEscopo ?? chaveNoProtocolo
 
   /**
-   * Quando o chamador informa qual documento espera, uma resposta sobre OUTRO documento é
-   * divergência estrutural — não importa o quão bem-formada esteja. Defesa contra resposta
-   * trocada, cache envenenado ou correlação perdida.
+   * Uma resposta sobre OUTRO documento é divergência estrutural — não importa o quão
+   * bem-formada esteja. Defesa contra resposta trocada, cache envenenado ou correlação perdida.
    */
-  if (input.chaveAcessoEsperada && chaveAcesso && chaveAcesso !== input.chaveAcessoEsperada) {
+  if (chaveAcesso && chaveAcesso !== input.chaveAcessoEsperada) {
     return incerto(
       servico,
       "DOCUMENT_MISMATCH",
@@ -713,13 +767,19 @@ function finalizar(input: {
 
   let xmlAutorizado: string | null = null
   if (entry.exigeXmlAutorizado) {
+    /**
+     * ⚠️ A autoridade do vínculo é `chaveAcessoEsperada` — a chave do CHAMADOR —, nunca a que a
+     * resposta declara. `chaveAcesso` já foi provada igual a ela acima; exigi-la presente aqui
+     * garante que nenhum `AUTHORIZED` saia de uma resposta que sequer diz de qual documento
+     * fala, e usar a do chamador impede que a própria resposta defina o escopo que a valida.
+     */
     xmlAutorizado = chaveAcesso
       ? extrairXmlAutorizadoVinculado({
           payload,
           texto: input.texto,
           cStat,
           protocolo: protocolo!,
-          chaveAcesso,
+          chaveAcesso: input.chaveAcessoEsperada,
         })
       : null
     if (!xmlAutorizado) {

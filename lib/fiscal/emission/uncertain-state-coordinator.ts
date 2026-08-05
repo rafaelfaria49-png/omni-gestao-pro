@@ -10,6 +10,7 @@ import {
   type FiscalExecutionProvenanceSink,
   type FiscalExternalExecutionCapability,
   type FiscalRejectionConsequences,
+  type FiscalTransmissionResult,
   type PersistedFiscalDocument,
   type SafeEmissionOutcome,
   type SafeEmissionOutcomeKind,
@@ -60,15 +61,78 @@ export function fiscalExecutionProvenanceOf(error: unknown): FiscalExecutionProv
 }
 
 function attachProvenance(error: unknown, provenance: FiscalExecutionProvenance): unknown {
+  /**
+   * ⚠️ Valor primitivo lançado (`throw "socket closed"`) é normalizado para `Error` antes de
+   * receber a marca. Sem isso, um provider mal escrito faria a proveniência desaparecer em
+   * silêncio — e o erro cairia no fallback genérico, que retransmite. O canal de proveniência
+   * não pode depender da educação de quem lança.
+   */
+  const alvo = typeof error === "object" && error !== null ? error : new Error(String(error))
+  Object.defineProperty(alvo, "fiscalExecutionProvenance", {
+    value: provenance,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  })
+  return alvo
+}
+
+/**
+ * Marca, no erro, se a CONSULTA que resolve o estado incerto pôde ser garantida.
+ *
+ * Sem isso o executor não tem como distinguir "documento estacionado com uma consulta a
+ * caminho" de "documento estacionado sem ninguém para resolvê-lo" — e os dois exigem tratamento
+ * e alarme diferentes.
+ */
+const CONSULTA_GARANTIDA = "fiscalConsultationEnsured"
+
+function marcarConsultaGarantida(error: unknown, garantida: boolean): void {
   if (typeof error === "object" && error !== null) {
-    Object.defineProperty(error, "fiscalExecutionProvenance", {
-      value: provenance,
+    Object.defineProperty(error, CONSULTA_GARANTIDA, {
+      value: garantida,
       enumerable: false,
       configurable: true,
       writable: true,
     })
   }
-  return error
+}
+
+export function fiscalConsultationEnsuredOf(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  return (error as Record<string, unknown>)[CONSULTA_GARANTIDA] === true
+}
+
+/**
+ * Garante a CONSULTA deduplicada quando o provider foi invocado e **lançou**.
+ *
+ * Achado BLOQUEANTE da revisão cruzada da correção 002: o caminho de exceção devolvia
+ * `uncertain` sem nunca criar o job `CONSULTA` — enquanto todo o resto do coordenador o cria
+ * antes de qualquer `uncertain`. O worker então estacionava o job com `proximaTentativaEm:
+ * null` e **não existia autoridade alguma** capaz de resolver a nota: nem consulta, nem retry,
+ * nem rota administrativa (que só alcança `FALHA`). A nota ficava presa em `TRANSMITINDO` para
+ * sempre — justamente o documento que pode ter chegado à SEFAZ.
+ *
+ * A escrita é best-effort **quanto a propagar**: a exceção original é o fato primário e segue
+ * subindo. O que ela produz é a MARCA, para que o executor possa alarmar quando a consulta não
+ * pôde ser criada.
+ */
+async function garantirConsultaAposExcecao(input: {
+  persistence: UncertainStatePersistence
+  document: PersistedFiscalDocument
+  now: Date
+  message: string
+}): Promise<boolean> {
+  try {
+    await input.persistence.recordUncertainAndEnsureConsultation({
+      document: input.document,
+      code: "PROVIDER_EXCEPTION",
+      message: input.message,
+      now: input.now,
+    })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -271,12 +335,36 @@ async function runTransmission(
   // A partir daqui o provider É invocado. O atalho idempotente acima retorna ANTES desta
   // marcação — é por isso que a proveniência deriva do que foi executado, não da posição.
   recorder.markProviderInvoked(input.provider.simulado)
-  const result = await input.provider.transmit({
-    document,
-    exactBytes: exact.bytes,
-    bytesSha256: exact.sha256,
-    provenance: recorder,
-  })
+  let result: FiscalTransmissionResult
+  try {
+    result = await input.provider.transmit({
+      document,
+      exactBytes: exact.bytes,
+      bytesSha256: exact.sha256,
+      provenance: recorder,
+    })
+  } catch (bruto) {
+    /**
+     * Falha DEPOIS de o provider ter sido invocado: o desfecho é DESCONHECIDO e o documento
+     * pode ter chegado à SEFAZ. A consulta deduplicada é a única autoridade capaz de resolver
+     * isso, e precisa existir antes de o job ser estacionado — do contrário a nota fica presa
+     * em `TRANSMITINDO` sem ninguém para desempatá-la.
+     *
+     * O erro é normalizado aqui para que a marca e a proveniência pousem no MESMO objeto,
+     * inclusive quando o provider lança um primitivo.
+     */
+    const error = typeof bruto === "object" && bruto !== null ? bruto : new Error(String(bruto))
+    marcarConsultaGarantida(
+      error,
+      await garantirConsultaAposExcecao({
+        persistence: input.persistence,
+        document,
+        now,
+        message: "Provider lançou exceção após a invocação; desfecho desconhecido.",
+      }),
+    )
+    throw error
+  }
   if (result.outcome === "AUTHORIZED") {
     await input.persistence.markAuthorized({
       document,

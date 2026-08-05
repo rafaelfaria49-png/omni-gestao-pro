@@ -97,6 +97,13 @@ export type SefazResponseReason =
   | "SERVICE_MISMATCH"
   /** Resposta bem-formada, porém referente a OUTRA chave de acesso. */
   | "DOCUMENT_MISMATCH"
+  /**
+   * O chamador não informou (ou informou em formato inválido) a chave de acesso que espera.
+   *
+   * Sem esse contexto não existe prova de vínculo entre a resposta e o documento em curso, e
+   * uma autorização "bem-formada" poderia pertencer a outra nota. Recusa-se a leitura inteira.
+   */
+  | "MISSING_DOCUMENT_CONTEXT"
 
 /**
  * Consequências fiscais de um desfecho. São a razão de ser da matriz: substituem o literal

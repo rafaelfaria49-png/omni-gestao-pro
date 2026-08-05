@@ -48,7 +48,9 @@ function documento(overrides: Partial<PersistedFiscalDocument> = {}): PersistedF
     ambiente: "HOMOLOGACAO",
     serie: 1,
     numero: 1,
-    chaveAcesso: "3".repeat(44),
+    // A MESMA chave das fixtures: o provider a repassa como `chaveAcessoEsperada`, então o
+    // vínculo documento↔resposta é exercitado de verdade, não contornado.
+    chaveAcesso: F.CHAVE_SINTETICA,
     status: "TRANSMITINDO",
     xmlAssinado: XML,
     xmlBytesSha256: SHA,
@@ -73,15 +75,25 @@ function providerDeFixture(input: {
   const provider = {
     simulado: input.simulado ?? true,
     [IN_MEMORY_ONLY_FISCAL_PROVIDER]: true as const,
-    async transmit(): Promise<FiscalTransmissionResult> {
+    // A chave esperada vem do DOCUMENTO em curso — é assim que o adapter real fará. Passar a
+    // chave do documento (e não uma constante do teste) é o que torna o vínculo verificável.
+    async transmit(
+      chamada: Parameters<UncertainStateFiscalProvider["transmit"]>[0],
+    ): Promise<FiscalTransmissionResult> {
       const passo = input.transmissao?.[Math.min(transmissoes, input.transmissao.length - 1)]
       transmissoes += 1
       if (!passo) throw new Error("provider sem resposta de transmissão configurada")
       return toFiscalTransmissionResult(
-        parseSefazSoapResponse({ servico: passo.servico ?? "NFeAutorizacao4", body: passo.fixture }),
+        parseSefazSoapResponse({
+          servico: passo.servico ?? "NFeAutorizacao4",
+          body: passo.fixture,
+          chaveAcessoEsperada: chamada.document.chaveAcesso,
+        }),
       )
     },
-    async consult(): Promise<FiscalConsultationResult> {
+    async consult(
+      chamada: Parameters<UncertainStateFiscalProvider["consult"]>[0],
+    ): Promise<FiscalConsultationResult> {
       const passo = input.consulta?.[Math.min(consultas, input.consulta.length - 1)]
       consultas += 1
       if (!passo) throw new Error("provider sem resposta de consulta configurada")
@@ -89,6 +101,7 @@ function providerDeFixture(input: {
         parseSefazSoapResponse({
           servico: passo.servico ?? "NFeConsultaProtocolo4",
           body: passo.fixture,
+          chaveAcessoEsperada: chamada.document.chaveAcesso,
         }),
       )
     },

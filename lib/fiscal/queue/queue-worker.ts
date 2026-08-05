@@ -74,9 +74,107 @@ function startHeartbeat(input: {
 /** `cStat` do consumo indevido. Lido do detalhe da execução; `656` é o único valor esperado. */
 const CSTAT_CONSUMO_INDEVIDO = "656"
 
+/**
+ * Intervalo MÍNIMO entre a resposta `103/105` e a reconsulta do mesmo lote.
+ *
+ * Regra oficial, não escolha de engenharia: o MOC 7.00 §5.7 exige 15 s antes de consultar o
+ * recibo. É um **piso** — nunca um teto — e é aplicado no worker para que nenhuma porta possa
+ * reagendar antes disso, mesmo que peça.
+ */
+export const FISCAL_RECONSULTA_MIN_DELAY_MS = 15_000
+
 function cStatDoThrottle(detalhe: Record<string, unknown> | undefined): string {
   const bruto = detalhe?.cStat
   return typeof bruto === "string" && /^\d{3}$/.test(bruto) ? bruto : CSTAT_CONSUMO_INDEVIDO
+}
+
+function reciboDoDetalhe(detalhe: Record<string, unknown> | undefined): string | null {
+  const bruto = detalhe?.recibo
+  return typeof bruto === "string" && /^\d{1,20}$/.test(bruto) ? bruto : null
+}
+
+/**
+ * Reagenda o próprio job `CONSULTA` que recebeu `103/105` (D12.1 · bloqueio 1 da revisão
+ * cruzada do PR #44).
+ *
+ * O defeito corrigido: `PROCESSING` numa CONSULTA descia para `waitForConsultation`, que
+ * estaciona com `proximaTentativaEm: null`. O job ficava **esperando a consulta que ele
+ * próprio é** — inelegível para sempre — e o documento morria em `TRANSMITINDO`, sem
+ * autorização e sem rejeição.
+ *
+ * Aqui não há job novo, não há backoff de falha e não há retransmissão: o MESMO job volta para
+ * `AGUARDANDO_RETRY` com data futura, mantendo `dedupeKey` e `nRec`.
+ */
+async function processReconsulta(input: {
+  job: FiscalQueueJob
+  takeover: boolean
+  ports: FiscalQueueWorkerPorts
+  workerId: string
+  now: Date
+  payload: FiscalQueuePayload
+  execution: { code: string; mensagem: string; detalhe?: Record<string, unknown> }
+}): Promise<DrainFiscalQueueItemResult> {
+  const { job, takeover, ports, workerId, now } = input
+  const base = { jobId: job.id, storeId: job.storeId, takeover, tentativas: job.tentativas }
+  const recibo = reciboDoDetalhe(input.execution.detalhe)
+  // Piso oficial aplicado AQUI: a porta recebe a data já calculada e não tem como antecipá-la.
+  const nextAttemptAt = new Date(now.getTime() + FISCAL_RECONSULTA_MIN_DELAY_MS)
+
+  if (!ports.rescheduleProcessingConsultation) {
+    await safeAudit(ports, {
+      job,
+      acao: "fiscal.queue.processing.reschedule_unavailable",
+      nivel: "ERROR",
+      mensagem:
+        "Fila sem porta de reagendamento de consulta; job mantido sob lock para não morrer " +
+        "estacionado.",
+      detalhe: { workerId, recibo },
+    })
+    return {
+      ...base,
+      status: "reconsulta_falhou",
+      mensagem: "Lote em processamento sem porta de reagendamento; nada foi liberado.",
+    }
+  }
+
+  const reagendado = await ports
+    .rescheduleProcessingConsultation({
+      job,
+      workerId,
+      now,
+      nextAttemptAt,
+      recibo,
+      payload: input.payload,
+    })
+    .catch(() => false)
+
+  if (!reagendado) {
+    await safeAudit(ports, {
+      job,
+      acao: "fiscal.queue.processing.reschedule_failed",
+      nivel: "ERROR",
+      mensagem: "Reagendamento da consulta não confirmado; job mantido sob lock.",
+      detalhe: { workerId, recibo, nextAttemptAt: nextAttemptAt.toISOString() },
+    })
+    return {
+      ...base,
+      status: "reconsulta_falhou",
+      mensagem: "Reagendamento da consulta não confirmado; nada foi liberado.",
+    }
+  }
+
+  await safeAudit(ports, {
+    job,
+    acao: "fiscal.queue.processing.rescheduled",
+    nivel: "INFO",
+    mensagem: "Lote em processamento; a MESMA consulta foi reagendada para o mesmo recibo.",
+    detalhe: { workerId, recibo, nextAttemptAt: nextAttemptAt.toISOString() },
+  })
+  return {
+    ...base,
+    status: "reconsulta",
+    mensagem: "Lote em processamento; reconsulta do mesmo recibo agendada.",
+  }
 }
 
 /**
@@ -315,20 +413,29 @@ async function processLease(input: {
   /**
    * Freio do GOAL-011: execução não simulada vira terminal.
    *
-   * ⚠️ Duas correções do 016D-B, ambas de segurança:
+   * ⚠️ Correções do 016D-B, todas de segurança:
    *
    * 1. **`simulado` permanece `false`** (F-2). A versão anterior reescrevia para `true`, ou
    *    seja, gravava na trilha que uma execução REAL fora simulada. Bloquear é legítimo;
    *    mentir sobre a proveniência do que foi bloqueado não é.
-   * 2. **`throttled` não é rebaixado.** Um `656` vindo de provider real seria transformado em
-   *    `terminal` ⇒ `FALHA` ⇒ reprocessável pela rota administrativa ⇒ nova transmissão, que é
-   *    exatamente o que agrava o `656`. O caminho `throttled` é estritamente mais restritivo
-   *    que `terminal` (pausa a loja e estaciona o job sem reprocesso), então prevalece.
+   * 2. **Desfechos MAIS restritivos que `terminal` não são rebaixados.** `terminal` vira
+   *    `FALHA`, e `FALHA` é reprocessável pela rota administrativa — ou seja, rebaixar aqui
+   *    *abriria* um caminho de retransmissão. Ficam de fora:
+   *    - `throttled` — pausa a loja e estaciona sem reprocesso (rebaixá-lo é justamente o que
+   *      agrava o `656`);
+   *    - `processing` — reagenda a consulta do mesmo recibo, sem retransmitir;
+   *    - `uncertain` **que já registrou tentativa externa** — estaciona sem retry e sem
+   *      reprocesso; convertê-lo em `FALHA` deixaria um operador retransmitir um documento que
+   *      pode ter chegado à SEFAZ.
    *
    * `externalTransmissionAttempted: true` é deliberadamente conservador: sinaliza contato
    * externo POSSÍVEL, forçando reconciliação humana em vez de presumir que nada saiu.
    */
-  if (execution.kind !== "throttled" && !execution.simulado) {
+  const maisRestritivoQueTerminal =
+    execution.kind === "throttled" ||
+    execution.kind === "processing" ||
+    (execution.kind === "uncertain" && execution.externalTransmissionAttempted)
+  if (!maisRestritivoQueTerminal && !execution.simulado) {
     execution = {
       kind: "terminal" as const,
       code: "provider_real_bloqueado",
@@ -374,6 +481,22 @@ async function processLease(input: {
    * gravada, soltar o lock abriria uma janela em que o job volta a ser elegível e a loja
    * segue ativa — o loop que o `656` pune.
    */
+  /**
+   * `cStat 103/105` num job `CONSULTA` — reconsulta do MESMO recibo, nunca estacionamento.
+   * Avaliado antes de `uncertain` justamente porque era ali que morria.
+   */
+  if (execution.kind === "processing") {
+    return await processReconsulta({
+      job,
+      takeover,
+      ports: input.ports,
+      workerId: input.workerId,
+      now,
+      payload,
+      execution,
+    })
+  }
+
   if (execution.kind === "throttled") {
     return await processThrottled({
       job,
@@ -499,6 +622,8 @@ export async function drainFiscalQueue(
     lockLost: 0,
     throttled: 0,
     throttlePauseFailed: 0,
+    processingRescheduled: 0,
+    processingRescheduleFailed: 0,
     items: [],
   }
 
@@ -534,6 +659,8 @@ export async function drainFiscalQueue(
     else if (item.status === "falha") report.failed += 1
     else if (item.status === "throttled") report.throttled += 1
     else if (item.status === "pausa_falhou") report.throttlePauseFailed += 1
+    else if (item.status === "reconsulta") report.processingRescheduled += 1
+    else if (item.status === "reconsulta_falhou") report.processingRescheduleFailed += 1
     else report.lockLost += 1
 
     /**
@@ -545,6 +672,13 @@ export async function drainFiscalQueue(
      * outras lojas não são punidos pelo `656` de uma delas.
      */
     if (item.status === "pausa_falhou") break
+
+    /**
+     * Reagendamento de reconsulta não confirmado: o job continua `PROCESSANDO` sob nosso lock.
+     * Seguir drenando arriscaria repetir a mesma falha de persistência em cada job da fila, e
+     * cada repetição é mais uma chamada à SEFAZ sem desfecho registrado.
+     */
+    if (item.status === "reconsulta_falhou") break
   }
 
   return report

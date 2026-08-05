@@ -1105,6 +1105,74 @@ graph LR
 > grava com a **mesma** `acao`/`detalhe` que `readFiscalQueuePauseSnapshot` lê (a pausa **não** é
 > decorativa); `parkThrottled` produz estado inelegível em `eligibleWhere` e irreprocessável em
 > `reprocessFailedFiscalJob`.
+>
+> ---
+>
+> #### Correção 002 — bloqueios da revisão cruzada do PR #44
+>
+> ✅ **Aplicada** (GOAL `FISCAL-PR44-CROSS-FAMILY-BLOCKERS-CORRECTION-002`, mesma branch). Quatro
+> bloqueios apontados; os quatro eram reais.
+>
+> **Bloqueio 1 — `PROCESSING` em CONSULTA ficava inerte.** Um job `CONSULTA` que recebia
+> `103/105` era classificado `uncertain`, ia para `waitForConsultation` e virava
+> `AGUARDANDO_RETRY` com **`proximaTentativaEm: null`** — que `eligibleWhere` nunca readquire.
+> **A consulta passava a esperar por si mesma** e o documento morria em `TRANSMITINDO`, sem
+> autorização, sem rejeição e sem alarme. Corrigido com `kind: "processing"` dedicado + porta
+> `rescheduleProcessingConsultation`: o MESMO job volta a `AGUARDANDO_RETRY` com
+> `proximaTentativaEm ≥ now + 15 s` (piso do MOC 7.00 §5.7, aplicado no worker para que porta
+> alguma possa antecipá-lo), preservando `dedupeKey` e `nRec`, numa única escrita CAS pelo mesmo
+> `lockOwner`. Porta ausente ou escrita não confirmada ⇒ lock preservado e drenagem abortada. A
+> primeira resposta `103` da **EMISSAO** segue inalterada.
+>
+> **Bloqueio 2 — exceção após contato externo perdia a proveniência.** Erros lançados por
+> `transmit`/`consult` subiam ao `catch` genérico do worker, que fabricava `simulado: true`,
+> `externalTransmissionAttempted: false` e `kind: "transient"` — ou seja, **retry automático** de
+> um documento possivelmente entregue. O executor passa a ler `fiscalExecutionProvenanceOf` e a
+> devolver `uncertain` com as flags reais. ⚠️ Só quando `providerInvoked === true`: o coordenador
+> anexa proveniência a qualquer erro seu, inclusive a falhas de banco anteriores a qualquer
+> chamada — ali não há ambiguidade, e estacionar transformaria indisponibilidade momentânea em
+> intervenção manual. Mensagens ganham redação extra de identificadores longos.
+>
+> **Bloqueio 3 — teto de 2 MB só valia para `Uint8Array`.** Entrada `string` ia direto ao parser,
+> e `string.length` não substitui bytes: 1,5 milhão de caracteres CJK ocupam ~4,5 MB em UTF-8.
+> Medição agora é em bytes UTF-8, **antes** do parse, com atalhos que evitam codificar corpos
+> absurdos. Provado por teste que `parseXml` não é chamado acima do teto.
+>
+> **Bloqueio 4 — `chaveAcessoEsperada` era opcional.** Passa a ser **obrigatória** e validada em
+> runtime (44 dígitos). Ausente/inválida ⇒ `MISSING_DOCUMENT_CONTEXT`; divergente ⇒
+> `DOCUMENT_MISMATCH`. A chave declarada pela resposta **nunca** é autoridade de escopo: é apenas
+> conferida contra a do chamador, que é também a usada para validar o vínculo do `nfeProc`.
+>
+> **Freio do GOAL-011 ajustado:** deixa de rebaixar a `terminal` os desfechos que já são MAIS
+> restritivos que ele — `throttled`, `processing` e `uncertain` com tentativa externa registrada.
+> Rebaixar produzia `FALHA`, que a rota administrativa reprocessa: o freio estaria *abrindo* um
+> caminho de retransmissão.
+>
+> **Revisão independente da correção 002** (contexto frio, modelo distinto) — parecer
+> *REQUEST-CHANGES*, dois achados, **ambos corrigidos antes do commit**. ⚠️ Fable indisponível
+> por falta de crédito pela **6ª** vez consecutiva nesta frente.
+>
+> | # | Sev. | Achado | Correção |
+> |---|---|---|---|
+> | 1 | 🔴 **BLOQUEANTE** | O caminho de exceção devolvia `uncertain` **sem nunca garantir o job `CONSULTA`** — a única função do coordenador a fazê-lo. O worker estacionava o job com `proximaTentativaEm: null` e não restava autoridade alguma: nem consulta, nem retry, nem rota administrativa (que só alcança `FALHA`). A nota ficava presa em `TRANSMITINDO` **para sempre**, justamente no cenário de documento possivelmente entregue. `reconcileAgedTransmittingNotes`, que varreria isso, **não tem caller produtivo** | O `catch` em torno de `provider.transmit` passa a garantir a consulta deduplicada antes de propagar, e marca no erro se conseguiu. O executor expõe `detalhe.consultationEnsured` — `false` é condição de alarme, não de silêncio |
+> | 2 | 🟢 MINOR | `attachProvenance` só marcava erros que fossem objeto: um provider que fizesse `throw "socket closed"` após tocar a rede perdia a proveniência e caía no fallback `transient` ⇒ **retry automático** | Valor primitivo é normalizado para `Error` antes de receber marca e proveniência |
+>
+> ⚠️ **Assimetria deliberada descoberta na correção do achado 1:** exceção em job **`EMISSAO`**
+> produz `uncertain` (repetir pode duplicar o documento; a `CONSULTA` garantida resolve);
+> exceção em job **`CONSULTA`** produz `transient` (consultar é leitura — repetir é seguro e é o
+> que se quer). Classificar a consulta como `uncertain` a mandaria para `waitForConsultation`,
+> ou seja, ela ficaria **esperando por si mesma** — o defeito do bloqueio 1 reencenado, e uma
+> regressão frente ao comportamento anterior. O que a correção muda no caminho `CONSULTA` não é
+> o `kind`, é a **honestidade das flags**.
+>
+> **Validação da correção 002:** `vitest lib/fiscal` **834 verdes / 16 skip** (49 novos) ·
+> typecheck limpo · ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero
+> `migrate deploy`, zero baseline, zero conexão com banco) · `git diff --check` limpo.
+>
+> **Residual conhecido, não corrigido aqui:** um job `CONSULTA` que esgote `maxTentativas` (10)
+> termina em `FALHA` e exige reprocessamento humano — fail-closed, sem retransmissão, porém não
+> auto-recuperável. Uma cadência mais larga entre reconsultas e o rate limit pertencem ao
+> **016D-E**.
 
 ---
 

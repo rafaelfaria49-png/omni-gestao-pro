@@ -67,9 +67,14 @@ export type FiscalQueuePauseSnapshot = {
  * | `transient` | retry com backoff | insistir é a causa documentada do `656` |
  * | `uncertain` | estaciona esperando `CONSULTA` | a consulta que D12.2 proíbe criar ⇒ espera infinita |
  * | `terminal` | vira `FALHA` | `FALHA` é reprocessável pela rota administrativa ⇒ retransmissão por operador |
+ *
+ * ⚠️ `"processing"` também é dedicado, e pela razão simétrica: um job **`CONSULTA`** que recebe
+ * `cStat 103/105` precisa **voltar a consultar**. Tratá-lo como `uncertain` o mandaria para
+ * `waitForConsultation`, que estaciona com `proximaTentativaEm: null` — ou seja, a consulta
+ * ficaria esperando por ela mesma, para sempre, e o documento morreria em `TRANSMITINDO`.
  */
 export type FiscalQueueExecutionResult = {
-  kind: "success" | "transient" | "terminal" | "uncertain" | "throttled"
+  kind: "success" | "transient" | "terminal" | "uncertain" | "throttled" | "processing"
   code: string
   mensagem: string
   /** Sempre true no GOAL-011. Resultado false é bloqueado pelo worker. */
@@ -174,6 +179,25 @@ export type FiscalQueueWorkerPorts = {
     error: string
     payload: FiscalQueuePayload
   }) => Promise<boolean>
+  /**
+   * Reagenda **o próprio job `CONSULTA`** que acabou de receber `cStat 103/105` (D12.1).
+   *
+   * ⛔ Não cria job novo: a consulta deduplicada já existe e é esta. Reutiliza o mesmo
+   * `dedupeKey`, preserva o mesmo `nRec` no payload e devolve o job a `AGUARDANDO_RETRY` com
+   * `proximaTentativaEm = nextAttemptAt` — que o worker garante ser **no mínimo `now + 15 s`**
+   * (MOC 7.00 §5.7). Não é o backoff genérico de falha: um lote em processamento não é falha.
+   *
+   * O lock só pode ser solto **junto** com a nova data, numa única escrita CAS pelo mesmo
+   * `lockOwner`. Porta ausente ou escrita não confirmada ⇒ fail-closed: lock preservado.
+   */
+  rescheduleProcessingConsultation?: (input: {
+    job: FiscalQueueJob
+    workerId: string
+    now: Date
+    nextAttemptAt: Date
+    recibo: string | null
+    payload: FiscalQueuePayload
+  }) => Promise<boolean>
   execute: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>
   audit: (event: FiscalQueueAuditEvent) => Promise<void>
 }
@@ -201,6 +225,10 @@ export type DrainFiscalQueueItemResult = {
     | "throttled"
     /** `656` cujo bloqueio NÃO pôde ser persistido — lock não liberado, drenagem abortada. */
     | "pausa_falhou"
+    /** `103/105` em CONSULTA: o mesmo job foi reagendado para reconsultar o mesmo recibo. */
+    | "reconsulta"
+    /** Reagendamento da reconsulta não confirmado — lock não liberado, drenagem abortada. */
+    | "reconsulta_falhou"
   takeover: boolean
   tentativas: number
   mensagem: string
@@ -220,5 +248,9 @@ export type DrainFiscalQueueReport = {
   throttled: number
   /** Jobs em que a pausa por `656` não pôde ser persistida. Drenagem abortou. */
   throttlePauseFailed: number
+  /** Consultas reagendadas por `cStat 103/105`, para o mesmo recibo. */
+  processingRescheduled: number
+  /** Reagendamentos de reconsulta não confirmados. Drenagem abortou. */
+  processingRescheduleFailed: number
   items: DrainFiscalQueueItemResult[]
 }

@@ -149,7 +149,15 @@ export async function readFiscalQueuePauseSnapshot(
   }
 }
 
-function eligibleWhere(now: Date, pausedStoreIds: string[]): Record<string, unknown> {
+/**
+ * Filtro de elegibilidade da fila.
+ *
+ * Exportado para que a regra de `AGUARDANDO_RETRY` seja **verificável por teste**: é ela que
+ * distingue um job estacionado à espera de humano (`proximaTentativaEm: null`) de um job
+ * reagendado para reconsultar (`proximaTentativaEm` futuro). Um erro aqui não aparece em
+ * nenhum outro lugar — o job simplesmente nunca mais roda.
+ */
+export function eligibleWhere(now: Date, pausedStoreIds: string[]): Record<string, unknown> {
   return {
     ...(pausedStoreIds.length > 0 ? { storeId: { notIn: pausedStoreIds } } : {}),
     OR: [
@@ -548,6 +556,48 @@ export function createPrismaFiscalQueueWorkerPorts(
           lockExpiresAt: null,
         },
       })
+      return updated.count === 1
+    },
+    /**
+     * Reagenda a PRÓPRIA `CONSULTA` após `cStat 103/105` (GOAL-016D-B · D12.1).
+     *
+     * Uma única escrita CAS pelo mesmo `lockOwner`: status, nova data e liberação do lock
+     * entram juntos, de modo que não existe instante em que o job esteja solto sem a data
+     * futura gravada. `updated.count !== 1` significa que o lock já era de outro worker — nada
+     * foi tocado, e o chamador mantém o desfecho fail-closed.
+     *
+     * ⛔ Não cria job: `dedupeKey`, `tipo` e `notaFiscalId` permanecem os do próprio registro.
+     * O `nRec` é preservado no payload para que a próxima execução consulte o MESMO lote.
+     */
+    rescheduleProcessingConsultation: async ({
+      job,
+      workerId,
+      now,
+      nextAttemptAt,
+      recibo,
+      payload,
+    }) => {
+      const updated = await client.fiscalEmissaoJob.updateMany({
+        where: ownedLockWhere(job.id, workerId, now),
+        data: {
+          status: "AGUARDANDO_RETRY",
+          payload: recibo ? { ...payload, recibo } : payload,
+          ultimoErro: null,
+          proximaTentativaEm: nextAttemptAt,
+          lockOwner: null,
+          lockedAt: null,
+          lockExpiresAt: null,
+        },
+      })
+      if (updated.count === 1) {
+        await bestEffortAudit(client, {
+          job,
+          acao: "fiscal.queue.processing.reschedule.persisted",
+          nivel: "INFO",
+          mensagem: "Consulta reagendada para o mesmo recibo, sem criar job novo.",
+          detalhe: { workerId, nextAttemptAt: nextAttemptAt.toISOString(), reciboRegistrado: Boolean(recibo) },
+        })
+      }
       return updated.count === 1
     },
     waitForConsultation: async ({ job, workerId, now, error, payload }) => {
