@@ -80,11 +80,39 @@ describe("transporte default — sempre bloqueado", () => {
     expect((erro as SefazAdapterBlockedError).externalTransmissionAttempted).toBe(false)
   })
 
-  it("consult também termina bloqueado", async () => {
+  it("consult recusa por falta de payload — sem envelopar vazio nem inventar consSitNFe", async () => {
+    /**
+     * O construtor de `consSitNFe` pertence ao 016D-B. Envelopar bytes vazios produziria
+     * `<nfeDadosMsg/>` — uma requisição sem conteúdo fiscal — e fabricar o payload seria
+     * antecipar o slice seguinte. Nenhum socket é aberto em qualquer dos casos.
+     */
     const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
     const erro = await provider.consult({ document: documento() }).catch((e: unknown) => e)
     expect(erro).toBeInstanceOf(SefazAdapterBlockedError)
-    expect((erro as SefazAdapterBlockedError).codigo).toBe("transporte_offline_bloqueado")
+    expect((erro as SefazAdapterBlockedError).codigo).toBe("consulta_sem_payload_neste_slice")
+  })
+
+  it("consult ainda roda os guards D4 ANTES de recusar por payload", async () => {
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas({ resolvePilotStoreId: vi.fn(async () => "outra-loja") }),
+    })
+    const erro = await provider.consult({ document: documento() }).catch((e: unknown) => e)
+    // A falta de payload NUNCA pode mascarar um documento fora do piloto.
+    expect((erro as SefazAdapterBlockedError).codigo).toBe("loja_fora_do_piloto")
+  })
+
+  it("bytes com declaração XML são recusados ANTES do transporte (bloqueio de contrato)", async () => {
+    const transport: SefazTransport = { permiteRede: false, send: vi.fn() }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const comDeclaracao = new TextEncoder().encode(`<?xml version="1.0" encoding="UTF-8"?>${XML}`)
+    const shaDecl = createHash("sha256").update(comDeclaracao).digest("hex")
+
+    const erro = await provider
+      .transmit({ document: documento(), exactBytes: comDeclaracao, bytesSha256: shaDecl })
+      .catch((e: unknown) => e)
+
+    expect((erro as SefazAdapterBlockedError).codigo).toBe("bytes_fiscais_com_declaracao_xml")
+    expect(transport.send).not.toHaveBeenCalled()
   })
 
   it("NUNCA devolve desfecho fabricado (AUTHORIZED/REJECTED/UNCERTAIN)", async () => {
@@ -122,24 +150,34 @@ describe("transporte default — sempre bloqueado", () => {
   })
 })
 
-describe("proveniência de rede", () => {
-  it("reporta externalTransmissionAttempted=false — nada tentou contato externo", async () => {
+describe("proveniência de rede é ESCOPADA POR EXECUÇÃO (correção 002 · bloqueio 3)", () => {
+  it("o adapter não guarda proveniência de rede em estado de instância", () => {
     const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
-    expect(provider.reportExternalTransmissionAttempted()).toBe(false)
-    await provider
-      .transmit({ document: documento(), exactBytes: BYTES, bytesSha256: SHA })
-      .catch(() => null)
-    expect(provider.reportExternalTransmissionAttempted()).toBe(false)
+    // Nem o antigo reporter, nem o campo mutável que ele lia.
+    expect((provider as unknown as Record<string, unknown>).reportExternalTransmissionAttempted)
+      .toBeUndefined()
+    expect((provider as unknown as Record<string, unknown>).externalAttempted).toBeUndefined()
   })
-})
 
-describe("proveniência de rede é monotônica (segura sob reuso de instância)", () => {
-  it("uma tentativa externa registrada NUNCA é apagada por uma execução offline seguinte", async () => {
+  it("com o transporte offline, o coletor da execução não recebe nenhuma tentativa", async () => {
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const recordExternalTransmissionAttempted = vi.fn()
+    await provider
+      .transmit({
+        document: documento(),
+        exactBytes: BYTES,
+        bytesSha256: SHA,
+        provenance: { recordExternalTransmissionAttempted },
+      })
+      .catch(() => null)
+    expect(recordExternalTransmissionAttempted).not.toHaveBeenCalled()
+  })
+
+  it("a tentativa é reportada ao coletor DAQUELA execução, e a instância nada retém", async () => {
     /**
-     * Instâncias podem ser reaproveitadas entre jobs num worker pool. Se a flag fosse
-     * reatribuída a cada chamada, uma execução que não alcançou a rede poderia sobrescrever
-     * com `false` o registro de uma transmissão que de fato ocorreu — sub-reportar
-     * transmissão é o erro caro (leva a retransmitir documento já enviado).
+     * Instâncias podem ser reaproveitadas entre jobs num worker pool. Antes, o registro vivia
+     * num campo monotônico do provider, de modo que o job B lia o `true` do job A. Agora cada
+     * execução traz o próprio coletor: a que alcançou a rede registra, a seguinte não herda.
      */
     const transporteQueTentou: SefazTransport = {
       permiteRede: true,
@@ -147,7 +185,7 @@ describe("proveniência de rede é monotônica (segura sob reuso de instância)"
         ok: false as const,
         codigo: "transporte_destino_recusado" as const,
         mensagem: "falhou depois de tentar",
-        externalTransmissionAttempted: false as const,
+        externalTransmissionAttempted: true,
       })),
     }
     const provider = new SefazDiretoProvider({
@@ -155,14 +193,34 @@ describe("proveniência de rede é monotônica (segura sob reuso de instância)"
       transport: transporteQueTentou,
     })
 
-    // Simula o registro de uma tentativa externa real e confirma que ela é preservada
-    // após uma execução subsequente cujo transporte não alcançou a rede.
-    ;(provider as unknown as { externalAttempted: boolean }).externalAttempted = true
-    await provider
-      .transmit({ document: documento(), exactBytes: BYTES, bytesSha256: SHA })
-      .catch(() => undefined)
+    const coletorA = { recordExternalTransmissionAttempted: vi.fn() }
+    const erroA = await provider
+      .transmit({ document: documento(), exactBytes: BYTES, bytesSha256: SHA, provenance: coletorA })
+      .catch((e: unknown) => e)
+    expect(coletorA.recordExternalTransmissionAttempted).toHaveBeenCalledTimes(1)
+    expect((erroA as SefazAdapterBlockedError).externalTransmissionAttempted).toBe(true)
 
-    expect(provider.reportExternalTransmissionAttempted()).toBe(true)
+    // MESMA instância, transporte que não alcança a rede: o novo coletor fica limpo.
+    const offline = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const coletorB = { recordExternalTransmissionAttempted: vi.fn() }
+    const erroB = await offline
+      .transmit({ document: documento(), exactBytes: BYTES, bytesSha256: SHA, provenance: coletorB })
+      .catch((e: unknown) => e)
+    expect(coletorB.recordExternalTransmissionAttempted).not.toHaveBeenCalled()
+    expect((erroB as SefazAdapterBlockedError).externalTransmissionAttempted).toBe(false)
+  })
+
+  it("o transporte DEFAULT do slice sempre reporta ausência de tentativa externa", async () => {
+    const { sefazOfflineRefusingTransport } = await import("./sefaz-transport.types")
+    const outcome = await sefazOfflineRefusingTransport.send({
+      endpoint: { url: "https://exemplo.invalido", servico: "NFeAutorizacao4" } as never,
+      contentType: "application/soap+xml; charset=utf-8",
+      bodyBytes: new Uint8Array(),
+      correlationId: "corr",
+      timeoutMs: 1,
+    })
+    expect(outcome.externalTransmissionAttempted).toBe(false)
+    expect(sefazOfflineRefusingTransport.permiteRede).toBe(false)
   })
 })
 
@@ -334,7 +392,7 @@ describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
 })
 
 describe("coordenador bloqueia o provider real ANTES de transmit (ADR-0017 · F-1)", () => {
-  it("provider não simulado ⇒ REAL_PROVIDER_BLOCKED, sem tocar persistência nem preparer", async () => {
+  it("sem capability explícita, o adapter real não alcança transmit", async () => {
     const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
     const transmitSpy = vi.spyOn(provider, "transmit")
 
@@ -355,7 +413,7 @@ describe("coordenador bloqueia o provider real ANTES de transmit (ADR-0017 · F-
       provider,
     })
 
-    expect(outcome).toMatchObject({ kind: "blocked", code: "REAL_PROVIDER_BLOCKED" })
+    expect(outcome).toMatchObject({ kind: "blocked", code: "EXTERNAL_EXECUTION_NOT_AUTHORIZED" })
     expect(transmitSpy).not.toHaveBeenCalled()
     expect(persistence.load).not.toHaveBeenCalled()
     expect(preparer.prepare).not.toHaveBeenCalled()
@@ -365,6 +423,47 @@ describe("coordenador bloqueia o provider real ANTES de transmit (ADR-0017 · F-
     const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
     expect(provider.simulado).toBe(false)
     expect(provider.tipo).toBe(FiscalProviderTipo.SEFAZ_DIRETO)
+  })
+
+  it("MENTIR em `simulado` não concede autorização ao adapter real", async () => {
+    /**
+     * A prova central do bloqueio 2. Sob a mecânica antiga (`if (!provider.simulado)`), forçar
+     * `simulado = true` neste adapter bastava para atravessar o coordenador e chegar a
+     * `transmit`. Agora o rótulo é inerte: falta a marca estrutural de "somente memória".
+     */
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    Object.defineProperty(provider, "simulado", { value: true, configurable: true })
+    expect(provider.simulado).toBe(true)
+
+    const transmitSpy = vi.spyOn(provider, "transmit")
+    const persistence = {
+      load: vi.fn(),
+      persistBeforeTransmission: vi.fn(),
+      recordUncertainAndEnsureConsultation: vi.fn(),
+      markAuthorized: vi.fn(),
+      markRejected: vi.fn(),
+      authorizeExactRetransmission: vi.fn(),
+    } as unknown as UncertainStatePersistence
+
+    const outcome = await transmitWithUncertainStateSafety({
+      locator: { storeId: LOJA_PILOTO, vendaId: "venda-1", notaFiscalId: "nota-1" },
+      persistence,
+      preparer: { prepare: vi.fn() } as unknown as FinalizedDocumentPreparer,
+      provider,
+    })
+
+    expect(outcome).toMatchObject({ kind: "blocked", code: "EXTERNAL_EXECUTION_NOT_AUTHORIZED" })
+    expect(transmitSpy).not.toHaveBeenCalled()
+  })
+
+  it("o adapter NÃO carrega a marca de provider somente-memória", async () => {
+    const { IN_MEMORY_ONLY_FISCAL_PROVIDER } = await import(
+      "@/lib/fiscal/emission/uncertain-state.types"
+    )
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    expect(
+      (provider as unknown as Record<symbol, unknown>)[IN_MEMORY_ONLY_FISCAL_PROVIDER],
+    ).toBeUndefined()
   })
 })
 
@@ -419,7 +518,7 @@ describe("fiação real de ponta a ponta pelo executor da fila", () => {
     })
 
     expect(resultado.kind).toBe("terminal")
-    expect(resultado.code).toBe("real_provider_blocked")
+    expect(resultado.code).toBe("external_execution_not_authorized")
     // O provider real nunca é invocado, e a trilha registra isso honestamente.
     expect(transmitSpy).not.toHaveBeenCalled()
     expect(resultado.externalTransmissionAttempted).toBe(false)

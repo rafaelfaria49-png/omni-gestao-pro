@@ -894,9 +894,11 @@ graph LR
 > fiscais preservados por concatenação**, e transporte **injetável** cujo default recusa sem
 > abrir socket. `uf`/`correlationId` entram de forma **aditiva** e o adapter bloqueia quando
 > ausentes. `simulado` passou a `boolean` (F-1: rótulo de trilha, nunca controle) — o adapter
-> se declara **não simulado** e o coordenador o bloqueia com `REAL_PROVIDER_BLOCKED` antes de
-> `transmit`. F-2 fechado: `simulado`/`externalTransmissionAttempted` **derivam** de
-> proveniência tipada; nenhum caminho deste slice produz tentativa externa. `SEFAZ_DIRETO`
+> se declara **não simulado** e o coordenador o bloqueia antes de `transmit` (⚠️ o código de
+> bloqueio virou `EXTERNAL_EXECUTION_NOT_AUTHORIZED` na **correção 002** abaixo, que removeu a
+> dependência de `simulado`). F-2 fechado: `simulado`/`externalTransmissionAttempted`
+> **derivam** de proveniência tipada; nenhum caminho deste slice produz tentativa externa.
+> `SEFAZ_DIRETO`
 > **continua fora do `REGISTRY`** de P1 (teste permanente). Dormente: zero caller produtivo,
 > zero rede, zero segredo. Matriz de `cStat`, `PROCESSING` e `THROTTLED` seguem no **016D-B**.
 >
@@ -910,16 +912,86 @@ graph LR
 > | # | Sev. | Achado | Correção |
 > |---|---|---|---|
 > | 1 | MAJOR | `readTpAmbFromSignedXml` pegava a **primeira** ocorrência: um `<tpAmb>2</tpAmb>` em comentário/CDATA mascararia um `tpAmb` real `1` (produção) | Comentários e CDATA removidos da cópia antes da busca; valor só aceito com **exatamente uma** ocorrência — ambiguidade bloqueia |
-> | 2 | MAJOR | Proveniência de rede em estado mutável de instância: sob reuso concorrente, uma execução offline podia **apagar** o registro de uma transmissão real (sub-reporte) | Flag tornada **monotônica** — sobe para `true` e nunca volta; escolhe o lado seguro da assimetria |
+> | 2 | MAJOR | Proveniência de rede em estado mutável de instância: sob reuso concorrente, uma execução offline podia **apagar** o registro de uma transmissão real (sub-reporte) | Flag tornada **monotônica** — ⚠️ **superada pela correção 002 (bloqueio 3)**: a monotonicidade continuava respondendo pela *instância*, não pela *execução*, e sobre-reportava. Hoje a proveniência é escopada por execução |
 > | 3 | MINOR | Barreira estrutural do catálogo (`endpoint_invalido`) sem cobertura — passaria por `return true` | `sefazEndpointIntegro` exportada e exercitada com oito entradas malformadas |
 > | 4 | MINOR | Nenhum teste ligava o adapter real ao executor real de fila | Teste ponta a ponta: `real_provider_blocked`, `transmit` nunca chamado, zero efeito colateral |
 > | 5 | NIT | `throw` inalcançável após `Promise<never>` sem intenção documentada | Comentado como código morto **intencional**, com o ponto de extensão de 016D-B/C |
 > | 6 | NIT | Casts `as never`/`as unknown as` — **somente em teste**, para simular entrada inválida | Aceito; zero cast inseguro em código de produção |
 >
-> ⚠️ **Herdado para o 016D-C:** `SefazTransportOutcome.externalTransmissionAttempted` e
-> `SefazAdapterBlockedError.externalTransmissionAttempted` são o literal `false`; ao existir
-> transporte com rede, ambos precisam ser alargados para `boolean` e o caminho de sucesso
-> genuíno precisa ser construído em `transmit`/`consult` (hoje `Promise<never>`).
+> ⚠️ **Herdado para o 016D-C:** o caminho de sucesso genuíno ainda precisa ser construído em
+> `transmit`/`consult` (hoje `Promise<never>`).
+>
+> ---
+>
+> #### Correção 002 — bloqueios da revisão cruzada do PR #41
+>
+> ✅ **Aplicada** (2026-08-05, GOAL `FISCAL-PR41-CROSS-FAMILY-BLOCKERS-CORRECTION-002`, mesma
+> branch). A revisão cruzada apontou **três bloqueios**; os três eram reais e foram corrigidos.
+>
+> **Bloqueio 1 — envelope XML mal-formado.** O envelope trazia declaração XML e os `exactBytes`
+> de teste também. Diagnóstico do produtor canônico: `serializeXmlDocument`
+> ([`lib/fiscal/xml/xml-writer.ts`](../../lib/fiscal/xml/xml-writer.ts)) emite
+> `<?xml version="1.0" encoding="UTF-8"?>` **por default**, `omitDeclaration` **não tem nenhum
+> caller** no repositório, e `signNfceXmlDetailed` preserva a string verbatim — logo o
+> `xmlAssinado` de produção **carrega declaração**. Como removê-la no adapter alteraria bytes
+> já persistidos e conferidos por hash (ADR-0017/0018) e quebraria a assinatura XMLDSig, o
+> adapter **recusa** com código estável em vez de "consertar". Regra fail-closed: UTF-8 estrito
+> obrigatório · BOM proibido · declaração XML embutida proibida · exatamente **um** elemento
+> embutível · envelope completo verificado como XML bem-formado. 🟥 **Bloqueio de contrato
+> registrado:** enquanto o produtor emitir declaração, o caminho real de emissão será recusado
+> em `bytes_fiscais_com_declaracao_xml`; corrigir o produtor exige GOAL e autorização próprios.
+>
+> > 🔍 **Achado colateral relevante.** `@xmldom/xmldom` (0.8.x) **não é um parser validador**:
+> > aceita silenciosamente um `<?xml ?>` embutido (vira PI de alvo reservado `xml`, ilegal por
+> > XML 1.0 §2.6/§2.8) sem erro nem warning, e **repara** tags desbalanceadas reescrevendo o
+> > documento. Portanto a recusa da declaração **não pode ser delegada ao parser** — nem à
+> > contagem de elementos, já que PI não é elemento. O guard textual é o que de fato bloqueia.
+>
+> **Bloqueio 2 — `simulado` não pode autorizar nem bloquear.** Removido o acoplamento
+> `if (!provider.simulado) → REAL_PROVIDER_BLOCKED`, que punha a autorização num rótulo
+> autodeclarado: um provider real que mentisse `simulado: true` era **autorizado**, e um stub
+> honesto que se declarasse real era barrado. No lugar, gate explícito e **fail-closed**:
+> `FiscalExternalExecutionCapability` injetada por execução, que **nasce negada**
+> (`EXTERNAL_EXECUTION_DENIED`); dispensa apenas quem carrega a marca estrutural
+> `IN_MEMORY_ONLY_FISCAL_PROVIDER`, controlada por símbolo de módulo. Novo código de bloqueio:
+> `EXTERNAL_EXECUTION_NOT_AUTHORIZED`. Nenhum caller deste PR recebe autorização; o desbloqueio
+> pertence ao **016D-D**. `simulado` permanece **apenas** como rótulo de trilha.
+>
+> **Bloqueio 3 — proveniência por execução.** A monotonicidade adotada na primeira rodada
+> respondia "alguma execução **desta instância** já tentou rede?", que não é a pergunta da
+> auditoria. Substituída por coletor **escopado por execução** (closure criada por chamada,
+> repassada ao provider em `transmit`/`consult`): dois jobs concorrentes na mesma instância não
+> compartilham estado, uma execução que reporta `true` não contamina a seguinte, o atalho
+> idempotente permanece não-invocado, e **o erro propagado carrega a proveniência daquela
+> tentativa** (`fiscalExecutionProvenanceOf`). `SefazTransportOutcome`/`SefazAdapterBlockedError`
+> passaram de literal `false` a `boolean` — um canal incapaz de exprimir `true` seria o próprio
+> F-2 reescrito no sistema de tipos; o `false` do slice vem de o **único** transporte existente
+> recusar antes de abrir socket, não do tipo.
+>
+> **Efeito colateral honesto:** `consult` deixou de "chegar ao transporte" com bytes vazios e
+> passa a recusar em `consulta_sem_payload_neste_slice` — o construtor de `consSitNFe` pertence
+> ao 016D-B, e envelopar vazio produziria requisição sem conteúdo fiscal. Os guards D4 seguem
+> rodando **antes** dessa recusa.
+>
+> **Validação:** **681** testes de `lib/fiscal` verdes · `typecheck` limpo · ESLint limpo ·
+> `git diff --check` limpo · `npm run build` com `MIGRATION_SKIPPED`. Cada fix foi validado por
+> **mutação** — revertê-lo quebra exatamente os testes que o cobrem (3, 3, 5 e 5).
+>
+> 🟥 **BLOCKER encontrado na revisão independente desta correção — e corrigido.** O guard de
+> declaração nasceu ancorado (`/^\s*<\?xml/i`) e **falhava ABERTA** sob entrada adversarial:
+> bastava um decoy antes da declaração (`<!--x--><?xml …?><NFe/>`) ou aninhá-la dentro do
+> elemento raiz (`<NFe><?xml …?><infNFe/></NFe>`) para atravessar. As outras duas defesas não
+> compensavam — o parser aceita a PI em silêncio e `childElements` não conta PI nem comentário,
+> de modo que "exatamente um elemento filho" seguia verdadeiro. Reproduzido por PoC executando
+> o código real antes de corrigir. Busca agora **não ancorada**, com cinco chamarizes cobertos
+> por teste. **Terceira ocorrência da mesma família** (após o chamariz de `tpAmb` e o
+> `Invalid Date` do 016D-A0): verificação que parece fail-closed mas falha aberta na entrada
+> adversarial — sinal de que checagem de segurança ancorada/posicional deve ser tratada como
+> suspeita por padrão neste código.
+>
+> Achado MINOR da mesma revisão também aplicado: `runConsultation` avaliava
+> `assertPersistedDocument` **antes** do gate de autorização; ordem invertida para espelhar
+> `runTransmission` — execução não autorizada não revela sequer se o documento existe.
 
 | | |
 |---|---|

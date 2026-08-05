@@ -11,9 +11,10 @@
  *    incapaz de alcançar este adapter, por construção.
  *
  * Garantias mecânicas deste slice:
- *  - `simulado = false` — declaração **honesta**. Consequência desejada: o coordenador
- *    (`transmitWithUncertainStateSafety`) bloqueia este provider com `REAL_PROVIDER_BLOCKED`
- *    **antes** de chamar `transmit`. `simulado` é rótulo de trilha, nunca controle (F-1).
+ *  - Ausência da marca `IN_MEMORY_ONLY_FISCAL_PROVIDER` ⇒ o coordenador o classifica como
+ *    EXTERNO e exige capability de execução, que no 016D-A nasce negada ⇒ bloqueio com
+ *    `EXTERNAL_EXECUTION_NOT_AUTHORIZED` **antes** de `transmit`. `simulado = false` é
+ *    declaração honesta e puramente de trilha: não bloqueia nem autoriza nada (F-1).
  *  - Zero import de cliente HTTP (`fetch`/`undici`/`axios`/`node:http`/`https`/`net`/`tls`).
  *  - Zero leitura de material do cofre: o certificado entra apenas como REFERÊNCIA opaca,
  *    via resolver 016D-A0.
@@ -26,6 +27,7 @@
 import { AmbienteFiscal, FiscalProviderTipo } from "@/generated/prisma"
 import type {
   FiscalConsultationResult,
+  FiscalExecutionProvenanceSink,
   FiscalTransmissionResult,
   UncertainStateFiscalProvider,
 } from "@/lib/fiscal/emission/uncertain-state.types"
@@ -43,7 +45,7 @@ import type {
   FiscalProviderStatus,
   FiscalProviderStatusParams,
 } from "../types"
-import { buildSefazSoap12Envelope } from "./sefaz-envelope"
+import { buildSefazSoap12Envelope, type SefazEnvelopeRejectionCode } from "./sefaz-envelope"
 import {
   runSefazPreTransportGuards,
   type SefazGuardCode,
@@ -62,7 +64,18 @@ const PROVIDER = FiscalProviderTipo.SEFAZ_DIRETO
 /** Timeout de conexão do piloto (D5). Sem efeito enquanto o transporte for offline. */
 export const SEFAZ_DEFAULT_TIMEOUT_MS = 15_000
 
-export type SefazAdapterBlockCode = SefazGuardCode | SefazTransportErrorCode
+/**
+ * Consulta ainda não possui construtor de payload (`consSitNFe` pertence ao 016D-B). Recusar
+ * é a única saída honesta: envelopar bytes vazios produziria uma requisição sem conteúdo
+ * fiscal, e fabricar o payload seria implementar o slice seguinte por antecipação.
+ */
+export type SefazAdapterProviderCode = "consulta_sem_payload_neste_slice"
+
+export type SefazAdapterBlockCode =
+  | SefazGuardCode
+  | SefazTransportErrorCode
+  | SefazEnvelopeRejectionCode
+  | SefazAdapterProviderCode
 
 /**
  * Erro de domínio estável do adapter. Existe para que um bloqueio NUNCA possa ser confundido
@@ -70,14 +83,22 @@ export type SefazAdapterBlockCode = SefazGuardCode | SefazTransportErrorCode
  */
 export class SefazAdapterBlockedError extends Error {
   readonly codigo: SefazAdapterBlockCode
-  /** Sempre `false` neste slice: nenhum contato externo é iniciado. */
-  readonly externalTransmissionAttempted: false
+  /**
+   * Proveniência DESTA falha. `boolean`, não o literal `false`: um bloqueio que ocorra depois
+   * de o transporte ter alcançado a rede precisa poder dizê-lo. Todo caminho deste slice
+   * produz `false` porque nenhum transporte existente abre socket.
+   */
+  readonly externalTransmissionAttempted: boolean
 
-  constructor(codigo: SefazAdapterBlockCode, mensagem: string) {
+  constructor(
+    codigo: SefazAdapterBlockCode,
+    mensagem: string,
+    externalTransmissionAttempted = false,
+  ) {
     super(mensagem)
     this.name = "SefazAdapterBlockedError"
     this.codigo = codigo
-    this.externalTransmissionAttempted = false
+    this.externalTransmissionAttempted = externalTransmissionAttempted
   }
 }
 
@@ -131,18 +152,6 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
   private readonly ports: SefazGuardPorts
   private readonly transport: SefazTransport
   private readonly timeoutMs: number
-  /**
-   * Proveniência de rede desta INSTÂNCIA: "algum transporte já iniciou contato externo?".
-   *
-   * Deliberadamente **monotônica** (só sobe de `false` para `true`, nunca volta). Se uma
-   * instância for reaproveitada entre jobs concorrentes — plausível num worker pool de fila —
-   * uma flag reatribuída a cada chamada permitiria que a execução A lesse o `false` recém
-   * escrito pela execução B e registrasse "nenhum contato externo" para uma transmissão que
-   * de fato ocorreu. Sub-reportar transmissão é o erro caro numa trilha fiscal (leva a
-   * retransmitir documento já enviado); sobre-reportar apenas provoca uma consulta a mais.
-   * A monotonicidade escolhe conscientemente o lado seguro dessa assimetria.
-   */
-  private externalAttempted = false
 
   constructor(options: SefazDiretoProviderOptions) {
     this.ports = options.ports
@@ -150,8 +159,14 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     this.timeoutMs = options.timeoutMs ?? SEFAZ_DEFAULT_TIMEOUT_MS
   }
 
-  /** Proveniência tipada consumida pela trilha de auditoria da fila (F-2). */
-  readonly reportExternalTransmissionAttempted = (): boolean => this.externalAttempted
+  /**
+   * ⚠️ Este provider NÃO carrega `IN_MEMORY_ONLY_FISCAL_PROVIDER`. É essa ausência — e não
+   * `simulado` — que faz o coordenador exigir capability de execução externa e bloqueá-lo.
+   *
+   * Também não guarda proveniência de rede em campo de instância (correção 002 · bloqueio 3):
+   * o registro vai para o coletor DA EXECUÇÃO, recebido em cada chamada. Uma instância
+   * reaproveitada num worker pool não tem, portanto, estado a vazar de um job para outro.
+   */
 
   // ── P2 — superfície de transmissão (ADR-0017/0020) ────────────────────────────────────
 
@@ -167,6 +182,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       exactBytes: input.exactBytes,
       bytesSha256: input.bytesSha256,
       servico: "NFeAutorizacao4",
+      provenance: input.provenance,
     })
     // Código morto INTENCIONAL: `executarAteOTransporte` devolve `Promise<never>` e sempre
     // lança. Este `throw` existe apenas para satisfazer a assinatura `FiscalTransmissionResult`
@@ -185,15 +201,26 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
   async consult(
     input: Parameters<UncertainStateFiscalProvider["consult"]>[0],
   ): Promise<FiscalConsultationResult> {
-    await this.executarAteOTransporte({
+    // Guards D4 primeiro: a recusa por falta de payload nunca pode mascarar um documento fora
+    // do piloto, de ambiente errado ou sem certificado.
+    const guards = await runSefazPreTransportGuards({
       document: input.document,
       servico: "NFeConsultaProtocolo4",
+      ports: this.ports,
       modo: "consulta",
     })
-    // Código morto INTENCIONAL — mesma razão de `transmit` acima.
+    if (!guards.ok) {
+      throw new SefazAdapterBlockedError(guards.codigo, guards.mensagem)
+    }
+    /**
+     * Sem construtor de `consSitNFe` (016D-B), não existem bytes fiscais a envelopar. Envelopar
+     * vazio produziria `<nfeDadosMsg/>` — uma requisição sem conteúdo — e fabricar o payload
+     * seria antecipar o slice seguinte. A recusa é o desfecho honesto; nenhum socket é aberto
+     * em nenhum dos casos.
+     */
     throw new SefazAdapterBlockedError(
-      "transporte_offline_bloqueado",
-      "Consulta SEFAZ indisponível no slice offline 016D-A.",
+      "consulta_sem_payload_neste_slice",
+      "Consulta SEFAZ indisponível no slice offline 016D-A: o payload consSitNFe pertence ao 016D-B.",
     )
   }
 
@@ -207,6 +234,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     bytesSha256?: string
     servico: SefazServico
     modo?: SefazGuardMode
+    provenance?: FiscalExecutionProvenanceSink
   }): Promise<never> {
     const guards = await runSefazPreTransportGuards({
       document: input.document,
@@ -220,22 +248,33 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       throw new SefazAdapterBlockedError(guards.codigo, guards.mensagem)
     }
 
+    // Envelope fail-closed: bytes com BOM, não-UTF8 ou com declaração XML são RECUSADOS,
+    // nunca "consertados" — consertar mudaria os bytes persistidos (ADR-0017/0018).
     const envelope = buildSefazSoap12Envelope({
       servico: input.servico,
       exactBytes: input.exactBytes ?? new Uint8Array(),
     })
+    if (!envelope.ok) {
+      throw new SefazAdapterBlockedError(envelope.codigo, envelope.mensagem)
+    }
+
     const outcome = await this.transport.send({
       endpoint: guards.endpoint,
-      contentType: envelope.contentType,
-      bodyBytes: envelope.bytes,
+      contentType: envelope.envelope.contentType,
+      bodyBytes: envelope.envelope.bytes,
       correlationId: guards.correlationId,
       timeoutMs: this.timeoutMs,
     })
-    // Proveniência derivada do que o transporte REALMENTE fez (nunca literal), e acumulada
-    // de forma monotônica — uma tentativa externa registrada jamais é apagada por uma
-    // execução posterior que não tenha alcançado a rede.
-    this.externalAttempted = this.externalAttempted || outcome.externalTransmissionAttempted
-    throw new SefazAdapterBlockedError(outcome.codigo, outcome.mensagem)
+    // Proveniência derivada do que o transporte REALMENTE fez, registrada no coletor DESTA
+    // execução. Sem estado de instância: nada sobrevive para contaminar o próximo job.
+    if (outcome.externalTransmissionAttempted) {
+      input.provenance?.recordExternalTransmissionAttempted()
+    }
+    throw new SefazAdapterBlockedError(
+      outcome.codigo,
+      outcome.mensagem,
+      outcome.externalTransmissionAttempted,
+    )
   }
 
   // ── P1 — configuração e status por instanciação direta (ADR-0020 §2.4) ────────────────

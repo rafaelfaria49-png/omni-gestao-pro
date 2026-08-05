@@ -34,9 +34,15 @@ export type SefazTransportOutcome = {
   readonly mensagem: string
   /**
    * Proveniência honesta: `true` SOMENTE se um socket/requisição externa foi realmente
-   * iniciado. O transporte offline sempre reporta `false` — e nada neste slice produz `true`.
+   * iniciado.
+   *
+   * O tipo é `boolean`, não o literal `false` (correção 002 · bloqueio 3): um canal incapaz de
+   * exprimir `true` seria o próprio bug F-2 reescrito no sistema de tipos — a trilha jamais
+   * poderia registrar uma transmissão que ocorreu. O que garante o `false` neste slice não é o
+   * tipo, é o fato de que o ÚNICO transporte existente recusa antes de abrir socket; há teste
+   * dedicado para isso.
    */
-  readonly externalTransmissionAttempted: false
+  readonly externalTransmissionAttempted: boolean
 }
 
 export interface SefazTransport {
@@ -65,7 +71,8 @@ export class SefazOfflineRefusingTransport implements SefazTransport {
       ok: false,
       codigo: "transporte_offline_bloqueado",
       mensagem: MENSAGEM_OFFLINE,
-      externalTransmissionAttempted: false,
+      // Literal `false` nesta implementação: nenhum socket é aberto, então não há tentativa.
+      externalTransmissionAttempted: false as const,
     }
   }
 }

@@ -7,11 +7,12 @@ import {
   reconcileUncertainDocument,
   transmitWithUncertainStateSafety,
 } from "./uncertain-state-coordinator"
-import type {
-  FinalizedDocumentPreparer,
-  FiscalExecutionProvenance,
-  UncertainStateFiscalProvider,
-  UncertainStatePersistence,
+import {
+  PROVIDER_NOT_INVOKED_PROVENANCE,
+  type FinalizedDocumentPreparer,
+  type FiscalExecutionProvenance,
+  type UncertainStateFiscalProvider,
+  type UncertainStatePersistence,
 } from "./uncertain-state.types"
 
 export type UncertainStateJobExecutorDependencies = {
@@ -26,26 +27,19 @@ export type UncertainStateJobExecutorDependencies = {
  *
  * Antes, os sete retornos deste executor traziam `simulado: true` e
  * `externalTransmissionAttempted: false` como LITERAIS — o que passaria a mentir assim que
- * houvesse transmissão real. Agora:
+ * houvesse transmissão real. Agora ambos derivam da proveniência que o coordenador coletou
+ * **naquela execução** (correção 002 · bloqueio 3): o executor não pergunta nada ao provider,
+ * justamente para não poder ler resíduo de outra execução da mesma instância.
  *
  *  - `externalTransmissionAttempted` só é `true` se um transporte REALMENTE tentou contato
- *    externo. Bloqueio antes do transporte ⇒ `false`, sempre (nenhum caminho deste slice
- *    produz `true`: o único transporte existente é o offline que recusa).
+ *    externo NESTA execução. Bloqueio antes do transporte ⇒ `false`.
  *  - `simulado` reflete o provider que de fato executou. Quando o provider sequer é
- *    invocado (bloqueio do coordenador, job inválido, tipo não suportado), nenhuma emissão
- *    — real ou simulada — aconteceu, e a execução é reportada como não-real (`true`).
+ *    invocado (gate, job inválido, tipo não suportado), nenhuma emissão — real ou simulada —
+ *    aconteceu, e a execução é reportada como não-real (`true`).
  */
-export function deriveExecutionAuditFlags(input: {
-  provider: UncertainStateFiscalProvider
-  providerInvoked: boolean
-}): Pick<FiscalQueueExecutionResult, "simulado" | "externalTransmissionAttempted"> {
-  const provenance: FiscalExecutionProvenance = {
-    providerInvoked: input.providerInvoked,
-    providerSimulado: input.provider.simulado,
-    externalTransmissionAttempted: input.providerInvoked
-      ? (input.provider.reportExternalTransmissionAttempted?.() ?? false)
-      : false,
-  }
+export function auditFlagsFromProvenance(
+  provenance: FiscalExecutionProvenance,
+): Pick<FiscalQueueExecutionResult, "simulado" | "externalTransmissionAttempted"> {
   return {
     simulado: provenance.providerInvoked ? provenance.providerSimulado : true,
     externalTransmissionAttempted: provenance.externalTransmissionAttempted,
@@ -57,10 +51,7 @@ export function createUncertainStateJobExecutor(
 ): (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult> {
   return async (job) => {
     /** Proveniência: o provider NÃO foi invocado até que uma chamada real aconteça. */
-    const naoInvocado = deriveExecutionAuditFlags({
-      provider: dependencies.provider,
-      providerInvoked: false,
-    })
+    const naoInvocado = auditFlagsFromProvenance(PROVIDER_NOT_INVOKED_PROVENANCE)
     if (!job.notaFiscalId) {
       return {
         kind: "terminal",
@@ -81,7 +72,7 @@ export function createUncertainStateJobExecutor(
         provider: dependencies.provider,
         now: dependencies.now?.(),
       })
-      // A consulta só retorna se `provider.consult` foi de fato chamado.
+      // Proveniência coletada pelo coordenador NESTA consulta.
       return {
         kind: "success",
         code: `consulta_${outcome.kind}`,
@@ -89,7 +80,7 @@ export function createUncertainStateJobExecutor(
           outcome.kind === "not_found"
             ? "Consulta não encontrou a nota; uma retransmissão exata foi autorizada."
             : `Consulta resolveu o documento como ${outcome.kind}.`,
-        ...deriveExecutionAuditFlags({ provider: dependencies.provider, providerInvoked: true }),
+        ...auditFlagsFromProvenance(outcome.provenance),
         detalhe: {
           consultationOutcome:
             outcome.kind === "not_found"
@@ -130,20 +121,16 @@ export function createUncertainStateJobExecutor(
         kind: "terminal",
         code: outcome.code.toLowerCase(),
         mensagem: outcome.message,
-        ...naoInvocado,
+        ...auditFlagsFromProvenance(outcome.provenance),
       }
     }
     /**
-     * Proveniência derivada do DESFECHO, não da posição no fluxo: o coordenador devolve
-     * `authorized` com `idempotent: true` num atalho que retorna ANTES de chamar
-     * `provider.transmit` (documento já AUTORIZADA). Tratar esse caso como invocado
-     * reintroduziria exatamente a mentira de trilha que F-2 existe para eliminar.
+     * Proveniência REGISTRADA pelo coordenador durante a execução, não inferida aqui. O
+     * atalho idempotente (documento já AUTORIZADA) retorna antes de `markProviderInvoked`,
+     * de modo que a trilha o descreve como não invocado sem que este executor precise
+     * adivinhar a posição no fluxo.
      */
-    const providerInvoked = !(outcome.kind === "authorized" && outcome.idempotent)
-    const invocado = deriveExecutionAuditFlags({
-      provider: dependencies.provider,
-      providerInvoked,
-    })
+    const invocado = auditFlagsFromProvenance(outcome.provenance)
     const detalhe = {
       document: {
         notaFiscalId: outcome.document.notaFiscalId,

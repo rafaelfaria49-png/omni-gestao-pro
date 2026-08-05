@@ -1,14 +1,97 @@
 import { createHash } from "node:crypto"
-import type {
-  ConsultationOutcome,
-  FinalizedFiscalDocument,
-  FiscalDocumentLocator,
-  PersistedFiscalDocument,
-  SafeEmissionOutcome,
-  UncertainStateFiscalProvider,
-  UncertainStatePersistence,
-  FinalizedDocumentPreparer,
+import {
+  EXTERNAL_EXECUTION_DENIED,
+  IN_MEMORY_ONLY_FISCAL_PROVIDER,
+  type ConsultationOutcome,
+  type ConsultationOutcomeKind,
+  type FinalizedFiscalDocument,
+  type FiscalDocumentLocator,
+  type FiscalExecutionProvenance,
+  type FiscalExecutionProvenanceSink,
+  type FiscalExternalExecutionCapability,
+  type PersistedFiscalDocument,
+  type SafeEmissionOutcome,
+  type SafeEmissionOutcomeKind,
+  type UncertainStateFiscalProvider,
+  type UncertainStatePersistence,
+  type FinalizedDocumentPreparer,
 } from "./uncertain-state.types"
+
+/**
+ * Coletor de proveniência de UMA execução (correção 002 · bloqueio 3).
+ *
+ * É uma closure criada por chamada: dois jobs concorrentes têm coletores distintos e não há
+ * campo de instância a contaminar. Nenhuma acumulação monotônica entre execuções.
+ */
+type ExecutionProvenanceRecorder = FiscalExecutionProvenanceSink & {
+  markProviderInvoked(simulado: boolean): void
+  snapshot(): FiscalExecutionProvenance
+}
+
+function createExecutionProvenanceRecorder(): ExecutionProvenanceRecorder {
+  let providerInvoked = false
+  let providerSimulado = false
+  let externalTransmissionAttempted = false
+  return {
+    markProviderInvoked(simulado: boolean) {
+      providerInvoked = true
+      providerSimulado = simulado
+    },
+    recordExternalTransmissionAttempted() {
+      externalTransmissionAttempted = true
+    },
+    snapshot() {
+      return { providerInvoked, providerSimulado, externalTransmissionAttempted }
+    },
+  }
+}
+
+/**
+ * Anexa a proveniência da execução ao erro propagado, preservando identidade e `instanceof`.
+ * Sem isso, uma execução que falhasse APÓS alcançar o transporte perderia o registro da
+ * tentativa — exatamente a lacuna de trilha que a proveniência existe para fechar.
+ */
+export function fiscalExecutionProvenanceOf(error: unknown): FiscalExecutionProvenance | null {
+  if (typeof error !== "object" || error === null) return null
+  const carried = (error as { fiscalExecutionProvenance?: FiscalExecutionProvenance })
+    .fiscalExecutionProvenance
+  return carried ?? null
+}
+
+function attachProvenance(error: unknown, provenance: FiscalExecutionProvenance): unknown {
+  if (typeof error === "object" && error !== null) {
+    Object.defineProperty(error, "fiscalExecutionProvenance", {
+      value: provenance,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+  }
+  return error
+}
+
+/**
+ * Gate de execução de provider EXTERNO (correção 002 · bloqueio 2).
+ *
+ * `simulado` NÃO participa desta decisão. Um provider é dispensado da capability apenas se
+ * carregar a marca estrutural `IN_MEMORY_ONLY_FISCAL_PROVIDER`; qualquer outro é tratado como
+ * externo e exige capability explicitamente concedida — que no 016D-A nasce negada.
+ */
+function externalExecutionBlock(
+  provider: UncertainStateFiscalProvider,
+  capability: FiscalExternalExecutionCapability | undefined,
+): Extract<SafeEmissionOutcomeKind, { kind: "blocked" }> | null {
+  if (provider[IN_MEMORY_ONLY_FISCAL_PROVIDER] === true) return null
+  const efetiva = capability ?? EXTERNAL_EXECUTION_DENIED
+  if (efetiva.allowExternalProviderExecution === true) return null
+  return {
+    kind: "blocked",
+    code: "EXTERNAL_EXECUTION_NOT_AUTHORIZED",
+    message:
+      "Execução de provider externo não autorizada: capability ausente ou negada " +
+      `(${efetiva.concedidaPor}).`,
+  }
+}
 
 export function fiscalXmlBytes(xmlAssinado: string): Uint8Array {
   return new TextEncoder().encode(xmlAssinado)
@@ -54,7 +137,7 @@ function persistedBytes(
 function assertPersistedDocument(
   locator: FiscalDocumentLocator,
   document: PersistedFiscalDocument,
-): Extract<SafeEmissionOutcome, { kind: "blocked" }> | null {
+): Extract<SafeEmissionOutcomeKind, { kind: "blocked" }> | null {
   if (!sameLocator(locator, document) || !validFiscalIdentity(document)) {
     return {
       kind: "blocked",
@@ -90,15 +173,25 @@ export async function transmitWithUncertainStateSafety(input: {
   provider: UncertainStateFiscalProvider
   now?: Date
   retryAuthorizedByConsultation?: boolean
+  /** Capability de execução externa. Ausente ⇒ negada (016D-A). */
+  capability?: FiscalExternalExecutionCapability
 }): Promise<SafeEmissionOutcome> {
-  const now = input.now ?? new Date()
-  if (!input.provider.simulado) {
-    return {
-      kind: "blocked",
-      code: "REAL_PROVIDER_BLOCKED",
-      message: "GOAL-012 permite somente provider stub/teste.",
-    }
+  const recorder = createExecutionProvenanceRecorder()
+  try {
+    const outcome = await runTransmission(input, recorder)
+    return { ...outcome, provenance: recorder.snapshot() }
+  } catch (error) {
+    throw attachProvenance(error, recorder.snapshot())
   }
+}
+
+async function runTransmission(
+  input: Parameters<typeof transmitWithUncertainStateSafety>[0],
+  recorder: ExecutionProvenanceRecorder,
+): Promise<SafeEmissionOutcomeKind> {
+  const now = input.now ?? new Date()
+  const naoAutorizado = externalExecutionBlock(input.provider, input.capability)
+  if (naoAutorizado) return naoAutorizado
 
   let document = await input.persistence.load(input.locator)
   if (document?.status === "AUTORIZADA") {
@@ -160,10 +253,14 @@ export async function transmitWithUncertainStateSafety(input: {
       message: "Bytes persistidos não puderam ser verificados.",
     }
   }
+  // A partir daqui o provider É invocado. O atalho idempotente acima retorna ANTES desta
+  // marcação — é por isso que a proveniência deriva do que foi executado, não da posição.
+  recorder.markProviderInvoked(input.provider.simulado)
   const result = await input.provider.transmit({
     document,
     exactBytes: exact.bytes,
     bytesSha256: exact.sha256,
+    provenance: recorder,
   })
   if (result.outcome === "AUTHORIZED") {
     await input.persistence.markAuthorized({
@@ -216,19 +313,36 @@ export async function reconcileUncertainDocument(input: {
   persistence: UncertainStatePersistence
   provider: UncertainStateFiscalProvider
   now?: Date
+  capability?: FiscalExternalExecutionCapability
 }): Promise<ConsultationOutcome> {
+  const recorder = createExecutionProvenanceRecorder()
+  try {
+    const outcome = await runConsultation(input, recorder)
+    return { ...outcome, provenance: recorder.snapshot() }
+  } catch (error) {
+    throw attachProvenance(error, recorder.snapshot())
+  }
+}
+
+async function runConsultation(
+  input: Parameters<typeof reconcileUncertainDocument>[0],
+  recorder: ExecutionProvenanceRecorder,
+): Promise<ConsultationOutcomeKind> {
   const now = input.now ?? new Date()
+  // Autorização PRIMEIRO, espelhando `runTransmission`: uma execução não autorizada não deve
+  // sequer revelar se o documento existe ou é válido.
+  const naoAutorizado = externalExecutionBlock(input.provider, input.capability)
+  if (naoAutorizado) throw new Error(naoAutorizado.message)
+
   const document = await input.persistence.load(input.locator)
   if (!document || document.status !== "TRANSMITINDO") {
     throw new Error("Consulta exige NotaFiscal TRANSMITINDO no mesmo storeId.")
   }
   const invalid = assertPersistedDocument(input.locator, document)
   if (invalid) throw new Error(invalid.message)
-  if (!input.provider.simulado) {
-    throw new Error("GOAL-012 bloqueia consulta por provider real.")
-  }
 
-  const result = await input.provider.consult({ document })
+  recorder.markProviderInvoked(input.provider.simulado)
+  const result = await input.provider.consult({ document, provenance: recorder })
   if (result.outcome === "AUTHORIZED") {
     await input.persistence.markAuthorized({
       document,
