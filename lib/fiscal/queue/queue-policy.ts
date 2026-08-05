@@ -108,7 +108,7 @@ export function withExecutionResult(
   input: {
     now: Date
     code: string
-    kind: "success" | "transient" | "terminal" | "uncertain"
+    kind: "success" | "transient" | "terminal" | "uncertain" | "throttled"
     externalTransmissionAttempted: boolean
     detalhe?: Record<string, unknown>
   },

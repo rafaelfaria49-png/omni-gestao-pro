@@ -73,6 +73,45 @@ export function createUncertainStateJobExecutor(
         now: dependencies.now?.(),
       })
       // Proveniência coletada pelo coordenador NESTA consulta.
+      const auditoria = auditFlagsFromProvenance(outcome.provenance)
+      /**
+       * `656` em consulta (D12.2): mesmo desfecho dedicado da transmissão. A consulta **não**
+       * reagenda a si mesma — insistir é o que agrava o consumo indevido.
+       */
+      if (outcome.kind === "throttled") {
+        return {
+          kind: "throttled",
+          code: "consulta_consumo_indevido",
+          mensagem: outcome.message,
+          ...auditoria,
+          detalhe: { consultationOutcome: "THROTTLED", cStat: outcome.cStat },
+        }
+      }
+      /** `103/105` em consulta: mesma consulta do mesmo recibo, jamais nova transmissão. */
+      if (outcome.kind === "processing") {
+        return {
+          kind: "uncertain",
+          code: "consulta_lote_em_processamento",
+          mensagem: outcome.message,
+          ...auditoria,
+          detalhe: {
+            consultationOutcome: "PROCESSING",
+            cStat: outcome.cStat,
+            recibo: outcome.recibo,
+            consultationJobId: outcome.consultationJobId,
+          },
+        }
+      }
+      /** Consulta que não resolveu nada: permanece incerta, sem autorizar retransmissão. */
+      if (outcome.kind === "uncertain") {
+        return {
+          kind: "uncertain",
+          code: "consulta_nao_conclusiva",
+          mensagem: outcome.message,
+          ...auditoria,
+          detalhe: { consultationOutcome: "UNCERTAIN", uncertainCode: outcome.code },
+        }
+      }
       return {
         kind: "success",
         code: `consulta_${outcome.kind}`,
@@ -80,7 +119,7 @@ export function createUncertainStateJobExecutor(
           outcome.kind === "not_found"
             ? "Consulta não encontrou a nota; uma retransmissão exata foi autorizada."
             : `Consulta resolveu o documento como ${outcome.kind}.`,
-        ...auditFlagsFromProvenance(outcome.provenance),
+        ...auditoria,
         detalhe: {
           consultationOutcome:
             outcome.kind === "not_found"
@@ -88,6 +127,9 @@ export function createUncertainStateJobExecutor(
               : outcome.kind === "authorized"
                 ? "AUTHORIZED"
                 : "REJECTED",
+          ...(outcome.kind === "rejected"
+            ? { requiresInutilizacao: outcome.requiresInutilizacao }
+            : {}),
         },
       }
     }
@@ -141,7 +183,42 @@ export function createUncertainStateJobExecutor(
         ambiente: outcome.document.ambiente,
         bytesSha256: outcome.bytesSha256,
       },
-      ...(outcome.kind === "rejected" ? { requiresInutilizacao: true } : {}),
+      // Decisão da matriz (016D-B), não mais o literal `true`: `110` é terminal e consome o
+      // número, porém NÃO pede inutilização.
+      ...(outcome.kind === "rejected"
+        ? { requiresInutilizacao: outcome.requiresInutilizacao }
+        : {}),
+    }
+    /**
+     * `cStat 656` (D12.2). ⛔ `kind: "throttled"` — não `terminal` (seria reprocessável),
+     * não `uncertain` (esperaria uma consulta proibida), não `transient` (faria retry).
+     */
+    if (outcome.kind === "throttled") {
+      return {
+        kind: "throttled",
+        code: "consumo_indevido_bloqueado",
+        mensagem: outcome.message,
+        ...invocado,
+        detalhe: { ...detalhe, cStat: outcome.cStat },
+      }
+    }
+    /**
+     * `cStat 103/105` (D12.1). Estaciona aguardando a consulta do MESMO recibo; a fila trata
+     * `uncertain` como "sem retransmissão até consulta", que é precisamente a regra do lote.
+     */
+    if (outcome.kind === "processing") {
+      return {
+        kind: "uncertain",
+        code: "lote_em_processamento",
+        mensagem: outcome.message,
+        ...invocado,
+        detalhe: {
+          ...detalhe,
+          cStat: outcome.cStat,
+          recibo: outcome.recibo,
+          consultationJobId: outcome.consultationJobId,
+        },
+      }
     }
     if (outcome.kind === "uncertain") {
       return {

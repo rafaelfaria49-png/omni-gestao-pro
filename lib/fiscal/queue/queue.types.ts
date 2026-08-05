@@ -55,8 +55,21 @@ export type FiscalQueuePauseSnapshot = {
   pausedStoreIds: string[]
 }
 
+/**
+ * Desfecho de execução de um job fiscal.
+ *
+ * ⚠️ `"throttled"` é um `kind` **dedicado** (GOAL-016D-B · D12.2 · F-5), e não um apelido de
+ * outro. Reaproveitar qualquer um dos três existentes produziria justamente o comportamento
+ * que o `cStat 656` proíbe:
+ *
+ * | `kind` | O que a fila faria | Por que é proibido |
+ * |---|---|---|
+ * | `transient` | retry com backoff | insistir é a causa documentada do `656` |
+ * | `uncertain` | estaciona esperando `CONSULTA` | a consulta que D12.2 proíbe criar ⇒ espera infinita |
+ * | `terminal` | vira `FALHA` | `FALHA` é reprocessável pela rota administrativa ⇒ retransmissão por operador |
+ */
 export type FiscalQueueExecutionResult = {
-  kind: "success" | "transient" | "terminal" | "uncertain"
+  kind: "success" | "transient" | "terminal" | "uncertain" | "throttled"
   code: string
   mensagem: string
   /** Sempre true no GOAL-011. Resultado false é bloqueado pelo worker. */
@@ -130,6 +143,37 @@ export type FiscalQueueWorkerPorts = {
     error: string
     payload: FiscalQueuePayload
   }) => Promise<boolean>
+  /**
+   * Persiste a **pausa da loja** após um `cStat 656` (D12.2).
+   *
+   * ⛔ Não é best-effort: precisa devolver `true` somente quando a pausa está gravada e será
+   * lida por `readPauseSnapshot`. É chamada **antes** de o lock do job ser liberado, para que
+   * nunca exista uma janela em que o job já esteja solto e a loja ainda ativa.
+   *
+   * Porta ausente ⇒ a fila não tem como parar a loja e falha fechada: o job **não** é
+   * liberado. Nenhum `auto-unpause` existe — a retomada é humana.
+   */
+  pauseStoreForThrottling?: (input: {
+    job: FiscalQueueJob
+    workerId: string
+    now: Date
+    cStat: string
+    reason: string
+  }) => Promise<boolean>
+  /**
+   * Estaciona o job estrangulado **sem retry e sem consulta**.
+   *
+   * Distinta de `waitForConsultation` de propósito: aquela existe para desfechos que aguardam
+   * uma `CONSULTA` que D12.2 proíbe criar. Ter portas separadas é o que torna verificável, por
+   * teste, que um `656` nunca percorre o caminho da incerteza.
+   */
+  parkThrottled?: (input: {
+    job: FiscalQueueJob
+    workerId: string
+    now: Date
+    error: string
+    payload: FiscalQueuePayload
+  }) => Promise<boolean>
   execute: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>
   audit: (event: FiscalQueueAuditEvent) => Promise<void>
 }
@@ -147,7 +191,16 @@ export type DrainFiscalQueueInput = {
 export type DrainFiscalQueueItemResult = {
   jobId: string
   storeId: string
-  status: "concluido" | "retry" | "consulta" | "falha" | "lock_perdido"
+  status:
+    | "concluido"
+    | "retry"
+    | "consulta"
+    | "falha"
+    | "lock_perdido"
+    /** `656`: loja pausada e job estacionado sem retry nem consulta. */
+    | "throttled"
+    /** `656` cujo bloqueio NÃO pôde ser persistido — lock não liberado, drenagem abortada. */
+    | "pausa_falhou"
   takeover: boolean
   tentativas: number
   mensagem: string
@@ -163,5 +216,9 @@ export type DrainFiscalQueueReport = {
   awaitingConsultation: number
   failed: number
   lockLost: number
+  /** Jobs parados por `cStat 656`, com a loja pausada. */
+  throttled: number
+  /** Jobs em que a pausa por `656` não pôde ser persistida. Drenagem abortou. */
+  throttlePauseFailed: number
   items: DrainFiscalQueueItemResult[]
 }

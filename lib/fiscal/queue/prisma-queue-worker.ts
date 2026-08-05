@@ -11,6 +11,7 @@ import {
   createUncertainStateJobExecutor,
   type UncertainStateJobExecutorDependencies,
 } from "../emission/uncertain-state-job-executor"
+import { sanitizeFiscalQueueError } from "./queue-policy"
 import type {
   FiscalQueueAuditEvent,
   FiscalQueueExecutionResult,
@@ -486,6 +487,67 @@ export function createPrismaFiscalQueueWorkerPorts(
           detalhe: { workerId, errorCode: error },
         })
       }
+      return updated.count === 1
+    },
+    /**
+     * Pausa da loja após `cStat 656` (GOAL-016D-B · D12.2).
+     *
+     * Grava exatamente o evento que `readFiscalQueuePauseSnapshot` já lê — mesma `acao`, mesmo
+     * `detalhe.paused` — de modo que a próxima aquisição exclua a loja. Escrever o evento
+     * inline (em vez de chamar `setFiscalQueuePause`) evita o ciclo de import
+     * `prisma-queue-worker → queue-admin → prisma-queue-worker`.
+     *
+     * ⛔ **Não** é best-effort: diferente de `bestEffortAudit`, a falha propaga como `false` e
+     * a fila mantém o job sob lock. Nenhum `auto-unpause` é criado — a retomada exige
+     * `setFiscalQueuePause({ paused: false })` por um humano, com ator e motivo registrados.
+     */
+    pauseStoreForThrottling: async ({ job, workerId, now, cStat, reason }) => {
+      try {
+        await client.fiscalLog.create({
+          data: {
+            storeId: job.storeId,
+            vendaId: job.vendaId,
+            notaFiscalId: job.notaFiscalId,
+            jobId: job.id,
+            nivel: "ERROR",
+            acao: STORE_PAUSE_ACTION,
+            cStat,
+            mensagem: "Fila fiscal da loja pausada por consumo indevido (656).",
+            operador: `fiscal-queue:${workerId}`,
+            detalhe: {
+              paused: true,
+              scope: "store",
+              reason: sanitizeFiscalQueueError(reason, 300),
+              cStat,
+              changedAt: now.toISOString(),
+              retomada: "somente por ação humana explícita após diagnóstico",
+            },
+          },
+        })
+        return true
+      } catch {
+        return false
+      }
+    },
+    /**
+     * Estaciona o job estrangulado. `AGUARDANDO_RETRY` + `proximaTentativaEm: null` é o único
+     * estado inerte disponível sem tocar no schema, e é inerte nas DUAS pontas:
+     *  - o worker não o adquire (`eligibleWhere` exige `proximaTentativaEm` não nulo e vencido);
+     *  - a rota administrativa não o reprocessa (`reprocessFailedFiscalJob` só aceita `FALHA`).
+     */
+    parkThrottled: async ({ job, workerId, now, error, payload }) => {
+      const updated = await client.fiscalEmissaoJob.updateMany({
+        where: ownedLockWhere(job.id, workerId, now),
+        data: {
+          status: "AGUARDANDO_RETRY",
+          payload,
+          ultimoErro: error,
+          proximaTentativaEm: null,
+          lockOwner: null,
+          lockedAt: null,
+          lockExpiresAt: null,
+        },
+      })
       return updated.count === 1
     },
     waitForConsultation: async ({ job, workerId, now, error, payload }) => {

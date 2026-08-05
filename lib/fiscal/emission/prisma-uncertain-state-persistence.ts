@@ -224,6 +224,7 @@ export function createPrismaUncertainStatePersistence(
       code,
       message,
       now,
+      recibo,
     }) =>
       client.$transaction(async (tx) => {
         const emissionJob = await findEmissionJob(tx, document)
@@ -240,11 +241,17 @@ export function createPrismaUncertainStatePersistence(
           "FALHA",
           "CANCELADO",
         ].includes(String(existing.status ?? ""))
+        /**
+         * `recibo` (GOAL-016D-B · D12.1): `nRec` do lote quando o desfecho foi `PROCESSING`.
+         * Vai para o payload EXISTENTE — nenhuma coluna, nenhum schema, nenhuma migration.
+         */
+        const reciboLote = stringOrNull(recibo)
         const queryPayload = {
           version: 2,
           operation: "CONSULTA",
           requestedAt: now.toISOString(),
           document: documentMetadata(document, document.xmlBytesSha256 ?? ""),
+          ...(reciboLote ? { recibo: reciboLote } : {}),
         }
         const queryJob = record(await tx.fiscalEmissaoJob.upsert({
           where: {
@@ -290,6 +297,9 @@ export function createPrismaUncertainStatePersistence(
                 uncertainAt: now.toISOString(),
                 uncertainCode: code,
                 consultationJobId: String(queryJob.id),
+                // Preserva o recibo já conhecido quando esta passagem não trouxe um novo:
+                // `103` seguido de um incerto genérico não pode apagar o `nRec` do lote.
+                ...(reciboLote ? { recibo: reciboLote } : {}),
               },
             }),
           },
@@ -317,6 +327,7 @@ export function createPrismaUncertainStatePersistence(
               code,
               consultationJobId: String(queryJob.id),
               bytesSha256: document.xmlBytesSha256,
+              reciboRegistrado: Boolean(reciboLote),
             },
           },
         })
@@ -586,7 +597,12 @@ export function createPrismaUncertainStatePersistence(
             acao: "fiscal.reconciliation.rejected_requires_inutilizacao",
             cStat: result.cStat,
             xMotivo: result.xMotivo,
-            mensagem: "Número consumido; não reutilizar. Inutilização futura no GOAL-019.",
+            // A mensagem acompanha a decisão da matriz: uma denegação (`110`) consome o número
+            // mas NÃO pede inutilização, e afirmar o contrário no log contradiria o próprio
+            // `detalhe.requiresInutilizacao` do mesmo evento.
+            mensagem: requiresInutilizacao
+              ? "Número consumido; não reutilizar. Inutilização futura no GOAL-019."
+              : "Número consumido; não reutilizar. Inutilização NÃO se aplica a esta rejeição.",
             operador: "fiscal-goal-012",
             detalhe: {
               source,

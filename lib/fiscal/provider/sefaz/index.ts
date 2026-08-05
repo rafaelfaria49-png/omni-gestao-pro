@@ -51,6 +51,29 @@ export {
 } from "./sefaz-guards"
 
 export {
+  SEFAZ_CSTAT_MATRIX,
+  SEFAZ_CSTAT_MATRIX_VERSION,
+  SEFAZ_CONSEQUENCIA_ESTRUTURAL,
+  SEFAZ_CONSEQUENCIA_INDETERMINADA,
+  lookupSefazCStat,
+  type SefazCStatEntry,
+  type SefazCStatLookup,
+  type SefazCStatOutcome,
+  type SefazFiscalConsequences,
+  type SefazResponseReason,
+} from "./sefaz-cstat-matrix"
+
+export {
+  SEFAZ_MAX_RESPONSE_BYTES,
+  SEFAZ_SERVICOS_COM_PARSER,
+  parseSefazSoapResponse,
+  toFiscalConsultationResult,
+  toFiscalTransmissionResult,
+  type SefazResponseClassification,
+  type SefazResponseOutcome,
+} from "./sefaz-response-parser"
+
+export {
   SEFAZ_DEFAULT_TIMEOUT_MS,
   SefazAdapterBlockedError,
   SefazDiretoProvider,

@@ -11,6 +11,7 @@ import type {
   DrainFiscalQueueReport,
   FiscalQueueJob,
   FiscalQueueLease,
+  FiscalQueuePayload,
   FiscalQueueWorkerPorts,
 } from "./queue.types"
 
@@ -67,6 +68,114 @@ function startHeartbeat(input: {
       await pending
       return !lockLost
     },
+  }
+}
+
+/** `cStat` do consumo indevido. Lido do detalhe da execução; `656` é o único valor esperado. */
+const CSTAT_CONSUMO_INDEVIDO = "656"
+
+function cStatDoThrottle(detalhe: Record<string, unknown> | undefined): string {
+  const bruto = detalhe?.cStat
+  return typeof bruto === "string" && /^\d{3}$/.test(bruto) ? bruto : CSTAT_CONSUMO_INDEVIDO
+}
+
+/**
+ * Trata `cStat 656` (D12.2): pausa a loja, audita e estaciona o job — nesta ordem.
+ *
+ * A pausa é a única barreira que impede os DEMAIS jobs da mesma loja de continuarem batendo na
+ * SEFAZ. Por isso ela precede a liberação do lock e, se não puder ser persistida, nada é
+ * liberado: o job permanece `PROCESSANDO` sob o lock deste worker (que ainda não expirou) e a
+ * drenagem aborta. É o desfecho fail-closed possível sem inventar estado novo no schema.
+ */
+async function processThrottled(input: {
+  job: FiscalQueueJob
+  takeover: boolean
+  ports: FiscalQueueWorkerPorts
+  workerId: string
+  now: Date
+  error: string
+  payload: FiscalQueuePayload
+  execution: { code: string; mensagem: string; detalhe?: Record<string, unknown> }
+}): Promise<DrainFiscalQueueItemResult> {
+  const { job, takeover, ports, workerId, now } = input
+  const cStat = cStatDoThrottle(input.execution.detalhe)
+  const base = { jobId: job.id, storeId: job.storeId, takeover, tentativas: job.tentativas }
+
+  await safeAudit(ports, {
+    job,
+    acao: "fiscal.queue.throttled.detected",
+    nivel: "ERROR",
+    mensagem: "Consumo indevido detectado; transmissões da loja serão pausadas.",
+    detalhe: { workerId, cStat, code: input.execution.code },
+  })
+
+  const bloqueio = ports.pauseStoreForThrottling
+    ? await ports
+        .pauseStoreForThrottling({
+          job,
+          workerId,
+          now,
+          cStat,
+          reason: `Consumo indevido (cStat ${cStat}) detectado pelo worker fiscal.`,
+        })
+        .catch(() => false)
+    : false
+
+  if (!bloqueio) {
+    await safeAudit(ports, {
+      job,
+      acao: "fiscal.queue.throttled.pause_failed",
+      nivel: "ERROR",
+      mensagem:
+        "Pausa da loja não pôde ser persistida após consumo indevido; job mantido sob lock e " +
+        "drenagem abortada.",
+      detalhe: { workerId, cStat, portaAusente: !ports.pauseStoreForThrottling },
+    })
+    return {
+      ...base,
+      status: "pausa_falhou",
+      mensagem: "Consumo indevido sem pausa persistida; nada foi liberado.",
+    }
+  }
+
+  // Pausa gravada: só agora o lock pode ser solto, e apenas para um estado inerte —
+  // não elegível pelo worker e não reprocessável pela rota administrativa.
+  if (!ports.parkThrottled) {
+    await safeAudit(ports, {
+      job,
+      acao: "fiscal.queue.throttled.park_unavailable",
+      nivel: "ERROR",
+      mensagem: "Fila sem porta de estacionamento para consumo indevido; job mantido sob lock.",
+      detalhe: { workerId, cStat },
+    })
+    return {
+      ...base,
+      status: "pausa_falhou",
+      mensagem: "Loja pausada, porém o job não pôde ser estacionado.",
+    }
+  }
+
+  const estacionado = await ports.parkThrottled({
+    job,
+    workerId,
+    now,
+    error: input.error,
+    payload: input.payload,
+  })
+  if (!estacionado) {
+    return { ...base, status: "lock_perdido", mensagem: "Lock perdido ao estacionar por 656." }
+  }
+  await safeAudit(ports, {
+    job,
+    acao: "fiscal.queue.throttled.parked",
+    nivel: "ERROR",
+    mensagem: "Job estacionado por consumo indevido; retomada exige ação humana explícita.",
+    detalhe: { workerId, cStat },
+  })
+  return {
+    ...base,
+    status: "throttled",
+    mensagem: "Consumo indevido: loja pausada e job estacionado sem retry nem consulta.",
   }
 }
 
@@ -203,12 +312,28 @@ async function processLease(input: {
     }
   }
 
-  if (!execution.simulado) {
+  /**
+   * Freio do GOAL-011: execução não simulada vira terminal.
+   *
+   * ⚠️ Duas correções do 016D-B, ambas de segurança:
+   *
+   * 1. **`simulado` permanece `false`** (F-2). A versão anterior reescrevia para `true`, ou
+   *    seja, gravava na trilha que uma execução REAL fora simulada. Bloquear é legítimo;
+   *    mentir sobre a proveniência do que foi bloqueado não é.
+   * 2. **`throttled` não é rebaixado.** Um `656` vindo de provider real seria transformado em
+   *    `terminal` ⇒ `FALHA` ⇒ reprocessável pela rota administrativa ⇒ nova transmissão, que é
+   *    exatamente o que agrava o `656`. O caminho `throttled` é estritamente mais restritivo
+   *    que `terminal` (pausa a loja e estaciona o job sem reprocesso), então prevalece.
+   *
+   * `externalTransmissionAttempted: true` é deliberadamente conservador: sinaliza contato
+   * externo POSSÍVEL, forçando reconciliação humana em vez de presumir que nada saiu.
+   */
+  if (execution.kind !== "throttled" && !execution.simulado) {
     execution = {
       kind: "terminal" as const,
       code: "provider_real_bloqueado",
       mensagem: "GOAL-011 bloqueia provider ou transmissão real.",
-      simulado: true,
+      simulado: false,
       externalTransmissionAttempted: true,
     }
   }
@@ -238,6 +363,28 @@ async function processLease(input: {
       tentativas: job.tentativas,
       mensagem: completed ? execution.mensagem : "Lock perdido ao concluir.",
     }
+  }
+
+  /**
+   * `cStat 656` — consumo indevido (D12.2). Caminho DEDICADO, avaliado antes de qualquer
+   * outro: ⛔ sem retry, ⛔ sem backoff, ⛔ sem `waitForConsultation`, ⛔ sem `CONSULTA`,
+   * ⛔ sem `FALHA` reprocessável.
+   *
+   * Ordem obrigatória: **pausa persistida → lock liberado**. Enquanto a pausa não estiver
+   * gravada, soltar o lock abriria uma janela em que o job volta a ser elegível e a loja
+   * segue ativa — o loop que o `656` pune.
+   */
+  if (execution.kind === "throttled") {
+    return await processThrottled({
+      job,
+      takeover,
+      ports: input.ports,
+      workerId: input.workerId,
+      now,
+      error,
+      payload,
+      execution,
+    })
   }
 
   if (execution.kind === "uncertain") {
@@ -350,6 +497,8 @@ export async function drainFiscalQueue(
     awaitingConsultation: 0,
     failed: 0,
     lockLost: 0,
+    throttled: 0,
+    throttlePauseFailed: 0,
     items: [],
   }
 
@@ -383,7 +532,19 @@ export async function drainFiscalQueue(
     else if (item.status === "retry") report.retried += 1
     else if (item.status === "consulta") report.awaitingConsultation += 1
     else if (item.status === "falha") report.failed += 1
+    else if (item.status === "throttled") report.throttled += 1
+    else if (item.status === "pausa_falhou") report.throttlePauseFailed += 1
     else report.lockLost += 1
+
+    /**
+     * Consumo indevido sem pausa persistida: o worker **para**. Continuar drenando seria seguir
+     * chamando a SEFAZ com a loja ainda ativa — a causa documentada do `656`.
+     *
+     * Já no caso `throttled` bem-sucedido a drenagem PROSSEGUE de propósito: a pausa é de loja,
+     * e a próxima volta relê `readPauseSnapshot`, que passa a excluir aquele `storeId`. Jobs de
+     * outras lojas não são punidos pelo `656` de uma delas.
+     */
+    if (item.status === "pausa_falhou") break
   }
 
   return report
