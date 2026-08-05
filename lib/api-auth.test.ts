@@ -19,22 +19,31 @@ const FALLBACK_ANTIGO = ["assistec", "dev", "secret", "change", "in", "productio
 
 const h = vi.hoisted(() => ({
   cookieValue: undefined as string | undefined,
+  adminCookie: undefined as string | undefined,
   auth: vi.fn(async (): Promise<unknown> => null),
   findUnique: vi.fn(async (): Promise<unknown> => null),
 }))
 
 vi.mock("next/headers", () => ({
   cookies: async () => ({
-    get: (name: string) =>
-      name === "assistec_sub_v1" && h.cookieValue !== undefined
-        ? { value: h.cookieValue }
-        : undefined,
+    get: (name: string) => {
+      if (name === "assistec_sub_v1" && h.cookieValue !== undefined) return { value: h.cookieValue }
+      if (name === ADMIN_AUTHORIZATION_COOKIE && h.adminCookie !== undefined) {
+        return { value: h.adminCookie }
+      }
+      return undefined
+    },
   }),
 }))
 vi.mock("@/auth", () => ({ auth: h.auth }))
 vi.mock("@/lib/prisma", () => ({ prisma: { adminUser: { findUnique: h.findUnique } } }))
 
-import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
+import { getVerifiedSubscriptionFromCookies, isAdminSession } from "@/lib/api-auth"
+import {
+  ADMIN_AUTHORIZATION_COOKIE,
+  PIN_AUTHORIZATION_MAX_AGE_SECONDS,
+  createPinAuthorizationToken,
+} from "@/lib/auth/pin-authorization"
 
 const USER_ATIVO = { active: true, planName: "PRATA", role: "CAIXA" }
 
@@ -48,6 +57,7 @@ beforeEach(() => {
   secretOriginal = process.env.ASSISTEC_SUBSCRIPTION_SECRET
   process.env.ASSISTEC_SUBSCRIPTION_SECRET = TEST_SECRET
   h.cookieValue = undefined
+  h.adminCookie = undefined
   vi.clearAllMocks()
   h.auth.mockResolvedValue(null)
   h.findUnique.mockResolvedValue(null)
@@ -140,5 +150,76 @@ describe("getVerifiedSubscriptionFromCookies — decisão por sessão", () => {
     h.findUnique.mockResolvedValue(null)
 
     expect(await getVerifiedSubscriptionFromCookies()).toEqual({ ok: false })
+  })
+})
+
+// ============================================================================
+// GOAL PLAT-AUTH-PIN-CONTAINMENT-001A — `isAdminSession` deixou de ser "o cookie
+// existe?". O consumidor real é `GET /api/audit/logs`; um cookie qualquer, ou o
+// cookie legítimo de OUTRO utilizador, não pode mais abrir a trilha de auditoria.
+// ============================================================================
+describe("isAdminSession — autorização assinada e vinculada", () => {
+  const PIN_SECRET = "segredo-de-teste-pin-containment-001a"
+  const T0 = Date.UTC(2026, 7, 5, 12, 0, 0)
+
+  beforeEach(() => {
+    process.env.AUTH_SECRET = PIN_SECRET
+    vi.spyOn(Date, "now").mockReturnValue(T0)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  async function tokenDe(userId: string): Promise<string> {
+    return createPinAuthorizationToken(
+      { userId, storeId: "loja-A", supervisorId: "supervisor-1" },
+      PIN_SECRET,
+      T0,
+    )
+  }
+
+  it("sem sessão: recusado mesmo com cookie presente", async () => {
+    h.auth.mockResolvedValue(null)
+    h.adminCookie = await tokenDe("user-1")
+    expect(await isAdminSession()).toBe(false)
+  })
+
+  it("cookie ausente: recusado", async () => {
+    h.auth.mockResolvedValue(sessao("ADMIN", "user-1"))
+    expect(await isAdminSession()).toBe(false)
+  })
+
+  it("valor arbitrário no cookie (comportamento legado) já não autentica", async () => {
+    h.auth.mockResolvedValue(sessao("ADMIN", "user-1"))
+    h.adminCookie = "user-1"
+    expect(await isAdminSession()).toBe(false)
+  })
+
+  it("autorização do próprio utilizador: aceite", async () => {
+    h.auth.mockResolvedValue(sessao("ADMIN", "user-1"))
+    h.adminCookie = await tokenDe("user-1")
+    expect(await isAdminSession()).toBe(true)
+  })
+
+  it("autorização de OUTRO utilizador: recusada", async () => {
+    h.auth.mockResolvedValue(sessao("ADMIN", "user-2"))
+    h.adminCookie = await tokenDe("user-1")
+    expect(await isAdminSession()).toBe(false)
+  })
+
+  it("autorização expirada: recusada", async () => {
+    h.auth.mockResolvedValue(sessao("ADMIN", "user-1"))
+    h.adminCookie = await tokenDe("user-1")
+    vi.spyOn(Date, "now").mockReturnValue(T0 + PIN_AUTHORIZATION_MAX_AGE_SECONDS * 1000)
+    expect(await isAdminSession()).toBe(false)
+  })
+
+  it("sem segredo no ambiente: falha fechado", async () => {
+    h.auth.mockResolvedValue(sessao("ADMIN", "user-1"))
+    h.adminCookie = await tokenDe("user-1")
+    delete process.env.AUTH_SECRET
+    delete process.env.NEXTAUTH_SECRET
+    delete process.env.PIN_AUTHORIZATION_SECRET
+    expect(await isAdminSession()).toBe(false)
   })
 })

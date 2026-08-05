@@ -19,13 +19,20 @@
 import { NextResponse } from "next/server"
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { auth } from "@/auth"
+import { isBlockedLegacySupervisorPin, LEGACY_DEFAULT_SUPERVISOR_PIN } from "@/lib/auth/pin-authorization"
 import { z } from "zod"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-const DEFAULT_PIN = "1234"
+/**
+ * Fonte única do valor legado (GOAL PLAT-AUTH-PIN-CONTAINMENT-001A): `POST /api/auth/admin`
+ * recusa este PIN sempre, então permitir uma rotação de volta a ele deixaria o supervisor
+ * com um PIN que nunca autentica. A constante vive no helper de autorização para que os
+ * dois lados não possam divergir.
+ */
+const DEFAULT_PIN = LEGACY_DEFAULT_SUPERVISOR_PIN
 const PIN_REGEX = /^\d{4,12}$/
 
 const trocarSchema = z.object({
@@ -101,6 +108,15 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (currentPin === newPin) {
     return NextResponse.json(
       { error: "O novo PIN deve ser diferente do atual." },
+      { status: 422 },
+    )
+  }
+
+  // Um PIN bloqueado é sempre recusado por `POST /api/auth/admin`; gravá-lo aqui
+  // deixaria o supervisor sem PIN utilizável. A mensagem não repete o valor.
+  if (isBlockedLegacySupervisorPin(newPin)) {
+    return NextResponse.json(
+      { error: "Este PIN é um valor padrão bloqueado. Escolha outro." },
       { status: 422 },
     )
   }

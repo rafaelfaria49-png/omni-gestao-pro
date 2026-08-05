@@ -1,7 +1,11 @@
 import { cookies } from "next/headers"
+import { auth } from "@/auth"
 import { getSessionEntitlement } from "@/lib/auth/session-entitlement"
-
-const ADMIN_COOKIE = "assistec_admin_session"
+import {
+  ADMIN_AUTHORIZATION_COOKIE,
+  resolvePinAuthorizationSecret,
+  verifyPinAuthorizationToken,
+} from "@/lib/auth/pin-authorization"
 
 /**
  * @deprecated Gate legado (GOAL 003D-lite). O nome é histórico: **já não lê o
@@ -29,7 +33,27 @@ export async function getVerifiedSubscriptionFromCookies(): Promise<
   }
 }
 
+/**
+ * Consome a autorização temporária de supervisor (GOAL PLAT-AUTH-PIN-CONTAINMENT-001A).
+ *
+ * Antes bastava o cookie existir — qualquer valor servia, e o cookie emitido a um
+ * utilizador valia para qualquer outro. Agora verifica assinatura, expiração e o
+ * vínculo com o `userId` da sessão NextAuth corrente.
+ *
+ * `storeId` NÃO é conferido aqui de propósito: o único consumidor
+ * (`GET /api/audit/logs`) lê a trilha global, que não é escopada por unidade. Quem é
+ * escopado por unidade deve chamar `verifyPinAuthorizationToken` passando `storeId`.
+ */
 export async function isAdminSession(): Promise<boolean> {
+  const session = await auth()
+  const userId = session?.user?.id
+  if (!userId) return false
+
   const jar = await cookies()
-  return !!(jar.get(ADMIN_COOKIE)?.value || "").trim()
+  const result = await verifyPinAuthorizationToken(
+    jar.get(ADMIN_AUTHORIZATION_COOKIE)?.value,
+    resolvePinAuthorizationSecret(),
+    { userId },
+  )
+  return result.ok
 }
