@@ -1,7 +1,8 @@
-import type {
-  FiscalConsultationResult,
-  FiscalTransmissionResult,
-  UncertainStateFiscalProvider,
+import {
+  IN_MEMORY_ONLY_FISCAL_PROVIDER,
+  type FiscalConsultationResult,
+  type FiscalTransmissionResult,
+  type UncertainStateFiscalProvider,
 } from "../emission/uncertain-state.types"
 
 export type UncertainStateStubOptions = {
@@ -14,7 +15,14 @@ export type UncertainStateStubOptions = {
  * certificado e não representa resposta real da SEFAZ.
  */
 export class UncertainStateTestStub implements UncertainStateFiscalProvider {
+  /** Rótulo de auditoria — não é o que o autoriza a executar. */
   readonly simulado = true as const
+  /**
+   * Marca ESTRUTURAL que dispensa a capability de execução externa: este stub responde de
+   * arrays em memória e não possui transporte algum. É o que o mantém executando depois que
+   * a autorização deixou de derivar de `simulado` (correção 002 · bloqueio 2).
+   */
+  readonly [IN_MEMORY_ONLY_FISCAL_PROVIDER] = true as const
   readonly transmissions: Array<{
     bytesBase64: string
     bytesSha256: string
