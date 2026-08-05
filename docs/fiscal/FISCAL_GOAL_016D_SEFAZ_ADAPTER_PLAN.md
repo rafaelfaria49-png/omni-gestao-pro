@@ -939,7 +939,9 @@ graph LR
 > obrigatório · BOM proibido · declaração XML embutida proibida · exatamente **um** elemento
 > embutível · envelope completo verificado como XML bem-formado. 🟥 **Bloqueio de contrato
 > registrado:** enquanto o produtor emitir declaração, o caminho real de emissão será recusado
-> em `bytes_fiscais_com_declaracao_xml`; corrigir o produtor exige GOAL e autorização próprios.
+> em `bytes_fiscais_com_declaracao_xml`; corrigir o produtor exige GOAL e autorização próprios e é
+> **pré-requisito antes de 016D-C/016D-D**. ⚠️ Este bloqueio **não impede o início do 016D-B** —
+> fixtures, parser e matriz de `cStat` são independentes dos bytes do produtor.
 >
 > > 🔍 **Achado colateral relevante.** `@xmldom/xmldom` (0.8.x) **não é um parser validador**:
 > > aceita silenciosamente um `<?xml ?>` embutido (vira PI de alvo reservado `xml`, ilegal por
@@ -992,6 +994,13 @@ graph LR
 > Achado MINOR da mesma revisão também aplicado: `runConsultation` avaliava
 > `assertPersistedDocument` **antes** do gate de autorização; ordem invertida para espelhar
 > `runTransmission` — execução não autorizada não revela sequer se o documento existe.
+>
+> ✅ **Revisão cruzada pós-correção concluída (2026-08-05)** por **família diferente** da autora e
+> da revisora da correção — veredito **APROVADO TECNICAMENTE, sem bloqueio de código**. Estado
+> consolidado do slice: **681 testes fiscais verdes** · gate de execução externa **independente de
+> `simulado`** (capability negada por padrão) · proveniência **isolada por execução** · bloqueio
+> **fail-closed** de declaração XML/BOM/UTF-8 · produtor atual emite declaração XML e **permanece
+> incompatível** (pré-requisito antes de 016D-C/016D-D; não bloqueia o início do 016D-B).
 
 | | |
 |---|---|
@@ -1044,6 +1053,7 @@ graph LR
 | **Objetivo** | Transmitir **um** documento de homologação pela esteira completa e persistir o desfecho. Alvo: `cStat 100` |
 | **Arquivos prováveis** | afrouxamento **narrow** de **T4** (`prisma-queue-worker.ts:303`) — a única trava mecânica da fila · caminho administrativo **dedicado**, server-side, de **nota única**. ⛔ **Nenhum registro de `SEFAZ_DIRETO` no `REGISTRY` de P1** (D11 regra 1 — decisão revista) |
 | **Dependências** | 🟥 **TODAS**: H-1, H-2, H-3 (credenciamento + CSC), IE, CRT, série ativa, `Store.id`, A1 + senha, H-11, **H-7** (destinatário). **+ D12 implementado nos dois códigos** |
+| **🆕 Condição obrigatória — capability** | A capability de execução externa **não poderá ser concedida por um objeto booleano arbitrário criado pelo caller**. Sua emissão deverá ser **centralizada, auditável, escopada à execução autorizada e impossível por omissão**. *(Nenhum código novo para isso foi criado no GOAL do adapter offline — a condição é registrada aqui como requisito vinculante do 016D-D.)* |
 | **🆕 Fronteiras explícitas (F-6)** | ⛔ O caminho de disparo é **separado** de [`app/api/internal/fiscal/queue`](../../app/api/internal/fiscal/queue/route.ts), que drena **lote** · ⛔ essa rota **não** recebe wiring do `SefazDiretoProvider` · ⛔ o caminho dedicado **valida escopo antes** de qualquer `allocateNumero`, escrita em `Venda` ou consumo de série (D11 regra 4) |
 | **Testes** | Byte-exatidão preservada (o transmitido **é** o persistido) · timeout ⇒ `TRANSMITINDO` + job `CONSULTA`, **sem** retransmitir · rejeição ⇒ número consumido, `requiresInutilizacao` · `markAuthorized` imutável · **`emitirNotaFiscalVenda` continua sem transmitir** — regressão da rota P1, agora trivialmente verdadeira porque `resolveFiscalProvider(SEFAZ_DIRETO)` devolve `provider_nao_implementado` · 🆕 teste provando que a rota administrativa de fila **continua fail-closed** para jobs do piloto · **zero** efeito sobre venda/PDV/caixa |
 | **Gate humano** | 🔒 **G-F5.3** — *"primeira transmissão de documento"*. Distinto do G-F5 (decisão de provider), do G-F5.2 (primeira chamada externa) e do G-F7 (ligar a emissão) · 🆕 **G-H4** (posse do `FISCAL_QUEUE_INTERNAL_SECRET`) · 🆕 **G-H5** (teto de transmissões) · 🆕 **G-H6** (nova autorização por repetição após falha) |
