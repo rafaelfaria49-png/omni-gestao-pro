@@ -104,12 +104,66 @@ function readEdges(file: string, source: string): Edge[] {
 }
 
 /**
- * `true` se o módulo contém um `new PrismaClient(...)` REAL. Via AST, não regex: comentários e
- * strings que citam a expressão (inclusive os que documentam esta própria regressão) não contam,
- * e `new  PrismaClient()` com espaçamento incomum não escapa.
+ * Qualquer módulo que EXPORTE o construtor do client, independentemente de o import dele ser
+ * tolerado. `@/generated/prisma` é aceito como fonte de enums (ver FORBIDDEN_SPECIFIER), mas
+ * também exporta `PrismaClient` — então continua sendo fonte de contaminação para construção.
+ */
+const PRISMA_CLIENT_SOURCE = /(^|\/)@prisma\/client($|\/)|(^|\/)generated\/prisma($|\/)|(^|\/)lib\/prisma$/
+
+/**
+ * `true` se o módulo constrói um Prisma Client REAL. Via AST, não regex: comentários e strings
+ * que citam a expressão (inclusive os que documentam esta própria regressão) não contam.
+ *
+ * Não basta comparar o nome no `new`: `import { PrismaClient } from "@/generated/prisma"` seguido
+ * de `const C = PrismaClient; new C()` evadiria as duas checagens deste arquivo ao mesmo tempo.
+ * Então rastreamos a ORIGEM do construtor — os bindings locais vindos de um módulo de client, mais
+ * os aliases `const X = Y` que os propagam (ponto fixo) — e sinalizamos `new <binding>`.
  */
 function instantiatesPrismaClient(file: string, source: string): boolean {
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
+
+  // 1. Bindings locais importados de um módulo que exporta o client.
+  const tainted = new Set<string>(["PrismaClient"])
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    if (!PRISMA_CLIENT_SOURCE.test(statement.moduleSpecifier.text)) continue
+    const clause = statement.importClause
+    if (!clause || clause.isTypeOnly) continue
+    if (clause.name) tainted.add(clause.name.text) // default / `import Prisma from`
+    const bindings = clause.namedBindings
+    if (!bindings) continue
+    if (ts.isNamespaceImport(bindings)) tainted.add(bindings.name.text) // `import * as P`
+    else for (const element of bindings.elements) {
+      if (!element.isTypeOnly) tainted.add(element.name.text)
+    }
+  }
+
+  // 2. Propaga por aliases simples até estabilizar (`const C = PrismaClient`, `const D = C`).
+  const aliases: { alias: string; from: string }[] = []
+  const collectAliases = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const init = node.initializer
+      const origin = ts.isIdentifier(init)
+        ? init.text
+        : ts.isPropertyAccessExpression(init) && ts.isIdentifier(init.expression)
+          ? init.expression.text
+          : undefined
+      if (origin) aliases.push({ alias: node.name.text, from: origin })
+    }
+    ts.forEachChild(node, collectAliases)
+  }
+  collectAliases(sourceFile)
+  for (let changed = true; changed; ) {
+    changed = false
+    for (const { alias, from } of aliases) {
+      if (tainted.has(from) && !tainted.has(alias)) {
+        tainted.add(alias)
+        changed = true
+      }
+    }
+  }
+
+  // 3. Qualquer `new <contaminado>` — inclusive `new Namespace.PrismaClient()`.
   let found = false
   const visit = (node: ts.Node): void => {
     if (found) return
@@ -120,7 +174,7 @@ function instantiatesPrismaClient(file: string, source: string): boolean {
         : ts.isPropertyAccessExpression(callee)
           ? callee.name.text
           : undefined
-      if (name === "PrismaClient") {
+      if (name !== undefined && tainted.has(name)) {
         found = true
         return
       }
@@ -175,19 +229,32 @@ function buildGraph(entryPoints: string[]): Graph {
 const graph = buildGraph(ENTRY_POINTS)
 
 /** Módulos que ligam a aplicação ao banco. `@/generated/prisma` NÃO entra: o grafo o usa
- *  apenas para enums (`AmbienteFiscal`, `ModeloFiscal`…), que não instanciam client nem engine. */
-const FORBIDDEN_SPECIFIER = /(^|\/)@prisma\/client($|\/)|(^|\/)lib\/prisma$|(^\.\.?\/)?prisma\/client$/
+ *  apenas para enums (`AmbienteFiscal`, `ModeloFiscal`…), que não instanciam client nem engine —
+ *  a construção do client é coberta separadamente por `instantiatesPrismaClient`.
+ *  O sufixo de extensão é opcional para que `@/lib/prisma.ts` não escape da âncora. */
+const FORBIDDEN_SPECIFIER =
+  /(^|\/)@prisma\/client($|\/)|(^|\/)lib\/prisma(\.[cm]?[jt]s)?$|(^\.\.?\/)?prisma\/client(\.[cm]?[jt]s)?$/
 
 describe("pureza do grafo de imports do worker XSD", () => {
   it("percorre um grafo real e resolve todo specifier do repositório", () => {
     // Guarda anti-vacuidade: sem isto, um rename que zere a varredura deixaria as
-    // asserções seguintes verdes sem terem inspecionado nada.
+    // asserções seguintes verdes sem terem inspecionado nada. A guarda FORTE é a lista de
+    // módulos abaixo — são justamente os que carregam o risco (builder, fixtures, cliente HTTP)
+    // e por onde a regressão original entrou. O piso numérico é só um sanity check grosseiro,
+    // deliberadamente folgado para não quebrar em consolidação legítima de arquivos.
     expect(graph.unresolved).toEqual([])
-    expect(graph.modules.size).toBeGreaterThan(40)
+    expect(graph.modules.size).toBeGreaterThan(20)
     const reached = [...graph.modules.keys()].map(toPosix)
-    expect(reached).toContain("lib/fiscal/xsd-worker/client.ts")
-    expect(reached).toContain("lib/fiscal/xml/nfce-xml-builder.ts")
-    expect(reached).toContain("lib/fiscal/dry-run/dry-run-fixtures.ts")
+    for (const required of [
+      "lib/fiscal/xsd-worker/client.ts",
+      "lib/fiscal/xml/nfce-xml-builder.ts",
+      "lib/fiscal/dry-run/dry-run-fixtures.ts",
+      "lib/fiscal/venda-fiscal-snapshot.ts",
+      "lib/fiscal/fiscal-validators.ts",
+      "lib/fiscal/signing/nfce-signer.ts",
+    ]) {
+      expect(reached).toContain(required)
+    }
   })
 
   it("não alcança @prisma/client nem lib/prisma por nenhum caminho de valor", () => {
