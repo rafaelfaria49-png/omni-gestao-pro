@@ -29,6 +29,25 @@
  * incondicionalmente, pela mesma razão. O rastreador de `new PrismaClient(...)` por alias
  * dentro do mesmo arquivo permanece como defesa adicional (útil mesmo quando o import de
  * origem já deveria ter sido pego — não deve haver um único ponto de falha).
+ *
+ * FISCAL-PR46-DYNAMIC-IMPORT-FAIL-CLOSED-CORRECTION-003 — dois resíduos que sobravam do fail-
+ * closed anterior, ambos por CLASSIFICAR o argumento do `import()`/`require()` só quando era
+ * `StringLiteral`, silenciosamente ignorando qualquer outra forma:
+ *
+ *  1. Specifier dinâmico não literal: `import(path)`, `require("@/generated/" + "prisma")`,
+ *     `` import(`@/generated/${segmento}`) ``, `import(condicao ? a : b)` não geravam aresta
+ *     NEM ofensa — o destino real só seria conhecido executando o código, o que este teste
+ *     nunca faz. A regra agora é negar por padrão: qualquer `import()`/`require()` cujo
+ *     argumento não seja um literal estático (`StringLiteral` ou, tratado como equivalente,
+ *     `NoSubstitutionTemplateLiteral` — `` `@/generated/prisma` `` sem interpolação) é uma
+ *     ofensa própria, dentro do grafo XSD, independente de "parecer" ligado a Prisma ou não:
+ *     se a análise estática não prova o destino, o carregamento não é auditável e é recusado.
+ *  2. `import X = require("...")` (TypeScript import-equals) não era visto em lugar nenhum —
+ *     nem `readEdges` nem `findForbiddenBindings` reconheciam `ImportEqualsDeclaration`. Além
+ *     de ser proibido pelas mesmas regras blanket/allow-list, vincula o NAMESPACE INTEIRO do
+ *     módulo ao identificador (como `import * as X`), então de `generated/prisma` é banido
+ *     incondicionalmente, não por allow-list de nome — não há como allow-listar o conteúdo de
+ *     um namespace. `import type X = require(...)` (sem efeito em runtime) continua permitido.
  */
 import { existsSync, readFileSync, statSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
@@ -76,6 +95,20 @@ function resolveSpecifier(specifier: string, fromFile: string): string | null {
   return null
 }
 
+/**
+ * `string` se o argumento é um literal ESTÁTICO — `StringLiteral` ou, tratado como equivalente,
+ * `NoSubstitutionTemplateLiteral` (`` `@/generated/prisma` `` sem `${}`). `undefined` para
+ * qualquer outra forma (`Identifier`, `TemplateExpression` com interpolação, concatenação,
+ * `ConditionalExpression`, chamada de função, etc.) — NUNCA tenta dobrar constantes nem avaliar
+ * a expressão para "adivinhar" o destino, de propósito: se não é um literal de sintaxe, não é
+ * auditável por análise estática, ponto final.
+ */
+function extractStaticSpecifier(node: ts.Expression | undefined): string | undefined {
+  if (!node) return undefined
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
+  return undefined
+}
+
 type Edge = { specifier: string; typeOnly: boolean }
 
 /** Extrai os specifiers de um módulo pela AST, separando os que somem na emissão. */
@@ -84,7 +117,8 @@ function readEdges(file: string, source: string): Edge[] {
   const edges: Edge[] = []
 
   const push = (node: ts.Expression | undefined, typeOnly: boolean) => {
-    if (node && ts.isStringLiteral(node)) edges.push({ specifier: node.text, typeOnly })
+    const specifier = extractStaticSpecifier(node)
+    if (specifier !== undefined) edges.push({ specifier, typeOnly })
   }
 
   const visit = (node: ts.Node): void => {
@@ -104,6 +138,11 @@ function readEdges(file: string, source: string): Edge[] {
         node.exportClause.elements.length > 0 &&
         node.exportClause.elements.every((element) => element.isTypeOnly)
       push(node.moduleSpecifier, node.isTypeOnly || namedTypeOnly)
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      // `import X = require("...")`: mesma aresta de um import comum, para efeito de caminhar o
+      // grafo. Specifier não literal aqui não gera aresta (nada para resolver), mas
+      // `findForbiddenBindings` o denuncia de forma independente — não some da análise.
+      push(node.moduleReference.expression, node.isTypeOnly)
     } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       // `import("x")` dinâmico: carrega em runtime, então conta como aresta de valor.
       push(node.arguments[0], false)
@@ -204,17 +243,45 @@ function findForbiddenBindings(file: string, source: string): string[] {
           checkNamedElements(node.exportClause.elements, specifier, "reexport nomeado")
         }
       }
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      if (!node.isTypeOnly) {
+        const literal = extractStaticSpecifier(node.moduleReference.expression)
+        if (literal === undefined) {
+          offenders.push(
+            `import-equals "${node.name.text}" com specifier não literal — destino não auditável ` +
+              `por análise estática, negado por padrão`
+          )
+        } else {
+          const blanket = FORBIDDEN_SPECIFIER.test(literal)
+          const generated = !blanket && GENERATED_PRISMA_SPECIFIER.test(literal)
+          if (blanket) {
+            offenders.push(`import-equals "${node.name.text}" de ${literal}`)
+          } else if (generated) {
+            // `import X = require(...)` vincula o NAMESPACE INTEIRO ao identificador — mesma
+            // política que namespace import: impossível allow-listar por nome.
+            offenders.push(`import-equals "${node.name.text}" (namespace inteiro) de ${literal}`)
+          }
+        }
+      }
     } else if (ts.isCallExpression(node)) {
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
       const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require"
       if (isDynamicImport || isRequire) {
+        const label = isDynamicImport ? "import() dinâmico" : "require()"
         const arg = node.arguments[0]
-        if (arg && ts.isStringLiteral(arg)) {
-          const specifier = arg.text
-          // Sem allow-list para acesso dinâmico: não dá para enumerar estaticamente o que uma
-          // Promise resolvida ou um `require()` desestruturam depois. Nega por padrão.
-          if (FORBIDDEN_SPECIFIER.test(specifier) || GENERATED_PRISMA_SPECIFIER.test(specifier)) {
-            offenders.push(`${isDynamicImport ? "import() dinâmico" : "require()"} de ${specifier}`)
+        if (arg) {
+          const literal = extractStaticSpecifier(arg)
+          if (literal === undefined) {
+            // Specifier não literal (identifier, concatenação, template interpolado,
+            // expressão condicional, chamada de função…): o destino só seria conhecido
+            // EXECUTANDO o código, o que esta análise nunca faz. Nega por padrão, dentro do
+            // grafo XSD, independente de "parecer" ligado a Prisma — se não é auditável, não
+            // é permitido, e a ofensa aparece explicitamente em vez de desaparecer da análise.
+            offenders.push(`${label} com specifier não literal — destino não auditável por análise estática, negado por padrão`)
+          } else if (FORBIDDEN_SPECIFIER.test(literal) || GENERATED_PRISMA_SPECIFIER.test(literal)) {
+            // Sem allow-list para acesso dinâmico mesmo quando literal: não dá para enumerar
+            // estaticamente o que uma Promise resolvida ou um `require()` desestruturam depois.
+            offenders.push(`${label} de ${literal}`)
           }
         }
       }
@@ -548,5 +615,127 @@ describe("detecção adversarial do guard (fixtures sintéticas em memória — 
   it("o grafo real atual (produção) permanece verde sob a nova regra", () => {
     const offenders = forbiddenBindingsAcross(graph.modules)
     expect(offenders).toEqual([])
+  })
+})
+
+/**
+ * FISCAL-PR46-DYNAMIC-IMPORT-FAIL-CLOSED-CORRECTION-003 — carregamentos runtime cujo alvo não
+ * é um literal de sintaxe, e `import X = require("...")` (TypeScript import-equals). Mesma
+ * disciplina do bloco acima: fixtures sintéticas em memória, sem tocar `ENTRY_POINTS` nem
+ * nenhum arquivo de produção.
+ */
+describe("detecção de carregamentos dinâmicos não auditáveis e import-equals (fixtures sintéticas)", () => {
+  it("1. fecha import() com identifier — destino só conhecido em runtime", () => {
+    const source = `const path = "@/generated/prisma"\nawait import(path)`
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/não auditável/)
+  })
+
+  it("2. fecha require() com identifier — destino só conhecido em runtime", () => {
+    const source = `const path = "@/generated/prisma"\nrequire(path)`
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/não auditável/)
+  })
+
+  it("3. fecha require() com concatenação — não tenta dobrar a constante", () => {
+    const source = `require("@/generated/" + "prisma")`
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/não auditável/)
+  })
+
+  it("4. fecha import() com template interpolado", () => {
+    const source = "const segmento = \"prisma\"\nawait import(`@/generated/${segmento}`)"
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/não auditável/)
+  })
+
+  it("5. fecha import() com expressão condicional", () => {
+    const source = `const condicao = Math.random() > 0.5\nawait import(condicao ? "@/generated/prisma" : "./outro")`
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/não auditável/)
+  })
+
+  it("6. NoSubstitutionTemplateLiteral de generated/prisma é tratado como literal — e proibido (não como 'não auditável')", () => {
+    const source = "await import(`@/generated/prisma`)"
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).not.toMatch(/não auditável/)
+    expect(offenders[0]).toMatch(/@\/generated\/prisma/)
+    // Prova que a mesma sintaxe também é reconhecida como aresta caminhável pelo grafo (não só
+    // pela detecção de ofensa) — comportamento simétrico ao de um StringLiteral.
+    const edges = readEdges("synthetic.ts", source)
+    expect(edges).toContainEqual({ specifier: "@/generated/prisma", typeOnly: false })
+  })
+
+  it("7. fecha import-equals de generated/prisma (vincula o namespace inteiro)", () => {
+    const source = `import Prisma = require("@/generated/prisma")`
+    const offenders = findForbiddenBindings("synthetic.ts", source)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/import-equals/)
+    expect(offenders[0]).not.toMatch(/não auditável/)
+  })
+
+  it("8. fecha import-equals de @prisma/client", () => {
+    const source = `import PrismaClientModule = require("@prisma/client")`
+    expect(findForbiddenBindings("synthetic.ts", source).length).toBeGreaterThan(0)
+  })
+
+  it("9. fecha import-equals de @/lib/prisma", () => {
+    const source = `import Database = require("@/lib/prisma")`
+    expect(findForbiddenBindings("synthetic.ts", source).length).toBeGreaterThan(0)
+  })
+
+  it("10. PERMITE carregamento literal de pacote não relacionado (dinâmico e import-equals)", () => {
+    const dynamic = `await import("node:crypto")\nrequire("react")`
+    const importEquals = `import Crypto = require("node:crypto")`
+    expect(findForbiddenBindings("synthetic.ts", dynamic)).toEqual([])
+    expect(findForbiddenBindings("synthetic.ts", importEquals)).toEqual([])
+  })
+
+  it("11. PERMITE import type/import-equals type-only — sem efeito em runtime", () => {
+    const importEqualsTypeOnly = `import type Foo = require("@/generated/prisma")`
+    const dynamicOfAllowedEnumViaLiteral = `import type { AmbienteFiscal } from "@/generated/prisma"`
+    expect(findForbiddenBindings("synthetic.ts", importEqualsTypeOnly)).toEqual([])
+    expect(findForbiddenBindings("synthetic.ts", dynamicOfAllowedEnumViaLiteral)).toEqual([])
+  })
+
+  it("12. comentários e strings que citam import-equals/import() dinâmico permanecem ignorados", () => {
+    const source = `
+      // import Prisma = require("@/generated/prisma") é proibido nesta camada
+      /** Nunca faça await import(path) nem require("@/generated/" + "prisma") aqui. */
+      import { AmbienteFiscal } from "@/generated/prisma"
+      export const aviso = "import Fake = require('@/generated/prisma') é só texto"
+      export function usa() { return AmbienteFiscal }
+    `
+    expect(findForbiddenBindings("synthetic.ts", source)).toEqual([])
+  })
+
+  it("13. o grafo real de produção segue sem carregamento dinâmico não auditável nem import-equals", () => {
+    // Reafirma, sob a lógica NOVA, a mesma garantia do describe anterior — usa o `graph` real
+    // (produção), não uma fixture. Passa hoje porque nenhum módulo alcançado usa import()
+    // dinâmico, require() ou import-equals para nada.
+    expect(forbiddenBindingsAcross(graph.modules)).toEqual([])
+  })
+
+  it("14. uma aresta não auditável NUNCA passa vacuamente — mesmo sem qualquer menção a Prisma", () => {
+    // Especifier completamente alheio a Prisma ("./algum-modulo-legitimo"), só para provar que
+    // a regra é "não literal ⇒ ofensa", não "não literal E parece Prisma ⇒ ofensa". Se este
+    // teste um dia passar vazio, a regra silenciosamente virou opt-in por palavra-chave — o que
+    // é exatamente a vacuidade que o GOAL pede para nunca acontecer.
+    const files = {
+      "entry.ts": `
+        const alvo = Math.random() > 0.5 ? "./algum-modulo-legitimo" : "./outro-modulo-legitimo"
+        await import(alvo)
+      `,
+    }
+    const modules = buildVirtualGraph(["entry.ts"], files)
+    const offenders = forbiddenBindingsAcross(modules)
+    expect(offenders.length).toBeGreaterThan(0)
+    expect(offenders[0]).toMatch(/não auditável/)
   })
 })
