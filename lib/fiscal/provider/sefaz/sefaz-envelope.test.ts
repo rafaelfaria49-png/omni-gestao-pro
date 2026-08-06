@@ -16,6 +16,7 @@ import {
   SEFAZ_SOAP12_CONTENT_TYPE,
   buildSefazSoap12Envelope,
   extractFiscalBytes,
+  type SefazEnvelopeRejectionCode,
   type SefazSoapEnvelope,
 } from "./sefaz-envelope"
 import type { SefazServico } from "./sefaz-endpoint-catalog"
@@ -374,5 +375,153 @@ describe("contrato do produtor canônico de xmlAssinado (GOAL-016D-C0)", () => {
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.codigo).toBe("bytes_fiscais_com_declaracao_xml")
+  })
+})
+
+// ── GOAL-016D-C1 — backstop INDEPENDENTE de fronteira da raiz ───────────────────────────────
+
+/** Recusa esperada, devolvendo o código para inspeção. Falha o teste se o payload for ACEITO. */
+function recusaDe(payload: string | Uint8Array): SefazEnvelopeRejectionCode {
+  const r = buildSefazSoap12Envelope({
+    servico: "NFeAutorizacao4",
+    exactBytes: typeof payload === "string" ? bytesDoXml(payload) : payload,
+  })
+  if (r.ok) throw new Error(`payload ACEITO indevidamente: ${JSON.stringify(String(payload))}`)
+  return r.codigo
+}
+
+describe("conteúdo fora da raiz é recusado pelo PRÓPRIO adapter (GOAL-016D-C1)", () => {
+  /**
+   * Antes desta correção o adapter aceitava 11 dos 15 payloads abaixo. A causa era mecânica e
+   * dupla: `childElements` roda sobre a AST de `c14n.toAst`, que descarta comentário e PI; e o
+   * `@xmldom/xmldom` REPARA em silêncio — um fecho órfão (`<NFe/></NFe>`) era simplesmente
+   * descartado, produzindo um DOM indistinguível do legítimo, sem erro nem warning.
+   *
+   * A barreira efetiva era o PRODUTOR (016D-C0). Isto aqui prova a garantia INDEPENDENTE que o
+   * GOAL pede: o adapter recusa sozinho, sem confiar em produtor nem em signer.
+   */
+  const foraDaRaiz: Array<[string, string]> = [
+    ["comentário antes da raiz", `<!--x--><NFe/>`],
+    ["comentário depois da raiz", `<NFe/><!--x-->`],
+    ["comentário depois de raiz com filhos", `<NFe><infNFe/></NFe><!--x-->`],
+    ["processing instruction antes da raiz", `<?pi dados?><NFe/>`],
+    ["processing instruction depois da raiz", `<NFe/><?pi dados?>`],
+    ["texto antes da raiz", `texto<NFe/>`],
+    ["texto depois da raiz", `<NFe/>texto`],
+    ["whitespace antes da raiz", ` <NFe/>`],
+    ["whitespace depois da raiz", `<NFe/>\n`],
+    ["CDATA depois da raiz", `<NFe/><![CDATA[oculto]]>`],
+    ["segunda raiz", `<NFe/><NFe2/>`],
+    ["raiz vazia seguida de fecho órfão", `<NFe/></NFe>`],
+    ["fecho órfão com comentário no meio", `<NFe></NFe><!--x--></NFe>`],
+    ["DOCTYPE antes da raiz", `<!DOCTYPE NFe><NFe/>`],
+    ["ENTITY antes da raiz", `<!DOCTYPE NFe [<!ENTITY e "v">]><NFe/>`],
+  ]
+
+  for (const [nome, payload] of foraDaRaiz) {
+    it(`recusa: ${nome}`, () => {
+      expect(recusaDe(payload)).toMatch(/^(bytes_fiscais_nao_embutiveis|envelope_mal_formado)$/)
+    })
+  }
+
+  it("recusa aninhamento cruzado que o parser repararia em silêncio", () => {
+    // `<NFe><a></NFe></a>` era ACEITO: o xmldom reordena/repara e o DOM final passa em tudo.
+    // O varredor é name-aware justamente para isto.
+    expect(recusaDe(`<NFe><a></NFe></a>`)).toBe("envelope_mal_formado")
+    expect(recusaDe(`<NFe><a></b></NFe>`)).toBe("envelope_mal_formado")
+    expect(recusaDe(`<NFe></nfe>`)).toBe("envelope_mal_formado")
+  })
+
+  it("recusa atributo em tag de fecho (achado da revisão independente)", () => {
+    // `</NFe x=">` é ilegal em XML e o xmldom o repara em silêncio. Não smuggla conteúdo
+    // externo — o varredor já barra o resto — mas despacharia marcação quebrada para a SEFAZ.
+    expect(recusaDe(`<NFe><infNFe/></NFe x=">`)).toBe("envelope_mal_formado")
+    // Depois da raiz o token sequer é lido: a malformação vence a posição, e ambas recusam.
+    expect(recusaDe(`<NFe/></NFe a="b">`)).toBe("envelope_mal_formado")
+    // O fecho com espaço antes do `>` continua legítimo — a recusa não virou bloqueio cego.
+    const r = buildSefazSoap12Envelope({
+      servico: "NFeAutorizacao4",
+      exactBytes: bytesDoXml(`<NFe><infNFe/></NFe\t\n >`),
+    })
+    expect(r.ok).toBe(true)
+  })
+
+  it("recusa raiz não fechada e markup truncado", () => {
+    expect(recusaDe(`<NFe><infNFe/>`)).toBe("envelope_mal_formado")
+    expect(recusaDe(`<NFe><!-- sem fim`)).toBe("envelope_mal_formado")
+    expect(recusaDe(`<NFe`)).toBe("envelope_mal_formado")
+  })
+
+  it("BOM e declaração continuam com seus códigos próprios (ordem dos guards preservada)", () => {
+    // O guard de declaração roda ANTES do de fronteira: um payload que viola os dois continua
+    // reportando a declaração, que é o diagnóstico mais específico.
+    expect(recusaDe(`<NFe/><?xml version="1.0"?>`)).toBe("bytes_fiscais_com_declaracao_xml")
+    const semBom = bytesDoXml(`<NFe/><!--x-->`)
+    const comBom = new Uint8Array(3 + semBom.length)
+    comBom.set([0xef, 0xbb, 0xbf], 0)
+    comBom.set(semBom, 3)
+    expect(recusaDe(comBom)).toBe("bytes_fiscais_com_bom")
+  })
+})
+
+describe("chamarizes que NÃO podem mover a fronteira da raiz (GOAL-016D-C1)", () => {
+  /** Cada payload é LEGÍTIMO: o material suspeito está dentro da raiz, escapado ou inerte. */
+  const legitimos: Array<[string, string]> = [
+    ["marcação de comentário escapada em texto", `<NFe><obs>&lt;!--x--&gt;</obs></NFe>`],
+    ["fecho da raiz escapado em texto", `<NFe><obs>&lt;/NFe&gt;</obs></NFe>`],
+    ["comentário real DENTRO da raiz", `<NFe><!-- nota --><infNFe/></NFe>`],
+    ["comentário contendo o fecho da raiz", `<NFe><!-- </NFe><evil/> --><infNFe/></NFe>`],
+    ["CDATA contendo o fecho da raiz", `<NFe><obs><![CDATA[</NFe><evil/>]]></obs></NFe>`],
+    ["PI real dentro da raiz", `<NFe><?processa isto?><infNFe/></NFe>`],
+    ["atributo com `>` e `<` no valor", `<NFe a="/><evil "><infNFe/></NFe>`],
+    ["atributo com barra antes do fecho", `<NFe a="x/"><infNFe/></NFe>`],
+    ["atributo em aspas simples com aspas duplas dentro", `<NFe a='x">y'><infNFe/></NFe>`],
+    ["tag vazia com atributo terminando em barra", `<NFe a="v/"/>`],
+    ["fecho com espaço antes do `>`", `<NFe><infNFe/></NFe >`],
+    ["elementos internos legítimos em série", `<NFe><a/><b/><c/></NFe>`],
+    ["raiz com prefixo de namespace", `<nfe:NFe xmlns:nfe="urn:x"><nfe:infNFe/></nfe:NFe>`],
+    ["texto e espaços INTERNOS preservados", `<NFe>  <a/>   <b/>  </NFe>`],
+  ]
+
+  for (const [nome, payload] of legitimos) {
+    it(`aceita: ${nome}`, () => {
+      const r = buildSefazSoap12Envelope({
+        servico: "NFeAutorizacao4",
+        exactBytes: bytesDoXml(payload),
+      })
+      if (!r.ok) throw new Error(`payload legítimo recusado: ${r.codigo} — ${r.mensagem}`)
+      // E os bytes continuam intactos: aceitar não pode implicar limpar.
+      expect(Buffer.from(extractFiscalBytes(r.envelope)).equals(Buffer.from(bytesDoXml(payload)))).toBe(true)
+    })
+  }
+
+  it("o chamariz dentro de CDATA não vira conteúdo externo no envelope montado", () => {
+    // Prova que aceitar o CDATA não introduziu uma segunda raiz de verdade no corpo.
+    const payload = `<NFe><obs><![CDATA[</NFe><evil/>]]></obs></NFe>`
+    const env = envelopeOk({ servico: "NFeAutorizacao4", exactBytes: bytesDoXml(payload) })
+    const doc = new DOMParser().parseFromString(new TextDecoder().decode(env.bytes), "text/xml")
+    const dados = doc.getElementsByTagName("nfeDadosMsg")[0]!
+    expect(Array.from(dados.childNodes).filter((n) => n.nodeType === 1)).toHaveLength(1)
+    expect(doc.getElementsByTagName("evil")).toHaveLength(0)
+  })
+})
+
+describe("o backstop não transforma nem reserializa (GOAL-016D-C1)", () => {
+  it("a fixture assinada legítima continua aceita e byte-idêntica", () => {
+    const original = bytesDoXml(XML_ASSINADO)
+    const env = envelopeOk({ servico: "NFeAutorizacao4", exactBytes: original })
+    expect(Buffer.from(extractFiscalBytes(env)).equals(Buffer.from(original))).toBe(true)
+  })
+
+  it("nenhuma recusa devolve conteúdo fiscal na mensagem", () => {
+    const segredo = "SEGREDO-FISCAL-12345678901234567890"
+    const r = buildSefazSoap12Envelope({
+      servico: "NFeAutorizacao4",
+      exactBytes: bytesDoXml(`<NFe><infNFe>${segredo}</infNFe></NFe><!--x-->`),
+    })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.mensagem).not.toContain(segredo)
+    expect(r.mensagem).not.toContain("infNFe")
   })
 })

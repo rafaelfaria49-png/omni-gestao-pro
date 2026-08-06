@@ -1298,6 +1298,8 @@ graph LR
 > gerar tais bytes, mas é defesa-em-profundidade ausente. Fechá-lo exige contar comentário/PI na
 > AST de canonicalização — **núcleo do XMLDSig**, que pede GOAL e autorização próprios. Registrado
 > em bloco `🟥` no cabeçalho de `sefaz-envelope.ts`.
+> ✅ **Resíduo FECHADO pelo slice 016D-C1** — e sem tocar a AST de canonicalização: a via foi um
+> varredor parser-free no próprio adapter. Ver §016D-C1 abaixo.
 >
 > ⚠️ **Fable indisponível por falta de crédito pela 7ª vez** nesta frente; a revisão independente
 > rodou em contexto frio com modelo distinto (não-Fable). Achado menor sobre o tipo de exceção
@@ -1315,6 +1317,89 @@ graph LR
 >
 > 🟩 **Pré-requisito de 016D-C/016D-D SATISFEITO.** O caminho real de emissão deixa de nascer
 > incompatível com o envelope.
+
+---
+
+### 016D-C1 — backstop de fronteira da raiz no envelope `[offline · defesa-em-profundidade]`
+
+> ✅ **Aplicado** (2026-08-06, GOAL `FISCAL-GOAL-016D-C1-SEFAZ-ENVELOPE-BACKSTOP-HARDENING-001`,
+> branch `fiscal/goal-016d-c1-envelope-backstop`, base `e6cd1d9`).
+>
+> **Objetivo:** fazer o adapter recusar SOZINHO qualquer conteúdo fora do único elemento raiz,
+> sem depender do produtor (016D-C0) nem do signer para essa garantia.
+>
+> **Causa mecânica (medida, não suposta).** Duas propriedades se somavam:
+> 1. `verificarEnvelope` prova a estrutura com `childElements`, que roda sobre a AST de
+>    `c14n.toAst` — e essa AST materializa **apenas elemento e texto**. Comentário, PI e CDATA
+>    fora da raiz simplesmente não existiam para a contagem, então "exatamente um elemento filho"
+>    seguia verdadeiro;
+> 2. o `@xmldom/xmldom` **repara e não valida**. Um fecho órfão após raiz vazia (`<NFe/></NFe>`)
+>    era **descartado em silêncio** — sem erro, sem warning — e o DOM resultante ficava
+>    indistinguível do legítimo. O mesmo valia para aninhamento cruzado (`<NFe><a></NFe></a>`).
+>
+> **Medição no commit-base `e6cd1d9`:** de 15 payloads adversariais, **11 eram ACEITOS**, incluindo
+> os dois casos do item 2 — que o bloco `🟥` de 016D-C0 **não** listava (ele previa só comentário e
+> PI colados após a raiz). Sondagem registrada antes de qualquer edição.
+>
+> **Correção:** `violacaoDeFronteiraDaRaiz` em `sefaz-envelope.ts` — varredura **parser-free**,
+> executada **antes** da montagem, que prova que o conteúdo é exatamente um elemento raiz e termina
+> no fecho dele. Lê comentário/PI/CDATA como **token único** (por isso `<![CDATA[</NFe><evil/>]]>`
+> e `<!-- </NFe> -->` não movem a fronteira), respeita aspas ao varrer tags de abertura (por isso
+> `<NFe a="/><evil ">` não é partido) e é **name-aware**: cada fecho precisa casar com o abre
+> correspondente, o que fecha as duas famílias que o parser reparava em silêncio.
+>
+> 🟩 **`c14n.ts` NÃO foi tocado.** A hipótese de 016D-C0 — de que fechar isto exigiria contar
+> comentário/PI em `toAst`, mexendo no núcleo de canonicalização do XMLDSig — **não se
+> confirmou**. Canonicalização, namespaces, digest, `SignatureValue` e ordem de atributos ficaram
+> intactos, e o GOAL não precisou ser ampliado.
+>
+> **Preservação de bytes:** o varredor só LÊ. Nada é removido, normalizado ou reserializado; os
+> bytes de `nfeDadosMsg` continuam byte-idênticos aos assinados (ADR-0017/0018).
+>
+> **Códigos de recusa:** sem ampliação do contrato público. Conteúdo fora da raiz →
+> `bytes_fiscais_nao_embutiveis`; markup inconsistente → `envelope_mal_formado`. A ordem dos guards
+> foi preservada (declaração e BOM continuam com seus códigos próprios).
+>
+> **Testes:** 15 payloads externos recusados (comentário/PI/texto/whitespace/CDATA antes e depois,
+> segunda raiz, fecho órfão, DOCTYPE/ENTITY) · 14 chamarizes legítimos **aceitos** com bytes
+> intactos (marcação escapada, comentário/CDATA contendo o fecho da raiz, decoys em atributo,
+> raiz com prefixo) · aninhamento cruzado e divergência de caixa recusados · regressão ponta a
+> ponta offline `snapshot → XML embutível → assinatura de teste → backstop → envelope → extração
+> de nfeDadosMsg → comparação byte a byte`, com `nfeDadosMsg` recortado **pelas marcas do
+> envelope** (não por `fiscalBytesOffset`, para não auto-confirmar) · digest e `SignatureValue`
+> verificáveis **depois** do envelope · prova de que anexar conteúdo externo a um XML já assinado
+> mantém o XMLDSig "válido" — ou seja, o backstop é mesmo a única defesa contra esse cenário ·
+> zero rede · nenhum caller produtivo novo (varredura de `lib/` + `app/`).
+>
+> **Revisão independente** (família distinta do executor — ⚠️ **Fable indisponível por falta de
+> crédito pela 8ª vez** nesta frente; rodou em contexto frio com modelo distinto não-Fable):
+> **nenhum BLOCKER**. ~35 payloads adversariais, incluindo DOCTYPE com subset interno entre aspas,
+> decoys de `<`/`>`/`-->`/`]]>` dentro de valor de atributo, aspas aninhadas, prefixo e caixa
+> divergentes no fecho, e aninhamento cruzado — todos recusados. A revisão confirmou o argumento
+> estrutural: cada byte é consumido por exatamente um token (`i = token.fim`), e os terminadores
+> usam `indexOf`, que só pode **subestimar** o fim do token — nunca engolir bytes à frente. Sobra
+> sempre é re-tokenizada e cai no catch-all de "conteúdo depois da raiz".
+>
+> **Achado NÃO-bloqueante acatado:** `</NFe x=">` era aceito — atributo em tag de fecho é ilegal e
+> o xmldom o repara em silêncio. Não smugglava conteúdo externo, mas despacharia marcação quebrada
+> para o parser estrito da SEFAZ (onde uma rejeição evitável custa tentativa sob **H-12/G-H3**).
+> Corrigido em `lerMarcacao`: depois do nome de um fecho só se admite espaço até o `>`.
+>
+> **Achado NÃO-bloqueante NÃO acatado (fora de escopo, relatado):** o guard **pré-existente**
+> `/<\?xml/i` (016D-A correção 002) é não-ancorado e recusaria conteúdo inerte que apenas *cite* o
+> texto `<?xml` dentro de comentário/CDATA, ou um PI legítimo `<?xml-stylesheet?>`. É falso-
+> positivo que apenas BLOQUEIA — o lado seguro da assimetria, como o próprio comentário do guard
+> já declara — e nenhum XML NFC-e real o dispara. Mexer nele não pertence a este GOAL.
+>
+> **Escopo intocado:** parser SOAP/cStat · fila fiscal · provider registry · transporte/mTLS ·
+> certificado/vault · produtor NFC-e · signer · `app/api/**` · `prisma/**` · `fiscalEnabled` ·
+> `c14n.ts`.
+>
+> **Validação:** `npx vitest run lib/fiscal/provider/sefaz` **230 verdes** ·
+> `npx vitest run lib/fiscal/signing` **46 verdes / 16 skip** (skip pré-existente) ·
+> `npx vitest run lib/fiscal` **947 verdes / 16 skip** (43 novos) · `npm run typecheck` limpo ·
+> ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero `migrate deploy`, zero baseline,
+> zero `db push`, zero conexão com banco) · `git diff --check` limpo.
 
 ---
 

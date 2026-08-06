@@ -35,6 +35,13 @@
  * em vez de removê-la, e essa recusa NÃO enfraquece: remover a declaração aqui mudaria bytes já
  * persistidos e conferidos por hash, violando ADR-0017/0018 e quebrando o XMLDSig. O guard é a
  * última barreira, não a correção.
+ *
+ * ## Backstop INDEPENDENTE de fronteira da raiz (GOAL-016D-C1)
+ *
+ * O contrato 016D-C0 protege produtor e signer, mas era a ÚNICA barreira contra conteúdo fora da
+ * raiz: aqui, comentário/PI/CDATA/texto externos atravessavam, porque a verificação estrutural
+ * roda sobre uma AST que descarta esses nós. `violacaoDeFronteiraDaRaiz` fecha isso sem depender
+ * de ninguém a montante — o adapter prova por si que os bytes são exatamente um elemento raiz.
  */
 import { childElements, parseXml } from "@/lib/fiscal/signing/c14n"
 import { sefazServiceNamespace, type SefazServico } from "./sefaz-endpoint-catalog"
@@ -95,6 +102,181 @@ function decodificarUtf8Estrito(bytes: Uint8Array): string | null {
   }
 }
 
+// ── Backstop de fronteira da raiz (GOAL-016D-C1) ────────────────────────────────────────────
+
+/**
+ * Violações de fronteira. São DIAGNÓSTICO interno — nunca carregam conteúdo fiscal e não
+ * ampliam `SefazEnvelopeRejectionCode`, que é o contrato público consumido pelo provider.
+ */
+type FronteiraRaizViolacao =
+  | "conteudo_antes_da_raiz"
+  | "conteudo_depois_da_raiz"
+  | "sem_raiz"
+  | "raiz_nao_fechada"
+  | "markup_malformado"
+
+type MarcacaoKind =
+  | "elemento_abre"
+  | "elemento_fecha"
+  | "elemento_vazio"
+  | "texto"
+  | "comentario"
+  | "pi"
+  | "cdata"
+  | "declaracao"
+
+type Marcacao = { kind: MarcacaoKind; fim: number; nome: string }
+
+/** Fim de um nome de tag: espaço XML 1.0 §2.3, `/` de tag vazia ou `>` de fecho. */
+const FIM_DE_NOME = new Set([" ", "\t", "\n", "\r", "/", ">"])
+
+function nomeDaTag(s: string, inicio: number): string {
+  let fim = inicio
+  while (fim < s.length && !FIM_DE_NOME.has(s[fim]!)) fim += 1
+  return s.slice(inicio, fim)
+}
+
+/**
+ * Lê UMA marcação a partir de `i`. Devolve `null` quando o token não termina — entrada
+ * truncada é malformação, não conteúdo aceitável.
+ *
+ * Comentário, PI e CDATA são lidos como um token ÚNICO, do abre ao fecha. É isso que impede
+ * chamariz: `<![CDATA[</NFe><evil/>]]>` e `<!-- </NFe> -->` não movem a fronteira da raiz,
+ * porque o varredor nunca olha dentro deles.
+ */
+function lerMarcacao(s: string, i: number): Marcacao | null {
+  if (s[i] !== "<") {
+    const proximo = s.indexOf("<", i)
+    return { kind: "texto", fim: proximo === -1 ? s.length : proximo, nome: "" }
+  }
+  if (s.startsWith("<!--", i)) {
+    const fim = s.indexOf("-->", i + 4)
+    return fim === -1 ? null : { kind: "comentario", fim: fim + 3, nome: "" }
+  }
+  if (s.startsWith("<![CDATA[", i)) {
+    const fim = s.indexOf("]]>", i + 9)
+    return fim === -1 ? null : { kind: "cdata", fim: fim + 3, nome: "" }
+  }
+  if (s.startsWith("<!", i)) {
+    // DOCTYPE e demais declarações de markup. O conteúdo é irrelevante: a declaração é ilegal
+    // em qualquer posição deste contrato, e o subset interno de um DTD faria esta busca de `>`
+    // parar cedo — o que só antecipa a recusa.
+    const fim = s.indexOf(">", i + 2)
+    return fim === -1 ? null : { kind: "declaracao", fim: fim + 1, nome: "" }
+  }
+  if (s.startsWith("<?", i)) {
+    const fim = s.indexOf("?>", i + 2)
+    return fim === -1 ? null : { kind: "pi", fim: fim + 2, nome: "" }
+  }
+  if (s.startsWith("</", i)) {
+    const fim = s.indexOf(">", i + 2)
+    if (fim === -1) return null
+    // Uma tag de fecho é `</Nome>` com, no máximo, espaço antes do `>`. Atributo em tag de fecho
+    // (`</NFe x=">`) é ilegal e o xmldom o repara em silêncio — recusar aqui evita despachar
+    // marcação quebrada para o parser estrito da SEFAZ. (Revisão independente 016D-C1.)
+    const nome = nomeDaTag(s, i + 2)
+    if (s.slice(i + 2 + nome.length, fim).trim() !== "") return null
+    return { kind: "elemento_fecha", fim: fim + 1, nome }
+  }
+
+  // Tag de abertura: varre respeitando aspas. `>`, `<` e `/` DENTRO de valor de atributo não
+  // são delimitadores — `<NFe a="/><evil ">` é uma tag só, e um varredor ingênuo a partiria.
+  const nome = nomeDaTag(s, i + 1)
+  let aspas: '"' | "'" | null = null
+  let barraAntes = false
+  for (let j = i + 1; j < s.length; j += 1) {
+    const c = s[j]!
+    if (aspas) {
+      if (c === aspas) aspas = null
+      continue
+    }
+    if (c === '"' || c === "'") {
+      aspas = c
+      barraAntes = false
+      continue
+    }
+    if (c === ">") {
+      return { kind: barraAntes ? "elemento_vazio" : "elemento_abre", fim: j + 1, nome }
+    }
+    if (c === "<") return null // `<` cru dentro de uma tag é malformação
+    barraAntes = c === "/"
+  }
+  return null
+}
+
+/**
+ * PROVA, sem parser e sem transformar nada, que o conteúdo é EXATAMENTE um elemento raiz e
+ * termina no fecho dessa raiz — nenhum byte antes, nenhum byte depois.
+ *
+ * ⚠️ Por que isto não pode ser delegado ao parser (causa mecânica do defeito 016D-C1).
+ * O `@xmldom/xmldom` REPARA em vez de validar, e o AST de `c14n.toAst` só materializa elemento
+ * e texto. As duas coisas juntas abrem três famílias que atravessavam o backstop inteiro:
+ *  1. comentário/PI/CDATA fora da raiz — o parser os cria, `childElements` não os conta, e
+ *     "exatamente um elemento filho" seguia verdadeiro;
+ *  2. fecho órfão após raiz vazia (`<NFe/></NFe>`) — o parser DESCARTA a tag extra em silêncio,
+ *     sem erro nem warning, e o DOM resultante é indistinguível do legítimo;
+ *  3. aninhamento cruzado (`<NFe><a></NFe></a>`) — reparado em silêncio pelo mesmo mecanismo.
+ * Medido no adapter antes desta correção: 11 de 15 payloads adversariais eram ACEITOS.
+ *
+ * O varredor é deliberadamente name-aware: casar o nome de cada fecho com o abre correspondente
+ * é o que fecha (2) e (3), porque a fronteira da raiz deixa de depender de contagem de `<`/`>`.
+ *
+ * Só LÊ. Não corrige, não normaliza, não reserializa — os bytes seguem para o envelope
+ * exatamente como chegaram (ADR-0017/0018).
+ */
+function violacaoDeFronteiraDaRaiz(s: string): FronteiraRaizViolacao | null {
+  const pilha: string[] = []
+  let raizFechada = false
+  let i = 0
+
+  while (i < s.length) {
+    const token = lerMarcacao(s, i)
+    if (!token || token.fim <= i) return "markup_malformado"
+
+    if (pilha.length === 0) {
+      // Nível de documento: só o start-tag da raiz é admissível, e uma única vez.
+      if (raizFechada) return "conteudo_depois_da_raiz"
+      if (token.kind === "elemento_vazio") raizFechada = true
+      else if (token.kind === "elemento_abre") pilha.push(token.nome)
+      else return "conteudo_antes_da_raiz"
+    } else if (token.kind === "elemento_abre") {
+      pilha.push(token.nome)
+    } else if (token.kind === "elemento_fecha") {
+      if (pilha.pop() !== token.nome) return "markup_malformado"
+      if (pilha.length === 0) raizFechada = true
+    } else if (token.kind === "declaracao") {
+      return "markup_malformado" // DOCTYPE/ENTITY não é conteúdo legítimo em lugar nenhum
+    }
+    // texto, comentário, PI, CDATA e tag vazia são legítimos DENTRO da raiz.
+
+    i = token.fim
+  }
+
+  if (pilha.length > 0) return "raiz_nao_fechada"
+  if (!raizFechada) return "sem_raiz"
+  return null
+}
+
+/**
+ * Mapeia a violação para o código público. Conteúdo fora da raiz é "não embutível"; markup
+ * quebrado é "mal-formado". A separação preserva o significado que o provider já consome.
+ */
+function recusaDeFronteira(
+  violacao: FronteiraRaizViolacao,
+): Extract<SefazEnvelopeResult, { ok: false }> {
+  if (violacao === "raiz_nao_fechada" || violacao === "markup_malformado") {
+    return recusa(
+      "envelope_mal_formado",
+      `Bytes fiscais com marcação inconsistente (${violacao}); transporte bloqueado sem transformação.`,
+    )
+  }
+  return recusa(
+    "bytes_fiscais_nao_embutiveis",
+    `Bytes fiscais carregam conteúdo fora do elemento raiz (${violacao}); o conteúdo embutido ` +
+      "precisa ser exatamente um elemento e terminar no fecho dele.",
+  )
+}
+
 /**
  * Monta o envelope SOAP 1.2 preservando os bytes fiscais byte a byte, ou RECUSA de forma
  * fail-closed com um código estável.
@@ -149,6 +331,9 @@ export function buildSefazSoap12Envelope(input: {
     )
   }
 
+  const fronteira = violacaoDeFronteiraDaRaiz(conteudo)
+  if (fronteira) return recusaDeFronteira(fronteira)
+
   const namespace = sefazServiceNamespace(input.servico)
   const encoder = new TextEncoder()
 
@@ -198,15 +383,11 @@ export function buildSefazSoap12Envelope(input: {
  * passariam por ambas as checagens e só quebrariam no parser estrito da SEFAZ. Há teste
  * dedicado fixando esse comportamento do parser.
  *
- * 🟥 **Lacuna conhecida e NÃO corrigida aqui (fora do escopo de 016D-C0).** Pela mesma razão —
- * `childElements` conta só elementos, e a AST de `c14n.toAst` descarta comentário e PI — este
- * módulo ACEITA lixo colado depois da raiz que não contenha `<?xml`: `<NFe/>…</NFe><!--x-->` ou
- * `<NFe/></NFe><?pi d?>`. Não é XML inválido dentro de `nfeDadosMsg`, mas contraria "exatamente
- * um elemento embutível" e deixa passar conteúdo não declarado. Em 016D-C0 a barreira efetiva
- * passou a ser o PRODUTOR (`xmlEmbeddableViolation` → `conteudo_fora_da_raiz`, checado antes da
- * assinatura), de modo que nenhum byte assim é produzível. Fechar o backstop exige contar
- * comentário/PI em `toAst` — mudança no núcleo de canonicalização do XMLDSig, que pede GOAL e
- * autorização próprios.
+ * ✅ **Lacuna FECHADA em 016D-C1.** Esta contagem seguia cega para lixo fora da raiz — comentário,
+ * PI, CDATA e texto não são elementos, e um fecho órfão (`<NFe/></NFe>`) o parser descartava em
+ * silêncio. Quem fecha isso agora é `violacaoDeFronteiraDaRaiz`, varredura parser-free que roda
+ * ANTES da montagem e não depende de `toAst`: o núcleo de canonicalização do XMLDSig permaneceu
+ * intocado. A contagem abaixo continua como segunda camada, não como a barreira.
  */
 function verificarEnvelope(
   envelopeXml: string,
