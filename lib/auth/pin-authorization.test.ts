@@ -189,19 +189,24 @@ describe("PIN legado bloqueado", () => {
   })
 })
 
-describe("rate limit — chave", () => {
-  it("separa orçamentos por utilizador, loja e IP", () => {
+describe("rate limit — chave (R1: sem ipHash)", () => {
+  it("separa orçamentos por utilizador e por loja", () => {
     const base = { userId: USER_A, storeId: LOJA_A, ipHash: "ip1" }
     expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base }))
     expect(buildPinRateLimitKey(base)).not.toBe(buildPinRateLimitKey({ ...base, userId: USER_B }))
     expect(buildPinRateLimitKey(base)).not.toBe(buildPinRateLimitKey({ ...base, storeId: LOJA_B }))
-    expect(buildPinRateLimitKey(base)).not.toBe(buildPinRateLimitKey({ ...base, ipHash: "ip2" }))
   })
 
-  it("é namespacada — não colide com a chave crua de ipHash do portal do contador", () => {
-    expect(buildPinRateLimitKey({ userId: USER_A, storeId: LOJA_A, ipHash: "ip1" })).toMatch(
-      /^pin-supervisor:v1:/,
-    )
+  it("R1: ipHash não participa da chave — trocar o IP não abre bucket novo", () => {
+    const base = { userId: USER_A, storeId: LOJA_A, ipHash: "ip1" }
+    expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base, ipHash: "ip2" }))
+    expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base, ipHash: "" }))
+  })
+
+  it("é namespacada v2 — não colide com a chave crua de ipHash do portal do contador", () => {
+    const key = buildPinRateLimitKey({ userId: USER_A, storeId: LOJA_A, ipHash: "ip1" })
+    expect(key).toMatch(/^pin-supervisor:v2:/)
+    expect(key).not.toContain("ip1")
   })
 })
 

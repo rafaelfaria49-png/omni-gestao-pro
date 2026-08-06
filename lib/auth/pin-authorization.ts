@@ -298,15 +298,19 @@ export function buildPinAuthorizationClearCookieOptions(): CookieOptions {
  * partilha o mesmo motor em memória (`lib/contador/auth/rate-limit.ts`) e usa o
  * `ipHash` cru como chave.
  *
- * Inclui `userId` + `storeId` + `ipHash` para que uma loja ou um operador não consuma
- * o orçamento de tentativas de outro.
+ * Inclui `userId` + `storeId` para que uma loja ou um operador não consuma o
+ * orçamento de tentativas de outro. **R1**: de propósito SEM `ipHash` — `x-forwarded-for`
+ * é enviado pelo cliente, então derivar a chave dele deixava o mesmo utilizador abrir um
+ * bucket novo a cada tentativa só trocando o cabeçalho. `ipHash` continua sendo aceite
+ * aqui (o chamador não muda) e continua disponível para auditoria/log, mas nunca mais
+ * participa da chave.
  */
 export function buildPinRateLimitKey(input: {
   userId: string
   storeId: string
   ipHash: string
 }): string {
-  return `pin-supervisor:v1:${input.userId}:${input.storeId}:${input.ipHash}`
+  return `pin-supervisor:v2:${input.userId}:${input.storeId}`
 }
 
 /** Hash não-reversível do IP, só para correlação em log. Nunca logar o IP bruto. */

@@ -48,6 +48,9 @@ const h = vi.hoisted(() => ({
   userFindFirst: vi.fn(async (_args: unknown): Promise<unknown> => null),
   auditCreate: vi.fn(async (_args: unknown): Promise<unknown> => ({})),
   cookieJar: new Map<string, string>(),
+  /** Mutável de propósito: os testes de R1 trocam isto entre chamadas para simular
+   *  rotação de `x-forwarded-for` pelo cliente, sem tocar no endpoint. */
+  clientIp: "203.0.113.7",
 }))
 
 vi.mock("@/auth", () => ({ auth: h.auth }))
@@ -66,7 +69,7 @@ vi.mock("next/headers", () => ({
       return v === undefined ? undefined : { name, value: v }
     },
   }),
-  headers: async () => new Headers({ "x-forwarded-for": "203.0.113.7" }),
+  headers: async () => new Headers({ "x-forwarded-for": h.clientIp }),
 }))
 
 import { DELETE, GET, POST } from "./route"
@@ -114,6 +117,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   __resetContadorRateLimitForTests()
   h.cookieJar.clear()
+  h.clientIp = "203.0.113.7"
   process.env.AUTH_SECRET = "segredo-de-teste-pin-containment-001a"
   h.auth.mockResolvedValue(null)
   h.entitlement.mockResolvedValue({ ok: true })
@@ -348,6 +352,105 @@ describe("POST /api/auth/admin — rate limit", () => {
     expect((await POST(postReq(PIN_ERRADO))).status).toBe(429)
     h.auth.mockResolvedValue(sessionOf(unrestricted(USER_B)))
     expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+  })
+})
+
+describe("POST /api/auth/admin — R1: rate limit imune a rotação de x-forwarded-for", () => {
+  beforeEach(() => {
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_A)))
+  })
+
+  it("IP A registra a 1ª falha; IP B, mesmo user/loja, registra a 2ª no MESMO bucket", async () => {
+    h.clientIp = "198.51.100.1"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    h.clientIp = "198.51.100.2"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    // Só mais 3 falhas (qualquer IP) esgotam o orçamento de 5 — se IP A e IP B tivessem
+    // buckets separados, precisaríamos de 5 falhas em CADA um para bloquear.
+    h.clientIp = "198.51.100.3"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    h.clientIp = "198.51.100.4"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    h.clientIp = "198.51.100.5"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    h.clientIp = "198.51.100.6"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(429)
+  })
+
+  it("cinco IPs alternados esgotam o limite; a 6ª tentativa com um IP NUNCA usado ainda é 429, com Retry-After", async () => {
+    const ips = ["203.0.113.11", "203.0.113.12", "203.0.113.13", "203.0.113.14", "203.0.113.15"]
+    for (const ip of ips) {
+      h.clientIp = ip
+      expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    }
+    h.clientIp = "203.0.113.99"
+    const res = await POST(postReq(PIN_ERRADO))
+    expect(res.status).toBe(429)
+    const retry = res.headers.get("Retry-After")
+    expect(retry).toBeTruthy()
+    expect(Number(retry)).toBeGreaterThan(0)
+    expect(Number(retry)).toBeLessThanOrEqual(15 * 60)
+  })
+
+  it("outro userId, mesmo alternando IP, não herda o bloqueio", async () => {
+    const ips = ["203.0.113.21", "203.0.113.22", "203.0.113.23", "203.0.113.24", "203.0.113.25"]
+    for (const ip of ips) {
+      h.clientIp = ip
+      await POST(postReq(PIN_ERRADO))
+    }
+    h.clientIp = "203.0.113.26"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(429)
+
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_B)))
+    h.clientIp = "203.0.113.27"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+  })
+
+  it("outra storeId, mesmo alternando IP, não herda o bloqueio", async () => {
+    const ips = ["203.0.113.31", "203.0.113.32", "203.0.113.33", "203.0.113.34", "203.0.113.35"]
+    for (const ip of ips) {
+      h.clientIp = ip
+      await POST(postReq(PIN_ERRADO, LOJA_A))
+    }
+    h.clientIp = "203.0.113.36"
+    expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(429)
+
+    h.clientIp = "203.0.113.37"
+    expect((await POST(postReq(PIN_ERRADO, LOJA_B))).status).toBe(401)
+  })
+
+  it("sucesso limpa o bucket correto mesmo após falhas com IPs variados", async () => {
+    h.clientIp = "203.0.113.41"
+    await POST(postReq(PIN_ERRADO))
+    h.clientIp = "203.0.113.42"
+    await POST(postReq(PIN_ERRADO))
+    h.clientIp = "203.0.113.43"
+    await POST(postReq(PIN_ERRADO))
+    h.clientIp = "203.0.113.44"
+    expect((await POST(postReq(PIN_CORRETO))).status).toBe(200)
+
+    // Bucket limpo: precisa de 5 falhas NOVAS (IPs ainda variados) para bloquear de novo.
+    const ips = ["203.0.113.45", "203.0.113.46", "203.0.113.47", "203.0.113.48", "203.0.113.49"]
+    for (const ip of ips) {
+      h.clientIp = ip
+      expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    }
+    h.clientIp = "203.0.113.50"
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(429)
+  })
+
+  it("ipHash segue nos eventos de auditoria; o IP bruto nunca aparece em log, resposta ou auditoria", async () => {
+    h.clientIp = "198.51.100.77"
+    const res = await POST(postReq(PIN_ERRADO))
+    expect(res.status).toBe(401)
+
+    const auditWritten = JSON.stringify(h.auditCreate.mock.calls)
+    expect(auditWritten).toContain("ipHash")
+    expect(auditWritten).not.toContain("198.51.100.77")
+
+    expect(allLoggedText()).not.toContain("198.51.100.77")
+    expect(await res.text()).not.toContain("198.51.100.77")
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("198.51.100.77")
   })
 })
 
