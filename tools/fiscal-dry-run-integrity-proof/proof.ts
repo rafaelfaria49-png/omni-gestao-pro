@@ -327,9 +327,21 @@ export async function runFiscalDryRunIntegrityProof(
   const unsignedXml = built.xml
   const unsignedXmlSha256 = sha256Hex(unsignedXml)
 
+  /**
+   * Prova de DOCUMENTO standalone, deliberadamente (GOAL-016D-C0).
+   *
+   * `buildNfceXmlResult` acima emite a declaração `<?xml ?>`, e o manifesto golden em
+   * `evidence/manifest.json` sela `unsignedXmlSha256`/`signedXmlSha256` desses bytes desde o
+   * GOAL-005B. Estes bytes NUNCA são persistidos em `NotaFiscal.xmlAssinado` nem transmitidos —
+   * a prova é de integridade C14N/XMLDSig contra verificador externo, não de transmissibilidade.
+   * Trocar o produtor aqui invalidaria o golden sem nada a ganhar, então a prova declara o
+   * contrato standalone em vez de fingir ser o caminho de emissão. O caminho de emissão real
+   * usa `buildNfceXmlAssinavel`, e o signer recusa declaração por default.
+   */
   const signed = signNfceXmlDetailed(unsignedXml, certificate, deps.senha ?? "", {
     ignorarValidade: true,
     agora: new Date(clock),
+    permitirDocumentoStandalone: true,
   })
   const signedXml = signed.xml
   const signedXmlSha256 = sha256Hex(signedXml)

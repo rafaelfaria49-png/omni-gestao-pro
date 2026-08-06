@@ -4,9 +4,15 @@
  * Assina somente `infNFe` por Reference local e valida de forma fail-closed a estrutura, os
  * algoritmos fixados pelo schema, a unicidade do Id, o digest e o SignatureValue. Nao transmite,
  * nao chama SEFAZ, nao acessa banco e nunca registra chave ou senha.
+ *
+ * O XML de entrada precisa satisfazer o contrato EMBUTIVEL (GOAL-016D-C0) — sem declaracao XML,
+ * sem BOM, sem espaco fora da raiz. Fora disso a assinatura e recusada ANTES de assinar. Os bytes
+ * recebidos sao preservados verbatim: a unica alteracao e a insercao do `<Signature>` como ultimo
+ * filho de `<NFe>` (splice de string, sem re-serializacao).
  */
 
 import { X509Certificate, createPrivateKey, sign as cryptoSign, verify as cryptoVerify } from "node:crypto"
+import { xmlEmbeddableViolation } from "../xml/xml-writer"
 import {
   attrOf,
   canonicalizeElement,
@@ -129,6 +135,28 @@ export function signNfceXmlDetailed(
 ): SignNfceResult {
   if (typeof xml !== "string" || !xml.trim()) {
     throw new NfceSignError("xml_invalido", "XML vazio ou invalido.")
+  }
+
+  /**
+   * Contrato embutível conferido ANTES da assinatura (GOAL-016D-C0).
+   *
+   * Este e o unico momento em que corrigir declaracao/BOM ainda e legitimo: depois de assinado,
+   * qualquer alteracao de bytes quebra o XMLDSig e diverge do hash persistido, e o adapter SOAP
+   * so pode RECUSAR. Guardar aqui fecha a janela do "caller esquecido" — nenhum XML com `<?xml`
+   * ou BOM chega a virar `xmlAssinado`. O guard so LE e RECUSA; nunca transforma.
+   *
+   * `parseXml` nao substitui esta checagem: ele descarta o BOM numa COPIA (o BOM sobreviveria em
+   * `working`, que e o que vai para `insertSignatureIntoNFe`) e o `@xmldom/xmldom` aceita um
+   * `<?xml ?>` embutido em silencio, virando PI de alvo reservado.
+   */
+  if (!options.permitirDocumentoStandalone) {
+    const violacao = xmlEmbeddableViolation(xml)
+    if (violacao) {
+      throw new NfceSignError(
+        "xml_nao_embutivel",
+        `XML nao satisfaz o contrato embutivel (${violacao}); assinatura recusada na origem.`,
+      )
+    }
   }
 
   let working = xml

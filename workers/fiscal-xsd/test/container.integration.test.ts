@@ -5,7 +5,7 @@ import { XSD_CONTRACT_VERSION, XSD_MAX_PAYLOAD_BYTES, XSD_SCHEMA_PACKAGE, type X
 import { OFFICIAL_XSD_MANIFEST_SHA256 } from "../../../lib/fiscal/xsd/official-package"
 import { DRY_RUN_TEST_CERT, dryRunSnapshot } from "../../../lib/fiscal/dry-run"
 import { signNfceXmlDetailed } from "../../../lib/fiscal/signing"
-import { buildNfceXml } from "../../../lib/fiscal/xml"
+import { buildNfceXmlAssinavel } from "../../../lib/fiscal/xml"
 import {
   VALID_NFCE_XML, NFCE_XML_MISSING_REQUIRED, NFCE_XML_OUT_OF_ORDER, NFCE_XML_INVALID_TYPE,
   NFCE_XML_FIELD_TOO_LONG, NFCE_XML_WRONG_NAMESPACE, NFCE_XML_MALFORMED, NFCE_XML_VERPROC_21,
@@ -36,7 +36,7 @@ integration("container B2 real", () => {
   })
 
   it("aprova o XML ASSINADO produzido pelo builder fiscal real", async () => {
-    const xml = buildNfceXml(dryRunSnapshot("simples"), { serie: 1, numero: 42 })
+    const xml = buildNfceXmlAssinavel(dryRunSnapshot("simples"), { serie: 1, numero: 42 })
     expect(xml).toContain("<verProc>OmniGestao-Fiscal1.0</verProc>")
     // O schema exige <Signature> (`<xs:element ref="ds:Signature"/>`, sem minOccurs="0"), então o
     // documento que o XSD julga — e que a SEFAZ recebe — é o assinado. O XML cru é inválido por construção.
@@ -45,7 +45,7 @@ integration("container B2 real", () => {
   })
 
   it("rejeita o XML do builder sem assinatura (Signature é obrigatório no schema)", async () => {
-    const xml = buildNfceXml(dryRunSnapshot("simples"), { serie: 1, numero: 42 })
+    const xml = buildNfceXmlAssinavel(dryRunSnapshot("simples"), { serie: 1, numero: 42 })
     const result = await client.validate(request(xml, "production-builder-unsigned"))
     expect(result.valid).toBe(false)
     expect(result.outcome).toBe("XML_INVALIDO")

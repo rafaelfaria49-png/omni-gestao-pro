@@ -9,7 +9,7 @@
 
 import { createHash } from "node:crypto"
 import {
-  buildNfceXmlResult,
+  buildNfceXmlAssinavelResult,
   NfceXmlError,
   type NfceXmlContext,
 } from "../xml"
@@ -104,9 +104,12 @@ export async function runFiscalDryRunDetailed(
     etapas.push(etapa("tributacao", trib.semDestaque ? "ok" : "ok", `Regime ${trib.regime} (congelado).`))
   }
 
-  // 2) Snapshot + XML (buildNfceXmlResult valida o snapshot e lança em erro bloqueante).
+  // 2) Snapshot + XML (o builder valida o snapshot e lança em erro bloqueante).
+  //    Produtor ASSINÁVEL (embutível): o dry-run precisa exercitar exatamente os bytes que a
+  //    emissão real assinaria e enviaria dentro de `nfeDadosMsg` — um XML standalone provaria
+  //    integridade de bytes que nunca seriam transmitidos.
   try {
-    const built = buildNfceXmlResult(snapshot, options.contexto)
+    const built = buildNfceXmlAssinavelResult(snapshot, options.contexto)
     xml = built.xml
     chaveAcesso = built.chaveAcesso
     numeracaoPlaceholder = built.numeracaoPlaceholder

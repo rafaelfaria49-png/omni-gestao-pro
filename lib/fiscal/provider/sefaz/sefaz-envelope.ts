@@ -18,19 +18,23 @@
  * devolvidos continuam sendo exclusivamente a concatenação dos originais. Nenhuma saída deste
  * módulo passa por serializador.
  *
- * ## Bloqueio de contrato conhecido (016D-A)
+ * ## Contrato do produtor (bloqueio 016D-A resolvido em 016D-C0)
  *
- * O produtor canônico de `xmlAssinado` — `serializeXmlDocument` (`lib/fiscal/xml/xml-writer.ts`),
- * consumido por `buildNfceXmlResult` e preservado verbatim por `signNfceXmlDetailed` — emite
- * `<?xml version="1.0" encoding="UTF-8"?>` por DEFAULT (`omitDeclaration` não tem nenhum caller
- * no repositório). Uma declaração XML só é legal na posição 0 de um documento; embutida dentro
- * de `<nfeDadosMsg>` ela torna o envelope MAL-FORMADO e a SEFAZ o rejeitaria.
+ * O bloqueio original: o produtor canônico emitia `<?xml version="1.0" encoding="UTF-8"?>` por
+ * default e o signer o preservava verbatim, de modo que `xmlAssinado` chegava aqui com uma
+ * declaração — legal só na posição 0 de um documento, e portanto capaz de tornar o envelope
+ * MAL-FORMADO dentro de `<nfeDadosMsg>`.
  *
- * Este módulo **recusa** esses bytes com `bytes_fiscais_com_declaracao_xml` em vez de removê-la.
- * Remover a declaração aqui mudaria os bytes que foram persistidos e conferidos por hash,
- * violando ADR-0017/0018 e quebrando a assinatura XMLDSig. A correção pertence ao produtor
- * (passar `omitDeclaration`/`declaration: false` no caminho de emissão real) e exige GOAL e
- * autorização próprios — fora do escopo desta correção.
+ * A correção foi feita NA ORIGEM, não aqui: `buildNfceXmlAssinavel`
+ * (`lib/fiscal/xml/nfce-xml-builder.ts`) serializa por `serializeXmlEmbeddable`, que nunca
+ * escreve a declaração e prova o contrato embutível antes de devolver; e `signNfceXmlDetailed`
+ * RECUSA por default qualquer entrada com declaração ou BOM. `serializeXmlDocument` segue
+ * emitindo a declaração para o contrato de documento standalone, que não passa por aqui.
+ *
+ * Este módulo continua **recusando** bytes com declaração (`bytes_fiscais_com_declaracao_xml`)
+ * em vez de removê-la, e essa recusa NÃO enfraquece: remover a declaração aqui mudaria bytes já
+ * persistidos e conferidos por hash, violando ADR-0017/0018 e quebrando o XMLDSig. O guard é a
+ * última barreira, não a correção.
  */
 import { childElements, parseXml } from "@/lib/fiscal/signing/c14n"
 import { sefazServiceNamespace, type SefazServico } from "./sefaz-endpoint-catalog"
@@ -193,6 +197,16 @@ export function buildSefazSoap12Envelope(input: {
  * também continuaria vendo exatamente um `<NFe>`. Sem o guard textual, portanto, esses bytes
  * passariam por ambas as checagens e só quebrariam no parser estrito da SEFAZ. Há teste
  * dedicado fixando esse comportamento do parser.
+ *
+ * 🟥 **Lacuna conhecida e NÃO corrigida aqui (fora do escopo de 016D-C0).** Pela mesma razão —
+ * `childElements` conta só elementos, e a AST de `c14n.toAst` descarta comentário e PI — este
+ * módulo ACEITA lixo colado depois da raiz que não contenha `<?xml`: `<NFe/>…</NFe><!--x-->` ou
+ * `<NFe/></NFe><?pi d?>`. Não é XML inválido dentro de `nfeDadosMsg`, mas contraria "exatamente
+ * um elemento embutível" e deixa passar conteúdo não declarado. Em 016D-C0 a barreira efetiva
+ * passou a ser o PRODUTOR (`xmlEmbeddableViolation` → `conteudo_fora_da_raiz`, checado antes da
+ * assinatura), de modo que nenhum byte assim é produzível. Fechar o backstop exige contar
+ * comentário/PI em `toAst` — mudança no núcleo de canonicalização do XMLDSig, que pede GOAL e
+ * autorização próprios.
  */
 function verificarEnvelope(
   envelopeXml: string,
