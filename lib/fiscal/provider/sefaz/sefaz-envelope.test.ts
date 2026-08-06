@@ -12,6 +12,7 @@
  */
 import { describe, expect, it } from "vitest"
 import { DOMParser } from "@xmldom/xmldom"
+import { parseXml } from "@/lib/fiscal/signing/c14n"
 import {
   SEFAZ_SOAP12_CONTENT_TYPE,
   buildSefazSoap12Envelope,
@@ -473,7 +474,15 @@ describe("chamarizes que NÃO podem mover a fronteira da raiz (GOAL-016D-C1)", (
     ["comentário contendo o fecho da raiz", `<NFe><!-- </NFe><evil/> --><infNFe/></NFe>`],
     ["CDATA contendo o fecho da raiz", `<NFe><obs><![CDATA[</NFe><evil/>]]></obs></NFe>`],
     ["PI real dentro da raiz", `<NFe><?processa isto?><infNFe/></NFe>`],
-    ["atributo com `>` e `<` no valor", `<NFe a="/><evil "><infNFe/></NFe>`],
+    /**
+     * ⚠️ Este caso já foi `<NFe a="/><evil ">`, com um `<` CRU no valor — e isso não é XML
+     * legítimo: `AttValue ::= '"' ([^<&"] | Reference)* '"'` (XML 1.0 §3.1) proíbe `<` cru,
+     * justamente para que nenhum valor de atributo possa abrir marcação. Aceitá-lo aqui
+     * congelava um DEFEITO como contrato. O chamariz continua idêntico em intenção — `>` e `/`
+     * crus dentro das aspas, que partiriam um varredor ingênuo — com o `<` escapado, que é a
+     * única forma de escrever esse mesmo dado em XML bem-formado.
+     */
+    ["atributo com `>` e `/` crus e `<` escapado", `<NFe a="/>&lt;evil "><infNFe/></NFe>`],
     ["atributo com barra antes do fecho", `<NFe a="x/"><infNFe/></NFe>`],
     ["atributo em aspas simples com aspas duplas dentro", `<NFe a='x">y'><infNFe/></NFe>`],
     ["tag vazia com atributo terminando em barra", `<NFe a="v/"/>`],
@@ -503,6 +512,134 @@ describe("chamarizes que NÃO podem mover a fronteira da raiz (GOAL-016D-C1)", (
     const dados = doc.getElementsByTagName("nfeDadosMsg")[0]!
     expect(Array.from(dados.childNodes).filter((n) => n.nodeType === 1)).toHaveLength(1)
     expect(doc.getElementsByTagName("evil")).toHaveLength(0)
+  })
+})
+
+describe("start-tag lexicalmente inválida é recusada (correção 002)", () => {
+  /**
+   * O varredor nasceu rastreando aspas apenas para localizar o `>` de fecho: qualquer `<`
+   * encontrado com aspas abertas era IGNORADO. Matriz adversarial medida sobre 399d0e4:
+   *
+   *  - ACEITOS pelo backstop inteiro: `<NFe a="x<y"/>`, `<NFe a='x<y'/>`, `<NFe a="<NFe"/>`,
+   *    `<NFe//>` — e o `@xmldom/xmldom` REPARA os quatro sem erro nem warning, de modo que
+   *    `parseXml` também não os pegava;
+   *  - recusados APENAS pelo parser a jusante (varredor cego): atributo sem aspas, sem `=`,
+   *    sem valor, duplicado, sem separador, `=` sem nome, QName com dois `:`, nome vazio,
+   *    nome/atributo começando com dígito.
+   *
+   * O segundo grupo é o mais insidioso: a recusa existia, mas vinha de um parser que REPARA —
+   * ou seja, o backstop não era independente ali, que é exatamente o que este GOAL fecha.
+   */
+  const malFormadas: Array<[string, string]> = [
+    ["`<` cru em valor com aspas duplas", `<NFe a="x<y"/>`],
+    ["`<` cru em valor com aspas simples", `<NFe a='x<y'/>`],
+    ["`<` cru abrindo marcação dentro do valor", `<NFe a="<NFe"/>`],
+    ["`<` cru em atributo de elemento interno", `<NFe><infNFe a="x<y"/></NFe>`],
+    ["atributo sem aspas", `<NFe a=b/>`],
+    ["atributo sem `=` e sem valor", `<NFe a/>`],
+    ["atributo com `=` e sem valor", `<NFe a=/>`],
+    ["aspas do valor não fechada", `<NFe a="x/>`],
+    ["atributos sem whitespace de separação", `<NFe a="1"b="2"/>`],
+    ["separação ausente em elemento interno", `<NFe><infNFe a="1"b="2"/></NFe>`],
+    ["atributo duplicado", `<NFe a="1" a="2"/>`],
+    ["atributo duplicado com aspas distintas", `<NFe a="1" a='2'/>`],
+    ["atributo qualificado duplicado", `<NFe xmlns:p="urn:x" p:a="1" p:a="2"/>`],
+    ["barra dupla na tag vazia", `<NFe//>`],
+    ["barra separada do `>` na tag vazia", `<NFe a="1"/ >`],
+    ["nome de elemento vazio", `< />`],
+    ["nome de elemento começando com dígito", `<1NFe/>`],
+    ["nome de elemento com `<`", `<NF<e/>`],
+    ["QName de elemento com dois `:`", `<a:b:c/>`],
+    ["nome de atributo começando com dígito", `<NFe 1a="x"/>`],
+    ["`=` sem nome de atributo", `<NFe ="v"/>`],
+    ["whitespace antes do nome do elemento", `<  NFe/>`],
+  ]
+
+  for (const [nome, payload] of malFormadas) {
+    it(`recusa: ${nome}`, () => {
+      expect(recusaDe(payload)).toBe("envelope_mal_formado")
+    })
+  }
+
+  it("a recusa é do PRÓPRIO backstop, não do parser a jusante", () => {
+    /**
+     * A prova de independência que o GOAL exige. Para cada payload abaixo o `@xmldom/xmldom`
+     * — e portanto `parseXml`, que é a segunda camada — ACEITA em silêncio, reparando a
+     * marcação. Se o backstop dependesse dele, estes bytes seguiriam para a SEFAZ.
+     */
+    const parserAceitaMasBackstopRecusa = [
+      `<NFe a="x<y"/>`,
+      `<NFe a='x<y'/>`,
+      `<NFe a="<NFe"/>`,
+      `<NFe//>`,
+      `<NFe a="1"/ >`,
+      `<NFe><infNFe a="x<y"/></NFe>`,
+    ]
+    for (const payload of parserAceitaMasBackstopRecusa) {
+      const envelope =
+        `<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body>` +
+        `<nfeDadosMsg xmlns="urn:x">${payload}</nfeDadosMsg></soap12:Body></soap12:Envelope>`
+      // o parser não acusa nada…
+      expect(parseXml(envelope)).toBeTruthy()
+      // …e o backstop recusa mesmo assim.
+      expect(recusaDe(payload)).toBe("envelope_mal_formado")
+    }
+  })
+
+  it("nenhuma recusa léxica devolve conteúdo fiscal na mensagem", () => {
+    const segredo = "SEGREDO-FISCAL-12345678901234567890"
+    const r = buildSefazSoap12Envelope({
+      servico: "NFeAutorizacao4",
+      exactBytes: bytesDoXml(`<NFe chave="${segredo}<x"/>`),
+    })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.mensagem).not.toContain(segredo)
+    expect(r.mensagem).not.toContain("chave")
+  })
+})
+
+describe("start-tag léxica: o que continua ACEITO (a recusa não é bloqueio cego)", () => {
+  const validas: Array<[string, string]> = [
+    ["`&lt;` no valor do atributo", `<NFe a="x&lt;y"><infNFe/></NFe>`],
+    ["`&lt;` como valor inteiro", `<NFe a="&lt;"/>`],
+    ["`>` cru dentro das aspas não encerra a tag", `<NFe a="x>y"><infNFe/></NFe>`],
+    ["`/` cru dentro das aspas não faz tag vazia", `<NFe a="x/"><infNFe/></NFe>`],
+    ["`>` e `/` crus juntos dentro das aspas", `<NFe a="/>"><infNFe/></NFe>`],
+    ["aspas duplas dentro de valor em aspas simples", `<NFe a='x">y'><infNFe/></NFe>`],
+    ["aspas simples dentro de valor em aspas duplas", `<NFe a="x'y"><infNFe/></NFe>`],
+    ["espaços ao redor do `=`", `<NFe a = "v"><infNFe/></NFe>`],
+    ["quebra de linha e tab entre atributos", `<NFe a="1"\n\tb="2"><infNFe/></NFe>`],
+    ["valor de atributo vazio", `<NFe a=""><infNFe/></NFe>`],
+    ["entidades e referência numérica no valor", `<NFe a="&amp;&quot;&apos;&#65;"/>`],
+    ["xmlns default e xmlns com prefixo", `<nfe:NFe xmlns="urn:d" xmlns:nfe="urn:x"><nfe:infNFe/></nfe:NFe>`],
+    ["QName com prefixo em elemento e atributo", `<nfe:NFe xmlns:nfe="urn:x" nfe:a="1"><nfe:infNFe/></nfe:NFe>`],
+    ["nome com `.`, `-` e `_`", `<n_f-e.x/>`],
+    ["whitespace antes de `/>`", `<NFe a="1" />`],
+    ["sem whitespace antes de `/>`", `<NFe a="1"/>`],
+    ["atributos do XML fiscal real", `<infNFe Id="NFe35260812345678000199650010000000011000000017" versao="4.00"/>`],
+  ]
+
+  for (const [nome, payload] of validas) {
+    it(`aceita: ${nome}`, () => {
+      const r = buildSefazSoap12Envelope({
+        servico: "NFeAutorizacao4",
+        exactBytes: bytesDoXml(payload),
+      })
+      if (!r.ok) throw new Error(`payload legítimo recusado: ${r.codigo} — ${r.mensagem}`)
+      // aceitar nunca pode implicar normalizar: os bytes saem idênticos.
+      expect(
+        Buffer.from(extractFiscalBytes(r.envelope)).equals(Buffer.from(bytesDoXml(payload))),
+      ).toBe(true)
+    })
+  }
+
+  it("`&lt;` sobrevive ESCAPADO — sem expansão, sem reserialização", () => {
+    const payload = `<NFe a="x&lt;y"><infNFe/></NFe>`
+    const env = envelopeOk({ servico: "NFeAutorizacao4", exactBytes: bytesDoXml(payload) })
+    const texto = new TextDecoder().decode(env.bytes)
+    expect(texto).toContain(`a="x&lt;y"`)
+    expect(texto).not.toContain(`a="x<y"`)
   })
 })
 

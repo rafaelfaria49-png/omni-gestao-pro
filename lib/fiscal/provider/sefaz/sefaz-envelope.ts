@@ -130,10 +130,100 @@ type Marcacao = { kind: MarcacaoKind; fim: number; nome: string }
 /** Fim de um nome de tag: espaço XML 1.0 §2.3, `/` de tag vazia ou `>` de fecho. */
 const FIM_DE_NOME = new Set([" ", "\t", "\n", "\r", "/", ">"])
 
+/** Whitespace XML 1.0 §2.3 (`S`). Único separador legal entre nome e atributos. */
+const ESPACO_XML = new Set([" ", "\t", "\n", "\r"])
+
 function nomeDaTag(s: string, inicio: number): string {
   let fim = inicio
   while (fim < s.length && !FIM_DE_NOME.has(s[fim]!)) fim += 1
   return s.slice(inicio, fim)
+}
+
+/**
+ * `NCName` — `Name` de XML 1.0 §2.3 sem `:`, que aqui é tratado como separador de QName.
+ * As faixas são as da produção oficial (NameStartChar / NameChar), inclusive o plano astral.
+ */
+const INICIO_DE_NOME =
+  "A-Z_a-z\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u02FF\u0370-\u037D\u037F-\u1FFF" +
+  "\u200C-\u200D\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF\uF900-\uFDCF" +
+  "\uFDF0-\uFFFD\u{10000}-\u{EFFFF}"
+const CORPO_DE_NOME =
+  "-.0-9A-Z_a-z\u00B7\u00C0-\u00D6\u00D8-\u00F6\u00F8-\u037D\u037F-\u1FFF" +
+  "\u200C-\u200D\u203F-\u2040\u2070-\u218F\u2C00-\u2FEF\u3001-\uD7FF" +
+  "\uF900-\uFDCF\uFDF0-\uFFFD\u{10000}-\u{EFFFF}"
+const NCNAME = new RegExp(`^[${INICIO_DE_NOME}][${CORPO_DE_NOME}]*$`, "u")
+
+/** QName (Namespaces in XML §4): `NCName` ou `prefixo:local`, nenhuma parte vazia. */
+function ehQName(nome: string): boolean {
+  const partes = nome.split(":")
+  return partes.length <= 2 && partes.every((parte) => NCNAME.test(parte))
+}
+
+/**
+ * Tokeniza UMA start-tag ou empty-element tag exigindo a estrutura léxica mínima de XML 1.0
+ * §3.1 — `'<' QName (S Attribute)* S? ('>' | '/>')`, com
+ * `Attribute ::= QName S? '=' S? AttValue` e `AttValue` entre aspas, sem `<` cru.
+ *
+ * ⚠️ Por que o varredor precisa disto (correção 002 · matriz adversarial sobre 399d0e4).
+ * A versão anterior só rastreava aspas para achar o `>` de fecho, e o `<` era ignorado enquanto
+ * houvesse aspas abertas. Consequência medida: `<NFe a="x<y"/>`, `<NFe a='x<y'/>`,
+ * `<NFe a="<NFe"/>` e `<NFe//>` eram **ACEITOS** pelo backstop inteiro — e o
+ * `@xmldom/xmldom` os REPARA sem emitir erro nem warning, então `parseXml` também não pegava.
+ * Outros treze casos (atributo sem aspas, sem `=`, duplicado, sem separador, QName inválido…)
+ * só eram recusados PELO PARSER a jusante, isto é, o backstop não era independente ali —
+ * exatamente o que este GOAL existe para fechar.
+ *
+ * Escopo deliberadamente léxico: não valida entidades no valor, não resolve namespace e não
+ * substitui o XSD. `&` solto num valor segue para as camadas seguintes porque não é capaz de
+ * mover a fronteira da tag, que é o risco tratado aqui.
+ */
+function lerTagDeAbertura(s: string, i: number): Marcacao | null {
+  let j = i + 1
+  const nome = nomeDaTag(s, j)
+  if (!ehQName(nome)) return null
+  j += nome.length
+
+  const nomesVistos = new Set<string>()
+  for (;;) {
+    let houveEspaco = false
+    while (j < s.length && ESPACO_XML.has(s[j]!)) {
+      j += 1
+      houveEspaco = true
+    }
+    if (j >= s.length) return null // tag truncada
+
+    if (s[j] === ">") return { kind: "elemento_abre", fim: j + 1, nome }
+    if (s[j] === "/") {
+      // `/` só é legal colado no `>`. `<NFe//>` e `<NFe a="1"/ >` caem aqui.
+      if (s[j + 1] !== ">") return null
+      return { kind: "elemento_vazio", fim: j + 2, nome }
+    }
+    // Sobrou atributo — e XML exige whitespace ANTES dele (`<NFe a="1"b="2"/>` é ilegal).
+    if (!houveEspaco) return null
+
+    const inicioAtributo = j
+    while (j < s.length && !FIM_DE_NOME.has(s[j]!) && s[j] !== "=") j += 1
+    const atributo = s.slice(inicioAtributo, j)
+    if (!ehQName(atributo)) return null
+    // "Unique Att Spec" (XML 1.0 §3.1): duplicidade é comparada no nome qualificado literal.
+    if (nomesVistos.has(atributo)) return null
+    nomesVistos.add(atributo)
+
+    while (j < s.length && ESPACO_XML.has(s[j]!)) j += 1
+    if (s[j] !== "=") return null
+    j += 1
+    while (j < s.length && ESPACO_XML.has(s[j]!)) j += 1
+
+    const aspas = s[j]
+    if (aspas !== '"' && aspas !== "'") return null // valor sem aspas é ilegal
+    j += 1
+    const inicioValor = j
+    while (j < s.length && s[j] !== aspas) j += 1
+    if (j >= s.length) return null // aspas não fechada
+    // `AttValue ::= '"' ([^<&"] | Reference)* '"'` — `<` cru é proibido; `&lt;` passa intacto.
+    if (s.slice(inicioValor, j).includes("<")) return null
+    j += 1
+  }
 }
 
 /**
@@ -179,29 +269,10 @@ function lerMarcacao(s: string, i: number): Marcacao | null {
     return { kind: "elemento_fecha", fim: fim + 1, nome }
   }
 
-  // Tag de abertura: varre respeitando aspas. `>`, `<` e `/` DENTRO de valor de atributo não
-  // são delimitadores — `<NFe a="/><evil ">` é uma tag só, e um varredor ingênuo a partiria.
-  const nome = nomeDaTag(s, i + 1)
-  let aspas: '"' | "'" | null = null
-  let barraAntes = false
-  for (let j = i + 1; j < s.length; j += 1) {
-    const c = s[j]!
-    if (aspas) {
-      if (c === aspas) aspas = null
-      continue
-    }
-    if (c === '"' || c === "'") {
-      aspas = c
-      barraAntes = false
-      continue
-    }
-    if (c === ">") {
-      return { kind: barraAntes ? "elemento_vazio" : "elemento_abre", fim: j + 1, nome }
-    }
-    if (c === "<") return null // `<` cru dentro de uma tag é malformação
-    barraAntes = c === "/"
-  }
-  return null
+  // Tag de abertura / tag vazia: tokenização léxica estrita. `>` e `/` DENTRO de um valor entre
+  // aspas continuam não sendo delimitadores — `<NFe a="/>&lt;evil ">` é uma tag só, e um
+  // varredor ingênuo a partiria —, mas a estrutura da tag agora é conferida de fato.
+  return lerTagDeAbertura(s, i)
 }
 
 /**

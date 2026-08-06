@@ -1401,6 +1401,67 @@ graph LR
 > ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero `migrate deploy`, zero baseline,
 > zero `db push`, zero conexão com banco) · `git diff --check` limpo.
 
+#### Correção 002 — start-tag lexicalmente inválida (GOAL `…-START-TAG-LEXICAL-FAIL-CLOSED-CORRECTION-002`)
+
+> ✅ **Aplicada** sobre `399d0e4`. O varredor da correção anterior era **name-aware mas não
+> léxico**: rastreava aspas apenas para localizar o `>` de fecho e, enquanto houvesse aspas
+> abertas, **ignorava qualquer `<`**. `AttValue ::= '"' ([^<&"] | Reference)* '"'` (XML 1.0 §3.1)
+> proíbe `<` cru justamente para que nenhum valor de atributo possa abrir marcação.
+>
+> 🟥 **O teste positivo `<NFe a="/><evil ">` congelava o defeito como contrato** — ele afirmava
+> que um `<` cru entre aspas era legítimo. Estar entre aspas não torna `<` legal; o payload era
+> XML malformado. Substituído por `<NFe a="/>&lt;evil ">`, que preserva o chamariz idêntico em
+> intenção (`>` e `/` crus dentro das aspas) na única forma bem-formada de escrevê-lo.
+>
+> **Matriz adversarial medida sobre `399d0e4`, antes de qualquer edição** (25 payloads):
+> - **ACEITOS pelo backstop inteiro (defeito real):** `<NFe a="x<y"/>` · `<NFe a='x<y'/>` ·
+>   `<NFe a="<NFe"/>` · `<NFe//>` · `<NFe><infNFe a="x<y"/></NFe>`. O `@xmldom/xmldom` **repara os
+>   cinco sem erro nem warning**, então `parseXml` também não os pegava;
+> - **recusados APENAS pela camada a jusante — varredor cego:** atributo sem aspas, sem `=`, sem
+>   valor, duplicado (inclusive qualificado), sem whitespace de separação, `=` sem nome, QName com
+>   dois `:`, nome vazio, nome/atributo começando com dígito. A recusa existia, mas vinha de um
+>   parser que REPARA — ou seja, **o backstop não era independente ali**, que é a tese do 016D-C1.
+>
+> **Correção:** `lerTagDeAbertura` substitui a varredura ingênua por tokenização léxica de
+> `'<' QName (S Attribute)* S? ('>' | '/>')`, com `Attribute ::= QName S? '=' S? AttValue`. Exige
+> QName válido (NCName XML 1.0 §2.3, no máximo um `:`, nenhuma parte vazia), whitespace XML antes
+> de cada atributo, valor obrigatoriamente entre aspas, **nenhum `<` cru no valor**, nenhum nome
+> de atributo repetido ("Unique Att Spec") e `/` apenas colado ao `>`. Deliberadamente léxico:
+> não valida entidades, não resolve namespace, não substitui o XSD. `c14n.ts`, signer e produtor
+> **não foram tocados**; o código de recusa continua `envelope_mal_formado`, sem ampliar o contrato.
+>
+> **Preservados como válidos:** `>` e `/` crus dentro de aspas · `&lt;` e demais referências ·
+> aspas trocadas dentro do valor · espaços ao redor do `=` · `xmlns`/`xmlns:prefixo` · QName com
+> prefixo em elemento e atributo · tag vazia e fecho correspondente · a fixture assinada.
+>
+> **Testes:** 22 start-tags malformadas recusadas · 17 formas legítimas aceitas com bytes
+> byte-idênticos · prova explícita de **independência** (6 payloads que `parseXml` ACEITA e o
+> backstop recusa) · `&lt;` preservado escapado, sem expansão · nenhuma mensagem de recusa
+> carrega conteúdo fiscal. Suíte do envelope + e2e: **72 → 114**, nenhum teste anterior perdido.
+>
+> **Revisão independente** (contexto frio, família distinta — ⚠️ **Fable indisponível por falta de
+> crédito pela 9ª vez** nesta frente): **APROVADO, nenhum BLOCKER**. ~87 ataques executados:
+> nenhuma evasão, nenhum falso positivo (fixture NFC-e 4.00 realista com `CDATA`, bloco
+> `Signature` completo, acentos e `&amp;` aceita byte-idêntica), nenhuma alteração de bytes,
+> nenhum loop (payloads de 5000 chars e 2000 atributos terminam em ≤1ms). Confirmou a distinção
+> pedida: `\r`/`\n`/`\t` valem como `S`; **NBSP, `\v`, `\f` e ZWSP não** — são recusados como nome
+> inválido, não aceitos como separador.
+>
+> **Achados informativos, NÃO acatados (limites já declarados no comentário-fonte):**
+> 1. nome de elemento no **plano astral** é aceito pelo regex do backstop (correto — XML 1.0
+>    permite) e recusado só pela 2ª camada, porque o `xmldom` erra `invalid tagName`. Fail-closed
+>    de ponta a ponta; inatingível na prática (o XSD da NFC-e só define nomes ASCII);
+> 2. `xmlns:p="urn:x" xmlns:q="urn:x" p:a="1" q:a="2"` — dois prefixos distintos aliasando a mesma
+>    URI — é aceito, porque a duplicidade é comparada no **QName literal**, como XML 1.0 §3.1
+>    define. Colisão só após resolução de namespace é restrição de *Namespaces in XML*, não move a
+>    fronteira da raiz e não pertence a este GOAL.
+>
+> **Validação:** `npx vitest run lib/fiscal/provider/sefaz` **272 verdes** ·
+> `npx vitest run lib/fiscal/signing` **46 verdes / 16 skip** · `npx vitest run lib/fiscal`
+> **989 verdes / 16 skip** (42 novos) · `npm run typecheck` limpo · ESLint limpo · `npm run build`
+> com `MIGRATION_SKIPPED` (zero `migrate deploy`, zero baseline, zero `db push`, zero conexão com
+> banco) · `git diff --check` limpo.
+
 ---
 
 ### 016D-C — `statusServico` em homologação `[🔒 primeiro contato real]`
