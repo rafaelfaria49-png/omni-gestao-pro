@@ -8,7 +8,12 @@
  * Escopo F3: NFC-e Simples Nacional B2C, operação interna, sem ST/DIFAL/FCP/IPI/ISS
  * (mesma fronteira do motor F2 — fora disso a tributação vem `ok=false` e o builder bloqueia).
  */
-export { buildNfceXml, buildNfceXmlResult } from "./nfce-xml-builder"
+export {
+  buildNfceXml,
+  buildNfceXmlResult,
+  buildNfceXmlAssinavel,
+  buildNfceXmlAssinavelResult,
+} from "./nfce-xml-builder"
 export { validateNfceSnapshot } from "./nfce-xml-validation"
 export {
   montarChaveAcesso,
@@ -21,6 +26,10 @@ export {
 export {
   serializeXml,
   serializeXmlDocument,
+  serializeXmlEmbeddable,
+  assertEmbeddableXml,
+  xmlEmbeddableViolation,
+  XmlEmbeddableContractError,
   escapeXmlText,
   escapeXmlAttr,
   leaf,
@@ -41,4 +50,4 @@ export type {
   NfceValidationResult,
   BuildNfceXmlResult,
 } from "./nfce-xml.types"
-export type { XmlNode, XmlAttrs } from "./xml-writer"
+export type { XmlNode, XmlAttrs, XmlEmbeddableViolation } from "./xml-writer"

@@ -10,7 +10,7 @@ import { createHash } from "node:crypto"
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { buildVendaFiscalSnapshot, type BuildSnapshotInput, type SnapshotLojaInput } from "../venda-fiscal-snapshot"
 import { sanitizeProdutoFiscal } from "@/lib/produto-fiscal"
-import { buildNfceXml } from "../xml"
+import { buildNfceXml, buildNfceXmlAssinavel } from "../xml"
 import {
   signNfceXml,
   signNfceXmlDetailed,
@@ -50,8 +50,8 @@ const LOJA_OK: SnapshotLojaInput = {
   email: "",
 }
 
-function nfceXml(): string {
-  const input: BuildSnapshotInput = {
+function snapshotInput(): BuildSnapshotInput {
+  return {
     storeId: "loja-1",
     vendaId: "venda-1",
     loja: LOJA_OK,
@@ -80,7 +80,18 @@ function nfceXml(): string {
       },
     ],
   }
-  const r = buildVendaFiscalSnapshot(input)
+}
+
+/** XML do caminho de assinatura/transmissão — embutível, sem declaração. */
+function nfceXml(): string {
+  const r = buildVendaFiscalSnapshot(snapshotInput())
+  if (!r.ok) throw new Error(`snapshot inválido: ${r.code}`)
+  return buildNfceXmlAssinavel(r.snapshot, { serie: 1, numero: 42 })
+}
+
+/** Mesmo snapshot, contrato de DOCUMENTO standalone (com declaração) — o que o signer recusa. */
+function nfceXmlStandalone(): string {
+  const r = buildVendaFiscalSnapshot(snapshotInput())
   if (!r.ok) throw new Error(`snapshot inválido: ${r.code}`)
   return buildNfceXml(r.snapshot, { serie: 1, numero: 42 })
 }
@@ -295,6 +306,66 @@ describe("signNfceXml · validações (TAREFA 5)", () => {
     const noPassado = { agora: new Date("2000-01-01T00:00:00.000Z") }
     expect(() => signNfceXml(nfceXml(), CERT_PLAIN, "", noPassado)).toThrowError(/expirad|válid/i)
     expect(() => signNfceXml(nfceXml(), CERT_PLAIN, "", { ignorarValidade: true })).not.toThrow()
+  })
+})
+
+/**
+ * GOAL-016D-C0 — o contrato embutível é conferido ANTES de assinar.
+ *
+ * Depois de assinado não há correção possível: mexer nos bytes quebra o XMLDSig e diverge do hash
+ * persistido (ADR-0017/0018). Por isso o signer é a última porta em que recusar ainda é barato.
+ */
+describe("signNfceXml · contrato embutível pré-assinatura (GOAL-016D-C0)", () => {
+  it("recusa XML de documento standalone (com declaração) → xml_nao_embutivel", () => {
+    const standalone = nfceXmlStandalone()
+    expect(standalone.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
+    try {
+      signNfceXml(standalone, CERT_PLAIN, "", OPTS)
+      throw new Error("deveria ter lançado")
+    } catch (e) {
+      expect((e as NfceSignError).code).toBe("xml_nao_embutivel")
+    }
+  })
+
+  it.each([
+    ["declaração na posição 0", `<?xml version="1.0"?>`, ""],
+    ["declaração aninhada na raiz", "", `<?xml version="1.0"?>`],
+  ])("recusa %s", (_nome, prefixo, dentro) => {
+    const xml = `${prefixo}<NFe xmlns="http://www.portalfiscal.inf.br/nfe">${dentro}<infNFe Id="NFeX"><x>1</x></infNFe></NFe>`
+    try {
+      signNfceXml(xml, CERT_PLAIN, "", OPTS)
+      throw new Error("deveria ter lançado")
+    } catch (e) {
+      expect((e as NfceSignError).code).toBe("xml_nao_embutivel")
+    }
+  })
+
+  it("recusa BOM — que `parseXml` descartaria só na cópia e sobreviveria nos bytes assinados", () => {
+    const comBom = `${String.fromCharCode(0xfeff)}${nfceXml()}`
+    try {
+      signNfceXml(comBom, CERT_PLAIN, "", OPTS)
+      throw new Error("deveria ter lançado")
+    } catch (e) {
+      expect((e as NfceSignError).code).toBe("xml_nao_embutivel")
+    }
+  })
+
+  it("recusa espaço fora da raiz", () => {
+    try {
+      signNfceXml(`\n  ${nfceXml()}\n`, CERT_PLAIN, "", OPTS)
+      throw new Error("deveria ter lançado")
+    } catch (e) {
+      expect((e as NfceSignError).code).toBe("xml_nao_embutivel")
+    }
+  })
+
+  it("permitirDocumentoStandalone libera a prova standalone sem alterar os bytes recebidos", () => {
+    const standalone = nfceXmlStandalone()
+    const signed = signNfceXml(standalone, CERT_PLAIN, "", { ...OPTS, permitirDocumentoStandalone: true })
+    // A declaração continua exatamente onde estava: o signer não remove nada.
+    expect(signed.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
+    expect(signed.slice(0, standalone.indexOf("</NFe>"))).toBe(standalone.slice(0, standalone.indexOf("</NFe>")))
+    expect(verifyNfceSignature(signed).valido).toBe(true)
   })
 })
 

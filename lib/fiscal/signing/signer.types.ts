@@ -39,10 +39,20 @@ export type SignNfceOptions = {
   ignorarValidade?: boolean
   /** Se true, reassina um XML já assinado (remove a assinatura anterior). Default false. */
   permitirReassinatura?: boolean
+  /**
+   * Aceita XML de DOCUMENTO standalone (com declaração `<?xml ?>` ou BOM). Default false.
+   *
+   * ⚠️ Só para provas e fixtures cujos bytes NUNCA são persistidos em `NotaFiscal.xmlAssinado`
+   * nem transmitidos à SEFAZ. Bytes assinados sob esta flag são irreversivelmente inadequados
+   * para `nfeDadosMsg`: a declaração não pode ser removida depois sem quebrar o XMLDSig e
+   * divergir do hash persistido (ADR-0017/0018). Nenhum caminho de emissão pode ligá-la.
+   */
+  permitirDocumentoStandalone?: boolean
 }
 
 export type NfceSignErrorCode =
   | "xml_invalido"
+  | "xml_nao_embutivel"
   | "sem_infnfe"
   | "infnfe_sem_id"
   | "ja_assinado"

@@ -30,7 +30,13 @@ export type NfceXmlContext = {
   naturezaOperacao?: string
   /** verProc. Default `NFCE_VER_PROC`. */
   versaoAplicativo?: string
-  /** Omite a declaração `<?xml ?>` no documento. Default false (inclui). */
+  /**
+   * Omite a declaração `<?xml ?>`. Default false (inclui).
+   *
+   * ⚠️ NÃO é o contrato de transmissão: para bytes destinados a assinatura use
+   * `buildNfceXmlAssinavel`. Quando `true`, o builder cai no mesmo produtor embutível e o
+   * contrato é provado — não existe caminho que gere NFC-e sem declaração sem essa prova.
+   */
   omitDeclaration?: boolean
 }
 

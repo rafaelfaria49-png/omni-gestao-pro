@@ -342,29 +342,37 @@ describe("byte-exatidão dos bytes fiscais", () => {
   })
 })
 
-describe("diagnóstico do produtor canônico de xmlAssinado", () => {
-  it("o builder NFC-e emite declaração XML por default — bloqueio de contrato documentado", async () => {
+describe("contrato do produtor canônico de xmlAssinado (GOAL-016D-C0)", () => {
+  it("o serializador STANDALONE continua emitindo declaração — comportamento preservado", async () => {
     /**
-     * Fixa a razão pela qual o adapter recusa em vez de remover: hoje o produtor canônico
-     * (`serializeXmlDocument`, consumido por `buildNfceXmlResult` e preservado verbatim pelo
-     * signer) emite `<?xml ... ?>` por default, e `omitDeclaration` não tem nenhum caller.
-     *
-     * Se este teste passar a falhar, o produtor mudou — e a recusa
-     * `bytes_fiscais_com_declaracao_xml` deve ser reavaliada em GOAL próprio, com autorização.
+     * O bloqueio 016D-A foi corrigido na ORIGEM, não relaxando este adapter. O serializador
+     * genérico segue com o mesmo default de antes: quem pede documento standalone recebe
+     * documento standalone, com declaração na posição 0.
      */
     const { serializeXmlDocument } = await import("@/lib/fiscal/xml/xml-writer")
-    const comDefault = serializeXmlDocument({ tag: "NFe" })
-    expect(comDefault.startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
+    expect(serializeXmlDocument({ tag: "NFe" }).startsWith('<?xml version="1.0" encoding="UTF-8"?>')).toBe(true)
+    expect(serializeXmlDocument({ tag: "NFe" }, { declaration: false }).startsWith("<?xml")).toBe(false)
+  })
 
-    // O produtor SABE omitir — mas nenhum caller de produção pede isso hoje.
-    const semDeclaracao = serializeXmlDocument({ tag: "NFe" }, { declaration: false })
-    expect(semDeclaracao.startsWith("<?xml")).toBe(false)
+  it("o produtor EMBUTÍVEL entrega bytes que este envelope aceita", async () => {
+    const { serializeXmlEmbeddable } = await import("@/lib/fiscal/xml/xml-writer")
+    const embutivel = serializeXmlEmbeddable({ tag: "NFe" })
+    expect(embutivel.startsWith("<?xml")).toBe(false)
 
-    // E, omitida a declaração, os bytes passam a ser envelopáveis.
     const r = buildSefazSoap12Envelope({
       servico: "NFeAutorizacao4",
-      exactBytes: bytesDoXml(semDeclaracao),
+      exactBytes: bytesDoXml(embutivel),
     })
     expect(r.ok).toBe(true)
+  })
+
+  it("a recusa por declaração NÃO foi enfraquecida pela correção do produtor", () => {
+    const r = buildSefazSoap12Envelope({
+      servico: "NFeAutorizacao4",
+      exactBytes: bytesDoXml(`<?xml version="1.0" encoding="UTF-8"?>${XML_ASSINADO}`),
+    })
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.codigo).toBe("bytes_fiscais_com_declaracao_xml")
   })
 })

@@ -45,6 +45,7 @@ import {
   leaf,
   leafRequired,
   serializeXmlDocument,
+  serializeXmlEmbeddable,
   type XmlNode,
 } from "./xml-writer"
 
@@ -352,7 +353,11 @@ function buildTotalNode(snapshot: VendaFiscalSnapshot, vProdTotal: number, vDesc
 
 // ── Builder principal ────────────────────────────────────────────────────────────────────
 
-function buildInternal(snapshot: VendaFiscalSnapshot, contexto?: NfceXmlContext): BuildNfceXmlResult {
+function buildInternal(
+  snapshot: VendaFiscalSnapshot,
+  contexto?: NfceXmlContext,
+  destino: "standalone" | "embutivel" = "standalone",
+): BuildNfceXmlResult {
   const validacao = validateNfceSnapshot(snapshot, contexto)
   if (!validacao.ok) {
     const first = validacao.erros[0]
@@ -440,15 +445,24 @@ function buildInternal(snapshot: VendaFiscalSnapshot, contexto?: NfceXmlContext)
     { versao: NFCE_XML_VERSAO, Id: `NFe${chave}` },
   )
   const nfe = group("NFe", [infNFe], { xmlns: NFCE_XMLNS })
-  const xml = serializeXmlDocument(nfe, { declaration: !contexto?.omitDeclaration })
+  // Sem declaração ⇒ contrato EMBUTÍVEL, provado byte a byte antes de sair daqui. Com declaração
+  // ⇒ contrato de DOCUMENTO standalone. `omitDeclaration` cai no primeiro justamente para que não
+  // exista nenhum caminho que produza NFC-e sem declaração sem passar pela prova de contrato.
+  const embutivel = destino === "embutivel" || contexto?.omitDeclaration === true
+  const xml = embutivel
+    ? serializeXmlEmbeddable(nfe)
+    : serializeXmlDocument(nfe, { declaration: true })
 
   return { xml, chaveAcesso: chave, serie, numero, numeracaoPlaceholder, validacao }
 }
 
 /**
- * Monta o XML NFC-e 4.00 a partir do snapshot congelado. PURO. Lança `NfceXmlError` quando
- * falta informação OBRIGATÓRIA (emitente/UF/itens/NCM/CFOP/tributação). Pendências
+ * Monta o XML NFC-e 4.00 STANDALONE a partir do snapshot congelado. PURO. Lança `NfceXmlError`
+ * quando falta informação OBRIGATÓRIA (emitente/UF/itens/NCM/CFOP/tributação). Pendências
  * não-bloqueantes (numeração placeholder, IE/GTIN ausentes) NÃO impedem a montagem.
+ *
+ * ⚠️ Sai COM declaração `<?xml ?>` — é um documento, não conteúdo embutível. Para o caminho de
+ * assinatura/transmissão use `buildNfceXmlAssinavel`.
  */
 export function buildNfceXml(snapshot: VendaFiscalSnapshot, contexto?: NfceXmlContext): string {
   return buildInternal(snapshot, contexto).xml
@@ -457,4 +471,26 @@ export function buildNfceXml(snapshot: VendaFiscalSnapshot, contexto?: NfceXmlCo
 /** Igual a `buildNfceXml`, mas devolve também chave de acesso, numeração e diagnóstico. */
 export function buildNfceXmlResult(snapshot: VendaFiscalSnapshot, contexto?: NfceXmlContext): BuildNfceXmlResult {
   return buildInternal(snapshot, contexto)
+}
+
+/**
+ * Produtor canônico do XML NFC-e destinado a ASSINATURA e TRANSMISSÃO (GOAL-016D-C0).
+ *
+ * Esta é a ÚNICA entrada sancionada para bytes que serão assinados, hasheados, persistidos em
+ * `NotaFiscal.xmlAssinado` e concatenados dentro de `<nfeDadosMsg>` no envelope SOAP da SEFAZ.
+ * Emite conteúdo EMBUTÍVEL (sem declaração, sem BOM, sem espaço fora da raiz) e prova o contrato
+ * antes de devolver — nada aqui remove declaração depois: ela simplesmente nunca é escrita.
+ *
+ * `omitDeclaration` do contexto é irrelevante neste caminho: o destino já é embutível.
+ */
+export function buildNfceXmlAssinavel(snapshot: VendaFiscalSnapshot, contexto?: NfceXmlContext): string {
+  return buildInternal(snapshot, contexto, "embutivel").xml
+}
+
+/** Igual a `buildNfceXmlAssinavel`, mas devolve chave de acesso, numeração e diagnóstico. */
+export function buildNfceXmlAssinavelResult(
+  snapshot: VendaFiscalSnapshot,
+  contexto?: NfceXmlContext,
+): BuildNfceXmlResult {
+  return buildInternal(snapshot, contexto, "embutivel")
 }

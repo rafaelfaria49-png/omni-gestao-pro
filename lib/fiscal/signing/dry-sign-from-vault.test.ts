@@ -12,7 +12,7 @@ import { verifyNfceSignature } from "./nfce-signer"
 import { NfceSignError } from "./signer.types"
 import { buildVendaFiscalSnapshot, type BuildSnapshotInput, type SnapshotLojaInput } from "../venda-fiscal-snapshot"
 import { sanitizeProdutoFiscal } from "@/lib/produto-fiscal"
-import { buildNfceXml } from "../xml"
+import { buildNfceXmlAssinavel } from "../xml"
 
 const LOJA_OK: SnapshotLojaInput = {
   cnpj: "11.222.333/0001-81",
@@ -71,7 +71,7 @@ function nfceXml(): string {
   }
   const r = buildVendaFiscalSnapshot(input)
   if (!r.ok) throw new Error(`snapshot inválido: ${r.code}`)
-  return buildNfceXml(r.snapshot, { serie: 1, numero: 42 })
+  return buildNfceXmlAssinavel(r.snapshot, { serie: 1, numero: 42 })
 }
 
 function seedVault(storeId: string, pfx: Buffer, senha: string) {

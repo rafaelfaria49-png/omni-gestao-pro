@@ -11,7 +11,7 @@
 | **Decisões-mãe** | ADR-0015 (SEFAZ direta) · ADR-0016 (piloto SP) · ADR-0017 (estado incerto) · ADR-0018 (XML legal) · ADR-0014 (KMS) · **ADR-0020** (fronteira provider SEFAZ direto / P2-only) |
 | **Estado** | 🟡 **PLANEJADO — NÃO INICIADO.** Nenhum slice implementado |
 | **Revisões** | Sonnet 5 (independente, §9) · **revisão cruzada de outra família** (§9.1) — parecer **B**, dez achados **F-1…F-10** incorporados |
-| **Slices** | **seis**: `016D-A0` · `016D-A` · `016D-B` · `016D-C` · `016D-D` · `016D-E` |
+| **Slices** | **sete**: `016D-A0` · `016D-A` · `016D-B` · `016D-C0` · `016D-C` · `016D-D` · `016D-E` |
 
 > **Regra deste documento.** Nenhuma afirmação regulatória por memória de modelo. Cada regra em §3
 > tem **URL oficial + data de consulta**. Onde a fonte não pôde ser lida, está declarada como
@@ -942,6 +942,8 @@ graph LR
 > em `bytes_fiscais_com_declaracao_xml`; corrigir o produtor exige GOAL e autorização próprios e é
 > **pré-requisito antes de 016D-C/016D-D**. ⚠️ Este bloqueio **não impede o início do 016D-B** —
 > fixtures, parser e matriz de `cStat` são independentes dos bytes do produtor.
+> ✅ **RESOLVIDO no slice 016D-C0** (`buildNfceXmlAssinavel` + `serializeXmlEmbeddable` + recusa
+> pré-assinatura no signer). O guard do adapter permanece intacto — ver §016D-C0 abaixo.
 >
 > > 🔍 **Achado colateral relevante.** `@xmldom/xmldom` (0.8.x) **não é um parser validador**:
 > > aceita silenciosamente um `<?xml ?>` embutido (vira PI de alvo reservado `xml`, ilegal por
@@ -1001,6 +1003,7 @@ graph LR
 > `simulado`** (capability negada por padrão) · proveniência **isolada por execução** · bloqueio
 > **fail-closed** de declaração XML/BOM/UTF-8 · produtor atual emite declaração XML e **permanece
 > incompatível** (pré-requisito antes de 016D-C/016D-D; não bloqueia o início do 016D-B).
+> ✅ **Estado superado em 016D-C0:** o produtor passou a ter contrato embutível explícito.
 
 | | |
 |---|---|
@@ -1081,6 +1084,7 @@ graph LR
 > e `SOAPAction` viriam do WSDL, cuja consulta é vedada neste GOAL) — não a lógica de
 > classificação. ⚠️ O bloqueio de contrato do **produtor de XML** (declaração `<?xml?>` em
 > `serializeXmlDocument`) **não foi tocado**: continua pré-requisito de 016D-C/016D-D.
+> ✅ **Fechado depois, pelo slice 016D-C0.**
 >
 > **Validação:** `npx vitest run lib/fiscal` — **785 verdes / 16 skip**, dos quais **51 novos**
 > deste slice · `npm run typecheck` limpo · ESLint limpo em `provider/sefaz`, `emission` e
@@ -1216,6 +1220,101 @@ graph LR
 > typecheck limpo · ESLint limpo · `npm run build` com `MIGRATION_SKIPPED` (zero
 > `migrate deploy`, zero baseline, zero conexão com banco) · `git diff --check` limpo · zero
 > schema, zero migration, zero rede, zero segredo, zero caller produtivo novo.
+
+---
+
+### 016D-C0 — contrato do produtor de XML embutível `[offline · pré-requisito de 016D-C]`
+
+> ✅ **Aplicado** (2026-08-05, GOAL `FISCAL-GOAL-016D-C0-XML-PRODUCER-EMBEDDABLE-CONTRACT-001`,
+> branch `fiscal/goal-016d-c0-xml-producer-embeddable`, base `9e0d0b8`). Fecha o **bloqueio de
+> contrato** aberto na correção 002 do 016D-A e reafirmado no 016D-B. Zero rede, zero segredo,
+> zero schema, zero migration, zero SEFAZ.
+>
+> **O bloqueio.** O produtor canônico emitia `<?xml version="1.0" encoding="UTF-8"?>` por default;
+> `signNfceXmlDetailed` preservava a string verbatim; logo o `xmlAssinado` que chegaria ao
+> `nfeDadosMsg` carregava uma declaração — legal só na posição 0 de um documento (XML 1.0 §2.8) —
+> e o adapter o recusaria em `bytes_fiscais_com_declaracao_xml`. Corrigir **depois** da assinatura
+> é impossível: alterar bytes quebra o XMLDSig e diverge do hash conferido (ADR-0017/0018).
+>
+> **A correção — na ORIGEM, não no adapter.** Dois contratos passam a ser explícitos e distintos:
+>
+> | Contrato | Produtor | Bytes | Destino |
+> |---|---|---|---|
+> | **DOCUMENTO standalone** | `serializeXmlDocument` · `buildNfceXml` | **com** declaração | arquivo/prova; **nunca** transmitido |
+> | **FRAGMENTO embutível** | `serializeXmlEmbeddable` · **`buildNfceXmlAssinavel`** | **sem** declaração, sem BOM | assinatura → hash → `NotaFiscal.xmlAssinado` → `nfeDadosMsg` |
+>
+> `serializeXmlEmbeddable` **prova** o contrato antes de devolver (`assertEmbeddableXml`): zero
+> BOM · UTF-8 válido (recusa surrogate solto, que `TextEncoder` trocaria por U+FFFD em silêncio) ·
+> zero `<?xml` em **qualquer** posição (busca não ancorada, mesma razão do guard do envelope) ·
+> zero espaço fora da raiz · abertura em elemento · **fecho exatamente no QName da raiz**. A
+> declaração **nunca é escrita** — não há remoção por regex nem por substring, nem antes nem
+> depois da assinatura.
+>
+> 🟩 **Fechamento do "caller esquecido".** `signNfceXmlDetailed` passa a **recusar por default**
+> (`xml_nao_embutivel`) qualquer entrada com declaração, BOM ou espaço fora da raiz, **antes** de
+> assinar — o único ponto em que corrigir ainda é legítimo. Isso é necessário porque `parseXml`
+> não cobre nenhum dos dois casos: ele descarta o BOM só na **cópia** que parseia (o BOM
+> sobreviveria em `working`, que é o que vai para `insertSignatureIntoNFe`) e o `@xmldom/xmldom`
+> aceita `<?xml ?>` embutido em silêncio. A escotilha `permitirDocumentoStandalone` existe para
+> **um** caller — a prova de integridade do GOAL-005B, cujos bytes nunca são persistidos nem
+> transmitidos e cujo manifesto golden está selado. Nenhum caminho de emissão pode ligá-la.
+>
+> ⛔ **O guard do adapter NÃO foi enfraquecido.** `bytes_fiscais_com_declaracao_xml` continua
+> recusando exatamente o que recusava; há teste dedicado fixando isso. O guard é a última
+> barreira, não a correção.
+>
+> **Mudanças de comportamento.** `serializeXmlDocument` e `buildNfceXml` seguem idênticos
+> (standalone, com declaração). `omitDeclaration` — que continua sem caller — passa a rotear pelo
+> produtor embutível, de modo que **nenhum** caminho gera NFC-e sem declaração sem a prova de
+> contrato. O `dry-run` passa a usar `buildNfceXmlAssinavel`: ele precisa exercitar os bytes que a
+> emissão real assinaria, não bytes que nunca seriam transmitidos.
+>
+> **Testes.** Novo `lib/fiscal/xml/nfce-embeddable-contract.test.ts` com regressão ponta a ponta
+> **offline**: snapshot sintético → XML embutível → assinatura com certificado de teste → SHA-256
+> → guards D4 → envelope SOAP → `extractFiscalBytes` **byte-idêntico** ao assinado. Prova também
+> que o assinado é o produzido com `<Signature>` enxertada e **nada removido**, que digest e
+> `SignatureValue` continuam verificáveis, e que o mesmo documento em contrato standalone é
+> recusado nas duas portas. Nenhum certificado, CNPJ, IE ou chave real.
+>
+> 🟥 **BLOCKER encontrado na revisão independente — e corrigido antes do commit.** O contrato
+> nasceu **fail-OPEN** para lixo colado DEPOIS da raiz que não contivesse `<?xml`:
+> `<NFe>…</NFe><!--x-->`, `<NFe>…</NFe><?pi d?>` e `<NFe/><NFe2/>` começam em elemento, terminam
+> em `>`, não têm BOM e não deixam espaço nas bordas — as seis checagens originais devolviam
+> `null`. Pior, o comentário do código **afirmava** que o backstop do envelope provaria "exatamente
+> uma raiz" com parser real; isso é **falso**, porque `childElements` conta só elementos e a AST de
+> `c14n.toAst` descarta comentário e PI. PoC executando o código real do repositório confirmou a
+> cadeia inteira: signer **aceitava** → `insertSignatureIntoNFe` (que insere por
+> `lastIndexOf("</NFe>")`) **preservava** o lixo → envelope **aceitava** → o lixo chegava intacto
+> ao `nfeDadosMsg` (`extractFiscalBytes` confirmou). É a mesma família "chamariz" que o 016D-A
+> tratou como ameaça séria, só que **sem** `<?xml` — variante que nenhum teste cobria.
+> **Correção:** nova violação `conteudo_fora_da_raiz` — o documento precisa terminar no fecho do
+> QName da própria raiz (parser-free; `<NFe/>` isolado é o caso self-closing). Fecha as três
+> famílias de uma vez. O comentário passou a declarar honestamente que isso é condição
+> **necessária**, não prova de boa-formação: quem prova é o parser a jusante.
+>
+> 🟥 **Resíduo pré-existente, relatado e NÃO corrigido aqui.** O backstop do adapter
+> (`verificarEnvelope`) segue aceitando esse mesmo lixo — defeito anterior a este GOAL, em
+> `sefaz-envelope.ts` + `c14n.toAst`. Não é alcançável hoje, porque nenhum produtor consegue mais
+> gerar tais bytes, mas é defesa-em-profundidade ausente. Fechá-lo exige contar comentário/PI na
+> AST de canonicalização — **núcleo do XMLDSig**, que pede GOAL e autorização próprios. Registrado
+> em bloco `🟥` no cabeçalho de `sefaz-envelope.ts`.
+>
+> ⚠️ **Fable indisponível por falta de crédito pela 7ª vez** nesta frente; a revisão independente
+> rodou em contexto frio com modelo distinto (não-Fable). Achado menor sobre o tipo de exceção
+> (`XmlEmbeddableContractError` vs `NfceXmlError`) foi **avaliado e não acatado**: deixar a
+> exceção de contrato de bytes escapar de um `catch (e instanceof NfceXmlError)` é o lado
+> fail-closed; colapsá-la em `NfceXmlError` faria um caller tratar violação de bytes como
+> "snapshot inválido".
+>
+> **Validação:** `npx vitest run lib/fiscal` — **904 verdes / 16 skip** (51 novos) · suíte
+> completa **336 arquivos verdes**, 1 falho **pré-existente e ambiental**
+> (`tools/fiscal-dry-run-integrity-proof/proof.test.ts` exige JDK 17; a máquina tem JRE 8 —
+> reproduzido idêntico no commit-base `9e0d0b8` com o trabalho em stash) · `npm run typecheck`
+> limpo · ESLint limpo nos 14 arquivos alterados · `npm run build` com `MIGRATION_SKIPPED` (zero
+> `migrate deploy`, zero baseline, zero conexão com banco) · `git diff --check` limpo.
+>
+> 🟩 **Pré-requisito de 016D-C/016D-D SATISFEITO.** O caminho real de emissão deixa de nascer
+> incompatível com o envelope.
 
 ---
 
