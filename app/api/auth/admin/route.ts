@@ -9,11 +9,12 @@
  * AGORA: o PIN deixou de ser credencial de acesso e passou a ser CO-ASSINATURA.
  *   1. exige sessão NextAuth válida (utilizador existente e ativo) — anónimo nunca
  *      chega a consultar PIN nenhum;
- *   2. resolve a loja pelo caminho canónico (header → query → cookie) e exige
- *      `canAccessStore`; sem loja resolvível, falha fechado;
- *   3. rate limit por (userId, storeId, ipHash) no motor único do repositório;
- *   4. recusa sempre os PINs legados bloqueados, sem sequer consultar o banco;
- *   5. emite autorização assinada de 15 min, vinculada ao userId e ao storeId.
+ *   2. resolve a loja pelo caminho canónico (header → query → cookie); sem loja
+ *      resolvível, falha fechado;
+ *   3. rate limit pelo `userId` autenticado no motor único do repositório;
+ *   4. exige `canAccessStore` E prova no banco que a loja EXISTE (R1-bis);
+ *   5. recusa sempre os PINs legados bloqueados, sem sequer consultar o banco;
+ *   6. emite autorização assinada de 15 min, vinculada ao userId e ao storeId canónico.
  *
  * O que este GOAL NÃO fez (deliberadamente, sem migration): `User.pin` continua em
  * texto puro. A migration `pinHash` é a fase seguinte — o contrato aqui já está
@@ -124,9 +125,36 @@ async function matchSupervisor(pin: string): Promise<{ id: string; name: string 
 }
 
 /**
+ * Prova CANÓNICA de que a unidade existe — R1-bis.
+ *
+ * `canAccessStore` sozinho não serve como validação de loja: para sessões não
+ * restritas ele é *default-allow* (`lib/auth/enterprise-permissions.ts`) e devolve
+ * `true` para qualquer string, incluindo identificadores inventados. Ele responde
+ * "esta sessão pode operar esta unidade?", não "esta unidade existe?" — e o `storeId`
+ * chega de header/query/cookie, ou seja, é escolhido pelo cliente.
+ *
+ * Sem esta prova, um utilizador autenticado emitia autorização para uma loja que não
+ * existe e a vinculava no token e na auditoria.
+ *
+ * Devolve o id EXATO da linha do banco (nunca a string do cliente) ou `null`. O
+ * `findUnique` é por chave primária — barato e sem varredura.
+ */
+async function resolveCanonicalStoreId(storeId: string): Promise<string | null> {
+  await prismaEnsureConnected()
+  const store = await prisma.store.findUnique({ where: { id: storeId }, select: { id: true } })
+  return store?.id ?? null
+}
+
+/**
  * Estado da autorização corrente. Fail-closed em toda divergência: sem sessão, sem
  * loja resolvível, token ausente/adulterado/expirado ou vinculado a outro
  * utilizador/loja ⇒ `authenticated: false`, sem detalhe de motivo para o cliente.
+ *
+ * Sem validação canónica de loja aqui, de propósito: o GET não emite nada e não compara
+ * PIN. O `storeId` do token já foi provado no banco na EMISSÃO, e a comparação contra o
+ * valor pedido é exata — um identificador inventado nunca coincide com o do token e cai
+ * em `store_mismatch`. Consultar o banco a cada sondagem só somaria custo, sem fechar
+ * vetor nenhum.
  */
 export async function GET(request: Request) {
   const session = await auth()
@@ -190,23 +218,15 @@ export async function POST(request: Request) {
     })
   }
 
-  // (2) LOJA — o cliente SELECIONA a unidade; quem AUTORIZA é `canAccessStore`.
-  const storeId = storeIdFromAssistecRequestForRead(request)
-  if (!storeId) {
+  // (2) LOJA SOLICITADA — ainda é só a ESCOLHA do cliente (header → query → cookie).
+  // Nada aqui a trata como verdadeira; a validação vem no passo (4).
+  const requestedStoreId = storeIdFromAssistecRequestForRead(request)
+  if (!requestedStoreId) {
     return deny(400, "store_required", "pin_auth_store_missing", {
       ipHash,
       userId,
       reasonCode: "unresolved_store",
     })
-  }
-  if (!canAccessStore(session, storeId)) {
-    await audit("PIN_SUPERVISOR_LOJA_NEGADA", {
-      userId,
-      storeId,
-      ipHash,
-      detail: "Sessão sem acesso à unidade informada.",
-    })
-    return deny(403, "store_forbidden", "pin_auth_store_denied", { ipHash, userId, storeId })
   }
 
   const secret = resolvePinAuthorizationSecret()
@@ -214,26 +234,79 @@ export async function POST(request: Request) {
     return deny(503, "unavailable", "pin_auth_misconfigured", {
       ipHash,
       userId,
-      storeId,
+      storeId: requestedStoreId,
       reasonCode: "missing_server_secret",
     })
   }
 
-  // (3) RATE LIMIT — só depois de haver identidade e loja, para que a chave seja
-  // específica e ninguém consuma o orçamento de outro.
-  const rateKey = buildPinRateLimitKey({ userId, storeId, ipHash })
+  // (3) RATE LIMIT — ANTES da validação da loja, de propósito.
+  //
+  // A chave é só o `userId` (R1-bis), portanto já não depende do `storeId` e pode
+  // correr mais cedo. Correr antes da validação da loja é o que fecha o vetor: quem já
+  // esgotou o orçamento recebe 429 mesmo enviando um `storeId` inventado, em vez de
+  // receber uma resposta diferente que revelasse um balde novo — e não paga consulta ao
+  // banco nenhuma enquanto está bloqueado.
+  const rateKey = buildPinRateLimitKey({ userId, storeId: requestedStoreId, ipHash })
   const limit = checkContadorRateLimit(rateKey)
   if (limit.limited) {
     await audit("PIN_SUPERVISOR_BLOQUEADO", {
       userId,
-      storeId,
+      storeId: requestedStoreId,
       ipHash,
       detail: "Bloqueio por excesso de tentativas incorretas.",
     })
-    logPinAuthorizationEvent("pin_auth_rate_limited", { ipHash, userId, storeId })
+    logPinAuthorizationEvent("pin_auth_rate_limited", {
+      ipHash,
+      userId,
+      storeId: requestedStoreId,
+    })
     const res = NextResponse.json({ error: "rate_limited" }, { status: 429 })
     res.headers.set("Retry-After", String(limit.retryAfterSeconds))
     return res
+  }
+
+  // (4) LOJA VALIDADA — política de acesso E existência real, nesta ordem (a política é
+  // em memória; só se ela passar vale ir ao banco).
+  //
+  // As duas recusas devolvem o MESMO `store_forbidden`/403: distinguir "não é sua" de
+  // "não existe" transformaria a rota num oráculo de enumeração de unidades para
+  // qualquer utilizador autenticado. Os motivos ficam separados no log e na auditoria,
+  // que são internos.
+  if (!canAccessStore(session, requestedStoreId)) {
+    await audit("PIN_SUPERVISOR_LOJA_NEGADA", {
+      userId,
+      storeId: requestedStoreId,
+      ipHash,
+      detail: "Sessão sem acesso à unidade informada.",
+    })
+    return deny(403, "store_forbidden", "pin_auth_store_denied", {
+      ipHash,
+      userId,
+      storeId: requestedStoreId,
+      reasonCode: "store_not_allowed",
+    })
+  }
+
+  let storeId: string | null
+  try {
+    storeId = await resolveCanonicalStoreId(requestedStoreId)
+  } catch (e) {
+    console.error("[auth/admin:store]", e instanceof Error ? e.message : String(e))
+    return NextResponse.json({ error: "unavailable" }, { status: 503 })
+  }
+  if (!storeId) {
+    await audit("PIN_SUPERVISOR_LOJA_NEGADA", {
+      userId,
+      storeId: requestedStoreId,
+      ipHash,
+      detail: "Unidade informada não existe.",
+    })
+    return deny(403, "store_forbidden", "pin_auth_store_denied", {
+      ipHash,
+      userId,
+      storeId: requestedStoreId,
+      reasonCode: "store_not_found",
+    })
   }
 
   let body: { pin?: unknown } = {}
@@ -244,7 +317,7 @@ export async function POST(request: Request) {
   }
   const pin = typeof body.pin === "string" ? body.pin.trim() : ""
 
-  // (4) PIN LEGADO BLOQUEADO — recusado ANTES de qualquer consulta, para que nem
+  // (5) PIN LEGADO BLOQUEADO — recusado ANTES de qualquer consulta, para que nem
   // exista caminho em que ele possa autenticar. Conta como tentativa incorreta.
   if (pin.length === 0 || isBlockedLegacySupervisorPin(pin)) {
     registerContadorAuthFailure(rateKey)
@@ -287,7 +360,9 @@ export async function POST(request: Request) {
     })
   }
 
-  // (5) SUCESSO — limpa o contador daquele contexto e emite a autorização vinculada.
+  // (6) SUCESSO — limpa o orçamento DAQUELE utilizador (a chave é só o `userId`, logo
+  // nenhum outro utilizador é afetado) e emite a autorização vinculada ao `storeId`
+  // canónico devolvido pelo banco, nunca à string que o cliente enviou.
   registerContadorAuthSuccess(rateKey)
   const token = await createPinAuthorizationToken(
     { userId, storeId, supervisorId: supervisor.id },

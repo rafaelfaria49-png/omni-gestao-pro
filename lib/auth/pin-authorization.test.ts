@@ -189,12 +189,11 @@ describe("PIN legado bloqueado", () => {
   })
 })
 
-describe("rate limit — chave (R1: sem ipHash)", () => {
-  it("separa orçamentos por utilizador e por loja", () => {
+describe("rate limit — chave (R1: sem ipHash · R1-bis: sem storeId)", () => {
+  it("separa orçamentos por utilizador — a única dimensão que o cliente não escolhe", () => {
     const base = { userId: USER_A, storeId: LOJA_A, ipHash: "ip1" }
     expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base }))
     expect(buildPinRateLimitKey(base)).not.toBe(buildPinRateLimitKey({ ...base, userId: USER_B }))
-    expect(buildPinRateLimitKey(base)).not.toBe(buildPinRateLimitKey({ ...base, storeId: LOJA_B }))
   })
 
   it("R1: ipHash não participa da chave — trocar o IP não abre bucket novo", () => {
@@ -203,10 +202,30 @@ describe("rate limit — chave (R1: sem ipHash)", () => {
     expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base, ipHash: "" }))
   })
 
-  it("é namespacada v2 — não colide com a chave crua de ipHash do portal do contador", () => {
+  it("R1-bis: storeId não participa da chave — trocar de loja não abre bucket novo", () => {
+    const base = { userId: USER_A, storeId: LOJA_A, ipHash: "ip1" }
+    expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base, storeId: LOJA_B }))
+    expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base, storeId: "" }))
+  })
+
+  it("R1-bis: nem um storeId inventado abre bucket novo", () => {
+    const base = { userId: USER_A, storeId: LOJA_A, ipHash: "ip1" }
+    for (const inventada of ["loja-nao-existe", "../../etc", "loja-A ", "«»", "0"]) {
+      expect(buildPinRateLimitKey(base)).toBe(buildPinRateLimitKey({ ...base, storeId: inventada }))
+    }
+  })
+
+  it("a chave não contém NENHUM dado controlado pelo cliente", () => {
     const key = buildPinRateLimitKey({ userId: USER_A, storeId: LOJA_A, ipHash: "ip1" })
-    expect(key).toMatch(/^pin-supervisor:v2:/)
     expect(key).not.toContain("ip1")
+    expect(key).not.toContain(LOJA_A)
+    expect(key).toContain(USER_A)
+  })
+
+  it("é namespacada v3 — invalida os baldes v2 e não colide com o portal do contador", () => {
+    const key = buildPinRateLimitKey({ userId: USER_A, storeId: LOJA_A, ipHash: "ip1" })
+    expect(key).toMatch(/^pin-supervisor:v3:user:/)
+    expect(key).not.toMatch(/^pin-supervisor:v2:/)
   })
 })
 

@@ -24,6 +24,14 @@ import { __resetContadorRateLimitForTests } from "@/lib/contador/auth/rate-limit
 
 const LOJA_A = "loja-A"
 const LOJA_B = "loja-B"
+const LOJA_C = "loja-C"
+const LOJA_D = "loja-D"
+const LOJA_E = "loja-E"
+const LOJA_F = "loja-F"
+/** Unidades que EXISTEM na tabela `stores` deste cenário. */
+const LOJAS_REAIS = [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E, LOJA_F]
+/** Identificador que o cliente pode enviar mas que não corresponde a linha nenhuma. */
+const LOJA_INVENTADA = "loja-que-nao-existe"
 const USER_A = "admin-user-a"
 const USER_B = "admin-user-b"
 const SUPERVISOR_ID = "supervisor-1"
@@ -46,6 +54,8 @@ const h = vi.hoisted(() => ({
   entitlement: vi.fn(async (): Promise<unknown> => ({ ok: true })),
   ensureConnected: vi.fn(async (): Promise<void> => undefined),
   userFindFirst: vi.fn(async (_args: unknown): Promise<unknown> => null),
+  /** R1-bis: prova canónica de existência da loja. Só `LOJAS_REAIS` têm linha. */
+  storeFindUnique: vi.fn(async (_args: unknown): Promise<unknown> => null),
   auditCreate: vi.fn(async (_args: unknown): Promise<unknown> => ({})),
   cookieJar: new Map<string, string>(),
   /** Mutável de propósito: os testes de R1 trocam isto entre chamadas para simular
@@ -58,6 +68,7 @@ vi.mock("@/lib/auth/session-entitlement", () => ({ getSessionEntitlement: h.enti
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     user: { findFirst: h.userFindFirst },
+    store: { findUnique: h.storeFindUnique },
     logsAuditoria: { create: h.auditCreate },
   },
   prismaEnsureConnected: h.ensureConnected,
@@ -127,6 +138,10 @@ beforeEach(() => {
     if (where.pin === PIN_CORRETO) return { id: SUPERVISOR_ID, name: "Supervisora" }
     if (where.id === SUPERVISOR_ID) return { id: SUPERVISOR_ID, name: "Supervisora" }
     return null
+  })
+  h.storeFindUnique.mockImplementation(async (args: unknown) => {
+    const id = (args as { where?: { id?: string } }).where?.id
+    return id && LOJAS_REAIS.includes(id) ? { id } : null
   })
   vi.spyOn(Date, "now").mockReturnValue(T0)
   logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
@@ -341,10 +356,17 @@ describe("POST /api/auth/admin — rate limit", () => {
     }
   })
 
-  it("uma loja não consome o orçamento de outra", async () => {
+  /**
+   * R1-bis — INVERSÃO DELIBERADA de política.
+   *
+   * Até `pin-supervisor:v2` este caso afirmava "uma loja não consome o orçamento de
+   * outra". Essa era exatamente a falha: como o `storeId` chega do cliente, orçamento
+   * por loja significa orçamento infinito. A política nova é a oposta e é intencional.
+   */
+  it("R1-bis: o orçamento é do UTILIZADOR — trocar de loja não devolve tentativas", async () => {
     for (let i = 0; i < 5; i++) await POST(postReq(PIN_ERRADO, LOJA_A))
     expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(429)
-    expect((await POST(postReq(PIN_ERRADO, LOJA_B))).status).toBe(401)
+    expect((await POST(postReq(PIN_ERRADO, LOJA_B))).status).toBe(429)
   })
 
   it("um utilizador não consome o orçamento de outro", async () => {
@@ -406,7 +428,8 @@ describe("POST /api/auth/admin — R1: rate limit imune a rotação de x-forward
     expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
   })
 
-  it("outra storeId, mesmo alternando IP, não herda o bloqueio", async () => {
+  /** R1-bis: mesma inversão deliberada do caso acima, agora combinada com rotação de IP. */
+  it("R1-bis: trocar de loja E de IP ao mesmo tempo continua no mesmo bloqueio", async () => {
     const ips = ["203.0.113.31", "203.0.113.32", "203.0.113.33", "203.0.113.34", "203.0.113.35"]
     for (const ip of ips) {
       h.clientIp = ip
@@ -416,7 +439,7 @@ describe("POST /api/auth/admin — R1: rate limit imune a rotação de x-forward
     expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(429)
 
     h.clientIp = "203.0.113.37"
-    expect((await POST(postReq(PIN_ERRADO, LOJA_B))).status).toBe(401)
+    expect((await POST(postReq(PIN_ERRADO, LOJA_B))).status).toBe(429)
   })
 
   it("sucesso limpa o bucket correto mesmo após falhas com IPs variados", async () => {
@@ -451,6 +474,181 @@ describe("POST /api/auth/admin — R1: rate limit imune a rotação de x-forward
     expect(allLoggedText()).not.toContain("198.51.100.77")
     expect(await res.text()).not.toContain("198.51.100.77")
     expect(res.headers.get("set-cookie") ?? "").not.toContain("198.51.100.77")
+  })
+})
+
+/**
+ * R1-bis — o ATAQUE que a revisão independente encontrou, escrito como teste.
+ *
+ * Vetor: a chave `pin-supervisor:v2:{userId}:{storeId}` era derivada de um `storeId` que
+ * chega em header/query/cookie, e `canAccessStore` é *default-allow* para sessões não
+ * restritas — aceita qualquer string sem provar que a loja existe. Logo, um utilizador
+ * autenticado ganhava um balde novo de 5 tentativas por identificador que inventasse: o
+ * teto de 5 nunca chegava a ser atingido.
+ *
+ * Estes casos FALHAM na implementação anterior (v2) e só passam com a chave `v3`
+ * ancorada apenas no `userId` + a prova canónica de existência da loja.
+ */
+describe("POST /api/auth/admin — R1-bis: evasão do rate limit por loja (ataque)", () => {
+  beforeEach(() => {
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_A)))
+  })
+
+  it("ATAQUE: 5 falhas em 5 lojas REAIS distintas esgotam o orçamento global do utilizador", async () => {
+    // Com a chave v2 isto criava 5 baldes de count=1 e NADA bloqueava.
+    for (const loja of [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E]) {
+      expect((await POST(postReq(PIN_ERRADO, loja))).status).toBe(401)
+    }
+    const res = await POST(postReq(PIN_ERRADO, LOJA_F))
+    expect(res.status).toBe(429)
+    expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0)
+  })
+
+  it("ATAQUE: consumido o orçamento, um storeId INVENTADO não abre balde novo", async () => {
+    for (const loja of [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E]) {
+      await POST(postReq(PIN_ERRADO, loja))
+    }
+    // A tentativa seguinte inventa a unidade — sob v2 caía num balde virgem e devolvia 401.
+    const res = await POST(postReq(PIN_ERRADO, LOJA_INVENTADA))
+    expect(res.status).toBe(429)
+    expect(Number(res.headers.get("Retry-After"))).toBeGreaterThan(0)
+  })
+
+  it("ATAQUE: nem uma sequência de identificadores inventados devolve tentativas", async () => {
+    for (const loja of [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E]) {
+      await POST(postReq(PIN_ERRADO, loja))
+    }
+    for (let i = 0; i < 6; i++) {
+      expect((await POST(postReq(PIN_ERRADO, `${LOJA_INVENTADA}-${i}`))).status).toBe(429)
+    }
+  })
+
+  it("ATAQUE: durante o bloqueio nem o PIN CORRETO com loja inventada passa", async () => {
+    for (const loja of [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E]) {
+      await POST(postReq(PIN_ERRADO, loja))
+    }
+    h.userFindFirst.mockClear()
+    expect((await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))).status).toBe(429)
+    expect(h.userFindFirst).not.toHaveBeenCalled()
+  })
+
+  it("alternar lojas reais e inventadas dá exatamente 5 tentativas no total", async () => {
+    const sequencia = [LOJA_A, LOJA_INVENTADA, LOJA_B, `${LOJA_INVENTADA}-x`, LOJA_C]
+    let consumidas = 0
+    for (const loja of sequencia) {
+      const res = await POST(postReq(PIN_ERRADO, loja))
+      // Loja inventada é recusada (403) SEM gastar tentativa; loja real gasta (401).
+      expect([401, 403]).toContain(res.status)
+      if (res.status === 401) consumidas++
+    }
+    expect(consumidas).toBe(3)
+    // Restam 2 tentativas reais; a 6ª falha real bloqueia.
+    expect((await POST(postReq(PIN_ERRADO, LOJA_D))).status).toBe(401)
+    expect((await POST(postReq(PIN_ERRADO, LOJA_E))).status).toBe(401)
+    expect((await POST(postReq(PIN_ERRADO, LOJA_F))).status).toBe(429)
+  })
+
+  it("o bloqueio é do utilizador: outro utilizador segue livre em qualquer loja", async () => {
+    for (const loja of [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E]) {
+      await POST(postReq(PIN_ERRADO, loja))
+    }
+    expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(429)
+
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_B)))
+    expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(401)
+    expect((await POST(postReq(PIN_ERRADO, LOJA_E))).status).toBe(401)
+  })
+
+  it("sucesso limpa SÓ o balde do utilizador autenticado", async () => {
+    // USER_B queima 5 tentativas e fica bloqueado.
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_B)))
+    for (let i = 0; i < 5; i++) await POST(postReq(PIN_ERRADO, LOJA_A))
+    expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(429)
+
+    // USER_A falha 4 vezes e depois acerta — limpa o SEU balde.
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_A)))
+    for (let i = 0; i < 4; i++) await POST(postReq(PIN_ERRADO, LOJA_B))
+    expect((await POST(postReq(PIN_CORRETO, LOJA_B))).status).toBe(200)
+    for (let i = 0; i < 5; i++) {
+      expect((await POST(postReq(PIN_ERRADO, LOJA_B))).status).toBe(401)
+    }
+
+    // O bloqueio de USER_B continua intacto.
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_B)))
+    expect((await POST(postReq(PIN_ERRADO, LOJA_A))).status).toBe(429)
+  })
+})
+
+describe("POST /api/auth/admin — R1-bis: validação canónica da loja", () => {
+  beforeEach(() => {
+    h.auth.mockResolvedValue(sessionOf(unrestricted(USER_A)))
+  })
+
+  it("storeId inexistente → 403 ANTES de qualquer consulta de PIN", async () => {
+    const res = await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))
+    expect(res.status).toBe(403)
+    expect(h.userFindFirst).not.toHaveBeenCalled()
+  })
+
+  it("storeId inexistente NUNCA emite token, mesmo com o PIN correto", async () => {
+    const res = await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))
+    expect(res.status).toBe(403)
+    expect(res.headers.get("set-cookie")).toBeNull()
+  })
+
+  it("a existência é provada no banco, não deduzida de canAccessStore", async () => {
+    // Sessão não restrita: `canAccessStore` devolve true para QUALQUER string. Só a
+    // consulta canónica distingue a unidade real da inventada.
+    await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))
+    expect(h.storeFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: LOJA_INVENTADA } }),
+    )
+  })
+
+  it("recusa por inexistência e por falta de permissão são indistinguíveis para o cliente", async () => {
+    const inexistente = await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))
+    h.auth.mockResolvedValue(sessionOf(restrictedTo(USER_A, [LOJA_B])))
+    const semPermissao = await POST(postReq(PIN_CORRETO, LOJA_A))
+
+    expect(inexistente.status).toBe(semPermissao.status)
+    await expect(inexistente.json()).resolves.toEqual(await semPermissao.json())
+  })
+
+  it("loja sem permissão nem chega a consultar a existência no banco", async () => {
+    h.auth.mockResolvedValue(sessionOf(restrictedTo(USER_A, [LOJA_B])))
+    expect((await POST(postReq(PIN_CORRETO, LOJA_A))).status).toBe(403)
+    expect(h.storeFindUnique).not.toHaveBeenCalled()
+  })
+
+  it("banco indisponível na prova da loja → 503, fail-closed e sem emitir token", async () => {
+    h.storeFindUnique.mockRejectedValue(new Error("connection refused"))
+    const res = await POST(postReq(PIN_CORRETO, LOJA_A))
+    expect(res.status).toBe(503)
+    expect(res.headers.get("set-cookie")).toBeNull()
+    expect(h.userFindFirst).not.toHaveBeenCalled()
+  })
+
+  it("a auditoria da recusa distingue o motivo, mesmo a resposta não distinguindo", async () => {
+    await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))
+    const written = JSON.stringify(h.auditCreate.mock.calls)
+    expect(written).toContain("PIN_SUPERVISOR_LOJA_NEGADA")
+    expect(allLoggedText()).toContain("store_not_found")
+  })
+
+  it("o token guarda o storeId CANÓNICO devolvido pelo banco", async () => {
+    h.storeFindUnique.mockResolvedValue({ id: LOJA_A })
+    const res = await POST(postReq(PIN_CORRETO, LOJA_A))
+    expect(res.status).toBe(200)
+    adoptIssuedCookie(res)
+    // Vale na loja canónica…
+    await expect((await GET(getReq(LOJA_A))).json()).resolves.toMatchObject({
+      authenticated: true,
+    })
+    // …e em nenhuma outra, real ou inventada.
+    await expect((await GET(getReq(LOJA_B))).json()).resolves.toEqual({ authenticated: false })
+    await expect((await GET(getReq(LOJA_INVENTADA))).json()).resolves.toEqual({
+      authenticated: false,
+    })
   })
 })
 

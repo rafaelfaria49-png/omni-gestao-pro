@@ -298,19 +298,34 @@ export function buildPinAuthorizationClearCookieOptions(): CookieOptions {
  * partilha o mesmo motor em memória (`lib/contador/auth/rate-limit.ts`) e usa o
  * `ipHash` cru como chave.
  *
- * Inclui `userId` + `storeId` para que uma loja ou um operador não consuma o
- * orçamento de tentativas de outro. **R1**: de propósito SEM `ipHash` — `x-forwarded-for`
- * é enviado pelo cliente, então derivar a chave dele deixava o mesmo utilizador abrir um
- * bucket novo a cada tentativa só trocando o cabeçalho. `ipHash` continua sendo aceite
- * aqui (o chamador não muda) e continua disponível para auditoria/log, mas nunca mais
- * participa da chave.
+ * **A chave é a identidade autenticada no servidor e NADA MAIS.** Um orçamento de
+ * tentativas só contém força se o atacante não puder escolher em qual balde cai. Tudo
+ * que vem do cliente — cabeçalho, query, cookie — é escolha dele, logo é uma alavanca
+ * para fabricar baldes novos:
+ *
+ *  - **R1** (`ipHash`, fechado em `v2`): `x-forwarded-for` é enviado pelo cliente, então
+ *    derivar a chave dele deixava o mesmo utilizador abrir um bucket novo por tentativa
+ *    só trocando o cabeçalho.
+ *  - **R1-bis** (`storeId`, fechado aqui em `v3`): o `storeId` vem de header/query/cookie
+ *    e `canAccessStore` é *default-allow* para sessões não-restritas — aceita qualquer
+ *    string, inclusive de loja inexistente. Com `storeId` na chave, o mesmo utilizador
+ *    autenticado ganhava mais 5 tentativas por identificador inventado, ou seja, o teto
+ *    de 5 era ilimitado na prática.
+ *
+ * Consequência DESEJADA da `v3`: o mesmo `userId` partilha um único orçamento em todas
+ * as lojas e em todos os IPs. Trocar de loja não devolve tentativas. Utilizadores
+ * diferentes continuam com baldes separados — a única dimensão que o atacante não
+ * controla é justamente a que ficou.
+ *
+ * `storeId` e `ipHash` continuam a ser recebidos (o chamador não muda) e continuam em
+ * auditoria e log estruturado — só não decidem mais em que balde a tentativa cai.
  */
 export function buildPinRateLimitKey(input: {
   userId: string
   storeId: string
   ipHash: string
 }): string {
-  return `pin-supervisor:v2:${input.userId}:${input.storeId}`
+  return `pin-supervisor:v3:user:${input.userId}`
 }
 
 /** Hash não-reversível do IP, só para correlação em log. Nunca logar o IP bruto. */
