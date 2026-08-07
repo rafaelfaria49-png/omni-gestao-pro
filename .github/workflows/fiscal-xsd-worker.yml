@@ -12,6 +12,7 @@ on:
       - "lib/fiscal/pipeline/**"
       - "lib/fiscal/xml/**"
       - "lib/fiscal/signing/**"
+      - "lib/fiscal/provider/sefaz/**"
       - "scripts/fiscal/**"
       - "docker-compose.fiscal-xsd.yml"
       - "package.json"
@@ -26,6 +27,7 @@ on:
       - "lib/fiscal/pipeline/**"
       - "lib/fiscal/xml/**"
       - "lib/fiscal/signing/**"
+      - "lib/fiscal/provider/sefaz/**"
       - "scripts/fiscal/**"
       - "docker-compose.fiscal-xsd.yml"
       - "package.json"
@@ -59,10 +61,12 @@ jobs:
       - run: npx prisma generate
       - run: npm run fiscal:xsd:verify-hashes
       - run: npm run test:fiscal-xsd:unit
+      - name: Testes provider SEFAZ
+        run: npx vitest run lib/fiscal/provider/sefaz --testTimeout=30000
       - run: npx tsc --noEmit --incremental false
       - name: ESLint fiscal focado
         run: >-
-          npx eslint lib/fiscal/xsd lib/fiscal/xsd-worker
+          npx eslint lib/fiscal/xsd lib/fiscal/xsd-worker lib/fiscal/provider/sefaz
           lib/fiscal/dry-run/dry-run-validation.ts lib/fiscal/dry-run/dry-run-pipeline.ts
           lib/fiscal/dry-run/dry-run.test.ts lib/fiscal/pipeline/fiscal-pipeline.ts
           lib/fiscal/pipeline/fiscal-pipeline.test.ts lib/fiscal/xml/nfce-xml.types.ts
