@@ -3,7 +3,12 @@ import { describe, expect, it } from "vitest"
 import { createXsdWorkerHttpClient } from "../../../lib/fiscal/xsd-worker"
 import { XSD_CONTRACT_VERSION, XSD_MAX_PAYLOAD_BYTES, XSD_SCHEMA_PACKAGE, type XsdValidationRequest } from "../../../lib/fiscal/xsd"
 import { OFFICIAL_XSD_MANIFEST_SHA256 } from "../../../lib/fiscal/xsd/official-package"
-import { DRY_RUN_TEST_CERT, dryRunSnapshot } from "../../../lib/fiscal/dry-run"
+// Import direto do módulo de fixtures, NÃO do barril `../dry-run`: o barril reexporta
+// `dry-run-gate`, que alcança `lib/fiscal/numbering` → `@/lib/prisma`, cujo escopo de módulo
+// instancia `new PrismaClient()`. Dentro do container `node:*-slim` (sem OpenSSL) essa
+// instanciação resolvia a engine para `debian-openssl-1.1.x` e derrubava o job com
+// PrismaClientInitializationError DEPOIS dos 11 testes passarem. A camada XSD é pura.
+import { DRY_RUN_TEST_CERT, dryRunSnapshot } from "../../../lib/fiscal/dry-run/dry-run-fixtures"
 import { signNfceXmlDetailed } from "../../../lib/fiscal/signing"
 import { buildNfceXmlAssinavel } from "../../../lib/fiscal/xml"
 import {
