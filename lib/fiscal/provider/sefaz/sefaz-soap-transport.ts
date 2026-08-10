@@ -19,10 +19,10 @@ import {
   type SefazEndpoint,
 } from "./sefaz-endpoint-catalog"
 import {
-  nodeSefazHttpsRuntimePorts,
-  sefazRefusingOneShotAttemptPort,
+  consumeOfflineLoopbackTestAuthority,
+  isOfflineLoopbackTestAuthority,
   type SefazHttpsRuntimePorts,
-  type SefazOneShotAttemptPort,
+  type SefazOfflineLoopbackTestAuthority,
 } from "./sefaz-runtime-ports"
 import type {
   SefazTransport,
@@ -45,10 +45,13 @@ export type LoadA1MtlsMaterialPort = (
 export type SefazSoapTransportOptions = {
   /** Default produtivo: resolver server-side sobre `process.env`. */
   loadMaterial?: LoadA1MtlsMaterialPort
-  /** Seam de teste loopback; não contém URL nem relaxa a validação do catálogo. */
+  /**
+   * Seam diagnóstico fail-closed. Informar qualquer runtime explicitamente jamais autoriza rede;
+   * combinado com authority de teste, bloqueia a configuração antes do A1/TLS/socket.
+   */
   runtime?: SefazHttpsRuntimePorts
-  /** Default recusante. O foundation 003 não possui autoridade produtiva para emitir esta porta. */
-  attemptPort?: SefazOneShotAttemptPort
+  /** Token opaco cujo runtime é criado e preso a `127.0.0.1` no mesmo factory de teste. */
+  offlineLoopbackTestAuthority?: SefazOfflineLoopbackTestAuthority
 }
 
 function failure(
@@ -120,14 +123,17 @@ export class SefazSoapTransport implements SefazTransport {
   readonly permiteRede: boolean
 
   private readonly loadMaterial: LoadA1MtlsMaterialPort
-  private readonly runtime: SefazHttpsRuntimePorts
-  private readonly attemptPort: SefazOneShotAttemptPort
+  private readonly offlineLoopbackTestAuthority: SefazOfflineLoopbackTestAuthority | null
+  private readonly hasRuntimeAuthorityConflict: boolean
 
   constructor(options: SefazSoapTransportOptions = {}) {
     this.loadMaterial = options.loadMaterial ?? loadA1MtlsMaterial
-    this.runtime = options.runtime ?? nodeSefazHttpsRuntimePorts
-    this.attemptPort = options.attemptPort ?? sefazRefusingOneShotAttemptPort
-    this.permiteRede = options.attemptPort !== undefined
+    this.offlineLoopbackTestAuthority = options.offlineLoopbackTestAuthority ?? null
+    this.hasRuntimeAuthorityConflict =
+      options.runtime !== undefined && this.offlineLoopbackTestAuthority !== null
+    this.permiteRede =
+      !this.hasRuntimeAuthorityConflict &&
+      isOfflineLoopbackTestAuthority(this.offlineLoopbackTestAuthority)
   }
 
   async send(request: SefazTransportRequest): Promise<SefazTransportOutcome> {
@@ -152,19 +158,17 @@ export class SefazSoapTransport implements SefazTransport {
       )
     }
 
-    let attemptAuthorized = false
-    try {
-      attemptAuthorized = await this.attemptPort.authorizeOnce({
+    let runtime: SefazHttpsRuntimePorts | null = null
+    if (!this.hasRuntimeAuthorityConflict && this.offlineLoopbackTestAuthority) {
+      runtime = consumeOfflineLoopbackTestAuthority(this.offlineLoopbackTestAuthority, {
         endpointLogico: `${endpoint.uf}/${endpoint.ambiente}/${endpoint.servico}/${endpoint.versao}`,
         correlationId: request.correlationId,
       })
-    } catch {
-      attemptAuthorized = false
     }
-    if (!attemptAuthorized) {
+    if (!runtime) {
       return failure(
         "transporte_tentativa_nao_autorizada",
-        "Tentativa HTTPS não autorizada pela capability one-shot.",
+        "Tentativa HTTPS não autorizada por authority loopback one-shot íntegra.",
         "BLOCKED_BEFORE_NETWORK",
         false,
       )
@@ -193,7 +197,7 @@ export class SefazSoapTransport implements SefazTransport {
     let secureContext: ReturnType<SefazHttpsRuntimePorts["createSecureContext"]> | null = null
     try {
       material.withTlsOptions(({ pfx, passphrase }) => {
-        secureContext = this.runtime.createSecureContext({
+        secureContext = runtime.createSecureContext({
           pfx,
           passphrase,
           minVersion: "TLSv1.2",
@@ -240,7 +244,7 @@ export class SefazSoapTransport implements SefazTransport {
 
       let transportRequest: ReturnType<SefazHttpsRuntimePorts["request"]>
       try {
-        transportRequest = this.runtime.request(
+        transportRequest = runtime.request(
           {
             protocol: "https:",
             hostname: endpoint.host,
@@ -337,7 +341,7 @@ export class SefazSoapTransport implements SefazTransport {
             "transporte_rede_incerta",
             "Falha de rede ao iniciar a tentativa HTTPS.",
             "UNKNOWN_UNCERTAIN",
-            true,
+            false,
           ),
         )
         return
@@ -384,7 +388,19 @@ export class SefazSoapTransport implements SefazTransport {
         )
       })
 
-      transportRequest.end(Buffer.from(request.bodyBytes))
+      try {
+        transportRequest.end(Buffer.from(request.bodyBytes))
+      } catch {
+        finish(
+          failure(
+            "transporte_rede_incerta",
+            "Falha após criação da tentativa HTTPS.",
+            "UNKNOWN_UNCERTAIN",
+            true,
+          ),
+        )
+        transportRequest.destroy()
+      }
     })
   }
 }

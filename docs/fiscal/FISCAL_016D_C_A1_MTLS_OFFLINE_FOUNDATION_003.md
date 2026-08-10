@@ -12,6 +12,7 @@
 | Produção | bloqueada antes de cofre, PFX, senha, `SecureContext` e socket |
 | H-9 / H-10 | **ABERTOS**; nenhum `SOAPAction`, wrapper ou binding foi inferido |
 | Banco | `MIGRATION_SKIPPED`; sem schema, migration, baseline ou `db push` |
+| Correção PR #49 | authority de teste loopback-bound, proveniência e contrato A1 corrigidos pelo GOAL 004 |
 
 Este GOAL prepara apenas a fundação HTTPS/mTLS offline. Ele não implementa o envelope SOAP,
 não chama `NFeStatusServico4`, não interpreta `cStat` e não inicia o 016D-D.
@@ -22,11 +23,14 @@ não chama `NFeStatusServico4`, não interpreta `cStat` e não inicia o 016D-D.
 
 - O caller fornece somente referências opacas `{ storeId, blobRef, senhaRef }`.
 - PFX e senha são resolvidos server-side pelo provider de segredos já existente.
-- O material permanece encapsulado em memória, não é serializável e o `Buffer` do PFX é zerado
-  no descarte e também nos caminhos de falha parcial.
-- O callback de uso do material retorna `void`; portanto não existe canal de retorno para reter
-  PFX ou senha depois do descarte.
+- O material permanece encapsulado em memória, sem campos públicos serializáveis, e o `Buffer`
+  do PFX é zerado no descarte e também nos caminhos de falha parcial.
+- O callback retorna `void`, o que evita propagar seu resultado pela API, mas não impede o
+  consumer JavaScript de capturar referências ou copiar PFX/senha. O descarte é best-effort: zera
+  somente o Buffer possuído pela cápsula e remove suas referências internas.
 - Erros são sanitizados e não contêm material secreto nem identificadores fornecidos pelo cofre.
+- O material e seus tipos brutos não são reexportados pelo barrel de `certificate`; o único
+  consumidor produtivo de `withTlsOptions` é a fundação mTLS.
 
 ### Transporte HTTPS/mTLS
 
@@ -41,10 +45,14 @@ não chama `NFeStatusServico4`, não interpreta `cStat` e não inicia o 016D-D.
 
 ### Barreira de execução externa
 
-`SefazSoapTransport` recebe por padrão uma porta one-shot que sempre recusa e declara
-`permiteRede = false`. A única porta capaz de autorizar uma tentativa pertence ao fixture de teste,
-exige `NODE_ENV=test`, é consumida uma única vez e não é exportada pelo barrel de produção. Assim,
-instanciar diretamente o transporte server-side não concede capacidade externa.
+`SefazSoapTransport` sem authority declara `permiteRede = false` e recusa antes do A1. A authority
+de teste é um token opaco validado por `WeakMap`, exige `NODE_ENV=test` e é consumida uma única vez.
+O mesmo factory cria o runtime que ela libera, sobrescrevendo por construção o destino físico para
+`127.0.0.1:<porta>`. Informar qualquer runtime separadamente — inclusive o default Node ou um
+runtime custom — bloqueia a configuração antes de A1, `SecureContext` e request. Clone, cast ou
+forja do token por deep import não reproduzem a associação privada. Mesmo o consumo direto do
+helper recebe um runtime com allowlist fechada: `agent`, `createConnection`, `socketPath`, `lookup`
+e demais overrides de conexão não são encaminhados ao `node:https.request`.
 
 ## Provas locais
 
@@ -59,6 +67,12 @@ Toda negociação de rede dos testes foi confinada fisicamente a `127.0.0.1` em 
 - redirects `301`, `302`, `307` e `308`;
 - timeout de conexão e deadline durante body lento;
 - exatamente uma tentativa, inclusive após HTTP 503.
+- authority + runtime default/produtivo e authority + runtime custom bloqueados antes da rede;
+- clone/forja por deep import recusado pelo vínculo nominal em runtime;
+- consumo direto por deep import com `agent`/`createConnection`/`socketPath`/`lookup` maliciosos
+  ainda produz exclusivamente um hit no servidor loopback;
+- `throw` síncrono anterior a `node:https.request` com proveniência `false`;
+- erro, resposta e timeout posteriores à criação da request com proveniência `true`.
 
 Spies confirmam que o bloqueio de produção ocorre antes de carregar material, resolver senha,
 criar o contexto TLS ou iniciar request. Outro teste prova que a construção padrão, sem capability,
@@ -78,8 +92,8 @@ também para antes dessas fronteiras.
 
 | Gate | Resultado |
 |---|---|
-| `npx vitest run lib/fiscal/provider/sefaz --testTimeout=30000` | **10 arquivos / 290 testes verdes** |
-| `npx vitest run lib/fiscal/certificate --testTimeout=30000` | **6 arquivos / 105 testes verdes** |
+| `npx vitest run lib/fiscal/provider/sefaz --testTimeout=30000` | **10 arquivos / 297 testes verdes** |
+| `npx vitest run lib/fiscal/certificate --testTimeout=30000` | **6 arquivos / 106 testes verdes** |
 | `npm run typecheck` | **exit 0** |
 | `npx eslint lib/fiscal/certificate lib/fiscal/provider/sefaz` | **exit 0** |
 | `npm run build` | **exit 0**, 103 páginas geradas, `MIGRATION_SKIPPED` |
@@ -96,9 +110,15 @@ Ela identificou duas falhas antes do fechamento:
 1. o transporte genérico tinha runtime Node ativo sem capability externa obrigatória;
 2. o callback do material A1 podia retornar o próprio segredo ao caller.
 
-As duas falhas foram corrigidas. A reavaliação confirmou a porta one-shot fail-closed por padrão, a
-capability exclusivamente local de teste, o callback sem retorno, ausência de constantes inferidas e
-classificação técnica conservadora. Resultado final da revisão: **APROVADO**.
+As duas falhas foram corrigidas. Uma revisão coordenadora posterior identificou que a capability de
+teste ainda podia ser combinada com o runtime Node e que a descrição de não-retenção do callback era
+forte demais para JavaScript. O GOAL 004 vinculou authority e runtime loopback por construção,
+corrigiu a proveniência do throw síncrono e tornou explícita a possibilidade de captura/cópia pelo
+consumer. Na revisão adversarial do GOAL 004, o revisor encontrou ainda que o primeiro runtime
+loopback propagava `agent`/`createConnection` recebidos por deep import; isso foi substituído por
+allowlist fechada e congelado em teste de ataque. A reavaliação confrontou runtime default/custom,
+clone/forja/consumo direto, proveniência e retenção do A1. Resultado final: **APROVADO**, com
+**403/403 testes** verdes e nenhum caminho de egress fora de loopback identificado.
 
 ## Gates documentais
 

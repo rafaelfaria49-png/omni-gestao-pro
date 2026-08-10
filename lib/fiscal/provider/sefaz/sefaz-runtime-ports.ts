@@ -30,7 +30,7 @@ export type SefazHttpsRuntimePorts = {
   readonly createSecureContext: SefazCreateSecureContextPort
 }
 
-const ONE_SHOT_ATTEMPT_PORT = Symbol("sefaz-one-shot-attempt-port")
+const OFFLINE_LOOPBACK_TEST_AUTHORITY = Symbol("sefaz-offline-loopback-test-authority")
 
 export type SefazOneShotAttemptContext = {
   readonly endpointLogico: string
@@ -38,40 +38,141 @@ export type SefazOneShotAttemptContext = {
 }
 
 /**
- * Porta mínima para a futura capability G-H3. O brand privado impede criação estrutural
- * acidental. Este GOAL não implementa contador durável nem autoridade produtiva.
+ * Observabilidade exclusivamente de teste. Se `throwSynchronouslyBeforeNodeRequest` estiver
+ * ativo, `runtimeRequestCalls` aumenta, mas `nodeRequestCalls` permanece zero: nenhum
+ * `node:https.request` foi criado.
  */
-export type SefazOneShotAttemptPort = {
-  readonly [ONE_SHOT_ATTEMPT_PORT]: true
-  authorizeOnce(context: SefazOneShotAttemptContext): Promise<boolean>
+export type SefazOfflineLoopbackTestProbe = {
+  secureContextCalls: number
+  runtimeRequestCalls: number
+  nodeRequestCalls: number
+  destroyCalls: number
+  destinations: string[]
 }
 
-export const sefazRefusingOneShotAttemptPort: SefazOneShotAttemptPort = Object.freeze({
-  [ONE_SHOT_ATTEMPT_PORT]: true as const,
-  async authorizeOnce(_context: SefazOneShotAttemptContext): Promise<boolean> {
-    void _context
-    return false
-  },
-})
+export type SefazOfflineLoopbackTestAuthorityOptions = {
+  readonly port: number
+  readonly trustedCaPem: string
+  readonly withoutClientCertificate?: boolean
+  readonly throwSynchronouslyBeforeNodeRequest?: boolean
+  readonly probe?: SefazOfflineLoopbackTestProbe
+}
 
 /**
- * Capability efêmera SOMENTE para os testes loopback. Fora de `NODE_ENV=test`, falha fechado.
- * Consome no máximo uma tentativa por instância; não substitui o futuro ledger durável G-H3.
+ * Token opaco. Não contém runtime nem método de autorização publicamente acessível; a associação
+ * é guardada no `WeakMap` privado abaixo. Copiar ou forjar o objeto não reproduz a autoridade.
  */
-export function createOfflineLoopbackTestOneShotAttemptPort(): SefazOneShotAttemptPort {
+export type SefazOfflineLoopbackTestAuthority = {
+  readonly [OFFLINE_LOOPBACK_TEST_AUTHORITY]: true
+}
+
+type OfflineLoopbackBinding = {
+  available: boolean
+  readonly runtime: SefazHttpsRuntimePorts
+}
+
+const offlineLoopbackBindings = new WeakMap<object, OfflineLoopbackBinding>()
+
+function assertLoopbackTestOptions(options: SefazOfflineLoopbackTestAuthorityOptions): void {
   if (process.env.NODE_ENV !== "test") {
-    throw new Error("Capability loopback disponível somente no ambiente de testes.")
+    throw new Error("Authority loopback disponível somente no ambiente de testes.")
   }
-  let available = true
-  return {
-    [ONE_SHOT_ATTEMPT_PORT]: true,
-    async authorizeOnce(_context: SefazOneShotAttemptContext): Promise<boolean> {
-      void _context
-      if (!available) return false
-      available = false
-      return true
+  if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65_535) {
+    throw new Error("Porta loopback de teste inválida.")
+  }
+  if (!options.trustedCaPem.trim()) {
+    throw new Error("CA sintética de teste obrigatória.")
+  }
+}
+
+/**
+ * Cria authority + runtime como uma unidade indivisível. O runtime efetivo sempre sobrescreve
+ * destino físico para `127.0.0.1:<port>`; host lógico e SNI continuam vindos do endpoint canônico.
+ * Nenhum caller consegue autorizá-lo junto de `nodeSefazHttpsRuntimePorts` ou runtime custom.
+ */
+export function createOfflineLoopbackTestAuthority(
+  options: SefazOfflineLoopbackTestAuthorityOptions,
+): SefazOfflineLoopbackTestAuthority {
+  assertLoopbackTestOptions(options)
+
+  const runtime: SefazHttpsRuntimePorts = {
+    createSecureContext: (tlsOptions) => {
+      if (options.probe) options.probe.secureContextCalls += 1
+      return nodeCreateSecureContext({
+        ...tlsOptions,
+        ...(options.withoutClientCertificate ? { pfx: undefined, passphrase: undefined } : {}),
+        ca: options.trustedCaPem,
+      })
+    },
+    request: (requestOptions, onResponse) => {
+      if (options.probe) options.probe.runtimeRequestCalls += 1
+      if (options.throwSynchronouslyBeforeNodeRequest) {
+        throw new Error("Falha sintética antes de node:https.request.")
+      }
+
+      if (options.probe) {
+        options.probe.nodeRequestCalls += 1
+        options.probe.destinations.push(`127.0.0.1:${options.port}`)
+      }
+      // Allowlist fechada: nunca encaminhar `agent`, `createConnection`, `socketPath`,
+      // `lookup` ou qualquer outro override de conexão recebido de um deep import.
+      const loopbackRequestOptions: SefazHttpsRequestOptions = {
+        protocol: "https:",
+        hostname: "127.0.0.1",
+        port: options.port,
+        path: requestOptions.path,
+        method: requestOptions.method,
+        headers: requestOptions.headers,
+        agent: false,
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+        secureContext: requestOptions.secureContext,
+        servername: requestOptions.servername,
+      }
+      const request = nodeHttpsRequest(loopbackRequestOptions, onResponse)
+      if (options.probe) {
+        const destroy = request.destroy.bind(request)
+        request.destroy = ((error?: Error) => {
+          options.probe!.destroyCalls += 1
+          return destroy(error)
+        }) as typeof request.destroy
+      }
+      return request
     },
   }
+
+  const authority = Object.freeze({
+    [OFFLINE_LOOPBACK_TEST_AUTHORITY]: true as const,
+  })
+  offlineLoopbackBindings.set(authority, { available: true, runtime })
+  return authority
+}
+
+/** Validação nominal em runtime; cast, clone e objeto estrutural não atravessam o WeakMap. */
+export function isOfflineLoopbackTestAuthority(
+  authority: SefazOfflineLoopbackTestAuthority | null,
+): boolean {
+  return (
+    process.env.NODE_ENV === "test" &&
+    authority !== null &&
+    offlineLoopbackBindings.has(authority)
+  )
+}
+
+/**
+ * Consome no máximo uma vez e devolve somente o runtime já preso a loopback. A função é exportada
+ * para o transporte, mas um deep import não obtém capability separável nem runtime retargetable.
+ */
+export function consumeOfflineLoopbackTestAuthority(
+  authority: SefazOfflineLoopbackTestAuthority,
+  context: SefazOneShotAttemptContext,
+): SefazHttpsRuntimePorts | null {
+  void context
+  if (process.env.NODE_ENV !== "test") return null
+  const binding = offlineLoopbackBindings.get(authority)
+  if (!binding?.available) return null
+  binding.available = false
+  return binding.runtime
 }
 
 export const nodeSefazHttpsRuntimePorts: SefazHttpsRuntimePorts = Object.freeze({

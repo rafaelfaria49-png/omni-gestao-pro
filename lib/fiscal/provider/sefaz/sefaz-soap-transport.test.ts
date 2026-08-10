@@ -1,6 +1,5 @@
-import { createServer as createHttpsServer, request as httpsRequest } from "node:https"
+import { createServer as createHttpsServer } from "node:https"
 import { createServer as createTcpServer } from "node:net"
-import { createSecureContext } from "node:tls"
 import type { AddressInfo } from "node:net"
 import type { ServerResponse } from "node:http"
 import type { Server as NetServer, Socket } from "node:net"
@@ -11,7 +10,11 @@ import { loadA1MtlsMaterial } from "@/lib/fiscal/certificate/a1-mtls-material"
 import { createTestMtlsPki } from "./__fixtures__/mtls-test-pki"
 import { SEFAZ_ENDPOINT_CATALOG, selectSefazEndpoint } from "./sefaz-endpoint-catalog"
 import {
-  createOfflineLoopbackTestOneShotAttemptPort,
+  consumeOfflineLoopbackTestAuthority,
+  createOfflineLoopbackTestAuthority,
+  nodeSefazHttpsRuntimePorts,
+  type SefazOfflineLoopbackTestAuthority,
+  type SefazOfflineLoopbackTestProbe,
   type SefazHttpsRuntimePorts,
 } from "./sefaz-runtime-ports"
 import {
@@ -33,6 +36,7 @@ const running: Closable[] = []
 
 afterEach(async () => {
   await Promise.all(running.splice(0).map((item) => item.close()))
+  vi.unstubAllEnvs()
 })
 
 afterAll(() => {
@@ -73,48 +77,34 @@ function materialLoader(pfx = pki.clientPfx, passphrase = pki.clientPassphrase) 
     loadA1MtlsMaterial({ ...refs, env })
 }
 
-type LocalRuntimeOptions = {
-  port: number
+type LocalAuthorityOptions = {
   trustedCaPem?: string
   withoutClientCertificate?: boolean
-  calls?: { count: number; destinations: string[] }
-  onDestroy?: () => void
+  throwSynchronouslyBeforeNodeRequest?: boolean
+  probe?: SefazOfflineLoopbackTestProbe
 }
 
-function localRuntime(options: LocalRuntimeOptions): SefazHttpsRuntimePorts {
+function runtimeProbe(): SefazOfflineLoopbackTestProbe {
   return {
-    createSecureContext: (tlsOptions) =>
-      createSecureContext({
-        ...tlsOptions,
-        ...(options.withoutClientCertificate ? { pfx: undefined, passphrase: undefined } : {}),
-        ca: options.trustedCaPem ?? pki.caCertificatePem,
-      }),
-    request: (requestOptions, onResponse) => {
-      if (options.calls) {
-        options.calls.count += 1
-        options.calls.destinations.push(`127.0.0.1:${options.port}`)
-      }
-      // Único desvio dos testes: conexão física loopback. Host lógico/SNI continuam sendo o
-      // endpoint oficial já validado, portanto nenhum DNS nem pacote externo é emitido.
-      const clientRequest = httpsRequest(
-        {
-          ...requestOptions,
-          hostname: "127.0.0.1",
-          port: options.port,
-          servername: pki.serverName,
-        },
-        onResponse,
-      )
-      if (options.onDestroy) {
-        const destroy = clientRequest.destroy.bind(clientRequest)
-        clientRequest.destroy = ((error?: Error) => {
-          options.onDestroy?.()
-          return destroy(error)
-        }) as typeof clientRequest.destroy
-      }
-      return clientRequest
-    },
+    secureContextCalls: 0,
+    runtimeRequestCalls: 0,
+    nodeRequestCalls: 0,
+    destroyCalls: 0,
+    destinations: [],
   }
+}
+
+function loopbackAuthority(
+  port: number,
+  options: LocalAuthorityOptions = {},
+): SefazOfflineLoopbackTestAuthority {
+  return createOfflineLoopbackTestAuthority({
+    port,
+    trustedCaPem: options.trustedCaPem ?? pki.caCertificatePem,
+    withoutClientCertificate: options.withoutClientCertificate,
+    throwSynchronouslyBeforeNodeRequest: options.throwSynchronouslyBeforeNodeRequest,
+    probe: options.probe,
+  })
 }
 
 async function listen(server: NetServer): Promise<number> {
@@ -179,11 +169,20 @@ async function startStalledTcpServer(): Promise<number> {
   return listen(server)
 }
 
-function transport(port: number, runtimeOptions: Omit<LocalRuntimeOptions, "port"> = {}) {
+async function startRejectingTcpServer(): Promise<number> {
+  const server = createTcpServer((socket) => socket.destroy())
+  trackServer(server)
+  return listen(server)
+}
+
+function transport(
+  port: number,
+  authorityOptions: LocalAuthorityOptions = {},
+  loadMaterial = materialLoader(),
+) {
   return new SefazSoapTransport({
-    loadMaterial: materialLoader(),
-    runtime: localRuntime({ port, ...runtimeOptions }),
-    attemptPort: createOfflineLoopbackTestOneShotAttemptPort(),
+    loadMaterial,
+    offlineLoopbackTestAuthority: loopbackAuthority(port, authorityOptions),
   })
 }
 
@@ -277,9 +276,167 @@ describe("SefazSoapTransport · gates antes de segredo/TLS/socket", () => {
     expect(runtime.createSecureContext).not.toHaveBeenCalled()
     expect(runtime.request).not.toHaveBeenCalled()
   })
+
+  it("authority de teste + runtime produtivo/default é BLOCKED_BEFORE_NETWORK", async () => {
+    expect(process.env.NODE_ENV).toBe("test")
+    const probe = runtimeProbe()
+    const authority = loopbackAuthority(443, { probe })
+    const loadMaterial = vi.fn(materialLoader())
+
+    const withExactDefaultRuntime = new SefazSoapTransport({
+      loadMaterial,
+      runtime: nodeSefazHttpsRuntimePorts,
+      offlineLoopbackTestAuthority: authority,
+    })
+    const exactOutcome = await withExactDefaultRuntime.send(requestInput())
+    expect(withExactDefaultRuntime.permiteRede).toBe(false)
+    expect(exactOutcome).toMatchObject({
+      ok: false,
+      codigo: "transporte_tentativa_nao_autorizada",
+      classification: "BLOCKED_BEFORE_NETWORK",
+      externalTransmissionAttempted: false,
+    })
+
+    const createSecureContext = vi.fn(nodeSefazHttpsRuntimePorts.createSecureContext)
+    const nodeHttpsRequest = vi.fn(nodeSefazHttpsRuntimePorts.request)
+    const observableProductionRuntime: SefazHttpsRuntimePorts = {
+      createSecureContext,
+      request: nodeHttpsRequest,
+    }
+    const observableOutcome = await new SefazSoapTransport({
+      loadMaterial,
+      runtime: observableProductionRuntime,
+      offlineLoopbackTestAuthority: authority,
+    }).send(requestInput())
+    expect(observableOutcome).toMatchObject({
+      ok: false,
+      classification: "BLOCKED_BEFORE_NETWORK",
+      externalTransmissionAttempted: false,
+    })
+    expect(loadMaterial).not.toHaveBeenCalled()
+    expect(createSecureContext).not.toHaveBeenCalled()
+    expect(nodeHttpsRequest).not.toHaveBeenCalled()
+    expect(probe).toEqual({
+      secureContextCalls: 0,
+      runtimeRequestCalls: 0,
+      nodeRequestCalls: 0,
+      destroyCalls: 0,
+      destinations: [],
+    })
+  })
+
+  it("factory da authority falha fechado fora de NODE_ENV=test", () => {
+    vi.stubEnv("NODE_ENV", "production")
+    expect(() => loopbackAuthority(443)).toThrow("somente no ambiente de testes")
+  })
+
+  it("authority de deep import não pode ser combinada com runtime custom não-loopback", async () => {
+    const authority = loopbackAuthority(443)
+    const loadMaterial = vi.fn(materialLoader())
+    const customRuntime: SefazHttpsRuntimePorts = {
+      createSecureContext: vi.fn(() => {
+        throw new Error("não deveria preparar TLS custom")
+      }),
+      request: vi.fn(() => {
+        throw new Error("não deveria tentar egress custom")
+      }),
+    }
+
+    const outcome = await new SefazSoapTransport({
+      loadMaterial,
+      runtime: customRuntime,
+      offlineLoopbackTestAuthority: authority,
+    }).send(requestInput())
+    expect(outcome).toMatchObject({
+      ok: false,
+      classification: "BLOCKED_BEFORE_NETWORK",
+      externalTransmissionAttempted: false,
+    })
+    expect(loadMaterial).not.toHaveBeenCalled()
+    expect(customRuntime.createSecureContext).not.toHaveBeenCalled()
+    expect(customRuntime.request).not.toHaveBeenCalled()
+  })
+
+  it("clone/forja do token opaco de deep import não reproduz authority", async () => {
+    const genuine = loopbackAuthority(443)
+    const forged = Object.assign({}, genuine) as SefazOfflineLoopbackTestAuthority
+    const loadMaterial = vi.fn(materialLoader())
+    const transportWithForgedAuthority = new SefazSoapTransport({
+      loadMaterial,
+      offlineLoopbackTestAuthority: forged,
+    })
+
+    const outcome = await transportWithForgedAuthority.send(requestInput())
+    expect(transportWithForgedAuthority.permiteRede).toBe(false)
+    expect(outcome).toMatchObject({
+      ok: false,
+      classification: "BLOCKED_BEFORE_NETWORK",
+      externalTransmissionAttempted: false,
+    })
+    expect(loadMaterial).not.toHaveBeenCalled()
+  })
 })
 
 describe("SefazSoapTransport · mTLS ponta a ponta exclusivamente loopback", () => {
+  it("deep import ignora agent/createConnection/socketPath/lookup e continua em loopback", async () => {
+    const server = await startMtlsServer((response) => response.end("<loopback-bound/>"))
+    const probe = runtimeProbe()
+    const authority = loopbackAuthority(server.port, { probe })
+    const runtime = consumeOfflineLoopbackTestAuthority(authority, {
+      endpointLogico: "SP/HOMOLOGACAO/NFeStatusServico4/4.00",
+      correlationId: "corr-deep-import-004",
+    })
+    if (!runtime) throw new Error("authority loopback de teste indisponível")
+
+    const secureContext = runtime.createSecureContext({
+      pfx: pki.clientPfx,
+      passphrase: pki.clientPassphrase,
+      minVersion: "TLSv1.2",
+    })
+    const maliciousAgent = { addRequest: vi.fn(() => Promise.reject(new Error("egress agent"))) }
+    const maliciousCreateConnection = vi.fn(() => {
+      throw new Error("egress createConnection")
+    })
+    const maliciousLookup = vi.fn(() => {
+      throw new Error("egress lookup")
+    })
+
+    await new Promise<void>((resolve, reject) => {
+      const request = runtime.request(
+        {
+          protocol: "https:",
+          host: "egress.invalid",
+          hostname: "egress.invalid",
+          port: 443,
+          path: "/deep-import",
+          method: "GET",
+          headers: {},
+          agent: maliciousAgent as never,
+          createConnection: maliciousCreateConnection as never,
+          lookup: maliciousLookup as never,
+          socketPath: "\\\\.\\pipe\\egress-invalido",
+          rejectUnauthorized: false,
+          minVersion: "TLSv1",
+          servername: pki.serverName,
+          secureContext,
+        },
+        (response) => {
+          response.resume()
+          response.once("end", resolve)
+        },
+      )
+      request.once("error", reject)
+      request.end()
+    })
+
+    expect(maliciousAgent.addRequest).not.toHaveBeenCalled()
+    expect(maliciousCreateConnection).not.toHaveBeenCalled()
+    expect(maliciousLookup).not.toHaveBeenCalled()
+    expect(server.hits()).toBe(1)
+    expect(probe.nodeRequestCalls).toBe(1)
+    expect(probe.destinations).toEqual([`127.0.0.1:${server.port}`])
+  })
+
   it("cliente válido negocia mTLS/TLS >=1.2 e não envia headers proibidos", async () => {
     let capturedHeaders: Record<string, string | string[] | undefined> = {}
     const server = await startMtlsServer((response, headers) => {
@@ -287,14 +444,19 @@ describe("SefazSoapTransport · mTLS ponta a ponta exclusivamente loopback", () 
       response.writeHead(200, { "Content-Type": "application/xml" })
       response.end("<local-only/>")
     }, { minVersion: "TLSv1.2" })
-    const calls = { count: 0, destinations: [] as string[] }
+    const probe = runtimeProbe()
 
-    const outcome = await transport(server.port, { calls }).send(requestInput())
+    const outcome = await transport(server.port, { probe }).send(requestInput())
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) throw new Error(outcome.codigo)
     expect(Buffer.from(outcome.bodyBytes).toString("utf8")).toBe("<local-only/>")
     expect(server.hits()).toBe(1)
-    expect(calls).toEqual({ count: 1, destinations: [`127.0.0.1:${server.port}`] })
+    expect(probe).toMatchObject({
+      runtimeRequestCalls: 1,
+      nodeRequestCalls: 1,
+      destinations: [`127.0.0.1:${server.port}`],
+    })
+    expect(outcome.externalTransmissionAttempted).toBe(true)
     expect(capturedHeaders.authorization).toBeUndefined()
     expect(capturedHeaders.cookie).toBeUndefined()
     expect(capturedHeaders.soapaction).toBeUndefined()
@@ -315,11 +477,11 @@ describe("SefazSoapTransport · mTLS ponta a ponta exclusivamente loopback", () 
 
   it("falha fechado com certificado cliente não confiável", async () => {
     const server = await startMtlsServer((response) => response.end("não deveria chegar"))
-    const outcome = await new SefazSoapTransport({
-      loadMaterial: materialLoader(pki.wrongClientPfx, pki.wrongClientPassphrase),
-      runtime: localRuntime({ port: server.port }),
-      attemptPort: createOfflineLoopbackTestOneShotAttemptPort(),
-    }).send(requestInput())
+    const outcome = await transport(
+      server.port,
+      {},
+      materialLoader(pki.wrongClientPfx, pki.wrongClientPassphrase),
+    ).send(requestInput())
     expect(outcome).toMatchObject({ ok: false, classification: "UNKNOWN_UNCERTAIN" })
     expect(server.hits()).toBe(0)
   })
@@ -370,6 +532,44 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
     })
   })
 
+  it("throw síncrono antes de node:https.request preserva proveniência false", async () => {
+    const probe = runtimeProbe()
+    const outcome = await transport(443, {
+      probe,
+      throwSynchronouslyBeforeNodeRequest: true,
+    }).send(requestInput())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "transporte_rede_incerta",
+      classification: "UNKNOWN_UNCERTAIN",
+      externalTransmissionAttempted: false,
+    })
+    expect(probe).toEqual({
+      secureContextCalls: 1,
+      runtimeRequestCalls: 1,
+      nodeRequestCalls: 0,
+      destroyCalls: 0,
+      destinations: [],
+    })
+  })
+
+  it("erro assíncrono após criação da request preserva proveniência true", async () => {
+    const rejectingPort = await startRejectingTcpServer()
+    const probe = runtimeProbe()
+    const outcome = await transport(rejectingPort, { probe }).send(requestInput())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "transporte_rede_incerta",
+      classification: "UNKNOWN_UNCERTAIN",
+      externalTransmissionAttempted: true,
+    })
+    expect(probe.runtimeRequestCalls).toBe(1)
+    expect(probe.nodeRequestCalls).toBe(1)
+    expect(probe.destinations).toEqual([`127.0.0.1:${rejectingPort}`])
+  })
+
   it("aceita resposta abaixo de 2 MiB", async () => {
     const body = Buffer.alloc(256 * 1024, 0x61)
     const server = await startMtlsServer((response) => response.end(body))
@@ -381,7 +581,7 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
   it("aborta acima de 2 MiB durante streaming", async () => {
     const chunk = Buffer.alloc(64 * 1024, 0x62)
     let bytesWritten = 0
-    let destroyCalls = 0
+    const probe = runtimeProbe()
     const target = SEFAZ_HTTPS_MAX_RESPONSE_BYTES + 1024 * 1024
     const server = await startMtlsServer((response) => {
       const writeNext = () => {
@@ -395,18 +595,14 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
       }
       writeNext()
     })
-    const outcome = await transport(server.port, {
-      onDestroy: () => {
-        destroyCalls += 1
-      },
-    }).send(requestInput())
+    const outcome = await transport(server.port, { probe }).send(requestInput())
     expect(outcome).toMatchObject({
       ok: false,
       codigo: "transporte_resposta_excedida",
       classification: "UNKNOWN_UNCERTAIN",
     })
     expect(bytesWritten).toBeGreaterThan(SEFAZ_HTTPS_MAX_RESPONSE_BYTES)
-    expect(destroyCalls).toBeGreaterThan(0)
+    expect(probe.destroyCalls).toBeGreaterThan(0)
   })
 
   it.each([301, 302, 307, 308])("não segue redirect HTTP %i", async (status) => {
@@ -419,12 +615,12 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
       response.writeHead(status, { Location: `https://127.0.0.1:${redirectTarget.port}/target` })
       response.end()
     })
-    const calls = { count: 0, destinations: [] as string[] }
-    const outcome = await transport(source.port, { calls }).send(requestInput())
+    const probe = runtimeProbe()
+    const outcome = await transport(source.port, { probe }).send(requestInput())
     expect(outcome).toMatchObject({ ok: false, codigo: "transporte_redirect_recusado" })
     expect(source.hits()).toBe(1)
     expect(redirectTargetHits).toBe(0)
-    expect(calls.count).toBe(1)
+    expect(probe.nodeRequestCalls).toBe(1)
   })
 
   it("separa timeout de conexão/TLS do deadline total", async () => {
@@ -436,6 +632,7 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
       ok: false,
       codigo: "transporte_timeout_conexao",
       classification: "UNKNOWN_UNCERTAIN",
+      externalTransmissionAttempted: true,
     })
 
     const slowBody = await startMtlsServer((response) => {
@@ -449,6 +646,7 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
       ok: false,
       codigo: "transporte_deadline_total",
       classification: "UNKNOWN_UNCERTAIN",
+      externalTransmissionAttempted: true,
     })
   })
 
@@ -457,16 +655,17 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
       response.writeHead(503)
       response.end("indisponível")
     })
-    const calls = { count: 0, destinations: [] as string[] }
-    const oneShotTransport = transport(server.port, { calls })
+    const probe = runtimeProbe()
+    const oneShotTransport = transport(server.port, { probe })
     const outcome = await oneShotTransport.send(requestInput())
     expect(outcome).toMatchObject({
       ok: false,
       codigo: "transporte_http_incerto",
       classification: "UNKNOWN_UNCERTAIN",
+      externalTransmissionAttempted: true,
     })
     expect(server.hits()).toBe(1)
-    expect(calls.count).toBe(1)
+    expect(probe.nodeRequestCalls).toBe(1)
 
     const secondOutcome = await oneShotTransport.send(requestInput())
     expect(secondOutcome).toMatchObject({
@@ -475,6 +674,6 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
       externalTransmissionAttempted: false,
     })
     expect(server.hits()).toBe(1)
-    expect(calls.count).toBe(1)
+    expect(probe.nodeRequestCalls).toBe(1)
   })
 })

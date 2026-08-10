@@ -50,11 +50,6 @@ export {
   type SefazTransportDeadlines,
 } from "./sefaz-soap-transport"
 
-export type {
-  SefazOneShotAttemptContext,
-  SefazOneShotAttemptPort,
-} from "./sefaz-runtime-ports"
-
 export {
   SEFAZ_GUARD_ORDER,
   readTpAmbFromSignedXml,

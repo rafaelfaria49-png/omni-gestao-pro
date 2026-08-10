@@ -77,14 +77,3 @@ export {
   type ResolveActiveCertificateResult,
   type ResolveActiveCertificateSuccess,
 } from "./resolve-active-certificate"
-
-// GOAL-016D-C foundation 003 — material A1 efêmero para contexto mTLS server-side.
-export {
-  A1MtlsMaterialError,
-  loadA1MtlsMaterial,
-  type A1MtlsMaterial,
-  type A1MtlsMaterialErrorCode,
-  type A1MtlsSecretRefs,
-  type A1MtlsTlsOptions,
-  type LoadA1MtlsMaterialParams,
-} from "./a1-mtls-material"

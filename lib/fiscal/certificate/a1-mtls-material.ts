@@ -3,8 +3,9 @@
  *
  * Resolve PFX e senha exclusivamente server-side, a partir das referências opacas já
  * persistidas. O material nunca é aceito de request, nunca é escrito em arquivo/banco e não
- * possui representação JSON. O Buffer é zerado no descarte (best-effort); strings JavaScript
- * não são zeráveis, portanto a referência da senha é removida e fica a cargo do GC.
+ * possui campos públicos serializáveis. O Buffer que esta cápsula possui é zerado no descarte
+ * (best-effort); isso não apaga cópias feitas pelo consumer. Strings JavaScript não são zeráveis,
+ * portanto somente a referência interna da senha é removida e fica a cargo do GC.
  */
 import "server-only"
 
@@ -12,7 +13,7 @@ import type { EnvLike } from "@/lib/fiscal/vault/env-vault"
 import { resolveFiscalSecretProvider } from "@/lib/fiscal/vault/provider-resolver"
 import { zeroBuffer } from "@/lib/fiscal/vault/pkcs12-loader"
 
-export type A1MtlsMaterialErrorCode =
+type A1MtlsMaterialErrorCode =
   | "referencias_invalidas"
   | "secret_provider_indisponivel"
   | "pfx_indisponivel"
@@ -31,23 +32,27 @@ export class A1MtlsMaterialError extends Error {
   }
 }
 
-export type A1MtlsSecretRefs = {
+type A1MtlsSecretRefs = {
   readonly storeId: string
   readonly blobRef: string
   readonly senhaRef: string
 }
 
-export type A1MtlsTlsOptions = {
+type A1MtlsTlsOptions = {
   readonly pfx: Buffer
   readonly passphrase: string
 }
 
 /**
- * Cápsula não serializável. O consumidor só enxerga os valores dentro do callback síncrono
- * usado para construir o SecureContext; depois disso deve chamar `dispose`.
+ * Cápsula sem campos públicos serializáveis. O callback síncrono reduz a janela normal de uso,
+ * mas JavaScript permite ao consumer capturar referências ou criar cópias. `dispose` zera apenas
+ * o Buffer ainda possuído pela cápsula e remove suas referências internas em best-effort.
  */
 export interface A1MtlsMaterial {
-  /** O callback não pode devolver o material; serve somente para consumo síncrono pelo TLS. */
+  /**
+   * O retorno `void` evita propagar o resultado do callback pela API; não impede captura/cópia
+   * explícita dos valores pelo consumer, que deve tratá-los como segredo e não retê-los.
+   */
   withTlsOptions(consumer: (options: A1MtlsTlsOptions) => void): void
   dispose(): void
 }

@@ -43,6 +43,38 @@ describe("A1 mTLS material · somente memória e referências opacas", () => {
     expect(() => material.withTlsOptions(() => null)).toThrowError(A1MtlsMaterialError)
   })
 
+  it("documenta que dispose é best-effort e não apaga cópia/captura feita pelo consumer", async () => {
+    const fixture = validTestPfx({ senha: "senha-a1-captura-sintetica-004" })
+    const material = await loadA1MtlsMaterial({
+      storeId: STORE,
+      blobRef: PFX_REF,
+      senhaRef: SENHA_REF,
+      env: testEnv(fixture.pfx, fixture.senha),
+    })
+
+    const retained: {
+      borrowedPfx: Buffer | null
+      pfxCopy: Buffer | null
+      passphrase: string | null
+    } = { borrowedPfx: null, pfxCopy: null, passphrase: null }
+    material.withTlsOptions(({ pfx, passphrase }) => {
+      retained.borrowedPfx = pfx
+      retained.pfxCopy = Buffer.from(pfx)
+      retained.passphrase = passphrase
+    })
+
+    material.dispose()
+    expect(retained.borrowedPfx).not.toBeNull()
+    expect(retained.borrowedPfx?.every((byte) => byte === 0)).toBe(true)
+    expect(retained.pfxCopy?.equals(fixture.pfx)).toBe(true)
+    expect(retained.passphrase).toBe(fixture.senha)
+
+    retained.pfxCopy?.fill(0)
+    retained.borrowedPfx = null
+    retained.pfxCopy = null
+    retained.passphrase = null
+  })
+
   it("falha fechado quando PFX, senha ou provider não estão disponíveis", async () => {
     const fixture = validTestPfx({ senha: "segredo-sentinela-mtls-003" })
     const base = testEnv(fixture.pfx, fixture.senha)
