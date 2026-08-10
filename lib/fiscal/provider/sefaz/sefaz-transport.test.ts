@@ -24,7 +24,13 @@ describe("transporte offline default", () => {
     contentType: "application/soap+xml; charset=utf-8",
     bodyBytes: new TextEncoder().encode("<envelope/>"),
     correlationId: "corr-1",
-    timeoutMs: 15_000,
+    certificate: {
+      storeId: "store-piloto",
+      blobRef: "FISCAL_A1_PFX_B64_STORE_PILOTO",
+      senhaRef: "FISCAL_A1_SENHA_STORE_PILOTO",
+    },
+    connectionTimeoutMs: 15_000,
+    totalDeadlineMs: 60_000,
   }
 
   it("declara que não permite rede", () => {
@@ -35,6 +41,7 @@ describe("transporte offline default", () => {
   it("recusa QUALQUER chamada, com código estável e sem tentativa externa", async () => {
     const outcome = await sefazOfflineRefusingTransport.send(request)
     expect(outcome.ok).toBe(false)
+    if (outcome.ok) throw new Error("transporte offline não pode devolver sucesso")
     expect(outcome.codigo).toBe("transporte_offline_bloqueado")
     expect(outcome.externalTransmissionAttempted).toBe(false)
   })
@@ -50,7 +57,7 @@ describe("transporte offline default", () => {
   it("nunca devolve corpo de resposta, cStat ou protocolo", async () => {
     const outcome = await sefazOfflineRefusingTransport.send(request)
     expect(Object.keys(outcome).sort()).toEqual(
-      ["codigo", "externalTransmissionAttempted", "mensagem", "ok"].sort(),
+      ["classification", "codigo", "externalTransmissionAttempted", "mensagem", "ok"].sort(),
     )
   })
 })

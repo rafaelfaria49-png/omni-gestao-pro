@@ -185,6 +185,7 @@ describe("proveniência de rede é ESCOPADA POR EXECUÇÃO (correção 002 · bl
         ok: false as const,
         codigo: "transporte_destino_recusado" as const,
         mensagem: "falhou depois de tentar",
+        classification: "UNKNOWN_UNCERTAIN" as const,
         externalTransmissionAttempted: true,
       })),
     }
@@ -217,22 +218,33 @@ describe("proveniência de rede é ESCOPADA POR EXECUÇÃO (correção 002 · bl
       contentType: "application/soap+xml; charset=utf-8",
       bodyBytes: new Uint8Array(),
       correlationId: "corr",
-      timeoutMs: 1,
+      certificate: {
+        storeId: "store",
+        blobRef: "FISCAL_A1_PFX_B64_STORE",
+        senhaRef: "FISCAL_A1_SENHA_STORE",
+      },
+      connectionTimeoutMs: 1,
+      totalDeadlineMs: 1,
     })
     expect(outcome.externalTransmissionAttempted).toBe(false)
     expect(sefazOfflineRefusingTransport.permiteRede).toBe(false)
   })
 })
 
-describe("zero import de cliente HTTP em todo o adapter", () => {
+describe("fronteira HTTP nativa e isolada do foundation 003", () => {
   const dir = __dirname
   const fontes = readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
 
-  it("nenhum arquivo do adapter importa fetch/undici/axios/http/https/net/tls", () => {
+  it("somente a porta runtime importa node:https/node:tls; nenhum cliente externo é usado", () => {
     expect(fontes.length).toBeGreaterThan(0)
     for (const arquivo of fontes) {
       const src = readFileSync(join(dir, arquivo), "utf8")
-      expect(src, arquivo).not.toMatch(/from\s+["']node:(http|https|net|tls|dgram)["']/)
+      if (arquivo === "sefaz-runtime-ports.ts") {
+        expect(src).toMatch(/from\s+["']node:https["']/)
+        expect(src).toMatch(/from\s+["']node:tls["']/)
+      } else {
+        expect(src, arquivo).not.toMatch(/from\s+["']node:(http|https|net|tls|dgram)["']/)
+      }
       expect(src, arquivo).not.toMatch(/from\s+["'](undici|axios|node-fetch|got|superagent)["']/)
       expect(src, arquivo).not.toMatch(/require\(\s*["']node:(http|https|net|tls)["']\s*\)/)
       // `fetch(` como chamada — menções em comentário/string de nome não contam

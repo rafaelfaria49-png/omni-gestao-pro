@@ -31,10 +31,29 @@ export {
   SefazOfflineRefusingTransport,
   sefazOfflineRefusingTransport,
   type SefazTransport,
+  type SefazTransportClassification,
   type SefazTransportErrorCode,
+  type SefazTransportFailure,
   type SefazTransportOutcome,
   type SefazTransportRequest,
+  type SefazTransportSuccess,
 } from "./sefaz-transport.types"
+
+export {
+  SEFAZ_HTTPS_MAX_RESPONSE_BYTES,
+  SEFAZ_MAX_CONNECTION_TIMEOUT_MS,
+  SEFAZ_MAX_TOTAL_DEADLINE_MS,
+  SefazSoapTransport,
+  boundSefazTransportDeadlines,
+  type LoadA1MtlsMaterialPort,
+  type SefazSoapTransportOptions,
+  type SefazTransportDeadlines,
+} from "./sefaz-soap-transport"
+
+export type {
+  SefazOneShotAttemptContext,
+  SefazOneShotAttemptPort,
+} from "./sefaz-runtime-ports"
 
 export {
   SEFAZ_GUARD_ORDER,
@@ -74,6 +93,8 @@ export {
 } from "./sefaz-response-parser"
 
 export {
+  SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS,
+  SEFAZ_DEFAULT_TOTAL_DEADLINE_MS,
   SEFAZ_DEFAULT_TIMEOUT_MS,
   SefazAdapterBlockedError,
   SefazDiretoProvider,

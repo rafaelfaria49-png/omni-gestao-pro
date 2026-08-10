@@ -61,15 +61,20 @@ import type { SefazServico } from "./sefaz-endpoint-catalog"
 
 const PROVIDER = FiscalProviderTipo.SEFAZ_DIRETO
 
-/** Timeout de conexão do piloto (D5). Sem efeito enquanto o transporte for offline. */
-export const SEFAZ_DEFAULT_TIMEOUT_MS = 15_000
+/** Relógios separados do transporte. Sem efeito enquanto o default permanecer offline. */
+export const SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS = 15_000
+export const SEFAZ_DEFAULT_TOTAL_DEADLINE_MS = 60_000
+/** @deprecated Use `SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS`. */
+export const SEFAZ_DEFAULT_TIMEOUT_MS = SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS
 
 /**
  * Consulta ainda não possui construtor de payload (`consSitNFe` pertence ao 016D-B). Recusar
  * é a única saída honesta: envelopar bytes vazios produziria uma requisição sem conteúdo
  * fiscal, e fabricar o payload seria implementar o slice seguinte por antecipação.
  */
-export type SefazAdapterProviderCode = "consulta_sem_payload_neste_slice"
+export type SefazAdapterProviderCode =
+  | "consulta_sem_payload_neste_slice"
+  | "resposta_sem_parser_neste_slice"
 
 export type SefazAdapterBlockCode =
   | SefazGuardCode
@@ -106,7 +111,8 @@ export type SefazDiretoProviderOptions = {
   ports: SefazGuardPorts
   /** Transporte injetável. Default: o que RECUSA tudo, sem abrir socket. */
   transport?: SefazTransport
-  timeoutMs?: number
+  connectionTimeoutMs?: number
+  totalDeadlineMs?: number
 }
 
 function erro(code: FiscalProviderError["code"], mensagem: string): FiscalProviderError {
@@ -151,12 +157,15 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
 
   private readonly ports: SefazGuardPorts
   private readonly transport: SefazTransport
-  private readonly timeoutMs: number
+  private readonly connectionTimeoutMs: number
+  private readonly totalDeadlineMs: number
 
   constructor(options: SefazDiretoProviderOptions) {
     this.ports = options.ports
     this.transport = options.transport ?? sefazOfflineRefusingTransport
-    this.timeoutMs = options.timeoutMs ?? SEFAZ_DEFAULT_TIMEOUT_MS
+    this.connectionTimeoutMs =
+      options.connectionTimeoutMs ?? SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS
+    this.totalDeadlineMs = options.totalDeadlineMs ?? SEFAZ_DEFAULT_TOTAL_DEADLINE_MS
   }
 
   /**
@@ -263,12 +272,27 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       contentType: envelope.envelope.contentType,
       bodyBytes: envelope.envelope.bytes,
       correlationId: guards.correlationId,
-      timeoutMs: this.timeoutMs,
+      certificate: {
+        storeId: input.document.storeId,
+        blobRef: guards.certificado.blobRef,
+        senhaRef: guards.certificado.senhaRef,
+      },
+      connectionTimeoutMs: this.connectionTimeoutMs,
+      totalDeadlineMs: this.totalDeadlineMs,
     })
     // Proveniência derivada do que o transporte REALMENTE fez, registrada no coletor DESTA
     // execução. Sem estado de instância: nada sobrevive para contaminar o próximo job.
     if (outcome.externalTransmissionAttempted) {
       input.provenance?.recordExternalTransmissionAttempted()
+    }
+    if (outcome.ok) {
+      // O foundation 003 prova somente o canal. Sem contrato WSDL/parser oficial (H-9/H-10),
+      // uma resposta recebida não pode ser transformada em desfecho fiscal.
+      throw new SefazAdapterBlockedError(
+        "resposta_sem_parser_neste_slice",
+        "Resposta HTTPS recebida, mas interpretação fiscal permanece bloqueada por H-9/H-10.",
+        true,
+      )
     }
     throw new SefazAdapterBlockedError(
       outcome.codigo,

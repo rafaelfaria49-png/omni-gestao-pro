@@ -1466,6 +1466,14 @@ graph LR
 
 ### 016D-C — `statusServico` em homologação `[🔒 primeiro contato real]`
 
+> ✅ **Fundação offline aplicada** em 2026-08-09 pelo GOAL
+> `FISCAL-016D-C-A1-MTLS-OFFLINE-FOUNDATION-003`: carregamento A1 por referências opacas,
+> transporte Node HTTPS/mTLS fail-closed e matriz local de segurança, relógios, limites e tentativa
+> única. O transporte padrão **não possui capability de rede**, nenhum A1 real foi usado e nenhum
+> endpoint SEFAZ/WSDL foi acessado. **H-9/H-10 continuam ABERTOS**, sem `SOAPAction`, wrappers ou
+> bindings inferidos; portanto esta entrega **não executa** o primeiro contato real descrito abaixo.
+> Evidências e revisão: [`FISCAL_016D_C_A1_MTLS_OFFLINE_FOUNDATION_003.md`](./FISCAL_016D_C_A1_MTLS_OFFLINE_FOUNDATION_003.md).
+
 | | |
 |---|---|
 | **Objetivo** | Implementar o transporte HTTPS/mTLS real e provar **uma** chamada a `NFeStatusServico4` de homologação, esperando `cStat 107`. Usa `statusServico` — método que só existe em **P1** (D11) |
