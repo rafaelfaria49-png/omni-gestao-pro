@@ -1,13 +1,12 @@
 /**
  * Contrato do transporte SEFAZ (GOAL-016D-A · plano 016D D5 · ADR-0020).
  *
- * O transporte é INJETÁVEL e o default RECUSA qualquer chamada. Este módulo — e o adapter
- * que o consome — **não importa nenhum cliente HTTP**: sem `fetch`, `undici`, `axios`,
- * `node:http`, `node:https`, `node:net` e `node:tls`. Não existe socket a abrir neste slice;
- * o transporte real (mTLS/TLS 1.2) pertence ao 016D-C, sob gates humanos próprios.
+ * O transporte é INJETÁVEL e o default RECUSA qualquer chamada. A implementação Node HTTPS
+ * continua fora deste arquivo e nunca é selecionada por padrão. Assim, criar o adapter sem
+ * wiring explícito permanece incapaz de abrir socket.
  *
- * O transporte também NÃO resolve PFX nem senha: o material do certificado é assunto do
- * consumidor autorizado (F4/F5), nunca deste contrato.
+ * O request carrega somente referências opacas. PFX, senha e chave privada nunca entram no
+ * contrato do caller nem podem vir de um futuro request administrativo.
  */
 import type { SefazEndpoint } from "./sefaz-endpoint-catalog"
 
@@ -19,7 +18,16 @@ export type SefazTransportRequest = {
   readonly bodyBytes: Uint8Array
   /** Correlação para auditoria — nunca contém segredo. */
   readonly correlationId: string
-  readonly timeoutMs: number
+  /** Referências opacas já aprovadas pelos guards; nunca material secreto. */
+  readonly certificate: {
+    readonly storeId: string
+    readonly blobRef: string
+    readonly senhaRef: string
+  }
+  /** Timeout exclusivo da conexão/TLS. A implementação real limita a no máximo 15 s. */
+  readonly connectionTimeoutMs: number
+  /** Deadline do ciclo inteiro, inclusive leitura do body. Limitado a no máximo 60 s. */
+  readonly totalDeadlineMs: number
 }
 
 export type SefazTransportErrorCode =
@@ -27,11 +35,38 @@ export type SefazTransportErrorCode =
   | "transporte_offline_bloqueado"
   /** Transporte recusou o destino (não deveria acontecer: catálogo já filtra). */
   | "transporte_destino_recusado"
+  /** Produção é negada antes de cofre, contexto TLS e socket. */
+  | "transporte_producao_bloqueada"
+  /** Nenhuma capability one-shot válida autorizou esta tentativa. */
+  | "transporte_tentativa_nao_autorizada"
+  /** Referências/cofre/material A1 indisponíveis; nenhum socket foi aberto. */
+  | "transporte_certificado_indisponivel"
+  /** O contexto TLS não pôde ser construído de forma segura. */
+  | "transporte_tls_invalido"
+  /** A conexão/TLS não terminou dentro do relógio de conexão. */
+  | "transporte_timeout_conexao"
+  /** O ciclo completo excedeu o deadline total. */
+  | "transporte_deadline_total"
+  /** Falha de rede/TLS depois de iniciada a tentativa; nunca é rejeição fiscal. */
+  | "transporte_rede_incerta"
+  /** Resposta HTTP não conclusiva; nunca é rejeição fiscal. */
+  | "transporte_http_incerto"
+  /** Redirect recusado e não seguido. */
+  | "transporte_redirect_recusado"
+  /** Limite de resposta excedido durante streaming. */
+  | "transporte_resposta_excedida"
 
-export type SefazTransportOutcome = {
+export type SefazTransportClassification =
+  | "BLOCKED_BEFORE_NETWORK"
+  | "UNKNOWN_UNCERTAIN"
+  | "RESPONSE_RECEIVED"
+
+export type SefazTransportFailure = {
   readonly ok: false
   readonly codigo: SefazTransportErrorCode
   readonly mensagem: string
+  /** Nunca confundir falha técnica com rejeição fiscal. */
+  readonly classification: Exclude<SefazTransportClassification, "RESPONSE_RECEIVED">
   /**
    * Proveniência honesta: `true` SOMENTE se um socket/requisição externa foi realmente
    * iniciado.
@@ -44,6 +79,18 @@ export type SefazTransportOutcome = {
    */
   readonly externalTransmissionAttempted: boolean
 }
+
+export type SefazTransportSuccess = {
+  readonly ok: true
+  readonly classification: "RESPONSE_RECEIVED"
+  readonly httpStatus: number
+  readonly contentType: string | null
+  /** Bytes exatos recebidos, limitados durante streaming. */
+  readonly bodyBytes: Uint8Array
+  readonly externalTransmissionAttempted: true
+}
+
+export type SefazTransportOutcome = SefazTransportFailure | SefazTransportSuccess
 
 export interface SefazTransport {
   /** Declaração explícita de capacidade. O transporte offline é `false`. */
@@ -71,6 +118,7 @@ export class SefazOfflineRefusingTransport implements SefazTransport {
       ok: false,
       codigo: "transporte_offline_bloqueado",
       mensagem: MENSAGEM_OFFLINE,
+      classification: "BLOCKED_BEFORE_NETWORK",
       // Literal `false` nesta implementação: nenhum socket é aberto, então não há tentativa.
       externalTransmissionAttempted: false as const,
     }
