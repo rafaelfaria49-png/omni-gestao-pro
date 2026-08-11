@@ -35,6 +35,9 @@ import {
   LOCAL_FISICO_LABEL_V3,
   ORIGEM_LABEL_V3,
 } from "@/lib/operacoes-v3/dados-basicos-model";
+// Reuso PURO da máquina de status da V3 (Fase 1B) — fonte da AUTORIDADE de status
+// (`operacaoStatusV3`) e da projeção oficial "recebida" → "pronta". Sem I/O.
+import { isOperacaoStatusV3, projetarStatusV2 } from "@/lib/operacoes-v3/status-machine";
 // Reuso PURO (read-only) da garantia/entrega REAIS da V3 (GOAL OPS-V4-DOCS-
 // ASSINATURA-TERMOS-ANEXOS-012): mesma fonte já usada pelas telas de pós-venda
 // e pela impressão da OS (`aberturaV3.garantiaPrevista` / `entregaV3`).
@@ -95,20 +98,89 @@ export function iniciais(nome: string): string {
   return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
 }
 
-/** Status real (OSStatus) → V4Status. Os conjuntos coincidem 1:1; guard defensivo. */
+const V4_STATUS_VALIDOS: V4Status[] = [
+  "aberta",
+  "diagnostico",
+  "aguardando_aprovacao",
+  "aprovado",
+  "aguardando_peca",
+  "em_execucao",
+  "pronta",
+  "entregue",
+  "cancelada",
+];
+
+/**
+ * Apelidos LEGADOS aceitos no fallback (OS antigas gravadas antes da V3).
+ *
+ * NÃO reusa `normalizeOperacaoStatus` de propósito: lá o apelido `recebida` cai
+ * em "aberta" — o que faria uma OS a um passo da entrega voltar a exibir
+ * "Iniciar diagnóstico" (exatamente o F-02). Aqui `recebida` segue a projeção
+ * oficial da V3 (`projetarStatusV2`) e vira "pronta".
+ */
+const ALIAS_LEGADO_V4: Record<string, V4Status> = {
+  aberto: "aberta",
+  novo: "aberta",
+  recebida: "pronta",
+  em_analise: "diagnostico",
+  "em-analise": "diagnostico",
+  em_reparo: "em_execucao",
+  pronto: "pronta",
+  finalizado: "entregue",
+};
+
+/**
+ * Status real (OSStatus) → V4Status. Os conjuntos coincidem 1:1.
+ *
+ * OPS-V4-STATUS-AUTHORITY-FIX-003 (F-03) — FAIL-CLOSED: valor fora do domínio
+ * (e legado não mapeado) vira "desconhecido", nunca "aberta". Converter um status
+ * desconhecido em "aberta" oferecia CTA operacional ("Iniciar diagnóstico") sobre
+ * uma OS cujo estado real ninguém sabe.
+ *
+ * Preferir `resolverStatusV4(os)` — esta função só converte um valor solto e não
+ * conhece a autoridade (`operacaoStatusV3`).
+ */
 export function realStatusToV4(status: OSStatus | string | undefined): V4Status {
-  const valid: V4Status[] = [
-    "aberta",
-    "diagnostico",
-    "aguardando_aprovacao",
-    "aprovado",
-    "aguardando_peca",
-    "em_execucao",
-    "pronta",
-    "entregue",
-    "cancelada",
-  ];
-  return valid.includes(status as V4Status) ? (status as V4Status) : "aberta";
+  if (V4_STATUS_VALIDOS.includes(status as V4Status)) return status as V4Status;
+  const chave = typeof status === "string" ? status.trim().toLowerCase() : "";
+  return ALIAS_LEGADO_V4[chave] ?? "desconhecido";
+}
+
+/** Fontes de status que uma OS hidratada pode carregar no payload. */
+export interface OSStatusFonteV4 {
+  status?: unknown;
+  operacaoStatus?: unknown;
+  operacaoStatusV3?: unknown;
+}
+
+/**
+ * AUTORIDADE ÚNICA de status operacional da V4 (OPS-V4-STATUS-AUTHORITY-FIX-003).
+ *
+ * Pura, determinística, sem I/O. Toda superfície da V4 (Fila, Header, stage, CTA,
+ * dashboard, picker) resolve o status por AQUI — antes existiam duas leituras
+ * divergentes (`hydration-service` preferia `operacaoStatus`; a V3 preferia
+ * `operacaoStatusV3`), e a V4 exibia o resultado da primeira.
+ *
+ * Precedência (documentada em `status-machine.ts`, Fase 1B):
+ *   1. `payload.operacaoStatusV3` — AUTORITATIVO da V3. É o único campo que TODOS
+ *      os write-paths da V3 atualizam (`status-actions`, `entrega-actions`,
+ *      `atendimento-rapido-actions`, `orcamento-actions`). "recebida" não existe
+ *      na V4 → projeta para "pronta" via `projetarStatusV2`.
+ *      Presente porém fora do domínio → "desconhecido" (não cai para o legado:
+ *      a autoridade falou, e falou algo que não entendemos).
+ *   2. Fallback LEGADO `operacaoStatus` ?? `status` — OS anteriores à V3, que
+ *      nunca receberam `operacaoStatusV3`.
+ *   3. Nada reconhecível → "desconhecido" (fail-closed).
+ */
+export function resolverStatusV4(os: OSStatusFonteV4 | null | undefined): V4Status {
+  if (!os) return "desconhecido";
+  const v3 = os.operacaoStatusV3;
+  if (v3 !== undefined && v3 !== null && v3 !== "") {
+    return isOperacaoStatusV3(v3) ? (projetarStatusV2(v3) as V4Status) : "desconhecido";
+  }
+  const legado = os.operacaoStatus ?? os.status;
+  if (legado === undefined || legado === null || legado === "") return "desconhecido";
+  return realStatusToV4(legado as string);
 }
 
 /** Estágio inicial do pipeline V4 sugerido a partir do status real da OS. */
@@ -129,8 +201,12 @@ export function stageForStatus(status: OSStatus | string | undefined): V4Stage {
       return "entrega";
     case "cancelada":
       return "historico";
+    // F-03 fail-closed: sem etapa operacional para estado não reconhecido —
+    // "entrada" abriria a recepção da OS como se ela estivesse começando agora.
+    case "desconhecido":
+      return "historico";
     default:
-      return "entrada";
+      return "historico";
   }
 }
 

@@ -31,6 +31,7 @@ export const STATUS_LABEL: Record<V4Status, string> = {
   pronta: "Pronta",
   entregue: "Entregue",
   cancelada: "Cancelada",
+  desconhecido: "Status não reconhecido",
 };
 
 export const TONE: Record<V4Status, V4Tone> = {
@@ -43,6 +44,8 @@ export const TONE: Record<V4Status, V4Tone> = {
   pronta: { bg: C.successBg, fg: C.successFg, dot: C.success },
   entregue: { bg: C.line3, fg: C.bodySoft, dot: C.subtle },
   cancelada: { bg: C.dangerBg, fg: C.dangerFg, dot: C.danger },
+  // Estado inconsistente — tom de alerta para o operador notar e escalar.
+  desconhecido: { bg: C.dangerBg, fg: C.dangerFg, dot: C.danger },
 };
 
 export const PRIO = {
@@ -67,6 +70,8 @@ export const PRIMARY: Record<
   pronta: { label: "Receber pagamento", to: "entregue", stage: "financeiro" },
   entregue: null,
   cancelada: null,
+  // F-03 fail-closed: status não reconhecido NUNCA vira ação operacional.
+  desconhecido: null,
 };
 
 /* ---- definições de etapas / módulos ---- */

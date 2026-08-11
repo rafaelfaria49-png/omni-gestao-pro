@@ -35,6 +35,13 @@ export type V4Status =
   | "em_execucao"
   | "pronta"
   | "entregue"
+  /**
+   * OPS-V4-STATUS-AUTHORITY-FIX-003 (F-03) — estado NÃO reconhecido. Não é um
+   * status de negócio nem uma etapa do pipeline: é o resultado fail-closed de
+   * `resolverStatusV4` quando a OS carrega um status fora do domínio conhecido.
+   * Nunca habilita ação primária (`PRIMARY.desconhecido === null`).
+   */
+  | "desconhecido"
   | "cancelada";
 
 export type V4Mode = "recepcao" | "bancada" | "auditoria";

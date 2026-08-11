@@ -111,7 +111,7 @@ import {
   EMPTY_PAG_VIEW,
   EMPTY_SEGURANCA_ENTRADA,
   realPrioridadeToV4,
-  realStatusToV4,
+  resolverStatusV4,
   resumoCobrancaV4,
   stageForStatus,
 } from "./os-adapter";
@@ -371,8 +371,11 @@ export function buildVals(
   const orcamentoClienteView = realOS ? montarOrcamentoClienteViewV4(realOS) : null;
   // Status exibido: SEMPRE o da OS real carregada (sem drift após escritas/reloads);
   // o snapshot local `st.status` é só fallback enquanto nenhuma OS está selecionada.
-  const status = realOS ? realStatusToV4(realOS.status) : st.status;
+  const status = realOS ? resolverStatusV4(realOS) : st.status;
   const curIdx = (() => {
+    // F-03 fail-closed: status não reconhecido não marca NENHUMA etapa como
+    // atual/concluída (-1 deixa todas "pendentes") — em vez de fingir "em execução".
+    if (status === "desconhecido") return -1;
     let i = ORDER.indexOf(status);
     if (i < 0) i = ORDER.indexOf("em_execucao");
     return i;
@@ -765,9 +768,9 @@ export function buildVals(
   const selectOS = (o: OrdemServico, stageOverride?: V4Stage) => {
     update({
       selectedOsId: o.id,
-      status: realStatusToV4(o.status),
+      status: resolverStatusV4(o),
       prioridade: realPrioridadeToV4(o.prioridade),
-      stage: stageOverride ?? stageForStatus(o.status),
+      stage: stageOverride ?? stageForStatus(resolverStatusV4(o)),
       module: "workspace",
       view: "cockpit",
       menu: null,
