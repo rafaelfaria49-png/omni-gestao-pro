@@ -14,7 +14,7 @@ import type { OrdemServico } from "@/types/os";
 import type { FinancialProjectionOSV4, FinancialStatusV4 } from "@/lib/operacoes-v4/financial-projection";
 import type { V4Status, V4Tone } from "./types";
 import { STATUS_LABEL, TONE } from "./mock-data";
-import { aparelhoLabel, fmtData, realStatusToV4 } from "./os-adapter";
+import { aparelhoLabel, fmtData, resolverStatusV4 } from "./os-adapter";
 import { C, fmt } from "./tokens";
 
 function txt(v: unknown): string {
@@ -24,8 +24,11 @@ function txt(v: unknown): string {
 /** Status que NÃO contam como "ativo na operação" (fora da fila/bancada/SLA). */
 const STATUS_FINALIZADO: V4Status[] = ["entregue", "cancelada"];
 
+// "desconhecido" NÃO entra em STATUS_FINALIZADO de propósito: uma OS com status
+// inconsistente continua VISÍVEL na fila (some-la esconderia o problema) — o que
+// ela perde é a ação primária (`PRIMARY.desconhecido === null`).
 function isAtivo(os: OrdemServico): boolean {
-  return !STATUS_FINALIZADO.includes(realStatusToV4(os.status));
+  return !STATUS_FINALIZADO.includes(resolverStatusV4(os));
 }
 
 /** Linha de OS reutilizada por Fila / Bancada / SLA (apenas dados reais). */
@@ -42,7 +45,7 @@ export interface RailOsRow {
 }
 
 function toRow(os: OrdemServico): RailOsRow {
-  const status = realStatusToV4(os.status);
+  const status = resolverStatusV4(os);
   return {
     id: os.id,
     codigo: txt(os.codigo) || "OS",
@@ -89,7 +92,7 @@ export interface DashboardResumo {
 }
 
 export function buildDashboardResumo(ordens: OrdemServico[]): DashboardResumo {
-  const count = (s: V4Status) => ordens.filter((o) => realStatusToV4(o.status) === s).length;
+  const count = (s: V4Status) => ordens.filter((o) => resolverStatusV4(o) === s).length;
   const buckets: DashboardBucket[] = [
     { key: "aberta", label: "Abertas", count: count("aberta") },
     { key: "diagnostico", label: "Em diagnóstico", count: count("diagnostico") },

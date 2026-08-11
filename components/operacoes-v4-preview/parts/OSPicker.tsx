@@ -12,7 +12,7 @@ import { useMemo, useState } from "react";
 import { C } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { STATUS_LABEL, TONE } from "../mock-data";
-import { aparelhoLabel, osMatchesQuery, realStatusToV4 } from "../os-adapter";
+import { aparelhoLabel, osMatchesQuery, resolverStatusV4 } from "../os-adapter";
 
 export function OSPicker({ v }: { v: V4Vals }) {
   const [q, setQ] = useState("");
@@ -112,7 +112,7 @@ export function OSPicker({ v }: { v: V4Vals }) {
               {filtradas.length} {filtradas.length === 1 ? "ordem" : "ordens"}
             </div>
             {filtradas.slice(0, 100).map((o) => {
-              const status = realStatusToV4(o.status);
+              const status = resolverStatusV4(o);
               const tone = TONE[status] || TONE.em_execucao;
               const aparelho = aparelhoLabel(o);
               const imei = (o.equipamento?.numeroSerie ?? "").trim();
