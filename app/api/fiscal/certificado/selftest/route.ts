@@ -18,6 +18,10 @@ export const revalidate = 0
 
 const FEATURE_FLAG = "FISCAL_A1_OFFLINE_SELFTEST_ENABLED"
 const ALLOWED_QUERY_KEYS = new Set(["storeId", "lojaId"])
+const EMPTY_BODY_READ_TIMEOUT_MS = 250
+const EMPTY_BODY_CANCEL_TIMEOUT_MS = 25
+const MAX_EMPTY_BODY_CHUNKS = 16
+const BODY_READ_TIMED_OUT = Symbol("body-read-timed-out")
 
 function response(status: number, body: Record<string, unknown>): NextResponse {
   return NextResponse.json(body, {
@@ -26,13 +30,71 @@ function response(status: number, body: Record<string, unknown>): NextResponse {
   })
 }
 
-function requestIsParameterless(req: Request, storeId: string): boolean {
+async function cancelBodyReader(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      reader.cancel().catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, EMPTY_BODY_CANCEL_TIMEOUT_MS)
+      }),
+    ])
+  } catch {
+    // Cancelamento é best-effort; a validação já falhou fechada.
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
+}
+
+async function bodyIsEmpty(req: Request): Promise<boolean> {
+  if (req.body === null) return true
+
+  let reader: ReadableStreamDefaultReader<Uint8Array>
+  try {
+    reader = req.body.getReader()
+  } catch {
+    return false
+  }
+
+  let accepted = false
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const timedOut = new Promise<typeof BODY_READ_TIMED_OUT>((resolve) => {
+    timeout = setTimeout(() => resolve(BODY_READ_TIMED_OUT), EMPTY_BODY_READ_TIMEOUT_MS)
+  })
+
+  try {
+    for (let reads = 0; reads < MAX_EMPTY_BODY_CHUNKS; reads += 1) {
+      const result = await Promise.race([reader.read(), timedOut])
+      if (result === BODY_READ_TIMED_OUT) return false
+      if (result.done) {
+        accepted = true
+        return true
+      }
+      if (result.value.byteLength > 0) return false
+    }
+    return false
+  } catch {
+    return false
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+    if (!accepted) await cancelBodyReader(reader)
+    try {
+      reader.releaseLock()
+    } catch {
+      // Um reader hostil pode manter read() pendente mesmo após cancel(); não bloqueia a resposta.
+    }
+  }
+}
+
+async function requestIsParameterless(req: Request, storeId: string): Promise<boolean> {
   const url = new URL(req.url)
   if ([...url.searchParams.keys()].some((key) => !ALLOWED_QUERY_KEYS.has(key))) return false
   for (const key of ALLOWED_QUERY_KEYS) {
     if (url.searchParams.getAll(key).some((value) => value.trim() !== storeId)) return false
   }
-  return req.body === null
+  return bodyIsEmpty(req)
 }
 
 export async function POST(req: Request) {
@@ -47,7 +109,7 @@ export async function POST(req: Request) {
 
   try {
     // Nenhum parâmetro além da seleção canônica de loja atravessa o endpoint.
-    if (!requestIsParameterless(req, acl.storeId)) {
+    if (!(await requestIsParameterless(req, acl.storeId))) {
       return response(400, { ok: false, codigo: "parametros_nao_permitidos" })
     }
 

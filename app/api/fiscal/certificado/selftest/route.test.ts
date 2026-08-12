@@ -72,6 +72,26 @@ function request(body?: unknown, query = "") {
   })
 }
 
+function requestWithStream(body: ReadableStream<Uint8Array>, query = "") {
+  return new Request(`http://localhost/api/fiscal/certificado/selftest${query}`, {
+    method: "POST",
+    headers: { "x-assistec-loja-id": STORE },
+    body,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" })
+}
+
+function byteStream(bytes: number[], onCancel?: () => void) {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new Uint8Array(bytes))
+    },
+    cancel() {
+      onCancel?.()
+    },
+  })
+}
+
 async function json(res: Response): Promise<Record<string, unknown>> {
   return (await res.json()) as Record<string, unknown>
 }
@@ -109,6 +129,123 @@ beforeEach(() => {
 })
 
 describe("POST /api/fiscal/certificado/selftest", () => {
+  it("aceita body=null sem depender do estado do stream", async () => {
+    const req = request(undefined, "?storeId=loja-1")
+    expect(req.body).toBeNull()
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(h.prismaEnsureConnected).toHaveBeenCalledOnce()
+  })
+
+  it("aceita o POST Production-like com query canônica e ReadableStream vazio", async () => {
+    const req = requestWithStream(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array())
+          controller.close()
+        },
+      }),
+      "?storeId=loja-1",
+    )
+    expect(req.body).not.toBeNull()
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(200)
+    expect(h.prismaEnsureConnected).toHaveBeenCalledOnce()
+    expect(h.runSelftest).toHaveBeenCalledOnce()
+    expect(req.body?.locked).toBe(false)
+  })
+
+  it("rejeita stream ao receber o primeiro byte e cancela o reader", async () => {
+    const onCancel = vi.fn()
+    const res = await POST(requestWithStream(byteStream([0], onCancel), "?storeId=loja-1"))
+
+    expect(res.status).toBe(400)
+    expect(await json(res)).toEqual({ ok: false, codigo: "parametros_nao_permitidos" })
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
+  })
+
+  it("rejeita e cancela uma sequência ilimitada de chunks vazios", async () => {
+    const onCancel = vi.fn()
+    const req = requestWithStream(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          controller.enqueue(new Uint8Array())
+        },
+        cancel: onCancel,
+      }),
+      "?storeId=loja-1",
+    )
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(400)
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(req.body?.locked).toBe(false)
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["JSON vazio", "{}"],
+    ["whitespace", " \t\r\n"],
+  ])("rejeita payload efetivo: %s", async (_label, payload) => {
+    const res = await POST(
+      requestWithStream(byteStream([...new TextEncoder().encode(payload)]), "?storeId=loja-1"),
+    )
+
+    expect(res.status).toBe(400)
+    expect(await json(res)).toEqual({ ok: false, codigo: "parametros_nao_permitidos" })
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.runSelftest).not.toHaveBeenCalled()
+  })
+
+  it("rejeita fail-closed quando o stream falha", async () => {
+    const req = requestWithStream(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error("erro-de-stream-nao-pode-vazar"))
+        },
+      }),
+      "?storeId=loja-1",
+    )
+
+    const res = await POST(req)
+
+    expect(res.status).toBe(400)
+    expect(await json(res)).toEqual({ ok: false, codigo: "parametros_nao_permitidos" })
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+  })
+
+  it("rejeita fail-closed e cancela stream que não conclui no limite", async () => {
+    vi.useFakeTimers()
+    const onCancel = vi.fn()
+    try {
+      const pending = POST(
+        requestWithStream(
+          new ReadableStream<Uint8Array>({
+            cancel: onCancel,
+          }),
+          "?storeId=loja-1",
+        ),
+      )
+
+      await vi.advanceTimersByTimeAsync(1_000)
+      const res = await pending
+
+      expect(res.status).toBe(400)
+      expect(await json(res)).toEqual({ ok: false, codigo: "parametros_nao_permitidos" })
+      expect(onCancel).toHaveBeenCalledOnce()
+      expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("feature flag desligada responde 404 antes de ACL, banco, provider e material", async () => {
     delete process.env.FISCAL_A1_OFFLINE_SELFTEST_ENABLED
     const res = await POST(request({ senha: "nao-deve-ser-lida" }))
@@ -122,7 +259,7 @@ describe("POST /api/fiscal/certificado/selftest", () => {
 
   it("não-admin é bloqueado antes do banco e material", async () => {
     h.requireFiscalAdmin.mockResolvedValue({ ok: false, status: 403, error: "Apenas ADMIN" })
-    const res = await POST(request())
+    const res = await POST(request({ senha: "body-nao-deve-ser-lido" }))
     expect(res.status).toBe(403)
     expect(await json(res)).toEqual({ ok: false, codigo: "acesso_negado" })
     expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
