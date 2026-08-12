@@ -123,9 +123,11 @@ export function Topbar() {
   const showNone = !loading && !error && creditsValue !== null && creditsValue <= 0;
 
   const creditsLabel = loading
-    ? "Créditos..."
+    ? "Créditos…"
     : error
-      ? null
+      ? "Comprar créditos"
+      : showNone
+        ? "Sem créditos"
       : `Créditos: ${new Intl.NumberFormat("pt-BR").format(credits ?? 0)}`;
 
   const initials = useMemo(() => {
@@ -178,41 +180,30 @@ export function Topbar() {
           </div>
         </div>
 
-        <ThemeSwitcher />
+        <ThemeSwitcher compact />
 
         <LegibilityToggle />
 
-        {!isPDV && creditsLabel ? (
-          <div className="hidden sm:inline-flex items-center rounded-full border border-border bg-surface/60 px-3 py-1.5 text-[12px] font-medium text-muted-foreground">
-            {creditsLabel}
-          </div>
-        ) : null}
-
-        {!isPDV && (showNone || showLow) && (
+        {!isPDV ? (
           <Link
             href="/dashboard/creditos"
             className={[
-              "hidden sm:inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-semibold transition",
+              "hidden sm:inline-flex h-8 items-center gap-2 rounded-full border px-3 text-[12px] font-medium transition-colors",
               showNone
                 ? "border-destructive/25 bg-destructive/10 text-destructive hover:bg-destructive/15"
-                : "border-yellow-500/25 bg-yellow-500/10 text-yellow-700 hover:bg-yellow-500/15 dark:text-yellow-300",
+                : showLow
+                  ? "border-warning/30 bg-warning/10 text-foreground hover:bg-warning/15"
+                  : "border-border bg-surface/60 text-muted-foreground hover:bg-muted/50 hover:text-foreground",
             ].join(" ")}
+            aria-label={`${creditsLabel}. Abrir consulta e compra de créditos`}
+            title="Consultar saldo e comprar créditos"
           >
-            <span>{showNone ? "Sem créditos" : "Créditos baixos"}</span>
-            <span className="rounded-full bg-background/60 px-2 py-0.5 text-[11px] font-medium text-foreground/80">
-              Comprar
-            </span>
+            <span>{creditsLabel}</span>
+            {showNone || showLow ? (
+              <span className="border-l border-current/20 pl-2 text-[11px] font-semibold">Comprar</span>
+            ) : null}
           </Link>
-        )}
-
-        {!isPDV && (
-          <Link
-            href="/dashboard/creditos"
-            className="hidden sm:inline-flex h-8 items-center rounded-full border border-border bg-background/60 px-3 text-[12px] font-medium text-foreground/80 transition hover:bg-muted/50 hover:text-foreground"
-          >
-            Comprar créditos
-          </Link>
-        )}
+        ) : null}
 
         <button className="relative h-8 w-8 rounded-md border border-border bg-panel hover:bg-muted/60 transition-colors grid place-items-center">
           <Bell className="h-3.5 w-3.5" strokeWidth={1.75} />
