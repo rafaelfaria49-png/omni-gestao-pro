@@ -53,6 +53,10 @@ import {
   qualityScoreInputFromProduto,
 } from "@/lib/cadastros/produto-quality-score";
 import { getProdutoFiscal } from "@/lib/produto-fiscal";
+import {
+  categoriaCriadaSelecionada,
+  categoriasAtivasDeServico,
+} from "@/lib/cadastros/servico-categorias";
 
 const ICONS: Record<string, any> = {
   Users, Package, Wrench, Truck, HardHat, Smartphone, AlertTriangle, RefreshCw,
@@ -2466,16 +2470,20 @@ function ServicosPanel({
   const [filterQuery, setFilterQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [servCategorias, setServCategorias] = useState<string[]>([]);
+  const [servCategorias, setServCategorias] = useState<CategoriaCadastroDTO[]>([]);
+  const [selectedCategoria, setSelectedCategoria] = useState("");
+  const [categoryCreateOpen, setCategoryCreateOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [categoryCreateError, setCategoryCreateError] = useState<string | null>(null);
 
   useEffect(() => {
     listCategorias(storeId).then((cats) =>
-      setServCategorias(cats.filter((c) => c.active && c.type === "servico").map((c) => c.name))
+      setServCategorias(categoriasAtivasDeServico(cats))
     ).catch(() => {});
   }, [storeId]);
   const [saving, startSaving] = useTransition();
+  const [creatingCategory, startCreatingCategory] = useTransition();
   const nomeRef = useRef<HTMLInputElement | null>(null);
-  const catRef = useRef<HTMLSelectElement | null>(null);
   const tempoRef = useRef<HTMLInputElement | null>(null);
   const custoRef = useRef<HTMLInputElement | null>(null);
   const precoRef = useRef<HTMLInputElement | null>(null);
@@ -2483,8 +2491,29 @@ function ServicosPanel({
   const termoRef = useRef<HTMLTextAreaElement | null>(null);
   const statusRef = useRef<HTMLSelectElement | null>(null);
 
+  const openNewService = () => {
+    setEditing(null);
+    setSelectedCategoria("");
+    m.openIt();
+  };
+
+  const closeServiceModal = () => {
+    setEditing(null);
+    setCategoryCreateOpen(false);
+    setCategoryCreateError(null);
+    setNewCategoryName("");
+    m.close();
+  };
+
+  useEffect(() => {
+    if (!m.open) return;
+    setSelectedCategoria(editing?.categoria && editing.categoria !== "—" ? editing.categoria : "");
+  }, [m.open, editing]);
+
   useEffect(() => {
     if (autoOpen) {
+      setEditing(null);
+      setSelectedCategoria("");
       m.openIt();
       onAutoOpenConsumed?.();
     }
@@ -2521,7 +2550,7 @@ function ServicosPanel({
       <Toolbar
         count={visibleRows.length}
         label="serviços"
-        onNew={m.openIt}
+        onNew={openNewService}
         filterQuery={filterQuery}
         onFilterQueryChange={setFilterQuery}
       />
@@ -2534,6 +2563,7 @@ function ServicosPanel({
             className="p-5"
             onClick={() => {
               setEditing(s);
+              setSelectedCategoria(s.categoria === "—" ? "" : s.categoria);
               m.openIt();
             }}
           >
@@ -2544,7 +2574,8 @@ function ServicosPanel({
               </div>
               <button
                 disabled={saving}
-                onClick={() => {
+                onClick={(event) => {
+                  event.stopPropagation();
                   startSaving(async () => {
                     try {
                       await upsertServico(storeId, {
@@ -2556,7 +2587,7 @@ function ServicosPanel({
                         preco: s.preco,
                         garantia: s.garantia,
                         termo: s.termo,
-                        active: s.status !== "Ativo",
+                        active: s.status === "Inativo",
                       });
                       await refresh();
                     } catch (e) {
@@ -2581,7 +2612,6 @@ function ServicosPanel({
               <div className="font-semibold text-primary">{s.margem ? `${s.margem.toFixed(1)}%` : "—"}</div>
             </div>
             <div className="mt-3 flex items-center gap-2">
-              <Badge tone="info">Marketing IA</Badge>
               <Badge>OS</Badge>
               <Badge>PDV</Badge>
             </div>
@@ -2589,31 +2619,63 @@ function ServicosPanel({
         ))}
       </div>
 
-      <Modal open={m.open} onClose={m.close} title="Novo serviço" subtitle="Configuração completa para OS e Marketing IA." size="lg">
-        <div className="grid grid-cols-2 gap-4" key={m.open ? "open" : "closed"}>
+      <Modal
+        open={m.open}
+        onClose={closeServiceModal}
+        title={editing ? "Editar serviço" : "Novo serviço"}
+        subtitle="Dados operacionais usados em OS, atalhos e vendas do PDV."
+        size="lg"
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2" key={m.open ? "open" : "closed"}>
           <Field label="Nome" span={2}><Input ref={nomeRef} defaultValue={editing?.nome ?? ""} placeholder="Troca de tela" /></Field>
-          <Field label="Categoria"><Select ref={catRef} defaultValue={editing?.categoria ?? ""}>{servCategorias.map((c) => <option key={c}>{c}</option>)}</Select></Field>
+          <Field label="Categoria">
+            <div className="space-y-2">
+              <Select
+                value={selectedCategoria}
+                onChange={(event) => setSelectedCategoria(event.target.value)}
+                aria-label="Categoria do serviço"
+              >
+                <option value="" disabled>
+                  {servCategorias.length === 0
+                    ? "Nenhuma categoria de serviço cadastrada"
+                    : "Selecione uma categoria"}
+                </option>
+                {selectedCategoria && !servCategorias.some((categoria) => categoria.name === selectedCategoria) && (
+                  <option value={selectedCategoria} disabled>{selectedCategoria} (indisponível)</option>
+                )}
+                {servCategorias.map((categoria) => (
+                  <option key={categoria.id} value={categoria.name}>{categoria.name}</option>
+                ))}
+              </Select>
+              <button
+                type="button"
+                onClick={() => {
+                  setCategoryCreateError(null);
+                  setNewCategoryName("");
+                  setCategoryCreateOpen(true);
+                }}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 text-xs font-semibold text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Plus className="h-3.5 w-3.5" /> Criar categoria
+              </button>
+              {servCategorias.length === 0 && (
+                <p className="text-xs text-muted-foreground" role="status">
+                  Crie a primeira categoria para concluir este serviço.
+                </p>
+              )}
+            </div>
+          </Field>
           <Field label="Tempo médio"><Input ref={tempoRef} defaultValue={editing?.tempo === "—" ? "" : editing?.tempo ?? ""} placeholder="45 min" /></Field>
           <Field label="Custo interno"><Input ref={custoRef} defaultValue={editing ? String(editing.custo) : ""} placeholder="60" /></Field>
           <Field label="Preço de venda"><Input ref={precoRef} defaultValue={editing ? String(editing.preco) : ""} placeholder="280" /></Field>
           <Field label="Garantia (dias)"><Input ref={garantiaRef} defaultValue={editing ? String(editing.garantia) : ""} placeholder="90" /></Field>
-          <Field label="Peças sugeridas"><Input placeholder="Tela compatível…" /></Field>
-          <Field label="Checklist padrão" span={2}><Textarea rows={3} placeholder="• Testar touch&#10;• Testar Face ID" /></Field>
           <Field label="Termo de garantia" span={2}><Textarea ref={termoRef} defaultValue={editing?.termo ?? ""} rows={3} /></Field>
-          <Field label="Status"><Select ref={statusRef} defaultValue={editing?.status ?? "Ativo"}><option>Ativo</option><option>Inativo</option></Select></Field>
-          <Field label="Marketing IA" span={2}>
-            <div className="space-y-2 rounded-lg border border-border bg-background p-3 text-sm text-foreground">
-              <label className="flex items-center gap-2"><input type="checkbox" defaultChecked /> Usar em conteúdo automático</label>
-              <label className="flex items-center gap-2"><input type="checkbox" defaultChecked /> Pode gerar post antes/depois</label>
-              <Input placeholder="Template de legenda" />
-              <Input placeholder="Hashtags padrão" />
-            </div>
-          </Field>
+          <Field label="Status"><Select ref={statusRef} defaultValue={editing?.status === "Inativo" ? "Inativo" : "Ativo"}><option>Ativo</option><option>Inativo</option></Select></Field>
         </div>
         <div className="mt-6 flex justify-end gap-2">
-          <button onClick={m.close} className="rounded-lg border border-border px-4 py-2 text-sm">Cancelar</button>
+          <button onClick={closeServiceModal} className="rounded-lg border border-border px-4 py-2 text-sm">Cancelar</button>
           <button
-            disabled={saving}
+            disabled={saving || !selectedCategoria}
             onClick={() => {
               startSaving(async () => {
                 try {
@@ -2623,7 +2685,7 @@ function ServicosPanel({
                   await upsertServico(storeId, {
                     id: editing?.id,
                     nome: (nomeRef.current?.value ?? "").trim(),
-                    categoria: (catRef.current?.value ?? "").trim(),
+                    categoria: selectedCategoria.trim(),
                     tempo: (tempoRef.current?.value ?? "").trim(),
                     custo: Number.isFinite(custo) ? custo : 0,
                     preco: Number.isFinite(preco) ? preco : 0,
@@ -2632,9 +2694,8 @@ function ServicosPanel({
                     active: (statusRef.current?.value ?? "Ativo") !== "Inativo",
                   });
                   await refresh();
-                  setEditing(null);
-                  m.close();
-                  window.alert("Salvo com sucesso");
+                  closeServiceModal();
+                  toast.success("Serviço salvo com sucesso");
                 } catch (e) {
                   window.alert(e instanceof Error ? e.message : "Não foi possível salvar serviço");
                 }
@@ -2643,6 +2704,80 @@ function ServicosPanel({
             className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
           >
             {saving ? "Salvando…" : "Salvar serviço"}
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={categoryCreateOpen}
+        onClose={() => {
+          if (creatingCategory) return;
+          setCategoryCreateOpen(false);
+          setCategoryCreateError(null);
+        }}
+        title="Nova categoria de serviço"
+        subtitle="A categoria será criada nesta unidade e selecionada no serviço."
+        size="md"
+      >
+        <Field label="Nome da categoria">
+          <Input
+            autoFocus
+            value={newCategoryName}
+            onChange={(event) => setNewCategoryName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                document.getElementById("save-inline-service-category")?.click();
+              }
+            }}
+            placeholder="Software e Dados"
+            aria-invalid={Boolean(categoryCreateError)}
+          />
+        </Field>
+        {categoryCreateError && <p className="mt-2 text-sm text-destructive" role="alert">{categoryCreateError}</p>}
+        <div className="mt-6 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={creatingCategory}
+            onClick={() => setCategoryCreateOpen(false)}
+            className="rounded-lg border border-border px-4 py-2 text-sm disabled:opacity-60"
+          >
+            Cancelar
+          </button>
+          <button
+            id="save-inline-service-category"
+            type="button"
+            disabled={creatingCategory || !newCategoryName.trim()}
+            onClick={() => {
+              startCreatingCategory(async () => {
+                try {
+                  setCategoryCreateError(null);
+                  const created = await upsertCategoria(storeId, {
+                    name: newCategoryName.trim(),
+                    type: "servico",
+                    active: true,
+                  });
+                  const refreshed = categoriasAtivasDeServico(await listCategorias(storeId));
+                  const createdDto: CategoriaCadastroDTO = {
+                    id: created.id,
+                    name: created.name,
+                    type: "servico",
+                    active: true,
+                  };
+                  const next = categoriaCriadaSelecionada(refreshed, createdDto);
+                  setServCategorias(next.categorias);
+                  setSelectedCategoria(next.selectedName);
+                  setCategoryCreateOpen(false);
+                  setNewCategoryName("");
+                  toast.success(`Categoria “${next.selectedName}” criada e selecionada`);
+                } catch (error) {
+                  setCategoryCreateError(error instanceof Error ? error.message : "Não foi possível criar a categoria");
+                }
+              });
+            }}
+            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-60"
+          >
+            {creatingCategory ? "Criando…" : "Criar e selecionar"}
           </button>
         </div>
       </Modal>

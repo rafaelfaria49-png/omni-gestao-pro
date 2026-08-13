@@ -11,6 +11,8 @@ import { LEGACY_PRIMARY_STORE_ID } from "@/lib/store-defaults"
 import type { APrazoConfig, CaixaOperacaoRecord, DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
 import { mergeSalesById } from "@/lib/operations-sales-merge"
 import { isVirtualSaleLine } from "@/lib/os-pdv-virtual-lines"
+import { resolveSaleLineItemType, type SaleLineItemType } from "@/lib/sale-line-classification"
+import { saleLineRecordFromFinalizeInput } from "@/lib/operations-sale-line"
 import { readSelectedTerminal } from "@/lib/pdv-terminal"
 import { emitEvent } from "@/lib/events/event-bus"
 import { initAutomationEngineClient } from "@/lib/automation/automation-engine"
@@ -30,6 +32,8 @@ import {
   SALE_IDENTITY_CONFLICT_GUIDANCE,
   SALE_IDENTITY_CONFLICT_TITLE,
 } from "@/lib/vendas/sale-identity-conflict"
+
+const VENDA_AUTO_RETRY_HOLD_MS = 5 * 60_000
 
 export type { APrazoConfig, CaixaOperacaoRecord, DevolucaoRecord, PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
 
@@ -319,12 +323,17 @@ interface OperationsContextType {
       SaleLine & {
         name?: string
         unitPrice?: number
+        itemType?: SaleLineItemType
         /** Marca item avulso (Venda Avulsa via INSERT no PDV) — não toca estoque. */
         isAvulso?: boolean
         /** Custo unitário opcional informado pelo operador no balcão. `null`/ausente = desconhecido. */
         custoUnitario?: number | null
         /** Seleção de modelo/cor do acessório (dado passivo, ver SaleLineRecord). */
         accessorySelection?: AccessorySelectionV1
+        serviceId?: string
+        serviceCategory?: string
+        warrantyDays?: number
+        serviceTerms?: string
       }
     >
     total: number
@@ -957,7 +966,6 @@ export function OperationsProvider({
   // `allowClosedOriginalSession`/`retroactiveClosedSession` — sync retroativo de sessão
   // original fechada é sempre ação manual e explícita (ver `retrySyncSaleRetroactive`).
   const vendaAutoRetryHoldRef = useRef<Map<string, number>>(new Map())
-  const VENDA_AUTO_RETRY_HOLD_MS = 5 * 60_000
 
   const flushPendingSales = useCallback(() => {
     const pending = stateRef.current.sales.filter((s) => s.syncPending === true)
@@ -1479,7 +1487,8 @@ export function OperationsProvider({
 
       for (const line of lines) {
         // Linhas virtuais (O.S. ou Item Avulso) não tocam estoque: validam apenas qtd.
-        if (isVirtualSaleLine(line.inventoryId)) {
+        const itemType = resolveSaleLineItemType(line)
+        if (itemType !== "produto" || isVirtualSaleLine(line.inventoryId)) {
           if (line.quantity <= 0) return { ok: false, reason: "Quantidade inválida." }
           continue
         }
@@ -1528,7 +1537,7 @@ export function OperationsProvider({
 
       for (const line of lines) {
         // Linhas virtuais (O.S. / Item Avulso) não decrementam estoque local.
-        if (isVirtualSaleLine(line.inventoryId)) continue
+        if (resolveSaleLineItemType(line) !== "produto" || isVirtualSaleLine(line.inventoryId)) continue
         const item = next.inventory.find((i) => i.id === line.inventoryId)!
         item.stock -= line.quantity
       }
@@ -1547,39 +1556,15 @@ export function OperationsProvider({
 
       const saleId = nextSaleId(next.sales)
       const saleLines: SaleLineRecord[] = lines.map((ln) => {
-        if (isVirtualSaleLine(ln.inventoryId)) {
-          const unit = typeof ln.unitPrice === "number" && Number.isFinite(ln.unitPrice) ? ln.unitPrice : 0
-          // Custo opcional do Item Avulso. Ausente/inválido → `undefined`, para
-          // que relatórios tratem como "custo desconhecido" e não como 100% lucro.
-          const custoUnitario =
-            typeof ln.custoUnitario === "number" && Number.isFinite(ln.custoUnitario) && ln.custoUnitario >= 0
-              ? Math.round(ln.custoUnitario * 100) / 100
-              : undefined
-          const avulso = ln.isAvulso === true || ln.inventoryId.startsWith("__avulso__")
-          const fallbackName = avulso ? "Item avulso" : "Serviço O.S."
-          return {
-            inventoryId: ln.inventoryId,
-            name: (typeof ln.name === "string" && ln.name.trim()) || fallbackName,
-            quantity: ln.quantity,
-            unitPrice: unit,
-            lineTotal: Math.round(unit * ln.quantity * 100) / 100,
-            qtyReturned: 0,
-            ...(avulso ? { isAvulso: true } : {}),
-            ...(custoUnitario !== undefined ? { custoUnitario } : {}),
-            ...(ln.accessorySelection ? { accessorySelection: ln.accessorySelection } : {}),
-          }
-        }
-        const item = next.inventory.find((i) => i.id === ln.inventoryId)!
-        const unit = ln.unitPrice ?? item.price
-        return {
-          inventoryId: ln.inventoryId,
-          name: ln.name ?? item.name,
-          quantity: ln.quantity,
-          unitPrice: unit,
-          lineTotal: Math.round(unit * ln.quantity * 100) / 100,
-          qtyReturned: 0,
-          ...(ln.accessorySelection ? { accessorySelection: ln.accessorySelection } : {}),
-        }
+        const itemType = resolveSaleLineItemType(ln)
+        const item = itemType === "produto"
+          ? next.inventory.find((inventoryItem) => inventoryItem.id === ln.inventoryId)
+          : undefined
+        const record = saleLineRecordFromFinalizeInput(
+          ln,
+          item ? { name: item.name, price: item.price } : undefined,
+        )
+        return ln.accessorySelection ? { ...record, accessorySelection: ln.accessorySelection } : record
       })
       next.sales.push({
         id: saleId,

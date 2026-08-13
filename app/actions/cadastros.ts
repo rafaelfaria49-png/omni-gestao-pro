@@ -21,6 +21,7 @@ import {
   type ExistingProdutoLite,
 } from "@/lib/produtos/duplicate-product";
 import { validarGtin, type GtinFormato } from "@/lib/cadastros/gtin";
+import { requireCadastrosStoreAccess } from "@/lib/cadastros/cadastros-action-access";
 import {
   consultarProdutosSql,
   MENSAGEM_ERRO_FILTROS_PRODUTOS,
@@ -416,8 +417,9 @@ export type CategoriaCadastroDTO = {
 };
 
 export async function listCategorias(storeId: string): Promise<CategoriaCadastroDTO[]> {
+  const sid = await requireCadastrosStoreAccess(storeId);
   const rows = await prisma.categoriaCadastro.findMany({
-    where: { storeId },
+    where: { storeId: sid },
     orderBy: [{ type: "asc" }, { name: "asc" }],
     take: 1000,
   });
@@ -433,6 +435,7 @@ export async function upsertCategoria(
   storeId: string,
   input: { id?: string; name: string; type: CategoriaCadastroType; active?: boolean }
 ): Promise<{ id: string; name: string }> {
+  const sid = await requireCadastrosStoreAccess(storeId);
   const name = input.name.trim();
   if (!name) throw new Error("Nome obrigatório");
   const type = input.type || "geral";
@@ -444,7 +447,7 @@ export async function upsertCategoria(
   } as const;
 
   if (input.id) {
-    const existing = await prisma.categoriaCadastro.findFirst({ where: { id: input.id, storeId }, select: { id: true } });
+    const existing = await prisma.categoriaCadastro.findFirst({ where: { id: input.id, storeId: sid }, select: { id: true } });
     if (!existing) throw new Error("Categoria não encontrada");
     const updated = await prisma.categoriaCadastro.update({ where: { id: input.id }, data: common, select: { id: true, name: true } });
     revalidatePath("/dashboard/cadastros-v2");
@@ -453,7 +456,7 @@ export async function upsertCategoria(
 
   // Dedup case-insensitive antes de criar: evita duplicatas "Apple" vs "apple".
   const dup = await prisma.categoriaCadastro.findFirst({
-    where: { storeId, type, name: { equals: name, mode: "insensitive" } },
+    where: { storeId: sid, type, name: { equals: name, mode: "insensitive" } },
     select: { id: true, name: true, active: true },
   });
   if (dup) {
@@ -464,7 +467,7 @@ export async function upsertCategoria(
     return { id: dup.id, name: dup.name };
   }
 
-  const created = await prisma.categoriaCadastro.create({ data: { ...common, storeId }, select: { id: true, name: true } });
+  const created = await prisma.categoriaCadastro.create({ data: { ...common, storeId: sid }, select: { id: true, name: true } });
   revalidatePath("/dashboard/cadastros-v2");
   return created;
 }
@@ -824,6 +827,7 @@ export type ServicoDTO = {
   margem: number;
   garantia: number;
   termo: string;
+  active: boolean;
   status: "Ativo" | "Inativo" | "Incompleto";
 };
 
@@ -1950,8 +1954,9 @@ export async function deleteProduto(
 }
 
 export async function listServicos(storeId: string): Promise<ServicoDTO[]> {
+  const sid = await requireCadastrosStoreAccess(storeId);
   const rows = await prisma.servico.findMany({
-    where: { storeId },
+    where: { storeId: sid },
     orderBy: { updatedAt: "desc" },
     take: 500,
   });
@@ -1965,7 +1970,8 @@ export async function listServicos(storeId: string): Promise<ServicoDTO[]> {
     margem: Number(s.margin ?? 0),
     garantia: s.warrantyDays ?? 0,
     termo: s.terms || "",
-    status: (!s.name || !s.category || s.price <= 0 ? "Incompleto" : s.active ? "Ativo" : "Inativo"),
+    active: s.active,
+    status: !s.active ? "Inativo" : (!s.name || !s.category || s.price <= 0 ? "Incompleto" : "Ativo"),
   }));
 }
 
@@ -1983,28 +1989,38 @@ export async function upsertServico(
     active?: boolean;
   }
 ): Promise<{ id: string }> {
+  const sid = await requireCadastrosStoreAccess(storeId);
   const nome = input.nome.trim();
   if (!nome) throw new Error("Nome obrigatório");
 
   const preco = Number(input.preco ?? 0);
   const custo = Number(input.custo ?? 0);
+  const categoria = (input.categoria ?? "").trim();
+  const active = input.active ?? true;
+  if (active && categoria) {
+    const categoriaValida = await prisma.categoriaCadastro.findFirst({
+      where: { storeId: sid, type: "servico", active: true, name: { equals: categoria, mode: "insensitive" } },
+      select: { name: true },
+    });
+    if (!categoriaValida) throw new Error("Selecione uma categoria de serviço ativa");
+  }
   const margin = preco > 0 ? ((preco - custo) / preco) * 100 : 0;
 
   const common = {
     name: nome,
-    category: (input.categoria ?? "").trim(),
+    category: categoria,
     avgTime: (input.tempo ?? "").trim(),
     cost: custo,
     price: preco,
     margin: Number.isFinite(margin) ? Number(margin.toFixed(1)) : 0,
     warrantyDays: Math.max(0, Math.trunc(input.garantia ?? 0)),
     terms: (input.termo ?? "").trim(),
-    active: input.active ?? true,
-    status: input.active === false ? "Inativo" : "Ativo",
+    active,
+    status: !active ? "Inativo" : nome && categoria && preco > 0 ? "Ativo" : "Incompleto",
   } as const;
 
   if (input.id) {
-    const existing = await prisma.servico.findFirst({ where: { id: input.id, storeId }, select: { id: true } });
+    const existing = await prisma.servico.findFirst({ where: { id: input.id, storeId: sid }, select: { id: true } });
     if (!existing) throw new Error("Serviço não encontrado");
     const updated = await prisma.servico.update({
       where: { id: input.id },
@@ -2016,7 +2032,7 @@ export async function upsertServico(
   }
 
   const created = await prisma.servico.create({
-    data: { ...common, storeId },
+    data: { ...common, storeId: sid },
     select: { id: true },
   });
   revalidatePath("/dashboard/cadastros-v2");

@@ -10,7 +10,7 @@
  *
  *  2. Produto físico não resolvido (`enforceStock`): item com `inventoryId` sem
  *     casamento em `Produto` → `UnresolvedProductError` e NADA é gravado. Linhas
- *     virtuais (O.S./avulso) seguem isentas; replay legado preserva o histórico.
+ *     virtuais (O.S./serviço/avulso) seguem isentas; replay legado preserva o histórico.
  *
  * Usa um `TransactionClient` fake em memória — o vitest roda em `node` e proíbe
  * importar `@/lib/prisma`. O `import type` do Prisma em ops-upsert-venda é apagado
@@ -24,6 +24,7 @@ import {
   CaixaOriginalFechadoError,
   type SalePayload,
 } from "./ops-upsert-venda"
+import { servicoInventoryId } from "./os-pdv-virtual-lines"
 
 type FakeProduct = {
   id: string
@@ -55,12 +56,13 @@ function makeFakeTx(opts?: { products?: FakeProduct[]; sessoes?: FakeSessao[] })
   const ledger: Array<Record<string, unknown>> = []
   const financeiro: Array<Record<string, unknown>> = []
   const titulos: Array<Record<string, unknown>> = []
+  const itemRows: Array<Record<string, unknown>> = []
+  const vendaPayloads: Array<Record<string, unknown>> = []
   /** Registra cada consulta de sessão para inspecionar o scoping (anti loja-1). */
   const sessaoQueries: Array<Record<string, unknown>> = []
   let vendaCounter = 0
   let vendaUpserts = 0
 
-  /* eslint-disable @typescript-eslint/no-explicit-any */
   const tx: any = {
     cliente: { findFirst: async () => null },
     venda: {
@@ -69,6 +71,7 @@ function makeFakeTx(opts?: { products?: FakeProduct[]; sessoes?: FakeSessao[] })
       findUnique: async () => null,
       create: async ({ data }: any) => {
         vendaUpserts += 1
+        vendaPayloads.push(data.payload as Record<string, unknown>)
         return {
           id: `venda-${++vendaCounter}`,
           ...data,
@@ -80,7 +83,10 @@ function makeFakeTx(opts?: { products?: FakeProduct[]; sessoes?: FakeSessao[] })
     },
     itemVenda: {
       deleteMany: async () => ({ count: 0 }),
-      create: async () => ({}),
+      create: async ({ data }: any) => {
+        itemRows.push(data)
+        return data
+      },
     },
     produto: {
       findFirst: async ({ where }: any) => {
@@ -154,9 +160,17 @@ function makeFakeTx(opts?: { products?: FakeProduct[]; sessoes?: FakeSessao[] })
       },
     },
   }
-  /* eslint-enable @typescript-eslint/no-explicit-any */
-
-  return { tx, byId, ledger, financeiro, titulos, sessaoQueries, getVendaUpserts: () => vendaUpserts }
+  return {
+    tx,
+    byId,
+    ledger,
+    financeiro,
+    titulos,
+    itemRows,
+    vendaPayloads,
+    sessaoQueries,
+    getVendaUpserts: () => vendaUpserts,
+  }
 }
 
 const STORE = "loja-1"
@@ -359,5 +373,114 @@ describe("upsertVendaInTransaction — produto físico não resolvido (P1)", () 
     ).resolves.toMatchObject({ replayed: false })
     // Comportamento histórico preservado: venda/financeiro gravados, sem baixa de estoque.
     expect(financeiro).toHaveLength(1)
+  })
+})
+
+describe("upsertVendaInTransaction — serviço real do PDV Assistência", () => {
+  const linhaServico = {
+    inventoryId: servicoInventoryId("svc-1"),
+    name: "Transferência de Dados",
+    quantity: 1,
+    unitPrice: 80,
+    lineTotal: 80,
+    itemType: "servico" as const,
+    serviceId: "svc-1",
+    serviceCategory: "Software e Dados",
+    warrantyDays: 0,
+    serviceTerms: "",
+    custoUnitario: 0,
+  }
+
+  it("finaliza venda somente com serviço sem Produto, estoque ou O.S. e preserva metadata no payload", async () => {
+    const { tx, ledger, financeiro, itemRows, vendaPayloads } = makeFakeTx({
+      products: [],
+      sessoes: [sessao()],
+    })
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      {
+        id: "PED-SVC",
+        total: 80,
+        sessaoId: "sess-1",
+        paymentBreakdown: { pix: 80 },
+        lines: [linhaServico],
+      },
+      undefined,
+      LIVE,
+    )
+
+    expect(ledger).toHaveLength(0)
+    expect(financeiro).toHaveLength(1)
+    expect(itemRows).toHaveLength(1)
+    expect(itemRows[0]).toMatchObject({
+      inventoryId: "__servico__svc-1",
+      nome: "Transferência de Dados",
+      quantidade: 1,
+      precoUnitario: 80,
+    })
+    const persistedLines = vendaPayloads[0]?.lines as Array<Record<string, unknown>>
+    expect(persistedLines[0]).toMatchObject({
+      itemType: "servico",
+      serviceId: "svc-1",
+      serviceCategory: "Software e Dados",
+      warrantyDays: 0,
+    })
+    expect(persistedLines[0]?.isAvulso).not.toBe(true)
+    expect("ordemServico" in tx).toBe(false)
+  })
+
+  it("carrinho misto baixa somente o produto e mantém o serviço virtual", async () => {
+    const { tx, byId, ledger, itemRows } = makeFakeTx({
+      products: [produto({ stock: 3 })],
+      sessoes: [sessao()],
+    })
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      {
+        id: "PED-MISTO",
+        total: 180,
+        sessaoId: "sess-1",
+        paymentBreakdown: { dinheiro: 180 },
+        lines: [
+          { inventoryId: "prod-1", name: "Produto", quantity: 1, unitPrice: 100, itemType: "produto" },
+          linhaServico,
+        ],
+      },
+      undefined,
+      LIVE,
+    )
+
+    expect(byId.get("prod-1")?.stock).toBe(2)
+    expect(ledger).toHaveLength(1)
+    expect(itemRows).toHaveLength(2)
+  })
+
+  it("item avulso real continua explícito e não baixa estoque", async () => {
+    const { tx, ledger, vendaPayloads } = makeFakeTx({ products: [], sessoes: [sessao()] })
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      {
+        id: "PED-AVULSO",
+        total: 25,
+        sessaoId: "sess-1",
+        paymentBreakdown: { dinheiro: 25 },
+        lines: [{
+          inventoryId: "__avulso__line-1",
+          name: "Item avulso",
+          quantity: 1,
+          unitPrice: 25,
+          itemType: "avulso",
+          isAvulso: true,
+        }],
+      },
+      undefined,
+      LIVE,
+    )
+    expect(ledger).toHaveLength(0)
+    const persistedLines = vendaPayloads[0]?.lines as Array<Record<string, unknown>>
+    expect(persistedLines[0]).toMatchObject({ itemType: "avulso", isAvulso: true })
   })
 })

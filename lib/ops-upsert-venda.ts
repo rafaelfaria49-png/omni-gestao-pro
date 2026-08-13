@@ -1,6 +1,7 @@
 import type { Prisma } from "@/generated/prisma"
 import { isVirtualSaleLine } from "@/lib/os-pdv-virtual-lines"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
+import type { SaleLineItemType } from "@/lib/sale-line-classification"
 import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 import { sanitizeSaleLinesPayload } from "@/lib/vendas/sanitize-sale-line-payload"
@@ -38,7 +39,7 @@ export class InsufficientStockError extends Error {
  * referencia um `inventoryId` que não casa com nenhum `Produto` (id/sku/barcode) da
  * loja. Antes (P1 OPS-SALE-SAFETY) a venda era gravada mesmo assim e só logava
  * `estoque-nao-baixado`, deixando venda/financeiro sem baixa de estoque. Agora a
- * transação inteira é abortada — nada é gravado. Linhas virtuais (O.S./avulso) são
+ * transação inteira é abortada — nada é gravado. Linhas virtuais (O.S./serviço/avulso) são
  * isentas via `isVirtualSaleLine`. O caller (`venda-persist`) traduz para HTTP 409.
  */
 export class UnresolvedProductError extends Error {
@@ -247,6 +248,7 @@ export type SalePayload = {
     unitPrice?: number
     lineTotal?: number
     qtyReturned?: number
+    itemType?: SaleLineItemType
     /** Item avulso (Venda Avulsa via INSERT no PDV) — não baixa estoque. */
     isAvulso?: boolean
     /** Custo unitário opcional informado no balcão para relatórios de margem. */
@@ -258,6 +260,10 @@ export type SalePayload = {
      * (via `sanitizeAccessorySelection`) antes de ser gravada em `Venda.payload`.
      */
     accessorySelection?: AccessorySelectionV1
+    serviceId?: string
+    serviceCategory?: string
+    warrantyDays?: number
+    serviceTerms?: string
   }>
 }
 
@@ -654,7 +660,7 @@ export async function upsertVendaInTransaction(
       // P1 (OPS-SALE-SAFETY-P1-001): no fluxo PDV ao vivo, item de produto FÍSICO que
       // não casa com nenhum `Produto` (id/sku/barcode) da loja NÃO pode gerar
       // venda/financeiro sem baixa. Aborta a transação inteira — nada é gravado.
-      // Linhas virtuais (O.S./avulso) já foram excluídas acima por `isVirtualSaleLine`.
+      // Linhas virtuais (O.S./serviço/avulso) já foram excluídas acima por `isVirtualSaleLine`.
       throw new UnresolvedProductError(unresolvedInventoryIds)
     }
     // Replay legado (`enforceStock` default false): preserva o histórico — apenas registra.

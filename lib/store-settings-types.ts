@@ -13,8 +13,24 @@ export type CertificadoA1Meta = {
 /** Quando o PDV é o modelo "classic" (não supermercado): UI Lovable (atalhos F1–F9) ou tela completa legada (`services`/Assistência). */
 export type PdvClassicLayoutKind = "lovable" | "services"
 
+export type StorePdvAtalhoRapido = {
+  id: string
+  nome: string
+  preco: number
+  inventoryId?: string
+  categoria?: string
+  ativo?: boolean
+  favorito?: boolean
+  cor?: string
+  posicao?: number
+  /** Ausente em atalhos legados; leitores inferem sem exigir migração manual. */
+  kind?: "produto" | "servico"
+  serviceId?: string
+  serviceCategory?: string
+}
+
 export type StorePdvParams = {
-  atalhosRapidos: Array<{ id: string; nome: string; preco: number; inventoryId?: string; categoria?: string; ativo?: boolean; favorito?: boolean; cor?: string; posicao?: number }>
+  atalhosRapidos: StorePdvAtalhoRapido[]
   ocultarCategoriasNoPdv: boolean
   categoriasOcultasNoPdv: string[]
   garantiaPadraoDias: number
