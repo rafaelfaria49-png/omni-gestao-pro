@@ -284,8 +284,8 @@ export class SefazSoapTransport implements SefazTransport {
               const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
               received += bytes.length
               if (received > SEFAZ_HTTPS_MAX_RESPONSE_BYTES) {
-                response.destroy()
-                transportRequest.destroy()
+                // Sela a classificação antes do teardown: destroy pode emitir `error` no mesmo
+                // ciclo, mas esses handlers já encontrarão `settled=true` e não vencerão o race.
                 finish(
                   failure(
                     "transporte_resposta_excedida",
@@ -294,6 +294,8 @@ export class SefazSoapTransport implements SefazTransport {
                     true,
                   ),
                 )
+                response.destroy()
+                transportRequest.destroy()
                 return
               }
               chunks.push(bytes)
