@@ -1,0 +1,219 @@
+import { describe, expect, it } from "vitest"
+import { SEFAZ_WSDL_ACQUISITION_TARGETS } from "./wsdl-acquisition-target"
+import {
+  WSDL_EPHEMERAL_EXECUTION_WINDOW,
+  WSDL_EXECUTION_EXPECTED_TARGETS,
+  configuredWsdlExecutionWindowStatus,
+  consumeWsdlTargetExecutionPermit,
+  createWsdlExecutionGateTestHarness,
+  evaluateWsdlExecutionWindow,
+  type WsdlActivationLedgerClient,
+  type WsdlExecutionWindowConfig,
+} from "./wsdl-ephemeral-execution-window"
+
+const ACTIVE_CONFIG: WsdlExecutionWindowConfig = Object.freeze({
+  activationId: "FISCAL-017-GATE-019-TEST",
+  notBeforeUtc: "2026-08-13T12:00:00Z",
+  expiresAtUtc: "2026-08-13T12:10:00Z",
+})
+
+type SharedLedger = {
+  keys: Set<string>
+  jobs: Array<Record<string, unknown>>
+  logs: Array<Record<string, unknown>>
+}
+
+function ledgerClient(shared: SharedLedger): WsdlActivationLedgerClient {
+  return {
+    $transaction: async (operation) => {
+      let insertedKey: string | null = null
+      const tx = {
+        fiscalEmissaoJob: {
+          create: async (args: unknown) => {
+            const data = (args as { data: Record<string, unknown> }).data
+            const key = String(data.dedupeKey)
+            if (shared.keys.has(key)) throw new Error("unique constraint")
+            shared.keys.add(key)
+            insertedKey = key
+            shared.jobs.push(data)
+            return { id: `job-${shared.jobs.length}` }
+          },
+        },
+        fiscalLog: {
+          create: async (args: unknown) => {
+            shared.logs.push((args as { data: Record<string, unknown> }).data)
+            return {}
+          },
+        },
+      }
+      try {
+        return await operation(tx)
+      } catch (error) {
+        if (insertedKey) shared.keys.delete(insertedKey)
+        throw error
+      }
+    },
+  }
+}
+
+function sharedLedger(): SharedLedger {
+  return { keys: new Set(), jobs: [], logs: [] }
+}
+
+describe("janela efêmera WSDL versionada", () => {
+  it("nasce com activationId/notBefore/expiresAt null e bloqueia sem Prisma", () => {
+    expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
+      activationId: null,
+      notBeforeUtc: null,
+      expiresAtUtc: null,
+    })
+    expect(configuredWsdlExecutionWindowStatus()).toEqual({ active: false, reason: "disabled" })
+  })
+
+  it("recusa configuração parcial, id inválido, UTC não estrito e janela acima de 15 min", () => {
+    const now = new Date("2026-08-13T12:05:00Z")
+    expect(evaluateWsdlExecutionWindow({ ...ACTIVE_CONFIG, expiresAtUtc: null }, now)).toEqual({
+      active: false,
+      reason: "invalid",
+    })
+    expect(evaluateWsdlExecutionWindow({ ...ACTIVE_CONFIG, activationId: "curto" }, now)).toEqual({
+      active: false,
+      reason: "invalid",
+    })
+    expect(
+      evaluateWsdlExecutionWindow({ ...ACTIVE_CONFIG, notBeforeUtc: "2026-08-13 12:00:00" }, now),
+    ).toEqual({ active: false, reason: "invalid" })
+    expect(
+      evaluateWsdlExecutionWindow(
+        { ...ACTIVE_CONFIG, expiresAtUtc: "2026-08-13T12:16:00Z" },
+        now,
+      ),
+    ).toEqual({ active: false, reason: "invalid" })
+    expect(
+      evaluateWsdlExecutionWindow(
+        { ...ACTIVE_CONFIG, notBeforeUtc: "2026-02-30T12:00:00Z" },
+        now,
+      ),
+    ).toEqual({ active: false, reason: "invalid" })
+    expect(
+      evaluateWsdlExecutionWindow(
+        { ...ACTIVE_CONFIG, notBeforeUtc: "2026-08-13T24:00:00Z" },
+        now,
+      ),
+    ).toEqual({ active: false, reason: "invalid" })
+  })
+
+  it("recusa antes de notBefore e a partir de expiresAt; o caller não fornece relógio", () => {
+    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T11:59:59Z"))).toEqual({
+      active: false,
+      reason: "not_started",
+    })
+    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:10:00Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
+    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:05:00Z")).active).toBe(
+      true,
+    )
+  })
+})
+
+describe("ledger persistente global one-shot", () => {
+  it("duas invocations concorrentes consomem exatamente uma vez", async () => {
+    const shared = sharedLedger()
+    const client = ledgerClient(shared)
+    const clock = () => new Date("2026-08-13T12:05:00Z")
+    const gateA = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+    const gateB = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+
+    const results = await Promise.all([
+      gateA.consume({ storeId: "loja-1", operatorId: "admin-a" }),
+      gateB.consume({ storeId: "loja-1", operatorId: "admin-b" }),
+    ])
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1)
+    expect(results.filter((result) => !result.ok)).toEqual([
+      { ok: false, code: "already_consumed_or_persistence_unavailable" },
+    ])
+    expect(shared.jobs).toHaveLength(1)
+    expect(shared.logs).toHaveLength(1)
+    expect(shared.jobs[0]).toMatchObject({
+      storeId: "loja-1",
+      tipo: "CONSULTA",
+      status: "CONCLUIDO",
+      tentativas: 1,
+      maxTentativas: 1,
+      proximaTentativaEm: null,
+    })
+  })
+
+  it("cold start não restaura a capacidade: novo gate no mesmo ledger continua bloqueado", async () => {
+    const shared = sharedLedger()
+    const client = ledgerClient(shared)
+    const clock = () => new Date("2026-08-13T12:05:00Z")
+    const firstProcess = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+    expect((await firstProcess.consume({ storeId: "loja-1", operatorId: "admin-a" })).ok).toBe(true)
+
+    const coldStart = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+    expect(await coldStart.consume({ storeId: "loja-1", operatorId: "admin-b" })).toEqual({
+      ok: false,
+      code: "already_consumed_or_persistence_unavailable",
+    })
+    expect(shared.jobs).toHaveLength(1)
+  })
+
+  it("não consome para outra loja nem fora da janela", async () => {
+    const shared = sharedLedger()
+    const client = ledgerClient(shared)
+    const active = createWsdlExecutionGateTestHarness({
+      client,
+      config: ACTIVE_CONFIG,
+      clock: () => new Date("2026-08-13T12:05:00Z"),
+    })
+    expect(await active.consume({ storeId: "loja-2", operatorId: "admin" })).toEqual({
+      ok: false,
+      code: "store_not_allowed",
+    })
+    const expired = createWsdlExecutionGateTestHarness({
+      client,
+      config: ACTIVE_CONFIG,
+      clock: () => new Date("2026-08-13T12:10:00Z"),
+    })
+    expect(await expired.consume({ storeId: "loja-1", operatorId: "admin" })).toEqual({
+      ok: false,
+      code: "window_unavailable",
+    })
+    expect(shared.jobs).toHaveLength(0)
+  })
+
+  it("capability pós-ledger oferece exatamente seis alvos, uma vez cada, e expira em uso", async () => {
+    const shared = sharedLedger()
+    let now = new Date("2026-08-13T12:05:00Z")
+    const gate = createWsdlExecutionGateTestHarness({
+      client: ledgerClient(shared),
+      config: ACTIVE_CONFIG,
+      clock: () => now,
+    })
+    const consumed = await gate.consume({ storeId: "loja-1", operatorId: "admin" })
+    if (!consumed.ok) throw new Error("fixture deveria consumir")
+
+    expect(SEFAZ_WSDL_ACQUISITION_TARGETS).toHaveLength(WSDL_EXECUTION_EXPECTED_TARGETS)
+    for (const target of SEFAZ_WSDL_ACQUISITION_TARGETS) {
+      expect(consumeWsdlTargetExecutionPermit(consumed.activation, target)).toBe(true)
+      expect(consumeWsdlTargetExecutionPermit(consumed.activation, target)).toBe(false)
+    }
+
+    const secondShared = sharedLedger()
+    const expiring = createWsdlExecutionGateTestHarness({
+      client: ledgerClient(secondShared),
+      config: ACTIVE_CONFIG,
+      clock: () => now,
+    })
+    const second = await expiring.consume({ storeId: "loja-1", operatorId: "admin" })
+    if (!second.ok) throw new Error("fixture deveria consumir")
+    now = new Date("2026-08-13T12:10:00Z")
+    expect(consumeWsdlTargetExecutionPermit(second.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[0]!)).toBe(
+      false,
+    )
+  })
+})
