@@ -33,7 +33,17 @@
 import { request as nodeHttpsRequest } from "node:https"
 import { createSecureContext as nodeCreateSecureContext } from "node:tls"
 import type { SefazHttpsRequestOptions, SefazHttpsRuntimePorts } from "../sefaz-runtime-ports"
-import type { SefazWsdlTarget } from "./wsdl-acquisition-target"
+import {
+  SEFAZ_WSDL_METHOD,
+  SEFAZ_WSDL_QUERY,
+  canonicalSefazWsdlTarget,
+  type SefazWsdlTarget,
+} from "./wsdl-acquisition-target"
+import {
+  consumeWsdlTargetExecutionPermit,
+  type WsdlExecutionActivation,
+  wsdlExecutionActivationStillActive,
+} from "./wsdl-ephemeral-execution-window"
 
 const WSDL_EXECUTION_AUTHORITY = Symbol("sefaz-wsdl-execution-authority")
 
@@ -82,6 +92,19 @@ type AuthorityBinding = {
 }
 
 const bindings = new WeakMap<object, AuthorityBinding>()
+
+function bindAuthority(
+  runtime: SefazHttpsRuntimePorts,
+  escopo: SefazWsdlAuthorityScope,
+): SefazWsdlExecutionAuthority {
+  const authority = Object.freeze({ [WSDL_EXECUTION_AUTHORITY]: true as const })
+  bindings.set(authority, {
+    available: true,
+    runtime,
+    escopo: Object.freeze({ ...escopo }),
+  })
+  return authority
+}
 
 export function novoWsdlLoopbackTestProbe(): SefazWsdlLoopbackTestProbe {
   return {
@@ -170,13 +193,71 @@ export function createWsdlLoopbackTestAuthority(
     },
   }
 
-  const authority = Object.freeze({ [WSDL_EXECUTION_AUTHORITY]: true as const })
-  bindings.set(authority, {
-    available: true,
-    runtime,
-    escopo: Object.freeze({ ...options.escopo }),
+  return bindAuthority(runtime, options.escopo)
+}
+
+/**
+ * Emite UMA authority externa somente depois que o ledger global consumiu a ativação e somente
+ * para uma entrada canônica ainda disponível. Destino, porta, método, path, headers e SNI são
+ * reconstruídos a partir do alvo versionado; nenhum deles é aceito do caller HTTP.
+ */
+export function createWsdlEphemeralExternalAuthority(options: {
+  readonly activation: WsdlExecutionActivation
+  readonly target: SefazWsdlTarget
+}): SefazWsdlExecutionAuthority | null {
+  const target = canonicalSefazWsdlTarget(options.target)
+  if (!target || !consumeWsdlTargetExecutionPermit(options.activation, target)) return null
+
+  const expectedPath = `${target.path}?${SEFAZ_WSDL_QUERY}`
+  const runtime: SefazHttpsRuntimePorts = {
+    createSecureContext: (tlsOptions) =>
+      nodeCreateSecureContext({
+        pfx: tlsOptions.pfx,
+        passphrase: tlsOptions.passphrase,
+        minVersion: "TLSv1.2",
+      }),
+    request: (requestOptions, onResponse) => {
+      // A1/vault/SecureContext podem consumir o restante da janela. Revalidar aqui, na última
+      // instrução anterior a `node:https.request`, impede socket iniciado após `expiresAt`.
+      if (!wsdlExecutionActivationStillActive(options.activation)) {
+        throw new Error("Janela efêmera WSDL expirada antes da tentativa de rede.")
+      }
+      if (
+        requestOptions.protocol !== "https:" ||
+        requestOptions.hostname !== target.host ||
+        requestOptions.servername !== target.host ||
+        requestOptions.port !== 443 ||
+        requestOptions.path !== expectedPath ||
+        requestOptions.method !== SEFAZ_WSDL_METHOD
+      ) {
+        throw new Error("Runtime WSDL recusou opções divergentes do alvo canônico.")
+      }
+      const fixedOptions: SefazHttpsRequestOptions = {
+        protocol: "https:",
+        hostname: target.host,
+        port: 443,
+        path: expectedPath,
+        method: SEFAZ_WSDL_METHOD,
+        headers: {
+          Accept: "text/xml, application/xml",
+          Connection: "close",
+        },
+        agent: false,
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+        secureContext: requestOptions.secureContext,
+        servername: target.host,
+      }
+      return nodeHttpsRequest(fixedOptions, onResponse)
+    },
+  }
+
+  return bindAuthority(runtime, {
+    uf: target.uf,
+    ambiente: target.ambiente,
+    servico: target.servico,
+    versao: target.versao,
   })
-  return authority
 }
 
 /** Validação nominal em runtime; cast, clone e objeto estrutural não atravessam o `WeakMap`. */
