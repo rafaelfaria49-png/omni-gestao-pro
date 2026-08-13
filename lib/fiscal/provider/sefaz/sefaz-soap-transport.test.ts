@@ -1,7 +1,7 @@
 import { createServer as createHttpsServer } from "node:https"
 import { createServer as createTcpServer } from "node:net"
 import type { AddressInfo } from "node:net"
-import type { ServerResponse } from "node:http"
+import { ClientRequest, IncomingMessage, type ServerResponse } from "node:http"
 import type { Server as NetServer, Socket } from "node:net"
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest"
 import { canonicalEnvRef } from "@/lib/fiscal/vault/fiscal-secret-vault"
@@ -603,6 +603,62 @@ describe("SefazSoapTransport · limites, relógios e tentativa única", () => {
     })
     expect(bytesWritten).toBeGreaterThan(SEFAZ_HTTPS_MAX_RESPONSE_BYTES)
     expect(probe.destroyCalls).toBeGreaterThan(0)
+  })
+
+  it("sela resposta excedida antes de erros síncronos provocados pelo teardown", async () => {
+    const body = Buffer.alloc(SEFAZ_HTTPS_MAX_RESPONSE_BYTES + 1, 0x63)
+    const server = await startMtlsServer((response) => response.end(body))
+    const responseDestroyOriginal = IncomingMessage.prototype.destroy
+    const requestDestroyOriginal = ClientRequest.prototype.destroy
+    let responseDestroyCalls = 0
+    let requestDestroyCalls = 0
+    let teardownErrorEvents = 0
+
+    const responseDestroy = vi
+      .spyOn(IncomingMessage.prototype, "destroy")
+      .mockImplementation(function (this: IncomingMessage, error?: Error) {
+        responseDestroyCalls += 1
+        if (this.listenerCount("error") > 0) {
+          teardownErrorEvents += 1
+          this.emit("error", new Error("erro síncrono sintético de response.destroy"))
+        }
+        return responseDestroyOriginal.call(this, error)
+      })
+    const requestDestroy = vi
+      .spyOn(ClientRequest.prototype, "destroy")
+      .mockImplementation(function (this: ClientRequest, error?: Error) {
+        requestDestroyCalls += 1
+        if (this.listenerCount("error") > 0) {
+          teardownErrorEvents += 1
+          this.emit("error", new Error("erro síncrono sintético de request.destroy"))
+        }
+        return requestDestroyOriginal.call(this, error)
+      })
+
+    let resolutionCount = 0
+    try {
+      const outcome = await transport(server.port)
+        .send(requestInput())
+        .then((resolved) => {
+          resolutionCount += 1
+          return resolved
+        })
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      expect(outcome).toMatchObject({
+        ok: false,
+        codigo: "transporte_resposta_excedida",
+        classification: "UNKNOWN_UNCERTAIN",
+        externalTransmissionAttempted: true,
+      })
+      expect(resolutionCount).toBe(1)
+      expect(responseDestroyCalls).toBeGreaterThanOrEqual(1)
+      expect(requestDestroyCalls).toBeGreaterThanOrEqual(1)
+      expect(teardownErrorEvents).toBeGreaterThanOrEqual(2)
+    } finally {
+      responseDestroy.mockRestore()
+      requestDestroy.mockRestore()
+    }
   })
 
   it.each([301, 302, 307, 308])("não segue redirect HTTP %i", async (status) => {
