@@ -33,7 +33,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "lg" }:
 
 export function Field({ label, children, span = 1 }: { label: string; children: ReactNode; span?: 1 | 2 }) {
   return (
-    <div className={span === 2 ? "col-span-2 space-y-1.5" : "space-y-1.5"}>
+    <div className={span === 2 ? "col-span-full space-y-1.5" : "space-y-1.5"}>
       <label className="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</label>
       {children}
     </div>

@@ -1,5 +1,7 @@
 /** Tipos compartilhados entre PDV (client) e rotas `/api/ops/vendas-*` (server). */
 
+import type { SaleLineItemType } from "@/lib/sale-line-classification"
+
 export interface APrazoConfig {
   parcelas: number           // 1-24, default 1
   primeiroVencimento: string // DD/MM/YYYY
@@ -26,6 +28,8 @@ export interface SaleLineRecord {
   unitPrice: number
   lineTotal: number
   qtyReturned?: number
+  /** Produto, serviço real, item avulso ou linha originada de O.S. */
+  itemType?: SaleLineItemType
   /**
    * `true` quando o item não veio do catálogo (Venda Avulsa via tecla INSERT no PDV).
    * Avulsos não baixam estoque e não exigem `Produto` resolvido no banco.
@@ -38,6 +42,11 @@ export interface SaleLineRecord {
    * Não há coluna `custoUnitario` em `ItemVenda` — o valor vive em `Venda.payload`.
    */
   custoUnitario?: number | null
+  /** Metadata do Serviço real preservada no snapshot da venda. */
+  serviceId?: string
+  serviceCategory?: string
+  warrantyDays?: number
+  serviceTerms?: string
 }
 
 export interface SaleRecord {

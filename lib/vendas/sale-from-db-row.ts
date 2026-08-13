@@ -13,6 +13,7 @@
  */
 import type { PaymentBreakdownFull, SaleLineRecord, SaleRecord } from "@/lib/operations-sale-types"
 import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
+import { resolveSaleLineItemType } from "@/lib/sale-line-classification"
 
 const zeroPb: PaymentBreakdownFull = {
   dinheiro: 0,
@@ -52,14 +53,18 @@ export function saleFromDbRow(r: VendaDbRow): SaleRecord {
     }
   }
 
-  const lines: SaleLineRecord[] = r.itens.map((it) => ({
-    inventoryId: it.inventoryId ?? "",
-    name: it.nome,
-    quantity: it.quantidade,
-    unitPrice: it.precoUnitario,
-    lineTotal: it.lineTotal,
-    qtyReturned: 0,
-  }))
+  const lines: SaleLineRecord[] = r.itens.map((it) => {
+    const inventoryId = it.inventoryId ?? ""
+    return {
+      inventoryId,
+      name: it.nome,
+      quantity: it.quantidade,
+      unitPrice: it.precoUnitario,
+      lineTotal: it.lineTotal,
+      qtyReturned: 0,
+      itemType: resolveSaleLineItemType({ inventoryId }),
+    }
+  })
 
   return {
     id: r.pedidoId,

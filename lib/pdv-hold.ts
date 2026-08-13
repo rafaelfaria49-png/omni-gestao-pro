@@ -13,7 +13,12 @@ export type HeldCartItem = {
   name: string
   price: number
   quantity: number
+  itemType?: "produto" | "servico" | "avulso" | "ordem_servico"
   isAvulso?: boolean
+  serviceId?: string
+  serviceCategory?: string
+  warrantyDays?: number
+  serviceTerms?: string
   atributosLabel?: string
   vendaPorPeso?: boolean
   custoUnitario?: number | null

@@ -6,6 +6,7 @@ import { getVerifiedSubscriptionFromCookies } from "@/lib/api-auth"
 import { isVencimentoExpired } from "@/lib/subscription-seal"
 import { getTrustedTimeMs } from "@/lib/trusted-time"
 import { listServicos } from "@/app/actions/cadastros"
+import { isServicoDisponivelParaVenda } from "@/lib/servicos/servico-pdv"
 
 export const runtime = "nodejs"
 /** Sem cache de rota — sempre serviços frescos do Prisma. */
@@ -47,7 +48,9 @@ export async function GET(req: Request) {
   try {
     const gate = await requireSubscription()
     if (!gate.ok && !bypassSubscriptionCheck()) return gate.res
-    const items = await listServicos(lojaId)
+    // O Cadastros HUB continua exibindo incompletos para correção. O catálogo
+    // operacional, porém, só oferece serviços realmente vendáveis.
+    const items = (await listServicos(lojaId)).filter(isServicoDisponivelParaVenda)
     return NextResponse.json({ items })
   } catch (e) {
     const dev = process.env.NODE_ENV === "development"
