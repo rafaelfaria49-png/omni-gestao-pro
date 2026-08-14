@@ -3,7 +3,7 @@ import { SEFAZ_WSDL_ACQUISITION_TARGETS } from "./wsdl-acquisition-target"
 import {
   WSDL_EPHEMERAL_EXECUTION_WINDOW,
   WSDL_EXECUTION_EXPECTED_TARGETS,
-  configuredWsdlExecutionWindowStatus,
+  WSDL_EXECUTION_MAX_WINDOW_MS,
   consumeWsdlTargetExecutionPermit,
   createWsdlExecutionGateTestHarness,
   evaluateWsdlExecutionWindow,
@@ -11,11 +11,42 @@ import {
   type WsdlExecutionWindowConfig,
 } from "./wsdl-ephemeral-execution-window"
 
+const DISABLED_CONFIG: WsdlExecutionWindowConfig = Object.freeze({
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
+})
+
 const ACTIVE_CONFIG: WsdlExecutionWindowConfig = Object.freeze({
   activationId: "FISCAL-017-GATE-019-TEST",
   notBeforeUtc: "2026-08-13T12:00:00Z",
   expiresAtUtc: "2026-08-13T12:10:00Z",
 })
+
+function versionedConfigHasAllowedStructure(config: WsdlExecutionWindowConfig): boolean {
+  const values = [config.activationId, config.notBeforeUtc, config.expiresAtUtc]
+  if (values.every((value) => value === null)) {
+    const status = evaluateWsdlExecutionWindow(config, new Date("2026-08-13T12:05:00Z"))
+    return !status.active && status.reason === "disabled"
+  }
+  if (!values.every((value) => typeof value === "string" && value.trim().length > 0)) return false
+
+  const notBefore = new Date(config.notBeforeUtc!)
+  const expiresAt = new Date(config.expiresAtUtc!)
+  const durationMs = expiresAt.getTime() - notBefore.getTime()
+  if (
+    Number.isNaN(notBefore.getTime()) ||
+    Number.isNaN(expiresAt.getTime()) ||
+    durationMs <= 0 ||
+    durationMs > WSDL_EXECUTION_MAX_WINDOW_MS
+  ) {
+    return false
+  }
+
+  const startStatus = evaluateWsdlExecutionWindow(config, notBefore)
+  const expiryStatus = evaluateWsdlExecutionWindow(config, expiresAt)
+  return startStatus.active && !expiryStatus.active && expiryStatus.reason === "expired"
+}
 
 type SharedLedger = {
   keys: Set<string>
@@ -61,13 +92,28 @@ function sharedLedger(): SharedLedger {
 }
 
 describe("janela efêmera WSDL versionada", () => {
-  it("nasce com activationId/notBefore/expiresAt null e bloqueia sem Prisma", () => {
-    expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: null,
-      notBeforeUtc: null,
-      expiresAtUtc: null,
+  it("prova dormência com configuração explícita, sem depender da constante versionada", () => {
+    expect(evaluateWsdlExecutionWindow(DISABLED_CONFIG, new Date("2026-08-13T12:05:00Z"))).toEqual({
+      active: false,
+      reason: "disabled",
     })
-    expect(configuredWsdlExecutionWindowStatus()).toEqual({ active: false, reason: "disabled" })
+  })
+
+  it("aceita a constante versionada somente dormente ou integralmente configurada", () => {
+    expect(versionedConfigHasAllowedStructure(WSDL_EPHEMERAL_EXECUTION_WINDOW)).toBe(true)
+    expect(versionedConfigHasAllowedStructure(DISABLED_CONFIG)).toBe(true)
+    expect(versionedConfigHasAllowedStructure(ACTIVE_CONFIG)).toBe(true)
+
+    expect(
+      versionedConfigHasAllowedStructure({
+        activationId: ACTIVE_CONFIG.activationId,
+        notBeforeUtc: null,
+        expiresAtUtc: null,
+      }),
+    ).toBe(false)
+    expect(versionedConfigHasAllowedStructure({ ...ACTIVE_CONFIG, notBeforeUtc: null })).toBe(false)
+    expect(versionedConfigHasAllowedStructure({ ...ACTIVE_CONFIG, expiresAtUtc: null })).toBe(false)
+    expect(versionedConfigHasAllowedStructure({ ...ACTIVE_CONFIG, activationId: null })).toBe(false)
   })
 
   it("recusa configuração parcial, id inválido, UTC não estrito e janela acima de 15 min", () => {
@@ -103,18 +149,25 @@ describe("janela efêmera WSDL versionada", () => {
     ).toEqual({ active: false, reason: "invalid" })
   })
 
-  it("recusa antes de notBefore e a partir de expiresAt; o caller não fornece relógio", () => {
+  it("avalia janela válida somente com relógios fixos", () => {
     expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T11:59:59Z"))).toEqual({
       active: false,
       reason: "not_started",
     })
+    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:00:00Z")).active).toBe(
+      true,
+    )
+    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:05:00Z")).active).toBe(
+      true,
+    )
     expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:10:00Z"))).toEqual({
       active: false,
       reason: "expired",
     })
-    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:05:00Z")).active).toBe(
-      true,
-    )
+    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:10:01Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
   })
 })
 
