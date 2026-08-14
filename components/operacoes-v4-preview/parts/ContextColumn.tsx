@@ -1,10 +1,9 @@
 /** Operações V4 Preview — coluna de contexto (cliente + aparelho), recolhível. */
 import { useState } from "react";
-import { ArrowLeft, History, Mail, MessageCircle, Phone, Pin, Smartphone, UserRound } from "lucide-react";
-import { CollapsibleHoverRail } from "@/components/ui/collapsible-hover-rail";
 import { C, MONO } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { maskSenhaV4, NI } from "../os-adapter";
+import { FocusContextDrawer } from "./FocusContextDrawer";
 
 /**
  * Senha do aparelho MASCARADA por padrão (GOAL 006 — anti shoulder-surfing no
@@ -36,63 +35,8 @@ function SenhaRow({ senha, senhaTipo }: { senha: string; senhaTipo: string }) {
     </div>
   );
 }
-
 export function ContextColumn({ v }: { v: V4Vals }) {
-  if (v.focusActive) {
-    const os = v.os;
-    return (
-      <CollapsibleHoverRail ariaLabel="Contexto da OS" compactWidth={40} expandedWidth={320} panelClassName="!bg-[var(--card)]">
-        {({ expanded, pinned, togglePinned }) => (
-          <div style={{ width: 320, height: "100%", display: "flex", flexDirection: "column" }}>
-            <div style={{ height: 42, flex: "none", display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line3}` }}>
-              <button type="button" onClick={togglePinned} aria-label={expanded ? (pinned ? "Desafixar contexto" : "Fixar contexto aberto") : "Expandir contexto da OS"} aria-pressed={pinned} style={{ width: 39, height: 41, flex: "none", display: "grid", placeItems: "center", padding: 0, border: 0, background: "transparent", color: C.subtle, cursor: "pointer" }}><UserRound size={15} /></button>
-              <span style={{ opacity: expanded ? 1 : 0, transition: "opacity 160ms", flex: 1, fontSize: 10.5, fontWeight: 750, letterSpacing: ".08em", color: C.subtle }}>CONTEXTO DA OS</span>
-              {expanded ? <button type="button" onClick={togglePinned} aria-label={pinned ? "Desafixar contexto" : "Fixar contexto aberto"} aria-pressed={pinned} title={pinned ? "Desafixar" : "Fixar aberto"} style={{ width: 30, height: 30, display: "grid", placeItems: "center", marginRight: 6, border: 0, borderRadius: 7, background: pinned ? C.primaryBg : "transparent", color: pinned ? C.primary : C.subtle, cursor: "pointer" }}><Pin size={13} fill={pinned ? "currentColor" : "none"} /></button> : null}
-            </div>
-            <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-              <div style={{ width: 40, flex: "none", paddingTop: 12, display: "flex", justifyContent: "center" }}>
-                <span style={{ writingMode: "vertical-rl", fontSize: 9.5, fontWeight: 750, letterSpacing: ".09em", color: C.subtle }}>CLIENTE · APARELHO</span>
-              </div>
-              <div style={{ width: 280, minHeight: 0, overflowY: "auto", padding: "14px 14px 18px", opacity: expanded ? 1 : 0, transition: "opacity 160ms" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 14, borderBottom: `1px solid ${C.line3}` }}>
-                  <div style={{ width: 38, height: 38, flex: "none", display: "grid", placeItems: "center", borderRadius: 10, background: C.primaryBg, color: C.primaryHover, fontSize: 12, fontWeight: 800 }}>{os.avatarInitials}</div>
-                  <div style={{ minWidth: 0 }}><div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: C.ink, fontSize: 13.5, fontWeight: 700 }}>{os.cliente}</div><div style={{ color: C.subtle, fontSize: 11 }}>{os.documento}</div></div>
-                </div>
-                <div style={{ display: "flex", gap: 6, padding: "11px 0 14px" }}>
-                  <button type="button" onClick={v.act.whatsapp} title="WhatsApp" aria-label="Abrir WhatsApp" style={{ flex: 1, height: 32, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, cursor: "pointer", fontSize: 11.5, fontWeight: 650 }}><MessageCircle size={13} /> WhatsApp</button>
-                  <button type="button" onClick={v.act.ligar} title="Ligar" aria-label="Ligar para cliente" style={{ width: 34, height: 32, display: "grid", placeItems: "center", border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, cursor: "pointer" }}><Phone size={13} /></button>
-                  <button type="button" onClick={v.toHistCliente} title="Histórico" aria-label="Abrir histórico do cliente" style={{ width: 34, height: 32, display: "grid", placeItems: "center", border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, cursor: "pointer" }}><History size={13} /></button>
-                </div>
-                <div style={{ display: "grid", gap: 7, marginBottom: 17, color: C.body, fontSize: 11.5 }}>
-                  <span style={{ display: "flex", alignItems: "center", gap: 7 }}><Phone size={12} color={C.subtle} />{os.telefone}</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><Mail size={12} color={C.subtle} />{os.email}</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, color: C.subtle, fontSize: 10, fontWeight: 750, letterSpacing: ".08em" }}><Smartphone size={13} /> APARELHO</div>
-                <div style={{ color: C.ink, fontSize: 14, fontWeight: 700 }}>{os.aparelho}</div>
-                <div style={{ marginBottom: 13, color: C.muted, fontSize: 11.5 }}>{os.cor} · {os.tipo}</div>
-                <div style={{ display: "grid", gap: 8, paddingBottom: 16, borderBottom: `1px solid ${C.line3}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5 }}><span style={{ color: C.subtle }}>IMEI / Série</span><span style={{ color: C.body, fontFamily: MONO, fontWeight: 650 }}>{os.serieCurta}</span></div>
-                  <SenhaRow senha={os.senha} senhaTipo={os.senhaTipo} />
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11.5 }}><span style={{ color: C.subtle }}>Recebido por</span><span style={{ color: C.body, fontWeight: 650 }}>{os.recebidoPor}</span></div>
-                </div>
-                <div style={{ marginTop: 15, color: C.warnFg, fontSize: 9.5, fontWeight: 800, letterSpacing: ".09em" }}>DEFEITO RELATADO</div>
-                <p style={{ margin: "6px 0 15px", color: C.bodySoft, fontSize: 12, lineHeight: 1.5 }}>{os.defeito}</p>
-                <div style={{ display: "grid", gap: 7, padding: 11, borderTop: `1px solid ${C.line2}`, borderBottom: `1px solid ${C.line2}`, fontSize: 11.5 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: C.subtle }}>Prioridade</span><span style={{ color: v.prio.fg, fontWeight: 700 }}>{v.prio.label}</span></div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: C.subtle }}>Localização</span><span style={{ color: C.body, fontWeight: 650 }}>{os.localizacao}</span></div>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: C.subtle }}>Previsão / SLA</span><span style={{ color: C.successFg, fontWeight: 650 }}>{os.previsao}</span></div>
-                </div>
-                <div style={{ display: "flex", gap: 7, marginTop: 15 }}>
-                  <button type="button" onClick={v.railFila} style={{ flex: 1, height: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, cursor: "pointer", fontSize: 11.5, fontWeight: 650 }}><ArrowLeft size={13} /> Voltar à fila</button>
-                  <button type="button" onClick={v.onTrocar} style={{ flex: 1, height: 34, border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, cursor: "pointer", fontSize: 11.5, fontWeight: 650 }}>Trocar OS</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </CollapsibleHoverRail>
-    );
-  }
+  if (v.focusActive) return <FocusContextDrawer v={v} />;
 
   if (!v.leftOpen) {
     return (

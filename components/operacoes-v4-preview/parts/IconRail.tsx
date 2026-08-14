@@ -1,6 +1,7 @@
 /** Operações V4 Preview — rail de ícones (62px) com navegação por módulo. */
 import { Pin } from "lucide-react";
 import { CollapsibleHoverRail } from "@/components/ui/collapsible-hover-rail";
+import { WORKSPACE_OVERLAY_PRIORITY } from "@/lib/workspace-overlay-orchestrator";
 import { C } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { GearIcon, RailIcon } from "./icons";
@@ -12,9 +13,12 @@ export function IconRail({ v }: { v: V4Vals }) {
         ariaLabel="Módulos de Operações V4"
         compactWidth={54}
         expandedWidth={196}
-        panelClassName="!bg-[var(--card)]"
+        overlayId="v4-nav"
+        overlayGroup="workspace-left"
+        priority={WORKSPACE_OVERLAY_PRIORITY["v4-nav"]}
+        panelClassName="!bg-card"
       >
-        {({ expanded, pinned, togglePinned }) => (
+        {({ expanded, pinned, togglePinned, collapse }) => (
           <div style={{ width: 196, height: "100%", display: "flex", flexDirection: "column", padding: "8px 7px" }}>
             <div style={{ height: 30, display: "flex", alignItems: "center", padding: "0 7px", marginBottom: 5 }}>
               <button type="button" onClick={togglePinned} aria-label={expanded ? (pinned ? "Desafixar módulos" : "Fixar módulos abertos") : "Expandir módulos"} aria-pressed={pinned} style={{ width: 25, height: 28, flex: "none", display: "grid", placeItems: "center", padding: 0, border: 0, background: "transparent", color: C.primary, fontSize: 10, fontWeight: 800, letterSpacing: ".08em", cursor: "pointer" }}>V4</button>
@@ -36,7 +40,10 @@ export function IconRail({ v }: { v: V4Vals }) {
               <button
                 key={r.id}
                 type="button"
-                onClick={r.onClick}
+                onClick={() => {
+                  r.onClick();
+                  collapse();
+                }}
                 title={!expanded ? r.label : undefined}
                 aria-current={r.bg !== "transparent" ? "page" : undefined}
                 style={{
@@ -60,7 +67,10 @@ export function IconRail({ v }: { v: V4Vals }) {
             ))}
             <button
               type="button"
-              onClick={v.railSettings}
+              onClick={() => {
+                v.railSettings();
+                collapse();
+              }}
               title={!expanded ? "Configurações" : undefined}
               style={{ marginTop: "auto", height: 40, display: "flex", alignItems: "center", gap: 11, padding: "0 8px", border: 0, borderRadius: 9, background: "transparent", color: C.subtle, cursor: "pointer" }}
             >

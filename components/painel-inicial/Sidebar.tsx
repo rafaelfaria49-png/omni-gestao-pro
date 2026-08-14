@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { getEnterprisePermissions } from "@/lib/auth/enterprise-permissions";
 import { useSidebarCollapsed } from "@/hooks/use-sidebar-collapsed";
 import { CollapsibleHoverRail } from "@/components/ui/collapsible-hover-rail";
+import { WORKSPACE_OVERLAY_PRIORITY } from "@/lib/workspace-overlay-orchestrator";
 import {
   administrationNavItems,
   filterDashboardNav,
@@ -113,9 +114,12 @@ export function Sidebar({ focusMode = false }: { focusMode?: boolean }) {
         ariaLabel="Navegação principal"
         compactWidth={56}
         expandedWidth={224}
-        panelClassName="bg-background"
+        overlayId="global-nav"
+        overlayGroup="workspace-left"
+        priority={WORKSPACE_OVERLAY_PRIORITY["global-nav"]}
+        panelClassName="!bg-card"
       >
-        {({ expanded, pinned, togglePinned }) => (
+        {({ expanded, pinned, togglePinned, collapse }) => (
           <div className="flex h-full w-56 flex-col">
             <div className="flex h-12 shrink-0 items-center border-b border-border px-3">
               <button
@@ -158,6 +162,7 @@ export function Sidebar({ focusMode = false }: { focusMode?: boolean }) {
                         <Link
                           key={item.to}
                           href={item.to}
+                          onClick={collapse}
                           title={!expanded ? item.label : undefined}
                           aria-current={active ? "page" : undefined}
                           className={cn(

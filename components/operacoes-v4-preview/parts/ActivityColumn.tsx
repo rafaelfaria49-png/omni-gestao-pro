@@ -8,13 +8,23 @@
  */
 import { History, MessageSquare, Paperclip, Pin } from "lucide-react";
 import { CollapsibleHoverRail } from "@/components/ui/collapsible-hover-rail";
+import { WORKSPACE_OVERLAY_PRIORITY } from "@/lib/workspace-overlay-orchestrator";
 import { C, HATCH } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 
 export function ActivityColumn({ v }: { v: V4Vals }) {
   if (v.focusActive) {
     return (
-      <CollapsibleHoverRail ariaLabel="Atividade da OS" compactWidth={40} expandedWidth={304} side="right" panelClassName="!bg-[var(--card)]">
+      <CollapsibleHoverRail
+        ariaLabel="Atividade da OS"
+        compactWidth={40}
+        expandedWidth={304}
+        overlayId="activity"
+        overlayGroup="workspace-right"
+        priority={WORKSPACE_OVERLAY_PRIORITY.activity}
+        side="right"
+        panelClassName="!bg-card"
+      >
         {({ expanded, pinned, togglePinned }) => (
           <div style={{ width: 304, height: "100%", display: "flex", flexDirection: "column" }}>
             <div style={{ height: 42, display: "flex", alignItems: "center", borderBottom: `1px solid ${C.line3}` }}>

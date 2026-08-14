@@ -13,7 +13,7 @@ import { SegurancaStage } from "./stages/SegurancaStage";
 export function StagePanel({ v }: { v: V4Vals }) {
   if (v.isEntrada) {
     return (
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: "auto" }}>
         <EntradaStage v={v} />
       </div>
     );

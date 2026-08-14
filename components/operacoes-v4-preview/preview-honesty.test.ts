@@ -703,7 +703,11 @@ describe("OPS-V4-RIGHT-RAIL-DEDUP-001 — lateral 'Atividade' é painel contextu
     expect(importPaths.length).toBeGreaterThan(0)
     for (const p of importPaths) {
       expect(
-        p.startsWith("./") || p.startsWith("../") || p === "lucide-react" || p === "@/components/ui/collapsible-hover-rail",
+        p.startsWith("./") ||
+          p.startsWith("../") ||
+          p === "lucide-react" ||
+          p === "@/components/ui/collapsible-hover-rail" ||
+          p === "@/lib/workspace-overlay-orchestrator",
         `import proibido em ActivityColumn: ${p}`,
       ).toBe(true)
     }

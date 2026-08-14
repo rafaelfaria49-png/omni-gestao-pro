@@ -1,8 +1,74 @@
 /** Operações V4 Preview — header de comando: status, total, ação primária, menus. */
+"use client";
+
+import type { FocusEvent, PointerEvent } from "react";
+import { useEffect, useRef } from "react";
+import { UserRound } from "lucide-react";
+import { useWorkspaceFocus } from "@/components/painel-inicial/workspace-focus-context";
 import { C, fmt } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { NI } from "../os-adapter";
 import styles from "../operacoes-v4-preview.module.css";
+
+function ContextOverlayTrigger() {
+  const { overlayState, openOverlay, releaseOverlay, toggleOverlayPinned } = useWorkspaceFocus();
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const groupState = overlayState.groups["workspace-left"];
+  const expanded = groupState.activeOverlay === "os-context";
+  const pinned = groupState.pinnedOverlay === "os-context";
+
+  const clearTimers = () => {
+    if (openTimer.current) clearTimeout(openTimer.current);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    openTimer.current = null;
+    closeTimer.current = null;
+  };
+
+  useEffect(() => () => {
+    if (openTimer.current) clearTimeout(openTimer.current);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }, []);
+
+  const scheduleClose = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    closeTimer.current = setTimeout(() => {
+      const drawerHovered = document.querySelector('[data-overlay-id="os-context"]:hover');
+      if (!drawerHovered) releaseOverlay("os-context", "workspace-left");
+    }, 210);
+  };
+
+  const onPointerEnter = (event: PointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "touch") return;
+    clearTimers();
+    openTimer.current = setTimeout(() => openOverlay("os-context", "workspace-left"), 160);
+  };
+
+  const onBlur = (event: FocusEvent<HTMLButtonElement>) => {
+    const next = event.relatedTarget as Element | null;
+    if (next?.closest?.('[data-overlay-id="os-context"]')) return;
+    scheduleClose();
+  };
+
+  return (
+    <button
+      type="button"
+      data-overlay-trigger="os-context"
+      onPointerEnter={onPointerEnter}
+      onPointerLeave={scheduleClose}
+      onFocus={() => openOverlay("os-context", "workspace-left")}
+      onBlur={onBlur}
+      onClick={() => toggleOverlayPinned("os-context", "workspace-left")}
+      aria-label="Contexto da OS"
+      aria-expanded={expanded}
+      aria-pressed={pinned}
+      title="Contexto da OS"
+      className="grid h-[33px] w-[33px] place-items-center rounded-lg border border-border bg-card text-muted-foreground transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <UserRound size={14} />
+    </button>
+  );
+}
 
 export function CommandHeader({ v }: { v: V4Vals }) {
   const financial = v.financial;
@@ -60,6 +126,8 @@ export function CommandHeader({ v }: { v: V4Vals }) {
             <span style={{ width: 1, height: 26, background: C.line2, flex: "none" }} />
           </>
         )}
+
+        {v.focusActive ? <ContextOverlayTrigger /> : null}
 
         {/* Dropdown Docs — ancorado ao botão via position:relative */}
         <div style={{ position: "relative", flex: "none" }}>

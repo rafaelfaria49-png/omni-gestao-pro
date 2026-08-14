@@ -1,23 +1,109 @@
 .workspace {
   display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-columns: 66px minmax(0, 1fr);
   min-height: 100%;
   background: var(--background);
 }
 
-.sectionRail {
-  position: sticky;
-  top: 0;
-  align-self: start;
+.desktopRail {
+  position: relative;
+  min-width: 0;
+  min-height: 100%;
+}
+
+.railSlot {
   height: 100%;
   min-height: 520px;
-  padding: 22px 14px;
-  border-right: 1px solid var(--border);
-  background: color-mix(in oklab, var(--card) 88%, var(--background));
+}
+
+.sectionRailPanel {
+  background: var(--card) !important;
+}
+
+.sectionRail {
+  width: 224px;
+  height: 100%;
+  min-height: 520px;
+  padding: 0 9px 14px;
+  background: var(--card);
 }
 
 .railHeading {
-  margin: 0 8px 16px;
+  position: relative;
+  height: 76px;
+  margin: 0 -9px 8px;
+  padding: 16px 42px 10px 16px;
+  border-bottom: 1px solid var(--border);
+  opacity: 1;
+  transition: opacity 120ms ease-out;
+}
+
+.railHeadingHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.railHeadingCompact {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  width: 66px;
+  height: 76px;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  text-align: center;
+  transition: opacity 100ms ease-out;
+}
+
+.railHeadingCompact span {
+  color: var(--primary);
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: .14em;
+}
+
+.railHeadingCompact strong {
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.sectionRail[data-entrada-expanded="true"] .railHeadingCompact {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.railHeadingCopy {
+  min-width: 0;
+}
+
+.pinButton {
+  position: absolute;
+  top: 13px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.pinButton:hover,
+.pinButtonActive {
+  background: color-mix(in oklab, var(--primary) 9%, var(--card));
+  color: var(--primary);
+}
+
+.pinButton svg {
+  width: 13px;
+  height: 13px;
 }
 
 .railEyebrow,
@@ -30,7 +116,7 @@
 }
 
 .railProgress {
-  margin-top: 5px;
+  margin-top: 4px;
   color: var(--foreground);
   font-size: 13px;
   font-weight: 700;
@@ -38,7 +124,7 @@
 
 .progressTrack {
   height: 3px;
-  margin-top: 10px;
+  margin-top: 8px;
   overflow: hidden;
   border-radius: 999px;
   background: var(--muted);
@@ -54,17 +140,17 @@
 .railList {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
 }
 
 .railItem {
   width: 100%;
-  min-height: 44px;
+  min-height: 48px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  grid-template-columns: 38px minmax(0, 1fr) 50px;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 9px;
+  padding: 5px 8px;
   border: 1px solid transparent;
   border-radius: 9px;
   background: transparent;
@@ -76,25 +162,31 @@
 
 .railItem:hover { background: var(--muted); color: var(--foreground); }
 .railItemActive { border-color: color-mix(in oklab, var(--primary) 20%, transparent); background: color-mix(in oklab, var(--primary) 8%, var(--card)); color: var(--foreground); }
-.railItemDirty .step { border-color: color-mix(in oklab, var(--primary) 55%, var(--border)); }
+.railItemDirty .sectionIcon { border-color: color-mix(in oklab, var(--primary) 50%, var(--border)); }
 
-.step {
-  width: 24px;
-  height: 24px;
+.sectionIcon {
+  position: relative;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--card);
   color: var(--muted-foreground);
-  font-size: 10px;
-  font-weight: 800;
 }
 
+.sectionIcon > svg { width: 17px; height: 17px; stroke-width: 1.9; }
+.railItemActive .sectionIcon { border-color: color-mix(in oklab, var(--primary) 45%, var(--border)); background: color-mix(in oklab, var(--primary) 10%, var(--card)); color: var(--primary); }
+.step { position: absolute; top: -4px; left: -4px; min-width: 14px; height: 14px; display: grid; place-items: center; padding: 0 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--card); color: var(--muted-foreground); font-size: 8px; font-weight: 850; }
 .railItemActive .step { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
-.railLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
-.complete { color: var(--success); font-size: 14px; font-weight: 800; }
-.dirtyDot { width: 6px; height: 6px; justify-self: center; border-radius: 50%; background: var(--primary); }
+.completeMark { position: absolute; right: -4px; bottom: -4px; width: 15px; height: 15px; display: grid; place-items: center; border: 2px solid var(--card); border-radius: 50%; background: var(--success); color: white; }
+.completeMark svg { width: 9px; height: 9px; stroke-width: 3; }
+.dirtyDot { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border: 2px solid var(--card); border-radius: 50%; background: var(--warning, #d97706); }
+.railLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 680; }
+.railState { overflow: hidden; text-overflow: ellipsis; color: var(--muted-foreground); font-size: 9px; font-weight: 650; text-align: right; white-space: nowrap; }
+
+.mobileRail { display: none; }
 
 .canvas {
   min-width: 0;
@@ -102,7 +194,7 @@
 }
 
 .canvasInner {
-  width: min(100%, 900px);
+  width: min(100%, 960px);
   min-height: 100%;
   margin: 0 auto;
   display: flex;
@@ -200,6 +292,7 @@
 .saveNote { color: var(--muted-foreground); font-size: 10.5px; }
 
 .railItem:focus-visible,
+.pinButton:focus-visible,
 .choice:focus-visible,
 .chip:focus-visible,
 .iconButton:focus-visible,
@@ -209,17 +302,16 @@
 }
 
 @media (max-width: 1100px) {
-  .workspace { grid-template-columns: 196px minmax(0, 1fr); }
   .canvas { padding: 22px; }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 1023px) {
   .workspace { display: block; }
-  .sectionRail { position: static; min-height: 0; height: auto; padding: 10px; border-right: 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
-  .railHeading { display: none; }
-  .railList { width: max-content; flex-direction: row; }
-  .railItem { width: auto; min-width: 48px; grid-template-columns: 24px; }
-  .railLabel, .complete, .dirtyDot { display: none; }
+  .desktopRail { display: none; }
+  .mobileRail { display: block; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--card); padding: 8px 10px; }
+  .mobileRail .railList { width: max-content; flex-direction: row; }
+  .mobileRail .railItem { width: 48px; min-height: 44px; grid-template-columns: 36px; padding: 4px 6px; }
+  .mobileRail .railLabel, .mobileRail .railState { display: none; }
   .canvas { padding: 18px 14px; }
   .fields, .choiceGrid { grid-template-columns: 1fr; }
   .span2 { grid-column: auto; }
@@ -233,5 +325,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .progressValue, .railItem, .input, .select, .textarea { transition: none; }
+  .progressValue, .railItem, .railHeading, .railHeadingCompact, .input, .select, .textarea { transition: none; }
 }

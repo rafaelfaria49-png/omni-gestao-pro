@@ -13,12 +13,15 @@ export function WorkspaceView({ v }: { v: V4Vals }) {
   }
 
   return (
-    <div style={{ flex: 1, minWidth: 0, display: "flex" }}>
-      <ContextColumn v={v} />
+    <div style={{ flex: 1, minWidth: 0, display: "flex", position: "relative" }}>
+      {!v.focusActive ? <ContextColumn v={v} /> : null}
       <section style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--background)" }}>
         <CommandHeader v={v} />
         <PipelineSpine v={v} />
-        <StagePanel v={v} />
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative", display: "flex" }}>
+          <StagePanel v={v} />
+          {v.focusActive ? <ContextColumn v={v} /> : null}
+        </div>
       </section>
       <ActivityColumn v={v} />
     </div>

@@ -13,11 +13,16 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
   const workspace = read(DIR, "parts", "stages", "EntradaWorkspace.tsx");
   const sections = read(DIR, "parts", "stages", "EntradaSections.tsx");
   const context = read(DIR, "parts", "ContextColumn.tsx");
+  const contextDrawer = read(DIR, "parts", "FocusContextDrawer.tsx");
+  const commandHeader = read(DIR, "parts", "CommandHeader.tsx");
   const iconRail = read(DIR, "parts", "IconRail.tsx");
+  const entranceRail = read(DIR, "parts", "stages", "EntradaSectionRail.tsx");
   const entranceCss = read(DIR, "parts", "stages", "entrada-workspace.module.css");
   const shell = read(ROOT, "components", "painel-inicial", "AppShell.tsx");
   const sidebar = read(ROOT, "components", "painel-inicial", "Sidebar.tsx");
   const hoverRail = read(ROOT, "components", "ui", "collapsible-hover-rail.tsx");
+  const overlayContext = read(ROOT, "components", "painel-inicial", "workspace-focus-context.tsx");
+  const overlayModel = read(ROOT, "lib", "workspace-overlay-orchestrator.ts");
 
   it("ativa foco e recolhe os painéis quando uma OS real é selecionada", () => {
     const select = hook.slice(hook.indexOf("const selectOS"), hook.indexOf("const openOSFromRail"));
@@ -43,8 +48,23 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
 
   it("abre rails por hover com atraso e por foco de teclado sem atraso", () => {
     expect(hoverRail).toContain("openDelay = 170");
-    expect(hoverRail).toContain("setFocused(true)");
+    expect(hoverRail).toContain("focused.current = true");
+    expect(hoverRail).toContain("requestOpen()");
     expect(hoverRail).toContain('event.pointerType === "touch"');
+  });
+
+  it("usa um único overlay ativo por grupo e fecha o último com Escape", () => {
+    expect(overlayModel).toContain("activeOverlay");
+    expect(overlayModel).toContain("pinnedOverlay");
+    expect(overlayContext).toContain('event.key !== "Escape"');
+    expect(overlayContext).toContain('type: "close-last"');
+  });
+
+  it("declara prioridade Global > V4 > Contexto > Entrada", () => {
+    expect(overlayModel).toContain('"global-nav": 80');
+    expect(overlayModel).toContain('"v4-nav": 70');
+    expect(overlayModel).toContain('"os-context": 60');
+    expect(overlayModel).toContain('"entrada-nav": 50');
   });
 
   it("renderiza somente a seção ativa por switch", () => {
@@ -90,16 +110,19 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
     ]) expect(workspace).toContain(contract);
   });
 
-  it("abre Contexto da OS em overlay por foco, clique ou pin", () => {
-    expect(context).toContain('ariaLabel="Contexto da OS"');
-    expect(context).toContain("expandedWidth={320}");
-    expect(context).toContain("onClick={togglePinned}");
+  it("retira Contexto do fluxo e abre drawer de 320px pelo header", () => {
+    expect(context).toContain("if (v.focusActive) return <FocusContextDrawer");
+    expect(contextDrawer).toContain('className="absolute inset-y-0 left-0');
+    expect(contextDrawer).toContain("w-80");
+    expect(commandHeader).toContain('data-overlay-trigger="os-context"');
+    expect(commandHeader).toContain('title="Contexto da OS"');
   });
 
   it("preserva navegação por clique nas rails global e V4", () => {
     expect(sidebar).toContain("<Link");
-    expect(sidebar).toContain("onClick={togglePinned}");
-    expect(iconRail).toContain("onClick={r.onClick}");
+    expect(sidebar).toContain("onClick={collapse}");
+    expect(iconRail).toContain("r.onClick();");
+    expect(iconRail).toContain("collapse();");
   });
 
   it("não implementa autosave", () => {
@@ -108,9 +131,45 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
   });
 
   it("contém o overflow horizontal no rail mobile sem alargar o canvas", () => {
-    expect(entranceCss).toContain("grid-template-columns: 224px minmax(0, 1fr)");
+    expect(entranceCss).toContain("grid-template-columns: 66px minmax(0, 1fr)");
     expect(entranceCss).toMatch(/\.canvas \{[\s\S]*min-width: 0/);
-    expect(entranceCss).toMatch(/@media \(max-width: 760px\)[\s\S]*overflow-x: auto/);
+    expect(entranceCss).toMatch(/@media \(max-width: 1023px\)[\s\S]*overflow-x: auto/);
+  });
+
+  it("Entrada reserva 66px e expande para 224px somente em overlay", () => {
+    expect(entranceRail).toContain("compactWidth={66}");
+    expect(entranceRail).toContain("expandedWidth={224}");
+    expect(entranceRail).toContain('overlayId="entrada-nav"');
+    expect(hoverRail).toContain("style={{ width: compactWidth, zIndex: priority }}");
+  });
+
+  it("mantém as larguras compactas no fluxo ao expandir Global e V4", () => {
+    expect(sidebar).toContain("compactWidth={56}");
+    expect(sidebar).toContain("expandedWidth={224}");
+    expect(iconRail).toContain("compactWidth={54}");
+    expect(iconRail).toContain("expandedWidth={196}");
+    expect(hoverRail).toContain("data-reserved-width={compactWidth}");
+  });
+
+  it("mantém Atividade independente no grupo direito", () => {
+    const activity = read(DIR, "parts", "ActivityColumn.tsx");
+    expect(activity).toContain('overlayId="activity"');
+    expect(activity).toContain('overlayGroup="workspace-right"');
+    expect(activity).toContain("compactWidth={40}");
+    expect(activity).toContain("expandedWidth={304}");
+  });
+
+  it("fecha expansão não fixada por clique fora", () => {
+    expect(hoverRail).toContain('document.addEventListener("pointerdown", onPointerDown)');
+    expect(contextDrawer).toContain('document.addEventListener("pointerdown", onPointerDown)');
+  });
+
+  it("usa ícones semânticos e preserva indicadores completos e dirty", () => {
+    for (const icon of ["ClipboardList", "BadgeInfo", "KeyRound", "Smartphone", "ListChecks", "PackageCheck", "Camera"]) {
+      expect(entranceRail).toContain(icon);
+    }
+    expect(entranceRail).toContain("completeMark");
+    expect(entranceRail).toContain("dirtyDot");
   });
 
   it("respeita prefers-reduced-motion nas animações novas", () => {
