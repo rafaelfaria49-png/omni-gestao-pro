@@ -1,5 +1,12 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-14 — Operações V4: entrada única `+ Novo`
+
+- A TopBar da Operações V4 troca os três CTAs (Atendimento rápido, Orçamento rápido, Nova OS) por um único **`+ Novo`**.
+- O launcher oferece as três modalidades reais — Nova Ordem de Serviço, Novo Orçamento e Atendimento Rápido — e reutiliza os motores V3 já existentes.
+- Duplicar orçamento continua abrindo o modal direto, sem passar pelo launcher.
+- Sem schema, sem motor novo, sem alteração em PDV/Caixa/Financeiro.
+
 ## 2026-08-03 — Numeração server-side: rebase e readiness PostgreSQL
 
 - Infraestrutura reaplicada sobre `origin/main` `1ed325912de50750a018903cda9c14be4f4df92d`;

@@ -18,6 +18,7 @@ export interface ClienteV4 {
   nome: string;
   telefone: string;
   documento: string;
+  email: string;
   cidade: string;
 }
 
@@ -46,6 +47,7 @@ function mapCliente(raw: Record<string, unknown>): ClienteV4 {
     nome: s(raw.name) || s(raw.nome),
     telefone: s(raw.phone) || s(raw.telefone),
     documento: s(raw.document) || s(raw.documento),
+    email: s(raw.email),
     cidade: s(raw.city) || s(raw.cidade),
   };
 }

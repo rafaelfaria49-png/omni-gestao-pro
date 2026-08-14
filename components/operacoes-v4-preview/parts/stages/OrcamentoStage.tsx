@@ -22,6 +22,8 @@ import {
   validarEditorParaSalvarV4,
   type OrcamentoEditorV4,
 } from "@/lib/operacoes-v4/orcamento-form";
+import { converterOrcamentoEmOSV3 } from "@/lib/operacoes-v3/comercial-pre-os-actions";
+import { useLojaAtiva } from "@/lib/loja-ativa";
 import { OrcamentoEnvioCluster } from "./OrcamentoEnvioCluster";
 import { OrcamentoDuplicarButton } from "./OrcamentoDuplicarButton";
 import { OrcamentoDecisaoCluster } from "./OrcamentoDecisaoCluster";
@@ -93,15 +95,75 @@ export function OrcamentoStage({ v }: { v: V4Vals }) {
   if (v.orcamentoEditavel || reaberto) {
     const revisao = reaberto && !v.orcamentoEditavel;
     return (
-      <OrcamentoEditor
-        key={`${v.selectedOsId ?? "none"}:${revisao ? "revisao" : "auto"}`}
-        v={v}
-        revisao={revisao}
-        onFecharRevisao={() => setReaberto(false)}
-      />
+      <>
+        <ConverterOrcamentoPanel v={v} />
+        <OrcamentoEditor
+          key={`${v.selectedOsId ?? "none"}:${revisao ? "revisao" : "auto"}`}
+          v={v}
+          revisao={revisao}
+          onFecharRevisao={() => setReaberto(false)}
+        />
+      </>
     );
   }
-  return <OrcamentoReadonly v={v} onReabrir={() => setReaberto(true)} />;
+  return (
+    <>
+      <ConverterOrcamentoPanel v={v} />
+      <OrcamentoReadonly v={v} onReabrir={() => setReaberto(true)} />
+    </>
+  );
+}
+
+function ConverterOrcamentoPanel({ v }: { v: V4Vals }) {
+  const { lojaAtivaId } = useLojaAtiva();
+  const comercial = v.comercialV4;
+  const aprovado = comercial?.statusComercial === "aprovado" || /aprovad/i.test(v.orcamento.statusLabel);
+  const [busy, setBusy] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [recebidoPor, setRecebidoPor] = useState("");
+  const [previsao, setPrevisao] = useState("");
+  if (!comercial || comercial.tipo !== "orcamento_pre_os" || comercial.statusComercial === "convertido" || !aprovado) return null;
+  return (
+    <div style={{ ...card, marginBottom: 12, border: `1px solid ${C.primaryBd}` }}>
+      <div style={{ ...cardTitle, marginBottom: 6 }}>Converter em Ordem de Serviço</div>
+      <div style={{ fontSize: 12, color: C.subtle, lineHeight: 1.45, marginBottom: 10 }}>
+        Cliente, aparelho, defeito, opção aprovada e valor já estão neste registro. Só complete a recepção.
+      </div>
+      {erro ? <div style={{ fontSize: 12, color: C.dangerFg, marginBottom: 8 }}>{erro}</div> : null}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8, marginBottom: 10 }}>
+        <input value={recebidoPor} onChange={(e) => setRecebidoPor(e.target.value)} placeholder="Recebido por" style={cellInput} autoComplete="off" />
+        <input type="datetime-local" value={previsao} onChange={(e) => setPrevisao(e.target.value)} style={cellInput} autoComplete="off" />
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          const sid = (lojaAtivaId ?? "").trim();
+          const osId = (v.selectedOsId ?? "").trim();
+          if (!sid || !osId) return;
+          setBusy(true);
+          setErro(null);
+          try {
+            await converterOrcamentoEmOSV3(sid, osId, {
+              recebidoPor,
+              previsaoEntrega: previsao || undefined,
+              localFisico: "balcao",
+              prioridade: "media",
+            });
+            v.reloadOrdens();
+            v.goOrcamento();
+          } catch (e) {
+            setErro(e instanceof Error ? e.message : "Não foi possível converter.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+        style={{ height: 34, padding: "0 16px", border: "none", background: C.primary, color: C.white, borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: busy ? "default" : "pointer" }}
+      >
+        {busy ? "Convertendo…" : "Criar Ordem de Serviço"}
+      </button>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

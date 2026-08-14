@@ -13,6 +13,7 @@ import { C } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { STATUS_LABEL, TONE } from "../mock-data";
 import { aparelhoLabel, osMatchesQuery, resolverStatusV4 } from "../os-adapter";
+import { isOrcamentoPreOsAtivoV4, lerComercialV4, STATUS_COMERCIAL_LABEL_V4 } from "@/lib/operacoes-v4/orcamento-pre-os";
 
 export function OSPicker({ v }: { v: V4Vals }) {
   const [q, setQ] = useState("");
@@ -56,7 +57,7 @@ export function OSPicker({ v }: { v: V4Vals }) {
             Selecione uma Ordem de Serviço
           </h2>
           <p style={{ margin: 0, fontSize: 13, color: C.muted, lineHeight: 1.5 }}>
-            Busque por Nº da OS, cliente, aparelho ou IMEI — ou crie uma nova OS.
+            Busque por Nº da OS, cliente, aparelho ou IMEI — ou abra um novo atendimento.
           </p>
         </div>
 
@@ -81,10 +82,10 @@ export function OSPicker({ v }: { v: V4Vals }) {
           />
           <button
             type="button"
-            onClick={v.openNovaOS}
+            onClick={v.openNovoAtendimento}
             style={{ height: 38, padding: "0 16px", border: "none", background: C.primary, color: C.white, borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}
           >
-            + Nova OS
+            + Novo
           </button>
         </div>
 
@@ -116,6 +117,8 @@ export function OSPicker({ v }: { v: V4Vals }) {
               const tone = TONE[status] || TONE.em_execucao;
               const aparelho = aparelhoLabel(o);
               const imei = (o.equipamento?.numeroSerie ?? "").trim();
+              const comercial = lerComercialV4(o);
+              const preOs = isOrcamentoPreOsAtivoV4(o);
               return (
                 <button
                   key={o.id}
@@ -155,7 +158,7 @@ export function OSPicker({ v }: { v: V4Vals }) {
                         }}
                       >
                         <span style={{ width: 5, height: 5, borderRadius: "50%", background: tone.dot }} />
-                        {STATUS_LABEL[status] || status}
+                        {preOs ? STATUS_COMERCIAL_LABEL_V4[comercial!.statusComercial] : STATUS_LABEL[status] || status}
                       </span>
                     </div>
                     <div style={{ fontSize: 12.5, color: C.body, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

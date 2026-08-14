@@ -48,9 +48,15 @@ import { aplicarTransicaoStatusV3 } from "@/lib/operacoes-v3/status-actions";
 // (decide enviar 1ª vez vs. só registrar reenvio); a mensagem NASCE da projeção
 // client-safe do GOAL 023, nunca do payload cru.
 import { enviarOrcamentoPorCanalV3 } from "@/lib/operacoes-v3/orcamento-envio-actions";
+import { lerComercialV4 } from "@/lib/operacoes-v4/orcamento-pre-os";
 import type { CanalEnvioOrcamentoV3, PecaV3, RecusarOrcamentoV3Input, ServicoV3 } from "@/lib/operacoes-v3/orcamento-model";
 import { montarOrcamentoClienteViewV4 } from "@/lib/operacoes-v4/orcamento-cliente-view";
 import type { OrcamentoRapidoFormV4 } from "@/lib/operacoes-v4/orcamento-rapido-form";
+import {
+  patchAbrirLauncherNovoAtendimentoV4,
+  patchEscolherNovoAtendimentoV4,
+  type NovoAtendimentoModalidadeV4,
+} from "@/lib/operacoes-v4/novo-atendimento";
 // Seleção de variante (GOAL OPS-V4-ORC-APROVACAO-SELECAO-026) — utilitário
 // puro que marca `selecionadaV3`; grava pelo contrato oficial (`salvarOrcamentoV3`
 // com `gruposV3`, GOAL 026 aposentou o patch cru do GOAL 024).
@@ -270,6 +276,7 @@ const INITIAL: V4State = {
   prioridade: "alta",
   histFilter: "todos",
   novaOS: false,
+  novoAtendimento: false,
   recibo: false,
   atendimentoRapido: false,
   orcamentoRapido: false,
@@ -851,6 +858,7 @@ export function buildVals(
   const onOSCriada = (osId: string) => {
     update({
       novaOS: false,
+      novoAtendimento: false,
       selectedOsId: osId,
       status: "aberta",
       stage: "entrada",
@@ -874,6 +882,7 @@ export function buildVals(
   const onAtendimentoRapidoConcluido = (osId: string) => {
     update({
       atendimentoRapido: false,
+      novoAtendimento: false,
       selectedOsId: osId,
       status: "entregue",
       stage: "entrega",
@@ -895,6 +904,7 @@ export function buildVals(
   const onOrcamentoRapidoCriado = (osId: string) => {
     update({
       orcamentoRapido: false,
+      novoAtendimento: false,
       selectedOsId: osId,
       status: "aberta",
       stage: "orcamento",
@@ -1081,7 +1091,19 @@ export function buildVals(
     hist, histCount: hist.length, histFilters, anexos: anexosReais, observacoes: observacoesReais,
     resolved, pending: PENDING, act,
 
-    openNovaOS: () => update({ novaOS: true }), closeNovaOS: () => update({ novaOS: false }), novaOSOpen: st.novaOS,
+    openNovaOS: () => update({ novaOS: true, novoAtendimento: false }),
+    closeNovaOS: () => update({ novaOS: false }),
+    novaOSOpen: st.novaOS,
+    // ---- + Novo (GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001) ----
+    // Entrada única. Não persiste: só escolhe qual dos três motores reais abre.
+    // Duplicar orçamento continua em `abrirOrcamentoRapidoComPrefill` (sem launcher).
+    openNovoAtendimento: () => update(patchAbrirLauncherNovoAtendimentoV4()),
+    closeNovoAtendimento: () => update({ novoAtendimento: false }),
+    novoAtendimentoOpen: st.novoAtendimento,
+    escolherNovoAtendimento: (id: NovoAtendimentoModalidadeV4) => {
+      if (id === "orcamento") ctx.definirOrcamentoRapidoPrefill(null);
+      update(patchEscolherNovoAtendimentoV4(id));
+    },
     // Nova OS real: o modal coleta o formulário localmente, cria via `criarOSEnterpriseV3`
     // e chama `onOSCriada(osId)` no sucesso (fecha modal + abre a OS criada + recarrega).
     onOSCriada,
@@ -1090,7 +1112,7 @@ export function buildVals(
     // O modal coleta o formulário localmente e chama `finalizarAtendimentoRapidoV3`
     // direto (mesmo padrão do Nova OS acima) — sem motor novo. `onAtendimentoRapidoConcluido`
     // fecha o modal, abre a OS já finalizada no workspace e recarrega a lista.
-    openAtendimentoRapido: () => update({ atendimentoRapido: true }),
+    openAtendimentoRapido: () => update({ atendimentoRapido: true, novoAtendimento: false }),
     closeAtendimentoRapido: () => update({ atendimentoRapido: false }),
     atendimentoRapidoOpen: st.atendimentoRapido,
     onAtendimentoRapidoConcluido,
@@ -1100,11 +1122,11 @@ export function buildVals(
     // direto (mesmo padrão do Nova OS/Atendimento Rápido) — sem motor novo. A OS
     // nasce mínima com o orçamento multiopção já em rascunho; `onOrcamentoRapidoCriado`
     // fecha o modal, abre a OS no workspace (aba Orçamento) e recarrega a lista.
-    // Abrir "do zero" (botão ⚡ do header) limpa qualquer prefill anterior —
-    // nunca herda dados de uma duplicação prévia por engano.
+    // Abrir "do zero" (via launcher `+ Novo` → Novo Orçamento) limpa qualquer
+    // prefill anterior — nunca herda dados de uma duplicação prévia por engano.
     openOrcamentoRapido: () => {
       ctx.definirOrcamentoRapidoPrefill(null);
-      update({ orcamentoRapido: true });
+      update({ orcamentoRapido: true, novoAtendimento: false });
     },
     closeOrcamentoRapido: () => {
       update({ orcamentoRapido: false });
@@ -1116,7 +1138,7 @@ export function buildVals(
     // INTERNA — inclui custo) e chama isto para abrir a modal já preenchida.
     abrirOrcamentoRapidoComPrefill: (values: OrcamentoRapidoFormV4) => {
       ctx.definirOrcamentoRapidoPrefill(values);
-      update({ orcamentoRapido: true });
+      update({ orcamentoRapido: true, novoAtendimento: false });
     },
     onOrcamentoRapidoCriado,
 
@@ -1222,6 +1244,7 @@ export function buildVals(
     openDocPrint,
     // ---- Seleção de variante + decisão granular (GOAL 026) ----
     selecionarVarianteOrcamento: ctx.selecionarVarianteOrcamento,
+    comercialV4: lerComercialV4(ctx.realOS),
 
     // ---- Entrada/Recepção REAL (slice OPS-V4-ENTRADA-RECEPCAO-REAL-003) ----
     // Handlers reais (actions V3 prova-entrada/checklist). Fotos/assinatura/anexos/

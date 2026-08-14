@@ -23,6 +23,7 @@ import { WorkspaceView } from "./parts/WorkspaceView";
 import { ModuleView } from "./parts/ModuleView";
 import { AuditoriaPage } from "./parts/AuditoriaPage";
 import { NovaOSModal } from "./parts/NovaOSModal";
+import { NovoAtendimentoLauncher } from "./parts/NovoAtendimentoLauncher";
 import { AtendimentoRapidoModal } from "./parts/AtendimentoRapidoModal";
 import { OrcamentoRapidoModal } from "./parts/OrcamentoRapidoModal";
 import { EstornoRecebimentoModal } from "./parts/EstornoRecebimentoModal";
@@ -65,6 +66,7 @@ export function OperacoesV4Preview() {
         {v.isAuditoria && <AuditoriaPage v={v} />}
       </div>
 
+      <NovoAtendimentoLauncher v={v} />
       <NovaOSModal v={v} />
       <AtendimentoRapidoModal v={v} />
       <OrcamentoRapidoModal v={v} />

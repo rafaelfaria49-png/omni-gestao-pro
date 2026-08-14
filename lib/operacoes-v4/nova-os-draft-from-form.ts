@@ -43,6 +43,8 @@ export interface NovaOSClienteNovoV4 {
   tipo?: NovaOSClienteKindV3;
 }
 
+export type TipoEntradaOSV4 = "servico_autorizado" | "precisa_diagnostico" | "retorno_garantia";
+
 /** Forma bruta do formulário do modal "Nova OS" da V4. */
 export interface NovaOSFormV4 {
   /** Cliente existente — tem prioridade sobre os campos de cliente novo. */
@@ -52,10 +54,22 @@ export interface NovaOSFormV4 {
   marca: string;
   modelo: string;
   imei?: string;
+  cor?: string;
   defeitoRelatado: string;
   observacoes?: string;
   recebidoPor?: string;
   origem: NovaOSOrigemV4;
+  tipoEntrada?: TipoEntradaOSV4;
+  prioridade?: "baixa" | "media" | "alta";
+  localFisico?: "balcao" | "bancada" | "aguardando_diagnostico";
+  previsaoEntrega?: string;
+  servicoAutorizado?: {
+    descricao: string;
+    valor: number;
+    custo: number;
+    garantiaDias: number;
+    prazoTexto?: string;
+  } | null;
 }
 
 /** Tipo de equipamento (chave V4) → rótulo canônico da V3 (`TIPO_EQUIPAMENTO_V3`). */
@@ -101,6 +115,29 @@ export function buildNovaOSDraftFromFormV4(form: NovaOSFormV4, now: Date = new D
         tipo: form.clienteNovo?.tipo ?? "PF",
       };
 
+  const origem: NovaOSOrigemV4 =
+    form.tipoEntrada === "retorno_garantia" ? (form.origem === "garantia" ? "garantia" : "retorno") : form.origem;
+
+  const serv = form.tipoEntrada === "servico_autorizado" && form.servicoAutorizado?.descricao.trim() && form.servicoAutorizado.valor > 0
+    ? form.servicoAutorizado
+    : null;
+
+  const itens = serv
+    ? [
+        {
+          id: "autorizado",
+          categoria: "servico" as const,
+          descricao: serv.descricao.trim(),
+          quantidade: 1,
+          custoUnitario: Math.max(0, serv.custo),
+          valorUnitario: Math.max(0, serv.valor),
+          kind: "cobrado" as const,
+          baixaEstoque: false,
+          garantiaDias: serv.garantiaDias > 0 ? serv.garantiaDias : undefined,
+        },
+      ]
+    : base.itens;
+
   return {
     ...base,
     cliente,
@@ -113,13 +150,21 @@ export function buildNovaOSDraftFromFormV4(form: NovaOSFormV4, now: Date = new D
     },
     recepcao: {
       ...base.recepcao,
-      origem: form.origem,
+      origem,
       recebidoPor: clean(form.recebidoPor),
+      prioridade: form.prioridade ?? base.recepcao.prioridade,
+      localFisico: form.localFisico ?? base.recepcao.localFisico,
+      previsaoEntrega: clean(form.previsaoEntrega) ?? base.recepcao.previsaoEntrega,
     },
     problema: {
       ...base.problema,
       defeitoRelatado: clean(form.defeitoRelatado) ?? "",
       observacoesInternas: clean(form.observacoes),
+      condicaoAparelho: clean(form.cor),
     },
+    itens,
+    garantia: serv?.garantiaDias
+      ? { ...base.garantia, prazoDias: serv.garantiaDias }
+      : base.garantia,
   };
 }

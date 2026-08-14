@@ -64,6 +64,8 @@ export interface V4State {
   prioridade: "baixa" | "normal" | "alta" | "urgente";
   histFilter: string;
   novaOS: boolean;
+  /** Launcher `+ Novo` (GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001). */
+  novoAtendimento: boolean;
   recibo: boolean;
   /** Modal "Atendimento rápido" (GOAL OPS-V4-ATENDIMENTO-RAPIDO-CONNECT-014). */
   atendimentoRapido: boolean;

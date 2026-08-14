@@ -32,6 +32,20 @@ function formPreenchido(over: Partial<OrcamentoRapidoFormV4> = {}): OrcamentoRap
 }
 
 describe("orcamentoRapidoFormVazioV4", () => {
+  it("aceita item fixo e múltiplas opções com preço, custo e garantia", () => {
+    const f = formPreenchido({
+      itensFixos: [{ id: "f1", descricao: "Mão de obra", valor: 100, custoV3: 0, cortesia: false, quantidade: 1 }],
+    });
+    expect(f.itensFixos).toHaveLength(1);
+    expect(f.variantes.length).toBeGreaterThanOrEqual(2);
+    expect(f.variantes[0]?.valor).toBe(150);
+    expect(f.variantes[1]?.valor).toBe(300);
+    expect(f.variantes[1]?.garantiaDias).toBe(90);
+    const input = buildOrcamentoRapidoInputFromFormV4(f);
+    expect(input.itensFixos?.[0]?.descricao).toBe("Mão de obra");
+    expect(input.grupo.variantes[1]?.custoV3).toBeUndefined();
+  });
+
   it("nasce com 2 variantes vazias e cliente modo existente", () => {
     const f = orcamentoRapidoFormVazioV4();
     expect(f.variantes).toHaveLength(2);
@@ -144,7 +158,7 @@ describe("validarOrcamentoRapidoFormV4 — gating de UI", () => {
   });
 
   it("rejeita item fixo sem descrição", () => {
-    const f = formPreenchido({ itensFixos: [{ id: "f1", descricao: "  ", valor: 10, cortesia: false, custoV3: 0 }] });
+    const f = formPreenchido({ itensFixos: [{ id: "f1", descricao: "  ", valor: 10, cortesia: false, custoV3: 0, quantidade: 1 }] });
     expect(validarOrcamentoRapidoFormV4(f)).toBe("Há um item fixo sem descrição.");
   });
 
@@ -174,8 +188,8 @@ describe("buildOrcamentoRapidoInputFromFormV4", () => {
   it("itens fixos vazios (sem descrição) são descartados; cortesia mapeia kindV3 brinde", () => {
     const f = formPreenchido({
       itensFixos: [
-        { id: "f1", descricao: "", valor: 10, cortesia: false, custoV3: 0 },
-        { id: "f2", descricao: "Película", valor: 0, cortesia: true, custoV3: 5 },
+        { id: "f1", descricao: "", valor: 10, cortesia: false, custoV3: 0, quantidade: 1 },
+        { id: "f2", descricao: "Película", valor: 0, cortesia: true, custoV3: 5, quantidade: 1 },
       ],
     });
     const inputV3 = buildOrcamentoRapidoInputFromFormV4(f);

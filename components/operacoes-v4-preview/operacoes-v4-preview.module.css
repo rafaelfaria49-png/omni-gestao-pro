@@ -33,3 +33,27 @@
 .hoverFade:hover {
   opacity: 0.85;
 }
+
+/* GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001 — ticket do launcher + Novo */
+.novoTicket {
+  transition: background-color 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+}
+.novoTicket:hover {
+  background: var(--muted);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+.novoTicket:focus-visible {
+  background: var(--muted);
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+.novoTicket:hover > span:first-child,
+.novoTicket:focus-visible > span:first-child {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .novoTicket {
+    transition: none;
+  }
+}

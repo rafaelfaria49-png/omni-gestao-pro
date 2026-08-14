@@ -15,6 +15,7 @@ import type { FinancialProjectionOSV4, FinancialStatusV4 } from "@/lib/operacoes
 import type { V4Status, V4Tone } from "./types";
 import { STATUS_LABEL, TONE } from "./mock-data";
 import { aparelhoLabel, fmtData, resolverStatusV4 } from "./os-adapter";
+import { isOrcamentoPreOsAtivoV4 } from "@/lib/operacoes-v4/orcamento-pre-os";
 import { C, fmt } from "./tokens";
 
 function txt(v: unknown): string {
@@ -28,6 +29,7 @@ const STATUS_FINALIZADO: V4Status[] = ["entregue", "cancelada"];
 // inconsistente continua VISÍVEL na fila (some-la esconderia o problema) — o que
 // ela perde é a ação primária (`PRIMARY.desconhecido === null`).
 function isAtivo(os: OrdemServico): boolean {
+  if (isOrcamentoPreOsAtivoV4(os)) return false;
   return !STATUS_FINALIZADO.includes(resolverStatusV4(os));
 }
 

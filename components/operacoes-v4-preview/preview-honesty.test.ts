@@ -155,6 +155,7 @@ function makeState(over: Partial<V4State> = {}): V4State {
     prioridade: "alta",
     histFilter: "todos",
     novaOS: true,
+    novoAtendimento: false,
     recibo: false,
     atendimentoRapido: false,
     orcamentoRapido: false,
@@ -2306,9 +2307,10 @@ describe("GOAL OPS-V4-ATENDIMENTO-RAPIDO-CONNECT-014 — conecta ao contrato rea
     expect(modal).toMatch(/if \(!v\.atendimentoRapidoOpen\) return null/)
   })
 
-  it("botão 'Atendimento rápido' no TopBar chama v.openAtendimentoRapido (ação explícita, ao lado do + Nova OS)", () => {
-    expect(topBar).toContain("v.openAtendimentoRapido")
-    expect(topBar).toMatch(/Atendimento rápido/)
+  it("Atendimento rápido sai do TopBar e passa a ser escolhido no launcher + Novo", () => {
+    expect(topBar).not.toContain("v.openAtendimentoRapido")
+    expect(topBar).toContain("v.openNovoAtendimento")
+    expect(topBar).toMatch(/\+ Novo/)
   })
 
   it("o modal é montado na casca da V4, ao lado do Nova OS", () => {
@@ -2393,14 +2395,10 @@ describe("GOAL OPS-V4-ORC-RAPIDO-024 — ⚡ Orçamento Rápido conecta ao contr
     expect(modal).toMatch(/if \(!v\.orcamentoRapidoOpen\) return null/)
   })
 
-  it("botão '⚡ Orçamento rápido' no TopBar chama v.openOrcamentoRapido, ao lado do Atendimento rápido", () => {
-    expect(topBar).toContain("v.openOrcamentoRapido")
-    expect(topBar).toMatch(/Orçamento rápido/)
-    // Está fisicamente ao lado do botão de Atendimento rápido (mesmo bloco de botões).
-    const idxAtend = topBar.indexOf("openAtendimentoRapido")
-    const idxOrc = topBar.indexOf("openOrcamentoRapido")
-    expect(idxAtend).toBeGreaterThan(-1)
-    expect(idxOrc).toBeGreaterThan(idxAtend)
+  it("Orçamento rápido sai do TopBar e passa a ser escolhido no launcher + Novo", () => {
+    expect(topBar).not.toContain("v.openOrcamentoRapido")
+    expect(topBar).toContain("v.openNovoAtendimento")
+    expect(topBar).toMatch(/\+ Novo/)
   })
 
   it("o modal é montado na casca da V4, ao lado do Nova OS/Atendimento Rápido", () => {
@@ -2425,15 +2423,9 @@ describe("GOAL OPS-V4-ORC-RAPIDO-024 — ⚡ Orçamento Rápido conecta ao contr
     expect(modal).toMatch(/busy/)
   })
 
-  it("GOAL 025/026 — o modal 'Orçamento Rápido' CONTINUA proibido de enviar/aprovar/recusar (isso agora vive em OrcamentoEnvioCluster/OrcamentoDuplicarButton, arquivos dedicados do GOAL 025)", () => {
-    for (const proibido of [
-      "wa.me",
-      "enviarOrcamentoV3",
-      "enviarOrcamentoPorCanalV3",
-      "aprovarOrcamentoV3",
-      "recusarOrcamentoV3",
-      "registrarEnvioOrcamento",
-    ]) {
+  it("GOAL 001 — o modal comercial pode enviar no create; continua proibido de aprovar/recusar e de abrir WhatsApp direto", () => {
+    expect(modal).toContain("enviarOrcamentoPorCanalV3")
+    for (const proibido of ["wa.me", "aprovarOrcamentoV3", "recusarOrcamentoV3"]) {
       expect(modal, `referência fora de escopo encontrada no modal: ${proibido}`).not.toContain(proibido)
     }
   })
@@ -2936,5 +2928,158 @@ describe("GOAL OPS-V4-CANCELAR-OS-CONNECT-021 — cancelamento de OS conecta ao 
 
   it("só existe uma chamada a v.cancelarOS( no modal (sem motor duplicado / sem clique disparando duas escritas)", () => {
     expect((modal.match(/v\.cancelarOS\(/g) ?? []).length).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001 — entrada única `+ Novo`.
+// Os três motores reais continuam nos modais já existentes. O launcher só
+// escolhe a modalidade. Duplicar orçamento segue abrindo o modal direto.
+// ---------------------------------------------------------------------------
+describe("GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001 — launcher roteia para os motores reais", () => {
+  it("escolher os fecha o launcher e abre só a Nova OS", () => {
+    const patches: Array<Record<string, unknown>> = []
+    const v = buildVals(
+      makeState({ novoAtendimento: true }),
+      (p) => patches.push(p as Record<string, unknown>),
+      () => {},
+      ctx,
+    )
+    v.escolherNovoAtendimento("os")
+    expect(patches[0]).toEqual(
+      expect.objectContaining({
+        novoAtendimento: false,
+        novaOS: true,
+        orcamentoRapido: false,
+        atendimentoRapido: false,
+      }),
+    )
+  })
+
+  it("escolher orcamento limpa prefill e abre só o orçamento rápido", () => {
+    const patches: Array<Record<string, unknown>> = []
+    let prefillCalls = 0
+    const v = buildVals(
+      makeState({ novoAtendimento: true }),
+      (p) => patches.push(p as Record<string, unknown>),
+      () => {},
+      { ...ctx, definirOrcamentoRapidoPrefill: () => { prefillCalls += 1 } },
+    )
+    v.escolherNovoAtendimento("orcamento")
+    expect(prefillCalls).toBe(1)
+    expect(patches[0]).toEqual(
+      expect.objectContaining({
+        novoAtendimento: false,
+        novaOS: false,
+        orcamentoRapido: true,
+        atendimentoRapido: false,
+      }),
+    )
+  })
+
+  it("escolher rapido abre só o atendimento rápido", () => {
+    const patches: Array<Record<string, unknown>> = []
+    const v = buildVals(
+      makeState({ novoAtendimento: true }),
+      (p) => patches.push(p as Record<string, unknown>),
+      () => {},
+      ctx,
+    )
+    v.escolherNovoAtendimento("rapido")
+    expect(patches[0]).toEqual(
+      expect.objectContaining({
+        novoAtendimento: false,
+        novaOS: false,
+        orcamentoRapido: false,
+        atendimentoRapido: true,
+      }),
+    )
+  })
+})
+
+describe("GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001 — launcher + Novo", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const topBar = readFileSync(join(DIR, "parts", "TopBar.tsx"), "utf8")
+  const launcher = readFileSync(join(DIR, "parts", "NovoAtendimentoLauncher.tsx"), "utf8")
+  const shell = readFileSync(join(DIR, "OperacoesV4Preview.tsx"), "utf8")
+  const picker = readFileSync(join(DIR, "parts", "OSPicker.tsx"), "utf8")
+  const contrato = readFileSync(join(DIR, "..", "..", "lib", "operacoes-v4", "novo-atendimento.ts"), "utf8")
+
+  it("TopBar tem um único CTA + Novo e não expõe os três botões antigos", () => {
+    expect(topBar).toContain("v.openNovoAtendimento")
+    expect(topBar).toMatch(/\+ Novo/)
+    expect(topBar).not.toContain("v.openNovaOS")
+    expect(topBar).not.toContain("v.openOrcamentoRapido")
+    expect(topBar).not.toContain("v.openAtendimentoRapido")
+    expect(topBar).not.toMatch(/Atendimento rápido/)
+    expect(topBar).not.toMatch(/Orçamento rápido/)
+    expect(topBar).not.toMatch(/\+ Nova OS/)
+  })
+
+  it("launcher usa a copy aprovada e as três modalidades do contrato puro", () => {
+    expect(launcher).toContain("NOVO_ATENDIMENTO_COPY_V4")
+    expect(launcher).toContain("NOVO_ATENDIMENTO_OPCOES_V4")
+    expect(launcher).toContain("v.escolherNovoAtendimento")
+    expect(contrato).toContain('titulo: "Novo atendimento"')
+    expect(contrato).toContain('subtitulo: "Escolha como este atendimento começa."')
+    expect(contrato).toContain('titulo: "Nova OS"')
+    expect(contrato).toContain("Cliente já vai deixar o aparelho ou serviço já está autorizado.")
+    expect(contrato).toContain('titulo: "Orçamento"')
+    expect(contrato).toContain("Cliente pediu preço e ainda precisa aprovar.")
+    expect(contrato).toContain('titulo: "Atendimento rápido"')
+    expect(contrato).toContain("Serviço simples, pagamento e conclusão na hora.")
+  })
+
+  it("não cria motor novo — aponta para os três contratos V3 já existentes", () => {
+    expect(contrato).toContain('motor: "criarOSEnterpriseV3"')
+    expect(contrato).toContain('motor: "criarOrcamentoRapidoV3"')
+    expect(contrato).toContain('motor: "finalizarAtendimentoRapidoV3"')
+    expect(launcher).not.toContain("criarOSEnterpriseV3")
+    expect(launcher).not.toContain("criarOrcamentoRapidoV3")
+    expect(launcher).not.toContain("finalizarAtendimentoRapidoV3")
+  })
+
+  it("estado nasce fechado e o launcher só monta quando aberto", () => {
+    expect(orquestrador).toMatch(/novoAtendimento:\s*false,/)
+    expect(launcher).toMatch(/if \(!v\.novoAtendimentoOpen\) return null/)
+  })
+
+  it("escolher uma opção fecha o launcher e abre só o motor correspondente", () => {
+    expect(orquestrador).toContain("patchEscolherNovoAtendimentoV4")
+    expect(orquestrador).toContain("escolherNovoAtendimento")
+    expect(contrato).toContain("novaOS: id === \"os\"")
+    expect(contrato).toContain("orcamentoRapido: id === \"orcamento\"")
+    expect(contrato).toContain("atendimentoRapido: id === \"rapido\"")
+  })
+
+  it("duplicar orçamento continua abrindo o modal direto, sem o launcher", () => {
+    expect(orquestrador).toMatch(/abrirOrcamentoRapidoComPrefill[\s\S]*update\(\{ orcamentoRapido: true, novoAtendimento: false \}\)/)
+  })
+
+  it("launcher e os três formulários reais continuam montados na casca", () => {
+    expect(shell).toContain("<NovoAtendimentoLauncher")
+    expect(shell).toContain("<NovaOSModal")
+    expect(shell).toContain("<OrcamentoRapidoModal")
+    expect(shell).toContain("<AtendimentoRapidoModal")
+  })
+
+  it("empty state do workspace também entra pelo + Novo (entrada única)", () => {
+    expect(picker).toContain("v.openNovoAtendimento")
+    expect(picker).toMatch(/\+ Novo/)
+    expect(picker).not.toContain("v.openNovaOS")
+  })
+
+  it("não importa caixa/financeiro/estoque/whatsapp/fiscal/prisma — launcher é só escolha", () => {
+    for (const proibido of [
+      'from "@/lib/caixa',
+      'from "@/lib/financeiro',
+      'from "@/lib/estoque',
+      'from "@/lib/whatsapp',
+      'from "@/lib/fiscal',
+      'from "@/lib/prisma',
+    ]) {
+      expect(launcher, `import proibido no launcher: ${proibido}`).not.toContain(proibido)
+      expect(contrato, `import proibido no contrato: ${proibido}`).not.toContain(proibido)
+    }
   })
 })

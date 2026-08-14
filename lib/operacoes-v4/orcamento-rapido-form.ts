@@ -31,6 +31,8 @@ export interface OrcamentoRapidoClienteExistenteV4 {
   id: string;
   nome: string;
   telefone?: string;
+  documento?: string;
+  email?: string;
 }
 
 export interface OrcamentoRapidoItemFixoFormV4 {
@@ -41,6 +43,7 @@ export interface OrcamentoRapidoItemFixoFormV4 {
   cortesia: boolean;
   /** 0 = não informado. */
   custoV3: number;
+  quantidade: number;
 }
 
 export interface OrcamentoRapidoVarianteFormV4 {
@@ -54,6 +57,7 @@ export interface OrcamentoRapidoVarianteFormV4 {
   badge: string;
   /** 0 = não informado. */
   custoV3: number;
+  prazoTexto: string;
 }
 
 /** Estado controlado do formulário do modal "⚡ Orçamento Rápido" da V4. */
@@ -64,20 +68,33 @@ export interface OrcamentoRapidoFormV4 {
   /** modo === "novo" */
   clienteNovoNome: string;
   clienteNovoTelefone: string;
+  clienteNovoDocumento: string;
+  clienteNovoEmail: string;
+  origemAtendimento: "whatsapp" | "balcao" | "instagram" | "ligacao" | "outro";
+  equipamentoTipo: "celular" | "tablet" | "notebook" | "videogame" | "outro";
   aparelhoMarca: string;
   aparelhoModelo: string;
+  aparelhoImei: string;
+  aparelhoCor: string;
   defeitoRelatado: string;
+  causaProvavel: string;
+  solucaoSugerida: string;
+  observacaoTecnica: string;
+  validadeDias: number;
+  prazoEstimado: string;
+  observacaoCliente: string;
+  observacaoInterna: string;
   itensFixos: OrcamentoRapidoItemFixoFormV4[];
   grupoRotulo: string;
   variantes: OrcamentoRapidoVarianteFormV4[];
 }
 
 export function novaVarianteVaziaV4(): OrcamentoRapidoVarianteFormV4 {
-  return { id: uid("var"), rotulo: "", valor: 0, garantiaDias: 0, descricaoCurta: "", badge: "", custoV3: 0 };
+  return { id: uid("var"), rotulo: "", valor: 0, garantiaDias: 0, descricaoCurta: "", badge: "", custoV3: 0, prazoTexto: "" };
 }
 
 export function novoItemFixoVazioV4(): OrcamentoRapidoItemFixoFormV4 {
-  return { id: uid("fix"), descricao: "", valor: 0, cortesia: false, custoV3: 0 };
+  return { id: uid("fix"), descricao: "", valor: 0, cortesia: false, custoV3: 0, quantidade: 1 };
 }
 
 /** Formulário vazio (estado inicial do modal, sempre que abre) — já com 2 variantes. */
@@ -87,9 +104,22 @@ export function orcamentoRapidoFormVazioV4(): OrcamentoRapidoFormV4 {
     clienteExistente: null,
     clienteNovoNome: "",
     clienteNovoTelefone: "",
+    clienteNovoDocumento: "",
+    clienteNovoEmail: "",
+    origemAtendimento: "whatsapp",
+    equipamentoTipo: "celular",
     aparelhoMarca: "",
     aparelhoModelo: "",
+    aparelhoImei: "",
+    aparelhoCor: "",
     defeitoRelatado: "",
+    causaProvavel: "",
+    solucaoSugerida: "",
+    observacaoTecnica: "",
+    validadeDias: 7,
+    prazoEstimado: "",
+    observacaoCliente: "",
+    observacaoInterna: "",
     itensFixos: [],
     grupoRotulo: "",
     variantes: [novaVarianteVaziaV4(), novaVarianteVaziaV4()],
@@ -184,6 +214,7 @@ export function buildOrcamentoRapidoInputFromFormV4(form: OrcamentoRapidoFormV4)
     valor: Math.max(0, Number(v.valor) || 0),
     garantiaDias: v.garantiaDias > 0 ? Math.trunc(v.garantiaDias) : undefined,
     descricaoCurta: clean(v.descricaoCurta),
+    prazoTexto: clean(v.prazoTexto),
     badge: clean(v.badge),
     custoV3: v.custoV3 > 0 ? v.custoV3 : undefined,
   }));

@@ -74,6 +74,40 @@ describe("buildNovaOSDraftFromFormV4 — cliente", () => {
     expect(draft.cliente.nome).toBe("Novo Real");
   });
 
+  it("serviço autorizado materializa valor comercial > 0", () => {
+    const draft = buildNovaOSDraftFromFormV4(
+      form({
+        clienteNovo: { nome: "Rafael" },
+        marca: "Samsung",
+        modelo: "S22",
+        defeitoRelatado: "Tela quebrada",
+        tipoEntrada: "servico_autorizado",
+        servicoAutorizado: { descricao: "Tela Premium", valor: 400, custo: 210, garantiaDias: 90 },
+      }),
+      FIXED,
+    );
+    expect(draft.itens).toHaveLength(1);
+    expect(draft.itens[0]?.valorUnitario).toBe(400);
+    expect(draft.itens[0]?.custoUnitario).toBe(210);
+    expect(draft.garantia.prazoDias).toBe(90);
+    expect(validarNovaOSDraftV3(draft)).toBeNull();
+  });
+
+  it("precisa de diagnóstico não exige preço", () => {
+    const draft = buildNovaOSDraftFromFormV4(
+      form({
+        clienteNovo: { nome: "Ana" },
+        marca: "Apple",
+        modelo: "13",
+        defeitoRelatado: "Não liga",
+        tipoEntrada: "precisa_diagnostico",
+      }),
+      FIXED,
+    );
+    expect(draft.itens).toEqual([]);
+    expect(validarNovaOSDraftV3(draft)).toBeNull();
+  });
+
   it("cliente novo default tipo = PF", () => {
     const draft = buildNovaOSDraftFromFormV4(form({ clienteNovo: { nome: "Z" } }), FIXED);
     expect(draft.cliente.tipo).toBe("PF");
