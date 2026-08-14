@@ -1,11 +1,11 @@
-/** Operações V4 Preview — header de comando: status, total, ação primária, menus. */
+/** Operações V4 — header de comando: identidade, comercial, financeiro, histórico. */
 "use client";
 
 import type { FocusEvent, PointerEvent } from "react";
 import { useEffect, useRef } from "react";
-import { UserRound } from "lucide-react";
+import { History, UserRound } from "lucide-react";
 import { useWorkspaceFocus } from "@/components/painel-inicial/workspace-focus-context";
-import { C, fmt } from "../tokens";
+import { C } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { NI } from "../os-adapter";
 import styles from "../operacoes-v4-preview.module.css";
@@ -70,68 +70,71 @@ function ContextOverlayTrigger() {
   );
 }
 
+const TONE_FG: Record<string, string> = {
+  neutro: C.ink,
+  info: C.infoFg,
+  warn: C.warnFg,
+  success: C.successFg,
+  danger: C.dangerFg,
+};
+
 export function CommandHeader({ v }: { v: V4Vals }) {
-  const financial = v.financial;
-  const projection = financial.projection;
-  const financialWarning = projection?.consistencyStatus === "INCONSISTENT" || projection?.consistencyStatus === "UNKNOWN";
+  const comercial = v.comercialHeader;
+  const financeiro = v.financeiroHeader;
+  const historico = v.historicoHeader;
+  const slaAlert = v.os.sla !== NI && /estourado|atenção|atras/i.test(v.os.sla);
+
   return (
-    <div
-      style={{
-        flex: "none",
-        display: "flex",
-        alignItems: "center",
-        flexWrap: "wrap",
-        gap: 8,
-        minHeight: 46,
-        padding: "7px 14px",
-        background: C.surface,
-        borderBottom: `1px solid ${C.line}`,
-      }}
-    >
-      {/* Grupo esquerdo: identidade da OS */}
-      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, flex: "1 1 auto", minWidth: 0 }}>
+    <div className={styles.headerBar}>
+      <div className={styles.headerIdentity}>
+        {v.focusActive ? <ContextOverlayTrigger /> : null}
         <h1 style={{ margin: 0, fontSize: 16, fontWeight: 700, letterSpacing: "-.01em", color: C.ink, whiteSpace: "nowrap", flex: "none" }}>{v.os.codigo}</h1>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 9px", background: v.tone.bg, color: v.tone.fg, borderRadius: 999, fontSize: 11.5, fontWeight: 600, flex: "none", whiteSpace: "nowrap" }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: v.tone.dot, flex: "none" }} />{v.statusLabel}
         </span>
-        {v.osSelected && (
-          <span style={{ display: "inline-flex", alignItems: "center", height: 22, padding: "0 9px", background: financialWarning || financial.error ? C.dangerBg : projection?.financialStatus === "PAID" ? C.successBg : C.warnBg, color: financialWarning || financial.error ? C.dangerFg : projection?.financialStatus === "PAID" ? C.successFg : C.warnFg, borderRadius: 999, fontSize: 11.5, fontWeight: 600, flex: "none", whiteSpace: "nowrap" }}>
-            {financial.error ? "Financeiro indisponível" : financial.statusLabel}
-          </span>
-        )}
         {v.os.sla !== NI && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, height: 22, padding: "0 9px", background: C.successBg, color: C.successFg, borderRadius: 999, fontSize: 11.5, fontWeight: 600, flex: "none", whiteSpace: "nowrap" }}>⏱ SLA {v.os.sla}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, height: 22, padding: "0 9px", background: slaAlert ? C.warnBg : C.successBg, color: slaAlert ? C.warnFg : C.successFg, borderRadius: 999, fontSize: 11.5, fontWeight: 600, flex: "none", whiteSpace: "nowrap" }}>
+            ⏱ SLA {v.os.sla}
+          </span>
         )}
       </div>
 
-      {/* Grupo direito: financeiro + ações */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "none" }}>
-        {(financial.loading || financial.error || projection) && (
-          <>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, whiteSpace: "nowrap" }}>
-              {financial.loading ? (
-                <span style={{ fontSize: 11.5, color: C.subtle }}>Carregando financeiro…</span>
-              ) : financial.error || !projection ? (
-                <span style={{ fontSize: 11.5, color: C.dangerFg }}>Valores indisponíveis</span>
-              ) : (
-                <>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: C.ink }}>
-                    {projection.expectedTotal == null ? "Total indisponível" : fmt(projection.expectedTotal)}
-                  </span>
-                  {projection.receivedTotal != null && <span style={{ fontSize: 10.5, color: C.successFg }}>recebido {fmt(projection.receivedTotal)}</span>}
-                  {projection.balance != null && <span style={{ fontSize: 10.5, color: projection.balance > 0 ? C.warnFg : C.subtle }}>saldo {fmt(projection.balance)}</span>}
-                </>
-              )}
-            </div>
-            <span style={{ width: 1, height: 26, background: C.line2, flex: "none" }} />
-          </>
+      <div className={styles.headerOps}>
+        {v.osSelected ? <span className={styles.headerDivider} aria-hidden /> : null}
+
+        {v.osSelected && (
+          <button
+            type="button"
+            onClick={() => v.openHeaderDestino(comercial.destino)}
+            aria-current={v.isOrc ? "page" : undefined}
+            title="Abrir orçamento"
+            className={`${styles.headerTicket} ${v.isOrc ? styles.headerTicketCurrent : ""}`}
+          >
+            <span className={styles.headerTicketEyebrow}>{comercial.eyebrow}</span>
+            <span className={styles.headerTicketLabel} style={{ color: TONE_FG[comercial.tone] }}>{comercial.label}</span>
+          </button>
         )}
 
-        {v.focusActive ? <ContextOverlayTrigger /> : null}
+        {v.osSelected && (
+          <button
+            type="button"
+            onClick={() => v.openHeaderDestino(financeiro.destino)}
+            aria-current={v.isFin ? "page" : undefined}
+            title={financeiro.cta ?? "Abrir financeiro"}
+            className={`${styles.headerTicket} ${v.isFin ? styles.headerTicketCurrent : ""}`}
+          >
+            <span className={styles.headerTicketEyebrow}>{financeiro.eyebrow}</span>
+            <span className={styles.headerTicketMeta}>
+              <span className={styles.headerTicketLabel} style={{ color: TONE_FG[financeiro.tone] }}>{financeiro.label}</span>
+              {financeiro.cta ? <span className={styles.headerTicketCta}>{financeiro.cta}</span> : null}
+            </span>
+          </button>
+        )}
 
-        {/* Dropdown Docs — ancorado ao botão via position:relative */}
+        {v.osSelected ? <span className={styles.headerDivider} aria-hidden /> : null}
+
         <div style={{ position: "relative", flex: "none" }}>
-          <button type="button" onClick={v.togglePrint} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 30, padding: "0 10px", border: `1px solid ${C.inputBd}`, background: C.surface, color: C.body, borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" }}>🖨 Docs ▾</button>
+          <button type="button" onClick={v.togglePrint} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 36, padding: "0 10px", border: `1px solid ${C.inputBd}`, background: C.surface, color: C.body, borderRadius: 9, fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap" }}>Docs ▾</button>
           {v.menuPrint && (
             <>
               <button type="button" onClick={v.closeMenus} style={{ position: "fixed", inset: 0, zIndex: 40, border: "none", background: "transparent", cursor: "default" }} />
@@ -147,6 +150,20 @@ export function CommandHeader({ v }: { v: V4Vals }) {
           )}
         </div>
 
+        {v.osSelected && (
+          <button
+            type="button"
+            onClick={v.goHistorico}
+            aria-current={v.isHist ? "page" : undefined}
+            title={historico.countLabel ? `Histórico · ${historico.countLabel}` : "Histórico da OS"}
+            className={`${styles.headerHistory} ${v.isHist ? styles.headerHistoryCurrent : ""}`}
+          >
+            <History size={14} />
+            <span style={{ fontSize: 12, fontWeight: 600 }}>Histórico</span>
+            {historico.countLabel ? <span className={styles.headerHistoryCount}>{historico.countLabel}</span> : null}
+          </button>
+        )}
+
         {v.hasPrimary && (
           <button type="button" onClick={v.onPrimary} style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 33, padding: "0 14px", border: "none", background: C.primary, color: C.white, borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 1px 2px rgba(79,70,229,.3)", whiteSpace: "nowrap", flex: "none" }}>
             ✦ {v.primaryLabel}
@@ -157,7 +174,6 @@ export function CommandHeader({ v }: { v: V4Vals }) {
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 33, padding: "0 12px", background: C.successBg2, color: C.successFg, borderRadius: 9, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap", flex: "none" }}>✓ Fluxo concluído</span>
         )}
 
-        {/* Dropdown Mais ações — ancorado ao botão via position:relative */}
         <div style={{ position: "relative", flex: "none" }}>
           <button type="button" onClick={v.toggleMore} title="Mais ações" style={{ width: 33, height: 33, border: `1px solid ${C.inputBd}`, background: C.surface, color: C.muted, borderRadius: 9, fontSize: 16, cursor: "pointer" }}>⋯</button>
           {v.menuMore && (

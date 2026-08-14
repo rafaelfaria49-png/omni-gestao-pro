@@ -1,5 +1,12 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-14 — Operações V4: pipeline operacional e header transversal
+
+- A pipeline da OS passa a ter só **Entrada → Diagnóstico → Execução → Entrega → Pós-venda**.
+- Orçamento, Financeiro e Histórico saem da trilha e ficam no header da OS, reusando os estágios reais.
+- A Entrada deixa as sete subseções e o rail overlay; opera em quatro grupos (Recepção e aparelho, Segurança e custódia, Inspeção, Evidências), sem repetir o que já veio da abertura.
+- Sem schema, sem motor novo, sem alteração em PDV/Caixa/Financeiro engine.
+
 ## 2026-08-14 — Operações V4: entrada única `+ Novo`
 
 - A TopBar da Operações V4 troca os três CTAs (Atendimento rápido, Orçamento rápido, Nova OS) por um único **`+ Novo`**.

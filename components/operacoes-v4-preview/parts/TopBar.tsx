@@ -83,48 +83,6 @@ export function TopBar({ v }: { v: V4Vals }) {
         </kbd>
       </button>
 
-      {/* Mode switcher */}
-      <div
-        style={{
-          flex: "none",
-          display: "flex",
-          alignItems: "center",
-          gap: 3,
-          height: 28,
-          padding: 2,
-          background: "var(--muted)",
-          border: "1px solid var(--border)",
-          borderRadius: 9,
-        }}
-      >
-        {v.modeBtns.map((m) => (
-          <button
-            key={m.label}
-            type="button"
-            onClick={m.onClick}
-            title={m.hint}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              height: 24,
-              padding: "0 10px",
-              border: "none",
-              background: m.bg,
-              color: m.fg,
-              borderRadius: 7,
-              fontSize: 11.5,
-              fontWeight: 600,
-              cursor: "pointer",
-              boxShadow: m.shadow,
-            }}
-          >
-            <span style={{ fontSize: 11 }}>{m.icon}</span>
-            {m.label}
-          </button>
-        ))}
-      </div>
-
       <button
         type="button"
         onClick={v.onFoco}
@@ -152,25 +110,6 @@ export function TopBar({ v }: { v: V4Vals }) {
 
       <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 8, marginLeft: "auto" }}>
         <span style={{ fontSize: 11.5, color: "var(--muted-foreground)", whiteSpace: "nowrap" }}>Loja ativa</span>
-        <button
-          type="button"
-          onClick={v.goAuditoria}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            height: 28,
-            padding: "0 11px",
-            border: "1px solid var(--border)",
-            background: "var(--card)",
-            color: "var(--muted-foreground)",
-            borderRadius: 8,
-            fontSize: 12,
-            fontWeight: 500,
-            cursor: "pointer",
-          }}
-        >
-          Auditoria de UX
-        </button>
         <button
           type="button"
           onClick={v.openNovoAtendimento}

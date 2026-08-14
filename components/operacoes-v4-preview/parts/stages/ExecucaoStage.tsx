@@ -114,60 +114,6 @@ function ExecAcoesCard({ v }: { v: V4Vals }) {
   );
 }
 
-/**
- * Cartão de entrada para a superfície de Segurança (PREVIEW). Não é dado da OS:
- * é uma demonstração — claramente marcada — dos componentes de autorização do
- * gerente. Espelha o protótipo (a Execução é o ponto de acesso à aba Segurança).
- */
-function AutorizacaoCard({ v }: { v: V4Vals }) {
-  return (
-    <div style={{ ...card, borderColor: C.primaryBd, background: C.primarySoft }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
-        <span
-          style={{
-            width: 24,
-            height: 24,
-            borderRadius: 7,
-            background: C.primaryBg,
-            color: C.primaryHover,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 13,
-          }}
-        >
-          🔒
-        </span>
-        <span style={cardTitle}>Autorização necessária</span>
-      </div>
-      <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.5, color: C.muted }}>
-        Ações críticas exigem autorização do gerente (PIN, senha ou padrão). Demonstração na superfície{" "}
-        <b style={{ color: C.body }}>Segurança</b> — somente preview, nada é autenticado.
-      </p>
-      <button
-        type="button"
-        onClick={v.goSeguranca}
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          height: 30,
-          padding: "0 12px",
-          border: `1px solid ${C.primaryBd}`,
-          background: C.surface,
-          color: C.primary,
-          borderRadius: 7,
-          fontSize: 11.5,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
-        Ver componentes de segurança →
-      </button>
-    </div>
-  );
-}
-
 export function ExecucaoStage({ v }: { v: V4Vals }) {
   const e = v.execucao;
 
@@ -179,7 +125,6 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
           <div style={{ ...cardTitle, marginBottom: 6 }}>Execução</div>
           <div style={emptyText}>Ainda não existe execução registrada para esta Ordem de Serviço.</div>
         </div>
-        <AutorizacaoCard v={v} />
       </div>
     );
   }
@@ -295,7 +240,6 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
         </div>
       </div>
 
-      <AutorizacaoCard v={v} />
     </div>
   );
 }

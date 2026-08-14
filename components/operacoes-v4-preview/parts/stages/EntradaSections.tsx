@@ -1,7 +1,9 @@
 "use client";
 
-import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { Camera, LockKeyhole, ShieldCheck, Trash2 } from "lucide-react";
+import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { Camera, ShieldCheck, Trash2 } from "lucide-react";
+import { SignaturePadV3 } from "@/components/operacoes-v3/components/SignaturePadV3";
+import { CATEGORIAS_FOTO_V3, FOTO_MAX_V3, lerProvaEntradaV3, type CategoriaFotoV3 } from "@/lib/operacoes-v3/prova-entrada-model";
 import type { V4Vals } from "../../use-v4-preview";
 import { PatternPadV4 } from "../PatternPadV4";
 import {
@@ -26,12 +28,15 @@ import {
   setDadosBasicos,
   type DadosBasicosEditorV4,
 } from "@/lib/operacoes-v4/dados-basicos-form";
-import type { EntradaSectionId } from "@/lib/operacoes-v4/entrada-workspace";
+import type { EntradaGroupId } from "@/lib/operacoes-v4/entrada-workspace";
+import { lerAberturaRecepcionV4, resolverIdentidadeAparelhoV4 } from "@/lib/operacoes-v4/identidade-aparelho";
+import { rotuloChecklistExibidoV4 } from "@/lib/operacoes-v4/checklist-aplicabilidade";
+import { NI } from "../../os-adapter";
 import { cn } from "@/lib/utils";
 import styles from "./entrada-workspace.module.css";
 
 type Props = {
-  section: EntradaSectionId;
+  group: EntradaGroupId;
   v: V4Vals;
   ed: EntradaEditorV4;
   setEd: Dispatch<SetStateAction<EntradaEditorV4>>;
@@ -54,36 +59,98 @@ function Group({ title, hint, children }: { title?: string; hint?: string; child
 }
 
 export function EntradaSections(props: Props) {
-  switch (props.section) {
-    case "dados-basicos": return <DadosBasicosSection {...props} />;
-    case "identificacao": return <IdentificacaoSection {...props} />;
-    case "seguranca": return <SegurancaSection {...props} />;
-    case "estado-fisico": return <EstadoFisicoSection {...props} />;
-    case "checklist": return <ChecklistSection {...props} />;
-    case "acessorios": return <AcessoriosSection {...props} />;
-    case "fotos": return <FotosSection {...props} />;
+  switch (props.group) {
+    case "recepcao":
+      return (
+        <>
+          <ConferenciaSnapshot v={props.v} />
+          <DadosBasicosSection {...props} />
+          <IdentificacaoSection {...props} />
+        </>
+      );
+    case "seguranca-custodia":
+      return (
+        <>
+          <SegurancaSection {...props} />
+          <AcessoriosSection {...props} />
+        </>
+      );
+    case "inspecao":
+      return (
+        <>
+          <EstadoFisicoSection {...props} />
+          <ChecklistSection {...props} />
+        </>
+      );
+    case "evidencias":
+      return (
+        <>
+          <FotosSection {...props} />
+          <AssinaturaEntradaSection {...props} />
+        </>
+      );
   }
 }
 
+function ConferenciaSnapshot({ v }: { v: V4Vals }) {
+  const identidade = resolverIdentidadeAparelhoV4(v.realOS);
+  const abertura = lerAberturaRecepcionV4(v.realOS);
+  const aparelho = [identidade.marca.value, identidade.modelo.value].filter(Boolean).join(" ") || v.os.aparelho;
+  const rows = [
+    ["Cliente", v.os.cliente],
+    ["Tipo", identidade.tipo.value],
+    ["Aparelho", aparelho],
+    ["IMEI", identidade.imei.value || v.os.imei],
+    ["Série", identidade.serial.value],
+    ["Defeito", abertura.defeitoRelatado || v.os.defeito],
+    ["Origem", v.os.origem !== NI ? v.os.origem : abertura.origem],
+    ["Recebido por", abertura.recebidoPor],
+  ].filter(([, value]) => value && value !== NI);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <Group title="Informado na abertura" hint="Estes dados vieram da criação da OS. Abaixo só o que a bancada ainda precisa conferir ou completar.">
+      <dl className={styles.snapshotGrid}>
+        {rows.map(([label, value]) => (
+          <div key={label} className={styles.snapshotRow}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </Group>
+  );
+}
+
 function DadosBasicosSection({ db, setDb }: Props) {
+  const [corrigirAbertura, setCorrigirAbertura] = useState(false);
   const setBasico = <K extends keyof DadosBasicosEditorV4>(key: K, value: DadosBasicosEditorV4[K]) =>
     setDb((current) => setDadosBasicos(current, key, value));
+  const aberturaJaInformada = Boolean(db.defeitoRelatado.trim() || db.recebidoPor.trim());
 
   return (
     <>
-      <Group title="Registro da recepção" hint="Estas informações orientam a triagem e permanecem vinculadas à OS.">
+      <Group title="Ajustes da recepção" hint="Prioridade, localização e previsão. Cliente, aparelho e defeito já estão no resumo acima.">
         <div className={styles.fields}>
-          <Field label="Defeito relatado" className={styles.span2}>
-            <textarea className={styles.textarea} value={db.defeitoRelatado} onChange={(event) => setBasico("defeitoRelatado", event.target.value)} maxLength={600} placeholder="Descreva o problema informado pelo cliente…" />
-          </Field>
+          {(!aberturaJaInformada || corrigirAbertura) ? (
+            <>
+              <Field label="Defeito relatado" className={styles.span2}>
+                <textarea className={styles.textarea} value={db.defeitoRelatado} onChange={(event) => setBasico("defeitoRelatado", event.target.value)} maxLength={600} placeholder="Descreva o problema informado pelo cliente…" />
+              </Field>
+              <Field label="Origem">
+                <select className={styles.select} value={db.origem} onChange={(event) => setBasico("origem", event.target.value as DadosBasicosEditorV4["origem"])}>
+                  {ORIGEM_V3.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Recebido por">
+                <input className={styles.input} value={db.recebidoPor} onChange={(event) => setBasico("recebidoPor", event.target.value)} maxLength={80} placeholder="Nome do atendente" />
+              </Field>
+            </>
+          ) : null}
           <Field label="Prioridade">
             <select className={styles.select} value={db.prioridade} onChange={(event) => setBasico("prioridade", event.target.value as DadosBasicosEditorV4["prioridade"])}>
               {PRIORIDADE_V3.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-            </select>
-          </Field>
-          <Field label="Origem">
-            <select className={styles.select} value={db.origem} onChange={(event) => setBasico("origem", event.target.value as DadosBasicosEditorV4["origem"])}>
-              {ORIGEM_V3.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </Field>
           <Field label="Localização física">
@@ -91,13 +158,15 @@ function DadosBasicosSection({ db, setDb }: Props) {
               {LOCAL_FISICO_V3.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
             </select>
           </Field>
-          <Field label="Recebido por">
-            <input className={styles.input} value={db.recebidoPor} onChange={(event) => setBasico("recebidoPor", event.target.value)} maxLength={80} placeholder="Nome do atendente" />
-          </Field>
           <Field label="Previsão de entrega / SLA" className={styles.span2}>
             <input className={styles.input} type="datetime-local" value={db.previsaoLocal} onChange={(event) => setBasico("previsaoLocal", event.target.value)} />
           </Field>
         </div>
+        {aberturaJaInformada ? (
+          <button type="button" className={styles.linkButton} onClick={() => setCorrigirAbertura((open) => !open)}>
+            {corrigirAbertura ? "Ocultar correção da abertura" : "Corrigir dados da abertura"}
+          </button>
+        ) : null}
       </Group>
       <Group title="Uso interno" hint="Não é impresso para o cliente.">
         <Field label="Observações internas">
@@ -108,16 +177,51 @@ function DadosBasicosSection({ db, setDb }: Props) {
   );
 }
 
-function IdentificacaoSection({ ed, setEd }: Props) {
+function IdentificacaoSection({ ed, setEd, v }: Props) {
+  const identidade = resolverIdentidadeAparelhoV4(v.realOS);
+  const [unlock, setUnlock] = useState<Record<string, boolean>>({});
   const patch = (values: Partial<EntradaEditorV4["identificacao"]>) => setEd((current) => ({ ...current, identificacao: { ...current.identificacao, ...values } }));
+
+  const field = (
+    key: "imei" | "serial" | "modelo" | "cor" | "operadora",
+    label: string,
+    value: string,
+    informed: boolean,
+    extra?: { className?: string; mono?: boolean; placeholder?: string; inputMode?: "numeric" },
+  ) => {
+    if (informed && !unlock[key]) {
+      return (
+        <div key={key} className={cn(styles.confirmedField, extra?.className)}>
+          <span className={styles.label}>{label}</span>
+          <div className={styles.confirmedValue}>
+            <span className={extra?.mono ? styles.mono : undefined}>{value}</span>
+            <button type="button" className={styles.linkButton} onClick={() => setUnlock((current) => ({ ...current, [key]: true }))}>Alterar</button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <Field key={key} label={label} className={extra?.className}>
+        <input
+          className={cn(styles.input, extra?.mono && styles.mono)}
+          value={value}
+          onChange={(event) => patch({ [key]: event.target.value })}
+          maxLength={key === "modelo" ? 60 : 40}
+          inputMode={extra?.inputMode}
+          placeholder={extra?.placeholder}
+        />
+      </Field>
+    );
+  };
+
   return (
-    <Group title="Identificadores do aparelho" hint="Informe ao menos um identificador confiável quando ele estiver disponível.">
+    <Group title="Completar identificação" hint="Preencha só o que faltou na abertura — IMEI, série, cor ou operadora.">
       <div className={styles.fields}>
-        <Field label="IMEI"><input className={cn(styles.input, styles.mono)} value={ed.identificacao.imei} onChange={(event) => patch({ imei: event.target.value })} maxLength={40} inputMode="numeric" /></Field>
-        <Field label="Número de série"><input className={cn(styles.input, styles.mono)} value={ed.identificacao.serial} onChange={(event) => patch({ serial: event.target.value })} maxLength={40} /></Field>
-        <Field label="Modelo" className={styles.span2}><input className={styles.input} value={ed.identificacao.modelo} onChange={(event) => patch({ modelo: event.target.value })} maxLength={60} placeholder="Ex.: iPhone 13 Pro" /></Field>
-        <Field label="Cor"><input className={styles.input} value={ed.identificacao.cor} onChange={(event) => patch({ cor: event.target.value })} maxLength={40} /></Field>
-        <Field label="Operadora"><input className={styles.input} value={ed.identificacao.operadora} onChange={(event) => patch({ operadora: event.target.value })} maxLength={40} placeholder="Ex.: Vivo, Claro" /></Field>
+        {field("imei", "IMEI", ed.identificacao.imei, identidade.imei.informedAtOpening, { mono: true, inputMode: "numeric" })}
+        {field("serial", "Número de série", ed.identificacao.serial, Boolean(identidade.serial.value), { mono: true })}
+        {field("modelo", "Modelo", ed.identificacao.modelo, identidade.modelo.informedAtOpening, { className: styles.span2, placeholder: "Ex.: iPhone 13 Pro" })}
+        {field("cor", "Cor", ed.identificacao.cor, Boolean(identidade.cor.value))}
+        {field("operadora", "Operadora", ed.identificacao.operadora, Boolean(identidade.operadora.value), { placeholder: "Ex.: Vivo, Claro" })}
       </div>
     </Group>
   );
@@ -162,13 +266,15 @@ function SegurancaSection({ ed, setEd }: Props) {
 function EstadoFisicoSection({ ed, setEd }: Props) {
   return (
     <>
-      <Group title="Inspeção externa" hint="Revise cada componente com o cliente presente sempre que possível.">
+      <Group title="Condição física" hint="Revise cada componente com o cliente presente sempre que possível.">
         <div className={styles.inspectionList}>
           {ed.estadoFisico.map((item) => (
             <label key={item.componente} className={styles.inspectionRow}>
               <span className={styles.inspectionLabel}>{componenteFisicoLabelV3(item.componente)}</span>
               <select className={styles.select} value={item.status} onChange={(event) => setEd((current) => setEstadoFisicoStatus(current, item.componente, event.target.value as EstadoFisicoStatusV3))}>
-                {(Object.keys(ESTADO_FISICO_STATUS_META_V3) as EstadoFisicoStatusV3[]).map((status) => <option key={status} value={status}>{ESTADO_FISICO_STATUS_META_V3[status].label}</option>)}
+                {(Object.keys(ESTADO_FISICO_STATUS_META_V3) as EstadoFisicoStatusV3[]).map((status) => (
+                  <option key={status} value={status}>{status === "ok" ? "Íntegro" : ESTADO_FISICO_STATUS_META_V3[status].label}</option>
+                ))}
               </select>
             </label>
           ))}
@@ -191,10 +297,20 @@ function EstadoFisicoSection({ ed, setEd }: Props) {
 }
 
 function ChecklistSection({ ed, setEd }: Props) {
+  const credenciais = { faceId: ed.credenciais.faceId, biometria: ed.credenciais.biometria };
   return (
-    <Group title="Testes rápidos" hint="Clique em cada item para alternar entre OK, ruim e não testado.">
+    <Group title="Testes funcionais" hint="Clique em cada item para alternar entre OK, ruim e não testado. Recursos inexistentes ficam N/A.">
       <div className={styles.choiceGrid}>
         {ed.checklist.map((item) => {
+          const shown = rotuloChecklistExibidoV4(item.id, item.estado, credenciais);
+          if (shown.naoAplicavel) {
+            return (
+              <div key={item.id} className={cn(styles.choice, styles.choiceNA)} aria-label={`${item.label}: N/A`}>
+                <span>{item.label}</span>
+                <span className={styles.stateBadge}>N/A</span>
+              </div>
+            );
+          }
           const meta = CHECKLIST_ESTADO_META_V3[item.estado];
           return (
             <button key={item.id} type="button" className={styles.choice} onClick={() => setEd((current) => cycleChecklistEstado(current, item.id))} aria-label={`${item.label}: ${meta.label}`}>
@@ -210,7 +326,7 @@ function ChecklistSection({ ed, setEd }: Props) {
 
 function AcessoriosSection({ ed, setEd }: Props) {
   return (
-    <Group title="Itens sob custódia" hint="Marque apenas o que permaneceu na assistência junto com o aparelho.">
+    <Group title="Itens recebidos com o aparelho" hint="Marque apenas o que permaneceu na assistência junto com o aparelho.">
       <div className={styles.choiceGrid}>
         {ed.acessorios.map((item) => (
           <button key={item.id} type="button" className={cn(styles.choice, item.presente && styles.choiceOn)} onClick={() => setEd((current) => toggleAcessorio(current, item.id))} aria-pressed={item.presente}>
@@ -223,30 +339,121 @@ function AcessoriosSection({ ed, setEd }: Props) {
   );
 }
 
+async function comprimirFotoEntrada(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("Falha ao ler a imagem."));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Imagem inválida."));
+    image.src = dataUrl;
+  });
+  const scale = Math.min(1, 1024 / Math.max(img.width || 1, img.height || 1));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
+  canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.6);
+}
+
 function FotosSection({ v }: Props) {
-  if (!v.entradaFotos.length) {
-    return (
-      <div className={styles.photoEmpty}>
-        <div>
-          <div className={styles.photoEmptyIcon}><LockKeyhole size={20} /></div>
-          <h3 className={styles.photoEmptyTitle}>Nenhuma foto registrada</h3>
-          <p className={styles.photoEmptyText}>A listagem já exibe evidências reais vinculadas à OS. O upload por esta tela estará disponível em breve; nenhuma ação de envio é simulada aqui.</p>
-        </div>
-      </div>
-    );
-  }
+  const [categoria, setCategoria] = useState<CategoriaFotoV3>("frontal");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const remaining = Math.max(0, FOTO_MAX_V3 - v.entradaFotos.length);
+
+  const onUpload = async (file: File | undefined) => {
+    if (!file || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const dataUrl = await comprimirFotoEntrada(file);
+      const ok = await v.adicionarFotoEntrada({ categoria, nome: file.name, dataUrl });
+      if (!ok) setError("Não foi possível adicionar a foto.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Não foi possível adicionar a foto.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Group title={`${v.entradaFotos.length} foto${v.entradaFotos.length === 1 ? "" : "s"} registrada${v.entradaFotos.length === 1 ? "" : "s"}`} hint="Evidências reais já vinculadas à prova de entrada desta OS.">
-      <div className={styles.photoGrid}>
-        {v.entradaFotos.map((foto) => (
-          <figure key={foto.id} className={styles.photo} title={foto.name}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={foto.dataUrl} alt={foto.name} />
-            <figcaption className={styles.photoTag}>{foto.tag}</figcaption>
-          </figure>
-        ))}
+    <Group title="Fotos da entrada" hint={`${v.entradaFotos.length} de ${FOTO_MAX_V3} fotos. Frontal, traseira, lateral ou defeito.`}>
+      <div className={styles.fields}>
+        <Field label="Categoria">
+          <select className={styles.select} value={categoria} onChange={(event) => setCategoria(event.target.value as CategoriaFotoV3)}>
+            {CATEGORIAS_FOTO_V3.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Adicionar foto">
+          <input
+            className={styles.input}
+            type="file"
+            accept="image/*"
+            disabled={busy || remaining <= 0}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              void onUpload(file);
+            }}
+          />
+        </Field>
       </div>
-      <p className={styles.groupHint} style={{ marginTop: 14 }}><Camera size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Novos uploads por esta tela chegam em breve.</p>
+      {v.entradaFotos.length ? (
+        <div className={styles.photoGrid} style={{ marginTop: 14 }}>
+          {v.entradaFotos.map((foto) => (
+            <figure key={foto.id} className={styles.photo} title={foto.name}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={foto.dataUrl} alt={foto.name} />
+              <figcaption className={styles.photoTag}>{foto.tag}</figcaption>
+              <button type="button" className={styles.iconButton} style={{ position: "absolute", top: 6, right: 6, width: 28, height: 28 }} onClick={() => void v.removerFotoEntrada(foto.id)} aria-label="Remover foto">
+                <Trash2 size={13} />
+              </button>
+            </figure>
+          ))}
+        </div>
+      ) : (
+        <p className={styles.groupHint} style={{ marginTop: 14 }}><Camera size={13} style={{ verticalAlign: "-2px", marginRight: 5 }} />Nenhuma foto registrada nesta prova de entrada.</p>
+      )}
+      {error ? <div className={styles.error} role="alert">{error}</div> : null}
+    </Group>
+  );
+}
+
+function AssinaturaEntradaSection({ v }: Props) {
+  const prova = lerProvaEntradaV3(v.realOS);
+  const assinatura = prova.assinaturaCliente;
+  const quando = assinatura?.criadoEm
+    ? new Date(assinatura.criadoEm).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+    : "";
+
+  return (
+    <Group title="Assinatura do cliente" hint="Vinculada à prova de entrada — não é a assinatura de entrega.">
+      {assinatura?.dataUrl ? (
+        <div className={styles.snapshotGrid}>
+          <div className={styles.snapshotRow}>
+            <dt>Estado</dt>
+            <dd>Assinada em {quando}</dd>
+          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={assinatura.dataUrl} alt="Assinatura do cliente na entrada" style={{ maxHeight: 72, objectFit: "contain", background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, padding: 6 }} />
+        </div>
+      ) : (
+        <p className={styles.groupHint}>Não coletada</p>
+      )}
+      <div style={{ marginTop: 12 }}>
+        <SignaturePadV3
+          onSave={(dataUrl) => void v.salvarAssinaturaCliente(dataUrl)}
+          label={assinatura?.dataUrl ? "Substituir assinatura" : "Salvar assinatura"}
+          hint="O cliente assina confirmando a entrada e as condições do aparelho."
+        />
+      </div>
     </Group>
   );
 }

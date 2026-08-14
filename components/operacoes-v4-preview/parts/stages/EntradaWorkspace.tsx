@@ -4,13 +4,15 @@ import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { derivarPendenciasEntradaV4 } from "@/lib/operacoes-v4/entrada-pendencias";
 import {
-  ENTRADA_SECTION_IDS,
-  deriveEntradaSectionCompletion,
-  entradaCompletionProgress,
-  getEntradaSection,
+  ENTRADA_GROUP_IDS,
+  deriveEntradaGroupCompletion,
+  entradaGroupProgress,
+  getEntradaGroup,
+  isEntradaGroupDirty,
   isEntradaSectionDirty,
-  nextEntradaSection,
-  previousEntradaSection,
+  nextEntradaGroup,
+  previousEntradaGroup,
+  type EntradaGroupId,
   type EntradaSectionId,
 } from "@/lib/operacoes-v4/entrada-workspace";
 import {
@@ -27,7 +29,7 @@ import { EntradaSections } from "./EntradaSections";
 import styles from "./entrada-workspace.module.css";
 
 export function EntradaWorkspace({ v }: { v: V4Vals }) {
-  const [active, setActive] = useState<EntradaSectionId>("dados-basicos");
+  const [active, setActive] = useState<EntradaGroupId>("recepcao");
   const [ed, setEd] = useState<EntradaEditorV4>(() => v.entradaEditorSeed);
   const [db, setDb] = useState<DadosBasicosEditorV4>(() => v.dadosBasicosSeed);
   const [savedEd, setSavedEd] = useState<EntradaEditorV4>(() => v.entradaEditorSeed);
@@ -36,18 +38,18 @@ export function EntradaWorkspace({ v }: { v: V4Vals }) {
   const [error, setError] = useState("");
 
   const completion = useMemo(
-    () => deriveEntradaSectionCompletion(derivarPendenciasEntradaV4(v.realOS)),
+    () => deriveEntradaGroupCompletion(derivarPendenciasEntradaV4(v.realOS)),
     [v.realOS],
   );
-  const progress = entradaCompletionProgress(completion);
+  const progress = entradaGroupProgress(completion);
   const dirty = Object.fromEntries(
-    ENTRADA_SECTION_IDS.map((id) => [id, isEntradaSectionDirty(id, ed, db, savedEd, savedDb)]),
-  ) as Record<EntradaSectionId, boolean>;
-  const meta = getEntradaSection(active);
-  const previous = previousEntradaSection(active);
-  const next = nextEntradaSection(active);
+    ENTRADA_GROUP_IDS.map((id) => [id, isEntradaGroupDirty(id, ed, db, savedEd, savedDb)]),
+  ) as Record<EntradaGroupId, boolean>;
+  const meta = getEntradaGroup(active);
+  const previous = previousEntradaGroup(active);
+  const next = nextEntradaGroup(active);
 
-  const markCurrentSnapshotSaved = (section: EntradaSectionId) => {
+  const markSectionSaved = (section: EntradaSectionId) => {
     if (section === "dados-basicos") setSavedDb(db);
     if (section === "identificacao") setSavedEd((current) => ({ ...current, identificacao: ed.identificacao }));
     if (section === "seguranca" || section === "estado-fisico") {
@@ -57,25 +59,38 @@ export function EntradaWorkspace({ v }: { v: V4Vals }) {
     if (section === "acessorios") setSavedEd((current) => ({ ...current, acessorios: ed.acessorios }));
   };
 
-  const saveSection = async (section: EntradaSectionId): Promise<boolean> => {
-    if (busy || section === "fotos") return false;
+  const persistSection = async (section: EntradaSectionId): Promise<boolean> => {
+    if (section === "fotos") return true;
+    let saved = false;
+    if (section === "dados-basicos") saved = await v.salvarDadosBasicos(toDadosBasicosInput(db));
+    if (section === "identificacao") saved = await v.salvarIdentificacao(toIdentificacaoInput(ed));
+    if (section === "seguranca" || section === "estado-fisico") saved = await v.salvarProvaEntrada(toProvaEntradaInput(ed));
+    if (section === "checklist") saved = await v.salvarChecklist(toChecklistInput(ed));
+    if (section === "acessorios") saved = await v.salvarAcessorios(toAcessoriosInput(ed));
+    if (!saved) return false;
+    markSectionSaved(section);
+    return true;
+  };
+
+  const saveGroup = async (group: EntradaGroupId): Promise<boolean> => {
+    if (busy) return false;
+    const sections = getEntradaGroup(group).sections.filter((section) =>
+      section !== "fotos" && isEntradaSectionDirty(section, ed, db, savedEd, savedDb),
+    );
+    if (sections.length === 0) return true;
     setBusy(true);
     setError("");
     try {
-      let saved = false;
-      if (section === "dados-basicos") saved = await v.salvarDadosBasicos(toDadosBasicosInput(db));
-      if (section === "identificacao") saved = await v.salvarIdentificacao(toIdentificacaoInput(ed));
-      if (section === "seguranca" || section === "estado-fisico") saved = await v.salvarProvaEntrada(toProvaEntradaInput(ed));
-      if (section === "checklist") saved = await v.salvarChecklist(toChecklistInput(ed));
-      if (section === "acessorios") saved = await v.salvarAcessorios(toAcessoriosInput(ed));
-      if (!saved) {
-        setError("Não foi possível salvar esta seção. Revise os campos e tente novamente.");
-        return false;
+      for (const section of sections) {
+        const saved = await persistSection(section);
+        if (!saved) {
+          setError("Não foi possível salvar este grupo. Revise os campos e tente novamente.");
+          return false;
+        }
       }
-      markCurrentSnapshotSaved(section);
       return true;
     } catch {
-      setError("Não foi possível salvar esta seção. Tente novamente.");
+      setError("Não foi possível salvar este grupo. Tente novamente.");
       return false;
     } finally {
       setBusy(false);
@@ -83,13 +98,13 @@ export function EntradaWorkspace({ v }: { v: V4Vals }) {
   };
 
   const saveAndContinue = async () => {
-    const saved = await saveSection(active);
+    const saved = await saveGroup(active);
     if (saved && next) setActive(next);
   };
 
-  const selectSection = (section: EntradaSectionId) => {
+  const selectGroup = (group: EntradaGroupId) => {
     setError("");
-    setActive(section);
+    setActive(group);
   };
 
   return (
@@ -100,7 +115,7 @@ export function EntradaWorkspace({ v }: { v: V4Vals }) {
         dirty={dirty}
         completed={progress.completed}
         total={progress.total}
-        onSelect={selectSection}
+        onSelect={selectGroup}
       />
       <section className={styles.canvas} aria-labelledby={`entrada-title-${active}`}>
         <div className={styles.canvasInner}>
@@ -111,26 +126,26 @@ export function EntradaWorkspace({ v }: { v: V4Vals }) {
               <p className={styles.sectionDescription}>{meta.description}</p>
             </div>
             <span className={cn(styles.stateBadge, dirty[active] ? styles.stateBadgeDirty : completion[active] ? styles.stateBadgeComplete : undefined)}>
-              {dirty[active] ? "Alterações não salvas" : completion[active] ? "Concluída" : active === "fotos" ? "Upload em breve" : "Pendente"}
+              {dirty[active] ? "Alterações não salvas" : completion[active] ? "Concluído" : "Pendente"}
             </span>
           </header>
 
           <div className={styles.formBody}>
-            <EntradaSections section={active} v={v} ed={ed} setEd={setEd} db={db} setDb={setDb} />
+            <EntradaSections group={active} v={v} ed={ed} setEd={setEd} db={db} setDb={setDb} />
             {error ? <div className={styles.error} role="alert">{error}</div> : null}
           </div>
 
           <footer className={styles.actionBar}>
             <div>
-              {previous ? <button type="button" className={styles.button} onClick={() => selectSection(previous)} disabled={busy}>Anterior</button> : null}
+              {previous ? <button type="button" className={styles.button} onClick={() => selectGroup(previous)} disabled={busy}>Anterior</button> : null}
             </div>
             {meta.canSave ? (
               <div className={styles.actionGroup}>
                 <span className={styles.saveNote}>Sem salvamento automático</span>
-                <button type="button" className={styles.button} onClick={() => void saveSection(active)} disabled={busy}>{busy ? "Salvando…" : "Salvar"}</button>
+                <button type="button" className={styles.button} onClick={() => void saveGroup(active)} disabled={busy}>{busy ? "Salvando…" : "Salvar"}</button>
                 {next ? <button type="button" className={cn(styles.button, styles.buttonPrimary)} onClick={() => void saveAndContinue()} disabled={busy}>{busy ? "Salvando…" : "Salvar e continuar"}</button> : null}
               </div>
-            ) : <span className={styles.saveNote}>Upload de fotos em breve</span>}
+            ) : null}
           </footer>
         </div>
       </section>

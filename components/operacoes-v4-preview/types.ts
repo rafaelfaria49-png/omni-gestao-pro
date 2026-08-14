@@ -17,7 +17,7 @@ export type V4Stage =
   | "historico"
   /**
    * Superfície de **segurança/autorização (preview)** — não é uma fase do fluxo
-   * da OS (não entra no pipeline de 8 etapas). É um destino lateral, alcançado a
+   * da OS (não entra na pipeline operacional de 5 etapas). É um destino lateral, alcançado a
    * partir da Execução, que demonstra os componentes de autorização do gerente
    * (PIN, padrão 3×3, senha, estados). 100% visual/no-op — não autentica nada.
    */

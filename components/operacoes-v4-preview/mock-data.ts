@@ -91,15 +91,16 @@ export const MODE_DEF: Array<["recepcao" | "bancada" | "auditoria", string, stri
   ["auditoria", "Auditoria", "🔍", "Cliente recolhido · Atividade aberta"],
 ];
 
-/** Definição das etapas da pipeline: [id, label, statusRepresentado]. */
-export const STAGE_DEF: Array<[V4Stage, string, V4Status]> = [
-  ["entrada", "Entrada", "aberta"],
-  ["diagnostico", "Diagnóstico", "diagnostico"],
-  ["orcamento", "Orçamento", "aprovado"],
-  ["execucao", "Execução", "em_execucao"],
-  ["financeiro", "Financeiro", "pronta"],
-  ["entrega", "Entrega", "entregue"],
-  ["posvenda", "Pós-venda", "entregue"],
+/**
+ * Pipeline operacional da OS (GOAL OPS-V4-PIPELINE-ENTRADA-NAV-SIMPLIFY-002).
+ * Só o ciclo técnico. Orçamento, Financeiro e Histórico saíram da trilha.
+ */
+export const STAGE_DEF: Array<[V4Stage, string]> = [
+  ["entrada", "Entrada"],
+  ["diagnostico", "Diagnóstico"],
+  ["execucao", "Execução"],
+  ["entrega", "Entrega"],
+  ["posvenda", "Pós-venda"],
 ];
 
 export const HIST_FILTER_DEF: Array<[string, string]> = [

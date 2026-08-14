@@ -18,13 +18,11 @@ import {
   HIST_FILTER_DEF,
   MODE_DEF,
   MODULE_META,
-  ORDER,
   PENDING,
   PRIMARY,
   PRIO,
   RAIL_DEF,
   RESOLVED_RAW,
-  STAGE_DEF,
   STATUS_LABEL,
   TONE,
 } from "./mock-data";
@@ -77,6 +75,10 @@ import {
   salvarIdentificacaoV3,
   salvarProvaEntradaV3,
   salvarAcessoriosEntradaV3,
+  adicionarFotoEntradaV3,
+  removerFotoEntradaV3,
+  salvarAssinaturaClienteV3,
+  type AdicionarFotoEntradaInputV3,
   type SalvarProvaEntradaInputV3,
 } from "@/lib/operacoes-v3/prova-entrada-actions";
 import type { IdentificacaoV3, AcessorioEntradaV3 } from "@/lib/operacoes-v3/prova-entrada-model";
@@ -92,6 +94,16 @@ import type { DocumentoTipoV3 } from "@/lib/operacoes-v3/documentos";
 import { editorToSalvarInputV4, seedEditorFromOS, type OrcamentoEditorV4 } from "@/lib/operacoes-v4/orcamento-form";
 import { seedEntradaEditor, type EntradaEditorV4 } from "@/lib/operacoes-v4/entrada-form";
 import { seedDadosBasicos, type DadosBasicosEditorV4 } from "@/lib/operacoes-v4/dados-basicos-form";
+import {
+  PIPELINE_OPERACIONAL_IDS_V4,
+  estadoNoPipelineOperacionalV4,
+  labelPipelineOperacionalV4,
+} from "@/lib/operacoes-v4/pipeline-operacional";
+import {
+  montarComercialHeaderV4,
+  montarFinanceiroHeaderV4,
+  montarHistoricoHeaderV4,
+} from "@/lib/operacoes-v4/os-header-transversal";
 import {
   adaptAcessoriosEntrada,
   adaptAnexos,
@@ -218,6 +230,9 @@ export interface V4DataCtx {
   salvarProvaEntrada: (input: SalvarProvaEntradaInputV3) => Promise<boolean>;
   salvarAcessorios: (acessorios: AcessorioEntradaV3[]) => Promise<boolean>;
   salvarChecklist: (itens: ChecklistEntradaItemV3[]) => Promise<boolean>;
+  adicionarFotoEntrada: (input: AdicionarFotoEntradaInputV3) => Promise<boolean>;
+  removerFotoEntrada: (fotoId: string) => Promise<boolean>;
+  salvarAssinaturaCliente: (dataUrl: string) => Promise<boolean>;
   // ---- Dados básicos da OS (slice OPS-V4-DADOS-BASICOS-OS-REAL-003B) ----
   salvarDadosBasicos: (input: SalvarDadosBasicosInputV3) => Promise<boolean>;
   // ---- Envio de orçamento por canal (GOAL OPS-V4-ORC-ENVIO-WA-025) ----
@@ -405,14 +420,6 @@ export function buildVals(
   // Status exibido: SEMPRE o da OS real carregada (sem drift após escritas/reloads);
   // o snapshot local `st.status` é só fallback enquanto nenhuma OS está selecionada.
   const status = realOS ? resolverStatusV4(realOS) : st.status;
-  const curIdx = (() => {
-    // F-03 fail-closed: status não reconhecido não marca NENHUMA etapa como
-    // atual/concluída (-1 deixa todas "pendentes") — em vez de fingir "em execução".
-    if (status === "desconhecido") return -1;
-    let i = ORDER.indexOf(status);
-    if (i < 0) i = ORDER.indexOf("em_execucao");
-    return i;
-  })();
 
   const go = (stage: V4Stage) =>
     update({ stage, view: "cockpit", module: "workspace", menu: null });
@@ -562,35 +569,33 @@ export function buildVals(
   const entradaFotos = realOS ? adaptFotosEntrada(realOS) : [];
   const entradaSeguranca = realOS ? adaptSegurancaEntrada(realOS) : EMPTY_SEGURANCA_ENTRADA;
 
-  // ---- pipeline ----
-  // Legendas (sub) das etapas do fluxo eram placeholders fabricados ("Bancada 02",
-  // "saldo R$ 590"…) → removidas. Só o nó Histórico exibe um sub REAL derivado da
-  // OS (contagem de eventos/anexos), ocultado quando vazio.
-  const pipeline = STAGE_DEF.map(([id, label, rep]) => {
-    const ri = ORDER.indexOf(rep);
-    const after = id === "posvenda";
-    const done = after ? false : ri < curIdx;
-    const current = after ? false : ri === curIdx;
-    const pending = after ? true : ri > curIdx;
+  // ---- pipeline operacional (5 etapas técnicas) ----
+  // Orçamento, Financeiro e Histórico saíram da trilha — vivem no header.
+  const hasOpenCharge =
+    financialProjection?.financialStatus === "OPEN" || financialProjection?.financialStatus === "PARTIAL";
+  const pipeline = PIPELINE_OPERACIONAL_IDS_V4.map((id) => {
+    const node = estadoNoPipelineOperacionalV4(id, status, {
+      canDeliver: financialProjection?.canDeliver,
+      hasOpenCharge,
+    });
     const selected = st.stage === id;
+    const label = labelPipelineOperacionalV4(id);
     return {
-      id, label, sub: "", done, current, pending, ref: false, selected, onClick: () => go(id),
+      id,
+      label,
+      sub: node.alertReason ?? "",
+      done: node.done,
+      current: node.current,
+      pending: node.pending,
+      alert: node.alert,
+      alertReason: node.alertReason,
+      ref: false,
+      selected,
+      onClick: () => go(id),
       bg: selected ? C.primarySoft : C.surface,
-      underline: selected ? C.primary : "transparent",
-      labelColor: selected ? C.primaryHover : pending ? C.muted : C.ink,
+      underline: selected ? C.primary : node.alert ? C.warn : node.current ? C.primaryBd : "transparent",
+      labelColor: selected ? C.primaryHover : node.alert ? C.warnFg : node.pending ? C.muted : C.ink,
     };
-  });
-  const histSelected = st.stage === "historico";
-  const histSubParts: string[] = [];
-  if (timelineReal.length) histSubParts.push(`${timelineReal.length} ${timelineReal.length === 1 ? "evento" : "eventos"}`);
-  if (anexosReais.length) histSubParts.push(`${anexosReais.length} ${anexosReais.length === 1 ? "anexo" : "anexos"}`);
-  pipeline.push({
-    id: "historico", label: "Histórico", sub: histSubParts.join(" · "),
-    done: false, current: false, pending: false, ref: true, selected: histSelected,
-    onClick: () => go("historico"),
-    bg: histSelected ? C.primarySoft : C.surface,
-    underline: histSelected ? C.primary : "transparent",
-    labelColor: histSelected ? C.primaryHover : C.muted,
   });
 
   // ---- atividade ----
@@ -682,6 +687,20 @@ export function buildVals(
   const orcamentoEditavel = orcamentoMaterializado && (orcStatusRaw === "rascunho" || orcStatusRaw === "enviado");
   const orcamentoPodeDecidir = orcamentoEditavel;
   const orcamentoEditorSeed = seedEditorFromOS(realOS);
+  const comercialHeader = montarComercialHeaderV4({
+    estado: orcamentoReal.estado,
+    status: orcStatusRaw,
+    total: typeof orcRaw?.total === "number" ? orcRaw.total : financialProjection?.approvedBudgetTotal,
+  });
+  const financeiroHeader = montarFinanceiroHeaderV4({
+    loading: ctx.financialProjection.loading,
+    error: ctx.financialProjection.error,
+    financialStatus: financialProjection?.financialStatus,
+    expectedTotal: financialProjection?.expectedTotal,
+    receivedTotal: financialProjection?.receivedTotal,
+    balance: financialProjection?.balance,
+  });
+  const historicoHeader = montarHistoricoHeaderV4(timelineReal.length);
 
   // ---- Execução (slice OPS-V4-EXECUCAO-REAL-007): ações habilitadas SÓ quando a
   // máquina única (`podeTransicionarV3`) permite a partir do status real atual —
@@ -1065,6 +1084,12 @@ export function buildVals(
     // GOAL OPS-V4-ENTREGA-GUARD-SEM-COBRANCA-002: usado pelo alerta "OS sem cobrança"
     // da Entrega — leva o operador a lançar o orçamento antes de entregar (só navega).
     goOrcamento: () => update({ stage: "orcamento", module: "workspace", view: "cockpit", menu: null }),
+    goHistorico: () => update({ stage: "historico", module: "workspace", view: "cockpit", menu: null }),
+    openHeaderDestino: (destino: "orcamento" | "financeiro" | "historico") =>
+      update({ stage: destino, module: "workspace", view: "cockpit", menu: null }),
+    comercialHeader,
+    financeiroHeader,
+    historicoHeader,
     backFromSeguranca: () => update({ stage: "execucao", module: "workspace", view: "cockpit", menu: null }),
 
     menu: st.menu, menuPrint: st.menu === "print", menuMore: st.menu === "more",
@@ -1247,13 +1272,13 @@ export function buildVals(
     comercialV4: lerComercialV4(ctx.realOS),
 
     // ---- Entrada/Recepção REAL (slice OPS-V4-ENTRADA-RECEPCAO-REAL-003) ----
-    // Handlers reais (actions V3 prova-entrada/checklist). Fotos/assinatura/anexos/
-    // documentos e os dados básicos avançados (defeito/prioridade/recepção/observações)
-    // seguem preview/futuro (slice 3B).
     salvarIdentificacao: ctx.salvarIdentificacao,
     salvarProvaEntrada: ctx.salvarProvaEntrada,
     salvarAcessorios: ctx.salvarAcessorios,
     salvarChecklist: ctx.salvarChecklist,
+    adicionarFotoEntrada: ctx.adicionarFotoEntrada,
+    removerFotoEntrada: ctx.removerFotoEntrada,
+    salvarAssinaturaCliente: ctx.salvarAssinaturaCliente,
     entradaEditorSeed,
     // ---- Dados básicos da OS REAL (slice OPS-V4-DADOS-BASICOS-OS-REAL-003B) ----
     salvarDadosBasicos: ctx.salvarDadosBasicos,
@@ -1650,6 +1675,21 @@ export function useV4Preview(): V4Vals {
       runWrite((sid, osId) => salvarChecklistEntradaV3(sid, osId, itens), "Checklist salvo."),
     [runWrite],
   );
+  const adicionarFotoEntrada = useCallback(
+    (input: AdicionarFotoEntradaInputV3) =>
+      runWrite((sid, osId) => adicionarFotoEntradaV3(sid, osId, input), "Foto da entrada adicionada."),
+    [runWrite],
+  );
+  const removerFotoEntrada = useCallback(
+    (fotoId: string) =>
+      runWrite((sid, osId) => removerFotoEntradaV3(sid, osId, fotoId), "Foto da entrada removida."),
+    [runWrite],
+  );
+  const salvarAssinaturaCliente = useCallback(
+    (dataUrl: string) =>
+      runWrite((sid, osId) => salvarAssinaturaClienteV3(sid, osId, dataUrl), "Assinatura da entrada salva."),
+    [runWrite],
+  );
 
   // ---- Dados básicos da OS (slice 003B): handler real (payload-only, sem financeiro) ----
   const salvarDadosBasicos = useCallback(
@@ -1729,6 +1769,9 @@ export function useV4Preview(): V4Vals {
       salvarProvaEntrada,
       salvarAcessorios,
       salvarChecklist,
+      adicionarFotoEntrada,
+      removerFotoEntrada,
+      salvarAssinaturaCliente,
       salvarDadosBasicos,
       enviarOrcamentoPorCanal,
       orcamentoRapidoPrefill,
@@ -1771,6 +1814,9 @@ export function useV4Preview(): V4Vals {
       salvarProvaEntrada,
       salvarAcessorios,
       salvarChecklist,
+      adicionarFotoEntrada,
+      removerFotoEntrada,
+      salvarAssinaturaCliente,
       salvarDadosBasicos,
       enviarOrcamentoPorCanal,
       orcamentoRapidoPrefill,

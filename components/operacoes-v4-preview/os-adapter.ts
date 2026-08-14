@@ -23,6 +23,7 @@ import type {
   OrcamentoStatus,
 } from "@/types/os";
 import type { V4Status, V4Stage } from "./types";
+import { destinoOperacionalPorStatusV4 } from "@/lib/operacoes-v4/pipeline-operacional";
 import { C, fmt } from "./tokens";
 // Reuso PURO (read-only) dos readers da V3: identificação rica da prova de entrada
 // e dados básicos da recepção (recebido por / localização / origem / observações).
@@ -183,31 +184,9 @@ export function resolverStatusV4(os: OSStatusFonteV4 | null | undefined): V4Stat
   return realStatusToV4(legado as string);
 }
 
-/** Estágio inicial do pipeline V4 sugerido a partir do status real da OS. */
+/** Estágio inicial sugerido a partir do status real da OS. */
 export function stageForStatus(status: OSStatus | string | undefined): V4Stage {
-  switch (status) {
-    case "aberta":
-      return "entrada";
-    case "diagnostico":
-      return "diagnostico";
-    case "aguardando_aprovacao":
-    case "aprovado":
-      return "orcamento";
-    case "em_execucao":
-    case "aguardando_peca":
-      return "execucao";
-    case "pronta":
-    case "entregue":
-      return "entrega";
-    case "cancelada":
-      return "historico";
-    // F-03 fail-closed: sem etapa operacional para estado não reconhecido —
-    // "entrada" abriria a recepção da OS como se ela estivesse começando agora.
-    case "desconhecido":
-      return "historico";
-    default:
-      return "historico";
-  }
+  return destinoOperacionalPorStatusV4(status as V4Status);
 }
 
 /** Prioridade real (baixa|media|alta|critica) → prioridade da V4 (baixa|normal|alta|urgente). */

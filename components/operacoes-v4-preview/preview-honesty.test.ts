@@ -44,6 +44,9 @@ vi.mock("@/lib/operacoes-v3/prova-entrada-actions", () => ({
   salvarIdentificacaoV3: vi.fn(async () => ({})),
   salvarProvaEntradaV3: vi.fn(async () => ({})),
   salvarAcessoriosEntradaV3: vi.fn(async () => ({})),
+  adicionarFotoEntradaV3: vi.fn(async () => ({})),
+  removerFotoEntradaV3: vi.fn(async () => ({})),
+  salvarAssinaturaClienteV3: vi.fn(async () => ({})),
 }))
 vi.mock("@/lib/operacoes-v3/dados-basicos-actions", () => ({
   salvarDadosBasicosOSV3: vi.fn(async () => ({})),
@@ -220,6 +223,9 @@ const ctx: V4DataCtx = {
   salvarProvaEntrada: async () => false,
   salvarAcessorios: async () => false,
   salvarChecklist: async () => false,
+  adicionarFotoEntrada: async () => false,
+  removerFotoEntrada: async () => false,
+  salvarAssinaturaCliente: async () => false,
   salvarDadosBasicos: async () => false,
   enviarOrcamentoPorCanal: async () => ({ ok: false }),
   orcamentoRapidoPrefill: null,
@@ -644,7 +650,7 @@ describe("OPS-V4-PIPELINE-DEDUP-004 — a spine é a única fonte da etapa atual
   // O segundo trilho (`v.steps`, renderizado pela Atividade) foi REMOVIDO pelo
   // GOAL OPS-V4-RIGHT-RAIL-DEDUP-001 — a divergência que este describe caçava
   // deixou de ser possível por construção. Restam os invariantes da spine.
-  it("OS 'pronta' (o caso da auditoria): a spine marca 'Financeiro' como etapa atual — nunca 'Pronta' nem 'Entrega'", () => {
+  it("OS 'pronta': a spine marca 'Entrega' como etapa atual — Financeiro saiu da trilha", () => {
     const v = buildVals(
       makeState({ status: "em_execucao", selectedOsId: "os-x", novaOS: false }),
       () => {},
@@ -652,12 +658,35 @@ describe("OPS-V4-PIPELINE-DEDUP-004 — a spine é a única fonte da etapa atual
       { ...ctx, realOS: mkOS({ id: "os-x", status: "pronta" }) },
     )
     const pipelineAtual = v.pipeline.find((n) => n.current)
-    expect(pipelineAtual?.label).toBe("Financeiro")
-    // Só pode existir UM nó "atual" na spine.
+    expect(pipelineAtual?.label).toBe("Entrega")
+    expect(v.pipeline.map((n) => n.id)).toEqual(["entrada", "diagnostico", "execucao", "entrega", "posvenda"])
     expect(v.pipeline.filter((n) => n.current)).toHaveLength(1)
   })
 
-  it("abrir a aba Entrega numa OS 'pronta' não marca Entrega como concluída (pending, não done)", () => {
+  it("header comercial/financeiro/histórico reutilizam os estágios reais e não a pipeline", () => {
+    const v = buildVals(
+      makeState({ status: "aberta", selectedOsId: "os-x", novaOS: false }),
+      () => {},
+      () => {},
+      {
+        ...ctx,
+        realOS: mkOS({
+          id: "os-x",
+          status: "aberta",
+          orcamento: { status: "aprovado", total: 400, sintetizado: false, servicos: [{ id: "s1", descricao: "Tela", valor: 400 }], pecas: [] },
+        }),
+        financialProjection: financialStateFromPayment({ total: 400, recebido: 0, saldo: 400, status: "aberto" }),
+      },
+    )
+    expect(v.comercialHeader.label).toBe("R$ 400,00 · Aprovado")
+    expect(v.financeiroHeader.label).toBe("A receber R$ 400,00")
+    expect(v.historicoHeader.label).toBe("Histórico")
+    expect(v.goOrcamento).toBeTypeOf("function")
+    expect(v.goFinanceiro).toBeTypeOf("function")
+    expect(v.goHistorico).toBeTypeOf("function")
+  })
+
+  it("abrir a aba Entrega numa OS 'pronta' marca Entrega como atual, não concluída", () => {
     const v = buildVals(
       makeState({ status: "em_execucao", selectedOsId: "os-x", stage: "entrega", novaOS: false }),
       () => {},
@@ -665,9 +694,10 @@ describe("OPS-V4-PIPELINE-DEDUP-004 — a spine é a única fonte da etapa atual
       { ...ctx, realOS: mkOS({ id: "os-x", status: "pronta" }) },
     )
     const entregaNode = v.pipeline.find((n) => n.id === "entrega")
-    expect(entregaNode?.selected).toBe(true) // aba aberta
-    expect(entregaNode?.done).toBe(false) // mas NÃO marcada como já realizada
-    expect(entregaNode?.pending).toBe(true)
+    expect(entregaNode?.selected).toBe(true)
+    expect(entregaNode?.current).toBe(true)
+    expect(entregaNode?.done).toBe(false)
+    expect(entregaNode?.pending).toBe(false)
   })
 })
 
@@ -2136,9 +2166,12 @@ describe("GOAL OPS-V4-DOCS-ASSINATURA-TERMOS-ANEXOS-012 — Fotos de entrada rea
     expect(fn).toContain("lerProvaEntradaV3")
   })
 
-  it("EntradaStage não finge upload real: o botão/estado permanece honesto sobre a ausência de contrato de upload", () => {
-    const src = readFileSync(join(DIR, "parts", "stages", "EntradaStage.tsx"), "utf8")
-    expect(src).toMatch(/upload em breve/i)
+  it("Entrada usa as actions reais de foto e assinatura da prova de entrada", () => {
+    const src = readFileSync(join(DIR, "parts", "stages", "EntradaSections.tsx"), "utf8")
+    expect(src).toContain("v.adicionarFotoEntrada")
+    expect(src).toContain("v.removerFotoEntrada")
+    expect(src).toContain("v.salvarAssinaturaCliente")
+    expect(src).not.toMatch(/upload em breve/i)
   })
 })
 

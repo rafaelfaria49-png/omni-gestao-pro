@@ -48,7 +48,7 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
 
   it("abre rails por hover com atraso e por foco de teclado sem atraso", () => {
     expect(hoverRail).toContain("openDelay = 170");
-    expect(hoverRail).toContain("focused.current = true");
+    expect(hoverRail).toContain("keyboardFocus.current = true");
     expect(hoverRail).toContain("requestOpen()");
     expect(hoverRail).toContain('event.pointerType === "touch"');
   });
@@ -60,44 +60,54 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
     expect(overlayContext).toContain('type: "close-last"');
   });
 
-  it("declara prioridade Global > V4 > Contexto > Entrada", () => {
+  it("declara prioridade Global > V4 > Contexto, sem rail de entrada", () => {
     expect(overlayModel).toContain('"global-nav": 80');
     expect(overlayModel).toContain('"v4-nav": 70');
     expect(overlayModel).toContain('"os-context": 60');
-    expect(overlayModel).toContain('"entrada-nav": 50');
+    expect(overlayModel).not.toContain("entrada-nav");
   });
 
-  it("renderiza somente a seção ativa por switch", () => {
-    expect(sections).toContain("switch (props.section)");
-    expect(sections.match(/case "/g)).toHaveLength(7);
+  it("renderiza o grupo ativo por switch", () => {
+    expect(sections).toContain("switch (props.group)");
+    expect(sections.match(/case "/g)).toHaveLength(4);
   });
 
-  it("inicia a Entrada em Dados básicos", () => {
-    expect(workspace).toContain('useState<EntradaSectionId>("dados-basicos")');
+  it("inicia a Entrada em Recepção", () => {
+    expect(workspace).toContain('useState<EntradaGroupId>("recepcao")');
   });
 
-  it("seleciona explicitamente a tela de Identificação", () => {
-    expect(sections).toContain('case "identificacao": return <IdentificacaoSection');
+  it("Recepção mostra o que já veio da abertura e só pede o que falta", () => {
+    expect(sections).toContain("<ConferenciaSnapshot");
+    expect(sections).toContain("Informado na abertura");
+    expect(sections).toContain("resolverIdentidadeAparelhoV4");
+    expect(sections).toContain("Corrigir dados da abertura");
+    expect(sections).toContain("<DadosBasicosSection");
+    expect(sections).toContain("<IdentificacaoSection");
   });
 
-  it("seleciona explicitamente a tela de Checklist", () => {
-    expect(sections).toContain('case "checklist": return <ChecklistSection');
+  it("Inspeção marca Face ID/Biometria como N/A quando o recurso não existe", () => {
+    expect(sections).toContain("rotuloChecklistExibidoV4");
+  });
+
+  it("Inspeção junta estado físico e checklist no mesmo grupo", () => {
+    expect(sections).toContain("<EstadoFisicoSection");
+    expect(sections).toContain("<ChecklistSection");
   });
 
   it("mantém os drafts no pai do conteúdo alternado", () => {
     expect(workspace).toContain("const [ed, setEd]");
     expect(workspace).toContain("const [db, setDb]");
-    expect(workspace).toContain("<EntradaSections section={active}");
+    expect(workspace).toContain("<EntradaSections group={active}");
   });
 
-  it("só avança depois que o save retorna sucesso", () => {
-    expect(workspace).toMatch(/const saved = await saveSection\(active\);[\s\S]*if \(saved && next\) setActive\(next\)/);
+  it("só avança depois que o save do grupo retorna sucesso", () => {
+    expect(workspace).toMatch(/const saved = await saveGroup\(active\);[\s\S]*if \(saved && next\) setActive\(next\)/);
   });
 
-  it("mantém a seção atual quando a persistência falha", () => {
-    const saveSection = workspace.slice(workspace.indexOf("const saveSection"), workspace.indexOf("const saveAndContinue"));
-    expect(saveSection).toMatch(/if \(!saved\)[\s\S]*return false/);
-    expect(saveSection).not.toContain("setActive(");
+  it("mantém o grupo atual quando a persistência falha", () => {
+    const saveGroup = workspace.slice(workspace.indexOf("const saveGroup"), workspace.indexOf("const saveAndContinue"));
+    expect(saveGroup).toMatch(/if \(!saved\)[\s\S]*return false/);
+    expect(saveGroup).not.toContain("setActive(");
   });
 
   it("reusa os cinco handlers e mapeadores reais da Entrada", () => {
@@ -130,17 +140,14 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
     expect(workspace).toContain("Sem salvamento automático");
   });
 
-  it("contém o overflow horizontal no rail mobile sem alargar o canvas", () => {
-    expect(entranceCss).toContain("grid-template-columns: 66px minmax(0, 1fr)");
+  it("a Entrada não compete mais com overlay lateral — grupos ficam no canvas", () => {
+    expect(entranceRail).not.toContain("CollapsibleHoverRail");
+    expect(entranceRail).not.toContain("entrada-nav");
+    expect(entranceRail).toContain("Grupos da entrada");
+    expect(entranceCss).toContain("grid-template-columns: repeat(4, minmax(0, 1fr))");
+    expect(entranceCss).toContain(".confirmedField");
     expect(entranceCss).toMatch(/\.canvas \{[\s\S]*min-width: 0/);
     expect(entranceCss).toMatch(/@media \(max-width: 1023px\)[\s\S]*overflow-x: auto/);
-  });
-
-  it("Entrada reserva 66px e expande para 224px somente em overlay", () => {
-    expect(entranceRail).toContain("compactWidth={66}");
-    expect(entranceRail).toContain("expandedWidth={224}");
-    expect(entranceRail).toContain('overlayId="entrada-nav"');
-    expect(hoverRail).toContain("style={{ width: compactWidth, zIndex: priority }}");
   });
 
   it("mantém as larguras compactas no fluxo ao expandir Global e V4", () => {
@@ -148,7 +155,7 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
     expect(sidebar).toContain("expandedWidth={224}");
     expect(iconRail).toContain("compactWidth={54}");
     expect(iconRail).toContain("expandedWidth={196}");
-    expect(hoverRail).toContain("data-reserved-width={compactWidth}");
+    expect(hoverRail).toContain("data-reserved-width={reservedWidth}");
   });
 
   it("mantém Atividade independente no grupo direito", () => {
@@ -164,12 +171,12 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
     expect(contextDrawer).toContain('document.addEventListener("pointerdown", onPointerDown)');
   });
 
-  it("usa ícones semânticos e preserva indicadores completos e dirty", () => {
-    for (const icon of ["ClipboardList", "BadgeInfo", "KeyRound", "Smartphone", "ListChecks", "PackageCheck", "Camera"]) {
+  it("usa ícones semânticos dos quatro grupos e preserva indicador de concluído", () => {
+    for (const icon of ["Search", "KeyRound", "ClipboardCheck", "PackageCheck"]) {
       expect(entranceRail).toContain(icon);
     }
     expect(entranceRail).toContain("completeMark");
-    expect(entranceRail).toContain("dirtyDot");
+    expect(entranceRail).toContain("groupChipDirty");
   });
 
   it("respeita prefers-reduced-motion nas animações novas", () => {
@@ -177,10 +184,40 @@ describe("Operações V4 — arquitetura do workspace focado", () => {
     expect(hoverRail).toContain("motion-reduce:transition-none");
   });
 
-  it("mantém Fotos sem ação falsa de upload", () => {
+  it("Evidências usa as actions reais de foto e assinatura da entrada", () => {
     const photos = sections.slice(sections.indexOf("function FotosSection"));
-    expect(photos).toContain("upload por esta tela estará disponível em breve");
-    expect(photos).not.toContain("type=\"file\"");
-    expect(photos).not.toContain("onClick");
+    expect(photos).toContain("v.adicionarFotoEntrada");
+    expect(photos).toContain("v.removerFotoEntrada");
+    expect(photos).toContain("type=\"file\"");
+    expect(photos).not.toContain("upload por esta tela estará disponível em breve");
+    expect(sections).toContain("v.salvarAssinaturaCliente");
+    expect(sections).toContain("Assinatura do cliente");
+  });
+});
+
+describe("Operações V4 — TopBar, Diagnóstico e Execução do GOAL 002", () => {
+  const topBar = read(DIR, "parts", "TopBar.tsx");
+  const diagnostico = read(DIR, "parts", "stages", "DiagnosticoStage.tsx");
+  const execucao = read(DIR, "parts", "stages", "ExecucaoStage.tsx");
+
+  it("TopBar deixa de competir com a rail V4", () => {
+    expect(topBar).not.toContain("v.modeBtns");
+    expect(topBar).not.toContain("Recepção");
+    expect(topBar).not.toContain("Auditoria de UX");
+    expect(topBar).toContain("+ Novo");
+    expect(topBar).toContain("onFoco");
+    expect(topBar).toContain("goToOSSearch");
+  });
+
+  it("Diagnóstico mostra o defeito como contexto e preserva parecer final legado", () => {
+    expect(diagnostico).toContain("Cliente relatou");
+    expect(diagnostico).not.toContain("Parecer final");
+    expect(diagnostico).toContain("final: d.parecerFinal");
+    expect(diagnostico).toContain("Criar orçamento");
+  });
+
+  it("Execução não mostra o card preview de autorização", () => {
+    expect(execucao).not.toContain("Autorização necessária");
+    expect(execucao).not.toContain("Ver componentes de segurança");
   });
 });

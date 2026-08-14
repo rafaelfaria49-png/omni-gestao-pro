@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useState } from "react";
 import {
   INITIAL_WORKSPACE_OVERLAY_STATE,
+  WORKSPACE_DOCK_STORAGE_KEY,
+  parseDockedRailsV1,
+  serializeDockedRailsV1,
   workspaceOverlayReducer,
   type WorkspaceOverlayGroup,
   type WorkspaceOverlayId,
@@ -32,9 +35,33 @@ const WorkspaceFocusContext = createContext<WorkspaceFocusValue>({
   closeOverlayGroup: () => undefined,
 });
 
+function readStoredDocks(): WorkspaceOverlayId[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return parseDockedRailsV1(window.localStorage.getItem(WORKSPACE_DOCK_STORAGE_KEY));
+  } catch {
+    return [];
+  }
+}
+
 export function WorkspaceFocusProvider({ children }: { children: ReactNode }) {
   const [focusMode, setFocusMode] = useState(false);
   const [overlayState, dispatchOverlay] = useReducer(workspaceOverlayReducer, INITIAL_WORKSPACE_OVERLAY_STATE);
+  const [docksReady, setDocksReady] = useState(false);
+
+  useEffect(() => {
+    dispatchOverlay({ type: "hydrate-docks", ids: readStoredDocks() });
+    setDocksReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!docksReady || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(WORKSPACE_DOCK_STORAGE_KEY, serializeDockedRailsV1(overlayState));
+    } catch {
+      /* quota / private mode — preferência é best-effort */
+    }
+  }, [docksReady, overlayState.dockedRails]);
   const openOverlay = useCallback((id: WorkspaceOverlayId, group: WorkspaceOverlayGroup) => {
     dispatchOverlay({ type: "open", id, group });
   }, []);

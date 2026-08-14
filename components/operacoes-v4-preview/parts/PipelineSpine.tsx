@@ -1,56 +1,54 @@
-/** Operações V4 Preview — trilha horizontal das etapas (52px). */
+/** Operações V4 — trilha operacional: Entrada → Diagnóstico → Execução → Entrega → Pós-venda. */
 import { C } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
+import styles from "../operacoes-v4-preview.module.css";
 
 export function PipelineSpine({ v }: { v: V4Vals }) {
   return (
     <div
+      role="navigation"
+      aria-label="Pipeline operacional da OS"
+      className={styles.spineTrack}
       style={{
         flex: "none",
         display: "flex",
         alignItems: "stretch",
-        height: 52,
+        height: 48,
         padding: "0 8px",
         background: C.surface,
         borderBottom: `1px solid ${C.line}`,
       }}
     >
-      {v.pipeline.map((n) => (
+      {v.pipeline.map((n, index) => (
         <button
           key={n.id}
           type="button"
           onClick={n.onClick}
-          title={n.sub ? `${n.label} — ${n.sub}` : n.label}
+          title={n.alertReason || n.sub ? `${n.label} — ${n.alertReason || n.sub}` : n.label}
+          aria-current={n.selected ? "step" : undefined}
+          className={styles.spineNode}
           style={{
-            flex: 1,
-            minWidth: 0,
-            position: "relative",
-            display: "flex",
-            alignItems: "center",
-            gap: 7,
-            padding: "0 10px",
-            border: "none",
             background: n.bg,
-            cursor: "pointer",
-            textAlign: "left",
             borderBottom: `2.5px solid ${n.underline}`,
           }}
         >
-          {n.done && (
-            <span style={{ width: 16, height: 16, borderRadius: "50%", background: C.success, color: C.white, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, flex: "none" }}>✓</span>
+          {n.done && !n.alert && (
+            <span className={styles.spineMark} style={{ background: C.success, color: C.white }}>✓</span>
           )}
-          {n.current && (
-            <span style={{ width: 16, height: 16, borderRadius: "50%", background: C.primary, color: C.white, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, flex: "none", boxShadow: `0 0 0 3px ${C.primaryBg}` }}>●</span>
+          {n.current && !n.alert && (
+            <span className={styles.spineMark} style={{ background: C.primary, color: C.white, boxShadow: `0 0 0 3px ${C.primaryBg}` }}>●</span>
           )}
-          {n.pending && (
-            <span style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${C.inputBd}`, background: C.surface, flex: "none" }} />
+          {n.pending && !n.alert && (
+            <span className={styles.spineMark} style={{ border: `2px solid ${C.inputBd}`, background: C.surface, color: C.subtle, fontSize: 8 }}>{String(index + 1).padStart(2, "0")}</span>
           )}
-          {n.ref && (
-            <span style={{ width: 16, height: 16, borderRadius: 5, background: C.line3, color: C.subtle, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, flex: "none" }}>≡</span>
+          {n.alert && (
+            <span className={styles.spineMark} style={{ background: C.warnBg, color: C.warnFg, border: `1.5px solid ${C.warnBd}` }}>!</span>
           )}
           <div style={{ minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: n.labelColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.label}</span>
-            {n.sub && <span style={{ fontSize: 10, color: C.subtle, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.sub}</span>}
+            <span style={{ fontSize: 12, fontWeight: 650, color: n.labelColor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.label}</span>
+            {(n.alertReason || n.sub) ? (
+              <span style={{ fontSize: 10, color: n.alert ? C.warnFg : C.subtle, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{n.alertReason || n.sub}</span>
+            ) : null}
           </div>
         </button>
       ))}

@@ -57,3 +57,173 @@
     transition: none;
   }
 }
+
+/* GOAL OPS-V4-PIPELINE-ENTRADA-NAV-SIMPLIFY-002 — tickets do header da OS */
+.headerTicket {
+  display: flex;
+  min-width: 0;
+  max-width: 220px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  height: 36px;
+  padding: 3px 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.14s ease, background-color 0.14s ease, box-shadow 0.14s ease;
+}
+.headerTicket:hover,
+.headerTicket:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+  background: color-mix(in srgb, var(--primary) 6%, var(--card));
+  outline: none;
+}
+.headerTicket:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+}
+.headerTicketCurrent {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.headerTicketEyebrow {
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  line-height: 1;
+}
+.headerTicketLabel {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.headerTicketMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.headerTicketCta {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--primary);
+}
+.headerHistory {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--foreground);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+.headerHistory:hover,
+.headerHistory:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 32%, var(--border));
+  background: color-mix(in srgb, var(--primary) 6%, var(--card));
+  outline: none;
+}
+.headerHistoryCurrent {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+}
+.headerHistoryCount {
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.headerBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  min-height: 46px;
+  padding: 7px 14px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.headerIdentity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.headerOps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.headerDivider {
+  width: 1px;
+  align-self: stretch;
+  min-height: 28px;
+  background: var(--border);
+  flex: none;
+}
+.spineTrack {
+  position: relative;
+}
+.spineTrack::before {
+  content: "";
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  top: 50%;
+  height: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.spineNode {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  background: transparent;
+}
+.spineMark {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 800;
+}
+@media (prefers-reduced-motion: reduce) {
+  .headerTicket,
+  .headerHistory {
+    transition: none;
+  }
+}

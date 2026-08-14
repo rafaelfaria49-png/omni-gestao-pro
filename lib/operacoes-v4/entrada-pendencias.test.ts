@@ -19,16 +19,16 @@ describe("derivarPendenciasEntradaV4", () => {
     expect(derivarPendenciasEntradaV4(undefined)).toEqual([]);
   });
 
-  it("OS vazia → todos os itens com contrato ficam pendentes; fotos é informativo", () => {
+  it("OS vazia → todos os itens com contrato ficam pendentes", () => {
     const pendencias = derivarPendenciasEntradaV4(osVazia);
     expect(pendencias).toHaveLength(6);
 
     const acionaveis = pendencias.filter((p) => p.temContrato);
-    expect(acionaveis).toHaveLength(5);
+    expect(acionaveis).toHaveLength(6);
     expect(acionaveis.every((p) => p.preenchido === false)).toBe(true);
 
     const fotos = porChave(pendencias, "fotos");
-    expect(fotos.temContrato).toBe(false);
+    expect(fotos.temContrato).toBe(true);
     expect(fotos.preenchido).toBe(false);
   });
 
@@ -79,7 +79,7 @@ describe("derivarPendenciasEntradaV4", () => {
         identificacao: { imei: "I-1" },
         estadoFisico: [{ componente: "tela", status: "ok" }],
         avarias: [],
-        fotos: [],
+        fotos: [{ id: "f1", categoria: "frontal", dataUrl: "data:image/png;base64,x", criadoEm: "2026-01-01T12:00:00.000Z" }],
         credenciais: {},
         acessorios: [{ id: "chip", presente: true }],
       },
@@ -87,12 +87,10 @@ describe("derivarPendenciasEntradaV4", () => {
     const pendencias = derivarPendenciasEntradaV4(os);
     const acionaveis = pendencias.filter((p) => p.temContrato);
     expect(acionaveis.every((p) => p.preenchido === true)).toBe(true);
-
-    // Fotos continua informativo mesmo com tudo mais preenchido — nunca fica acionável.
-    expect(porChave(pendencias, "fotos").temContrato).toBe(false);
+    expect(porChave(pendencias, "fotos").temContrato).toBe(true);
   });
 
-  it("fotos: mesmo com fotos reais presentes, permanece temContrato:false (sem contrato de upload real)", () => {
+  it("fotos reais preenchem o contrato de evidências", () => {
     const os = {
       provaEntradaV3: {
         versao: 1,
@@ -108,15 +106,15 @@ describe("derivarPendenciasEntradaV4", () => {
     const pendencias = derivarPendenciasEntradaV4(os);
     const fotos = porChave(pendencias, "fotos");
     expect(fotos.preenchido).toBe(true);
-    expect(fotos.temContrato).toBe(false);
+    expect(fotos.temContrato).toBe(true);
   });
 });
 
 describe("progressoPendenciasEntradaV4", () => {
-  it("conta só itens com contrato — fotos nunca entra no denominador", () => {
+  it("conta os seis contratos reais, inclusive evidências", () => {
     const pendencias = derivarPendenciasEntradaV4(osVazia);
     const progresso = progressoPendenciasEntradaV4(pendencias);
-    expect(progresso.total).toBe(5);
+    expect(progresso.total).toBe(6);
     expect(progresso.preenchidos).toBe(0);
   });
 
@@ -127,7 +125,7 @@ describe("progressoPendenciasEntradaV4", () => {
     } as unknown as OrdemServico;
     const pendencias = derivarPendenciasEntradaV4(os);
     const progresso = progressoPendenciasEntradaV4(pendencias);
-    expect(progresso.total).toBe(5);
+    expect(progresso.total).toBe(6);
     expect(progresso.preenchidos).toBe(2);
   });
 });

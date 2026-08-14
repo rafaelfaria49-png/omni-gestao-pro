@@ -13,8 +13,7 @@
 //   • estado-avarias-acesso ← provaEntradaCriadaV3(os)               · salvarProvaEntradaV3
 //   • checklist             ← os.checklist (raw, não o reader com default) · salvarChecklistEntradaV3
 //   • acessorios            ← lerProvaEntradaV3(os).acessorios       · salvarAcessoriosEntradaV3
-//   • fotos                 ← lerProvaEntradaV3(os).fotos            · SEM contrato de upload real
-//                             (informativo, `temContrato: false` — nunca acionável)
+//   • fotos                 ← lerProvaEntradaV3(os).fotos / assinatura · adicionarFotoEntradaV3 / salvarAssinaturaClienteV3
 //
 // `estadoFisico` sozinho não serve de sinal: o valor padrão de cada componente
 // já nasce "ok" (ver `estadoFisicoPadraoV3`), então usar isso daria falso
@@ -47,8 +46,7 @@ function algumaStringPreenchida(valores: (string | undefined)[]): boolean {
 /**
  * Deriva a lista de pendências de entrada da OS real. Nunca fabrica dado: cada
  * `preenchido` reflete um campo que só existe depois de uma action V3 já
- * chamada pela V4 (ver `EntradaStage.tsx`). Itens sem contrato real (fotos)
- * vêm com `temContrato: false` e não contam para o progresso.
+ * chamada pela V4 (ver `EntradaWorkspace.tsx`).
  */
 export function derivarPendenciasEntradaV4(os: OrdemServico | null | undefined): PendenciaEntradaV4[] {
   if (!os) return [];
@@ -58,14 +56,18 @@ export function derivarPendenciasEntradaV4(os: OrdemServico | null | undefined):
   const checklistRaw = (os as unknown as { checklist?: unknown }).checklist;
   const checklistSalvo = Array.isArray(checklistRaw) && checklistRaw.length > 0;
   const acessoriosPresentes = (prova.acessorios ?? []).some((a) => a.presente === true);
+  const eq = os.equipamento;
   const identificacaoPreenchida = algumaStringPreenchida([
     prova.identificacao.imei,
     prova.identificacao.serial,
     prova.identificacao.operadora,
     prova.identificacao.modelo,
     prova.identificacao.cor,
+    eq?.modelo,
+    eq?.numeroSerie,
   ]);
   const fotos = prova.fotos ?? [];
+  const evidenciasPreenchidas = fotos.length > 0 || Boolean(prova.assinaturaCliente?.dataUrl);
 
   return [
     {
@@ -100,9 +102,9 @@ export function derivarPendenciasEntradaV4(os: OrdemServico | null | undefined):
     },
     {
       chave: "fotos",
-      rotulo: "Fotos de entrada (upload em breve)",
-      preenchido: fotos.length > 0,
-      temContrato: false,
+      rotulo: "Fotos e assinatura da entrada",
+      preenchido: evidenciasPreenchidas,
+      temContrato: true,
     },
   ];
 }

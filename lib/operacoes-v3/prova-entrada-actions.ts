@@ -200,7 +200,12 @@ export async function salvarIdentificacaoV3(storeId: string, osId: string, input
     },
   };
   const evento = makeEvento("observacao", operador, "Identificação do aparelho atualizada (IMEI/serial/operadora).", { evento: "identificacao_atualizada" });
-  return persistirProva(id, payload, next, operador, evento);
+  const equipamentoAtual = payload.equipamento && typeof payload.equipamento === "object"
+    ? { ...(payload.equipamento as unknown as Record<string, unknown>) }
+    : {};
+  if (next.identificacao.modelo) equipamentoAtual.modelo = next.identificacao.modelo;
+  if (next.identificacao.imei) equipamentoAtual.numeroSerie = next.identificacao.imei;
+  return persistirProva(id, payload, next, operador, evento, { equipamento: equipamentoAtual });
 }
 
 // ----------------------------------------------------------------------------

@@ -7,13 +7,12 @@ const dir = dirname(fileURLToPath(import.meta.url));
 const source = (relative: string) => readFileSync(join(dir, relative), "utf8");
 
 describe("Operações V4 — superfícies financeiras unificadas", () => {
-  it("Header usa total/recebido/saldo/status da projeção e não v.pag", () => {
+  it("Header usa o chip financeiro transversal derivado da projeção e não v.pag", () => {
     const header = source("parts/CommandHeader.tsx");
-    expect(header).toContain("v.financial")
-    expect(header).toContain("projection.expectedTotal")
-    expect(header).toContain("projection.receivedTotal")
-    expect(header).toContain("projection.balance")
+    expect(header).toContain("v.financeiroHeader")
+    expect(header).toContain("financeiro.destino")
     expect(header).not.toContain("v.pag.")
+    expect(header).not.toContain("v.financial")
   });
 
   it("Financeiro usa a projeção inclusive para CR, formas, parcelas e histórico", () => {

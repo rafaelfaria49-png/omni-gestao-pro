@@ -14,6 +14,7 @@
 // ============================================================================
 
 import type { OrdemServico } from "@/types/os";
+import { identidadeAtualV4 } from "./identidade-aparelho";
 import {
   lerProvaEntradaV3,
   ACESSORIOS_ENTRADA_V3,
@@ -107,13 +108,14 @@ export function seedEntradaEditor(os: OrdemServico | null | undefined): EntradaE
   const prova = lerProvaEntradaV3(os ?? null);
   const checklist = lerChecklistEntradaV3(os ?? null);
   const cred = prova.credenciais ?? {};
+  const identidade = identidadeAtualV4(os);
   return {
     identificacao: {
-      imei: str(prova.identificacao.imei),
-      serial: str(prova.identificacao.serial),
-      operadora: str(prova.identificacao.operadora),
-      modelo: str(prova.identificacao.modelo),
-      cor: str(prova.identificacao.cor),
+      imei: identidade.imei || str(prova.identificacao.imei),
+      serial: identidade.serial || str(prova.identificacao.serial),
+      operadora: identidade.operadora || str(prova.identificacao.operadora),
+      modelo: identidade.modelo || str(prova.identificacao.modelo),
+      cor: identidade.cor || str(prova.identificacao.cor),
     },
     estadoFisico: prova.estadoFisico.map((e) => ({ ...e })),
     avarias: prova.avarias.map((a) => ({ ...a })),

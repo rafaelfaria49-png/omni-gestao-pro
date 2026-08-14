@@ -42,10 +42,10 @@ export function DiagnosticoStage({ v }: { v: V4Vals }) {
 function DiagnosticoStageInner({ v }: { v: V4Vals }) {
   const d = v.diag;
   const [inicial, setInicial] = useState(d.parecerInicial);
-  const [final, setFinal] = useState(d.parecerFinal);
   const [causa, setCausa] = useState(d.causa);
   const [solucao, setSolucao] = useState(d.solucao);
   const [saving, setSaving] = useState(false);
+  const comercial = v.comercialHeader;
 
   const podeSalvar = v.osSelected && !saving;
 
@@ -53,7 +53,7 @@ function DiagnosticoStageInner({ v }: { v: V4Vals }) {
     if (!podeSalvar) return;
     setSaving(true);
     try {
-      await v.salvarDiagnostico({ inicial, final, causa, solucao });
+      await v.salvarDiagnostico({ inicial, final: d.parecerFinal, causa, solucao });
     } finally {
       setSaving(false);
     }
@@ -63,9 +63,12 @@ function DiagnosticoStageInner({ v }: { v: V4Vals }) {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 12, alignItems: "start" }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div style={card}>
-          <div style={{ ...cardTitle, marginBottom: 11 }}>🩺 Diagnóstico técnico</div>
-          <div style={{ ...upLabel, marginBottom: 4 }}>Defeito relatado</div>
-          <div style={{ ...fieldBox, minHeight: 40, color: d.temDefeito ? C.body : C.subtle }}>{d.defeito}</div>
+          <div style={{ ...cardTitle, marginBottom: 11 }}>Diagnóstico técnico</div>
+          <div style={{ ...upLabel, marginBottom: 4 }}>Cliente relatou</div>
+          <div style={{ ...fieldBox, minHeight: 40, color: d.temDefeito ? C.body : C.subtle }}>{d.temDefeito ? d.defeito : "Sem relato do cliente."}</div>
+          {d.parecerFinal ? (
+            <p style={{ ...emptyText, marginTop: 8 }}>Conclusão já registrada (consulta): {d.parecerFinal}</p>
+          ) : null}
 
           {!v.osSelected ? (
             <div style={{ ...emptyText, marginTop: 12 }}>Selecione uma Ordem de Serviço para registrar o diagnóstico.</div>
@@ -73,20 +76,16 @@ function DiagnosticoStageInner({ v }: { v: V4Vals }) {
             <>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10, marginTop: 13 }}>
                 <div>
-                  <div style={{ ...upLabel, marginBottom: 4 }}>Parecer inicial</div>
+                  <div style={{ ...upLabel, marginBottom: 4 }}>Avaliação inicial</div>
                   <textarea value={inicial} onChange={(e) => setInicial(e.target.value)} maxLength={2000} placeholder="Avaliação inicial do técnico…" style={textarea} />
-                </div>
-                <div>
-                  <div style={{ ...upLabel, marginBottom: 4 }}>Parecer final</div>
-                  <textarea value={final} onChange={(e) => setFinal(e.target.value)} maxLength={2000} placeholder="Conclusão após análise…" style={textarea} />
                 </div>
                 <div>
                   <div style={{ ...upLabel, marginBottom: 4 }}>Causa provável</div>
                   <textarea value={causa} onChange={(e) => setCausa(e.target.value)} maxLength={2000} placeholder="Causa identificada…" style={textarea} />
                 </div>
-                <div>
-                  <div style={{ ...upLabel, marginBottom: 4 }}>Solução prevista</div>
-                  <textarea value={solucao} onChange={(e) => setSolucao(e.target.value)} maxLength={2000} placeholder="Solução a aplicar…" style={textarea} />
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <div style={{ ...upLabel, marginBottom: 4 }}>Solução recomendada</div>
+                  <textarea value={solucao} onChange={(e) => setSolucao(e.target.value)} maxLength={2000} placeholder="Solução e observações técnicas…" style={textarea} />
                 </div>
               </div>
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
@@ -102,6 +101,22 @@ function DiagnosticoStageInner({ v }: { v: V4Vals }) {
             </>
           )}
         </div>
+
+        {v.osSelected ? (
+          <div style={card}>
+            <div style={{ ...cardTitle, marginBottom: 8 }}>Orçamento</div>
+            {comercial.hasBudget ? (
+              <button type="button" onClick={() => v.goOrcamento()} style={{ ...fieldBox, width: "100%", cursor: "pointer", justifyContent: "space-between" }}>
+                <span>{comercial.label}</span>
+                <span style={{ color: C.primary, fontWeight: 700 }}>Abrir</span>
+              </button>
+            ) : (
+              <button type="button" onClick={() => v.goOrcamento()} style={{ height: 34, padding: "0 16px", border: "none", background: C.primary, color: C.white, borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>
+                Criar orçamento
+              </button>
+            )}
+          </div>
+        ) : null}
 
         <div style={card}>
           <div style={{ ...cardTitle, marginBottom: 9 }}>

@@ -1,8 +1,194 @@
 .workspace {
-  display: grid;
-  grid-template-columns: 66px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 100%;
+  min-width: 0;
   background: var(--background);
+}
+
+.groupSwitch {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.groupSwitchMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.groupSwitchEyebrow {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.groupSwitchProgress {
+  justify-self: end;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.groupSwitchList {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.groupChip {
+  min-width: 0;
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.groupChip:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.groupChipActive {
+  border-color: color-mix(in oklab, var(--primary) 28%, var(--border));
+  background: color-mix(in oklab, var(--primary) 8%, var(--card));
+  color: var(--foreground);
+  box-shadow: inset 0 2px 0 var(--primary);
+}
+
+.groupChipDirty {
+  border-color: color-mix(in oklab, var(--warning, #d97706) 40%, var(--border));
+}
+
+.groupChipIcon {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--muted);
+  color: currentColor;
+}
+
+.groupChipIcon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.groupChipCopy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.groupChipStep {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  font-variant-numeric: tabular-nums;
+}
+
+.groupChipLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.snapshotGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  padding: 12px 14px;
+  border-left: 3px solid var(--primary);
+  border-radius: 0 10px 10px 0;
+  background: color-mix(in oklab, var(--primary) 5%, var(--card));
+}
+
+.confirmedField {
+  min-width: 0;
+}
+
+.confirmedValue {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.linkButton {
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.confirmedValue .linkButton {
+  margin-top: 0;
+  flex: none;
+}
+
+.choiceNA {
+  cursor: default;
+  opacity: .62;
+}
+
+.snapshotRow {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.snapshotRow dt {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.snapshotRow dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .desktopRail {
@@ -291,11 +477,11 @@
 .button:disabled { cursor: not-allowed; opacity: .5; }
 .saveNote { color: var(--muted-foreground); font-size: 10.5px; }
 
-.railItem:focus-visible,
-.pinButton:focus-visible,
+.groupChip:focus-visible,
 .choice:focus-visible,
 .chip:focus-visible,
 .iconButton:focus-visible,
+.linkButton:focus-visible,
 .button:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
@@ -306,14 +492,10 @@
 }
 
 @media (max-width: 1023px) {
-  .workspace { display: block; }
-  .desktopRail { display: none; }
-  .mobileRail { display: block; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--card); padding: 8px 10px; }
-  .mobileRail .railList { width: max-content; flex-direction: row; }
-  .mobileRail .railItem { width: 48px; min-height: 44px; grid-template-columns: 36px; padding: 4px 6px; }
-  .mobileRail .railLabel, .mobileRail .railState { display: none; }
-  .canvas { padding: 18px 14px; }
-  .fields, .choiceGrid { grid-template-columns: 1fr; }
+  .workspace { display: block; min-width: 0; }
+  .groupSwitchList { grid-template-columns: repeat(2, minmax(0, 1fr)); overflow-x: auto; }
+  .canvas { padding: 18px 14px; min-width: 0; }
+  .fields, .choiceGrid, .snapshotGrid { grid-template-columns: 1fr; }
   .span2 { grid-column: auto; }
   .inspectionRow { grid-template-columns: 1fr; gap: 7px; padding: 10px 0; }
   .sectionHeader { display: block; }
