@@ -71,7 +71,7 @@ const novoItems: NovoItem[] = [
   },
 ];
 
-export function Topbar() {
+export function Topbar({ focusMode = false }: { focusMode?: boolean }) {
   const { credits, loading, error } = useUserCredits();
   const { data: session, status } = useSession();
   const { collapsed: sidebarCollapsed, setCollapsed: setSidebarCollapsed } = useSidebarCollapsed();
@@ -145,7 +145,7 @@ export function Topbar() {
     <header className="h-14 shrink-0 border-b border-border bg-background/80 backdrop-blur-xl sticky top-0 z-30">
       <div className="h-full flex items-center gap-2 px-4 sm:px-6">
         <MobileNavSheet />
-        {sidebarCollapsed ? (
+        {sidebarCollapsed && !focusMode ? (
           <button
             type="button"
             onClick={() => setSidebarCollapsed(false)}

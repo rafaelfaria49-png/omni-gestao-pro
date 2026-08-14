@@ -1,0 +1,237 @@
+.workspace {
+  display: grid;
+  grid-template-columns: 224px minmax(0, 1fr);
+  min-height: 100%;
+  background: var(--background);
+}
+
+.sectionRail {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100%;
+  min-height: 520px;
+  padding: 22px 14px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in oklab, var(--card) 88%, var(--background));
+}
+
+.railHeading {
+  margin: 0 8px 16px;
+}
+
+.railEyebrow,
+.eyebrow {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+}
+
+.railProgress {
+  margin-top: 5px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.progressTrack {
+  height: 3px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.progressValue {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  transition: width 180ms ease-out;
+}
+
+.railList {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.railItem {
+  width: 100%;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  text-align: left;
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+
+.railItem:hover { background: var(--muted); color: var(--foreground); }
+.railItemActive { border-color: color-mix(in oklab, var(--primary) 20%, transparent); background: color-mix(in oklab, var(--primary) 8%, var(--card)); color: var(--foreground); }
+.railItemDirty .step { border-color: color-mix(in oklab, var(--primary) 55%, var(--border)); }
+
+.step {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.railItemActive .step { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.railLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 650; }
+.complete { color: var(--success); font-size: 14px; font-weight: 800; }
+.dirtyDot { width: 6px; height: 6px; justify-self: center; border-radius: 50%; background: var(--primary); }
+
+.canvas {
+  min-width: 0;
+  padding: clamp(20px, 3vw, 36px);
+}
+
+.canvasInner {
+  width: min(100%, 900px);
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 2px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sectionTitle { margin: 5px 0 4px; color: var(--foreground); font-size: clamp(22px, 2.2vw, 30px); font-weight: 720; letter-spacing: -.025em; line-height: 1.1; }
+.sectionDescription { max-width: 620px; margin: 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.5; }
+.stateBadge { flex: none; min-height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); font-size: 10px; font-weight: 750; white-space: nowrap; }
+.stateBadgeComplete { border-color: color-mix(in oklab, var(--success) 30%, var(--border)); color: var(--success); background: color-mix(in oklab, var(--success) 7%, transparent); }
+.stateBadgeDirty { border-color: color-mix(in oklab, var(--primary) 30%, var(--border)); color: var(--primary); }
+
+.formBody { flex: 1; padding: 24px 2px 32px; }
+.group + .group { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
+.groupTitle { margin: 0 0 5px; color: var(--foreground); font-size: 14px; font-weight: 750; }
+.groupHint { margin: 0 0 16px; color: var(--muted-foreground); font-size: 11.5px; line-height: 1.45; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 18px; }
+.span2 { grid-column: 1 / -1; }
+.field { min-width: 0; }
+.label { display: block; margin-bottom: 6px; color: var(--foreground); font-size: 11px; font-weight: 680; }
+.input, .select, .textarea {
+  width: 100%;
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  outline: none;
+  background: var(--card);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.input, .select { height: 40px; padding: 0 11px; }
+.textarea { min-height: 92px; padding: 10px 11px; line-height: 1.5; resize: vertical; }
+.input:focus, .select:focus, .textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px color-mix(in oklab, var(--primary) 13%, transparent); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.choiceGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.choice {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 620;
+}
+.choiceOn { border-color: color-mix(in oklab, var(--success) 45%, var(--border)); background: color-mix(in oklab, var(--success) 7%, var(--card)); }
+.choiceMark { width: 18px; height: 18px; display: grid; flex: none; place-items: center; border: 1px solid var(--border); border-radius: 5px; color: transparent; font-size: 11px; }
+.choiceOn .choiceMark { border-color: var(--success); background: var(--success); color: var(--background); }
+
+.inspectionList { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.inspectionRow { min-height: 54px; display: grid; grid-template-columns: minmax(0, 1fr) 170px; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); }
+.inspectionLabel { color: var(--foreground); font-size: 12.5px; font-weight: 650; }
+.damageTypes { display: flex; flex-wrap: wrap; gap: 7px; }
+.chip { min-height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); cursor: pointer; font-size: 11px; font-weight: 650; }
+.damageRow { display: grid; grid-template-columns: 82px minmax(0, 1fr) 36px; align-items: center; gap: 8px; margin-top: 8px; }
+.damageType { color: var(--muted-foreground); font-size: 11px; }
+.iconButton { width: 36px; height: 40px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--primary); cursor: pointer; }
+.checks { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 16px; }
+.checkLabel { display: inline-flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 12px; font-weight: 620; cursor: pointer; }
+
+.photoEmpty { min-height: 230px; display: grid; place-items: center; border-block: 1px solid var(--border); text-align: center; }
+.photoEmptyIcon { width: 48px; height: 48px; display: grid; margin: 0 auto 14px; place-items: center; border: 1px solid var(--border); border-radius: 14px; background: var(--muted); color: var(--muted-foreground); }
+.photoEmptyTitle { margin: 0 0 5px; color: var(--foreground); font-size: 14px; font-weight: 750; }
+.photoEmptyText { max-width: 430px; margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.photoGrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.photo { position: relative; overflow: hidden; aspect-ratio: 1; border: 1px solid var(--border); border-radius: 9px; background: var(--muted); }
+.photo img { width: 100%; height: 100%; object-fit: cover; }
+.photoTag { position: absolute; left: 6px; bottom: 6px; padding: 3px 6px; border-radius: 5px; background: rgb(0 0 0 / 62%); color: white; font-size: 9px; font-weight: 700; }
+
+.error { margin-top: 14px; padding: 9px 11px; border-left: 3px solid var(--destructive); background: color-mix(in oklab, var(--destructive) 7%, transparent); color: var(--destructive); font-size: 11.5px; }
+.actionBar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 10px 2px; border-top: 1px solid var(--border); background: color-mix(in oklab, var(--background) 94%, transparent); backdrop-filter: blur(10px); }
+.actionGroup { display: flex; align-items: center; gap: 8px; }
+.button { min-height: 38px; padding: 0 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--foreground); cursor: pointer; font-size: 12px; font-weight: 700; }
+.button:hover { background: var(--muted); }
+.buttonPrimary { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.buttonPrimary:hover { filter: brightness(.96); background: var(--primary); }
+.button:disabled { cursor: not-allowed; opacity: .5; }
+.saveNote { color: var(--muted-foreground); font-size: 10.5px; }
+
+.railItem:focus-visible,
+.choice:focus-visible,
+.chip:focus-visible,
+.iconButton:focus-visible,
+.button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1100px) {
+  .workspace { grid-template-columns: 196px minmax(0, 1fr); }
+  .canvas { padding: 22px; }
+}
+
+@media (max-width: 760px) {
+  .workspace { display: block; }
+  .sectionRail { position: static; min-height: 0; height: auto; padding: 10px; border-right: 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  .railHeading { display: none; }
+  .railList { width: max-content; flex-direction: row; }
+  .railItem { width: auto; min-width: 48px; grid-template-columns: 24px; }
+  .railLabel, .complete, .dirtyDot { display: none; }
+  .canvas { padding: 18px 14px; }
+  .fields, .choiceGrid { grid-template-columns: 1fr; }
+  .span2 { grid-column: auto; }
+  .inspectionRow { grid-template-columns: 1fr; gap: 7px; padding: 10px 0; }
+  .sectionHeader { display: block; }
+  .stateBadge { margin-top: 12px; }
+  .photoGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .saveNote { display: none; }
+  .actionBar { align-items: flex-end; }
+  .actionGroup { flex-wrap: wrap; justify-content: flex-end; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progressValue, .railItem, .input, .select, .textarea { transition: none; }
+}

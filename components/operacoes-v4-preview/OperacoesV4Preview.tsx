@@ -14,6 +14,8 @@
  */
 "use client";
 
+import { useEffect } from "react";
+import { useWorkspaceFocus } from "@/components/painel-inicial/workspace-focus-context";
 import { useV4Preview } from "./use-v4-preview";
 import { TopBar } from "./parts/TopBar";
 import { IconRail } from "./parts/IconRail";
@@ -31,6 +33,12 @@ import { Toast } from "./parts/Toast";
 
 export function OperacoesV4Preview() {
   const v = useV4Preview();
+  const { setFocusMode } = useWorkspaceFocus();
+
+  useEffect(() => {
+    setFocusMode(v.focusActive);
+    return () => setFocusMode(false);
+  }, [setFocusMode, v.focusActive]);
 
   return (
     <div
@@ -51,8 +59,7 @@ export function OperacoesV4Preview() {
       <TopBar v={v} />
 
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        {/* Modo foco recolhe o rail interno (junto das gavetas) para maximizar o workspace. */}
-        {!v.focusActive && <IconRail v={v} />}
+        <IconRail v={v} />
         {v.isWorkspace && <WorkspaceView v={v} />}
         {v.isModule && <ModuleView v={v} />}
         {v.isAuditoria && <AuditoriaPage v={v} />}

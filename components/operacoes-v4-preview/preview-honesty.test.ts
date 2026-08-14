@@ -698,11 +698,14 @@ describe("OPS-V4-RIGHT-RAIL-DEDUP-001 — lateral 'Atividade' é painel contextu
     expect(outros, `localStorage fora do hook: ${outros.join(", ")}`).toEqual([])
   })
 
-  it("ActivityColumn permanece visual: só importa de dentro da própria Preview", () => {
+  it("ActivityColumn permanece visual: importa apenas UI e ícones, sem domínio ou I/O", () => {
     const importPaths = [...activitySrc.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1])
     expect(importPaths.length).toBeGreaterThan(0)
     for (const p of importPaths) {
-      expect(p.startsWith("./") || p.startsWith("../"), `import proibido em ActivityColumn: ${p}`).toBe(true)
+      expect(
+        p.startsWith("./") || p.startsWith("../") || p === "lucide-react" || p === "@/components/ui/collapsible-hover-rail",
+        `import proibido em ActivityColumn: ${p}`,
+      ).toBe(true)
     }
   })
 })

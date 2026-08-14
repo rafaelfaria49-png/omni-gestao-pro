@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { DashboardAccessAlerts } from "@/components/enterprise/DashboardAccessAlerts";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
+import { WorkspaceFocusProvider, useWorkspaceFocus } from "./workspace-focus-context";
 
 export function AppShell({
   children,
@@ -23,10 +24,30 @@ export function AppShell({
   topNotice?: ReactNode;
 }) {
   return (
+    <WorkspaceFocusProvider>
+      <AppShellFrame noPadding={noPadding} topNotice={topNotice}>
+        {children}
+      </AppShellFrame>
+    </WorkspaceFocusProvider>
+  );
+}
+
+function AppShellFrame({
+  children,
+  noPadding,
+  topNotice,
+}: {
+  children: ReactNode;
+  noPadding?: boolean;
+  topNotice?: ReactNode;
+}) {
+  const { focusMode } = useWorkspaceFocus();
+
+  return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
-      <Sidebar />
+      <Sidebar focusMode={focusMode} />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Topbar />
+        <Topbar focusMode={focusMode} />
         {topNotice}
         <main
           className={cn(

@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useMemo } from "react";
-import { PanelLeftClose, type LucideIcon } from "lucide-react";
+import { PanelLeftClose, Pin, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getEnterprisePermissions } from "@/lib/auth/enterprise-permissions";
 import { useSidebarCollapsed } from "@/hooks/use-sidebar-collapsed";
+import { CollapsibleHoverRail } from "@/components/ui/collapsible-hover-rail";
 import {
   administrationNavItems,
   filterDashboardNav,
@@ -17,7 +19,7 @@ import {
   type DashboardNavItem,
 } from "@/lib/navigation/dashboard-nav-items";
 
-export function Sidebar() {
+export function Sidebar({ focusMode = false }: { focusMode?: boolean }) {
   const pathname = usePathname();
   const { data: session, status } = useSession();
   const { collapsed, setCollapsed } = useSidebarCollapsed();
@@ -99,6 +101,96 @@ export function Sidebar() {
     </div>
   );
 
+  if (focusMode) {
+    const sections = [
+      { label: "Workspace", items: workspaceFiltered },
+      { label: "Hubs", items: hubsFiltered },
+      { label: "Administração", items: adminFiltered },
+    ].filter((section) => section.items.length > 0);
+
+    return (
+      <CollapsibleHoverRail
+        ariaLabel="Navegação principal"
+        compactWidth={56}
+        expandedWidth={224}
+        panelClassName="bg-background"
+      >
+        {({ expanded, pinned, togglePinned }) => (
+          <div className="flex h-full w-56 flex-col">
+            <div className="flex h-12 shrink-0 items-center border-b border-border px-3">
+              <button
+                type="button"
+                onClick={togglePinned}
+                aria-label={expanded ? (pinned ? "Desafixar menu" : "Fixar menu aberto") : "Expandir menu"}
+                aria-pressed={pinned}
+                className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-md border border-primary/10 bg-primary/10"
+              >
+                <Image src="/omni-gestao-pro-icon.svg" alt="OmniGestão" width={16} height={16} className="h-4 w-4" />
+              </button>
+              <div className={cn("ml-2 min-w-0 flex-1 leading-tight transition-opacity", expanded ? "opacity-100" : "opacity-0")}>
+                <div className="truncate font-display text-[13px] font-semibold">OmniGestão Pro</div>
+                <div className="truncate text-[10px] text-muted-foreground">Workspace em foco</div>
+              </div>
+              {expanded ? (
+                <button
+                  type="button"
+                  onClick={togglePinned}
+                  aria-label={pinned ? "Desafixar menu aberto" : "Fixar menu aberto"}
+                  aria-pressed={pinned}
+                  title={pinned ? "Desafixar" : "Fixar aberto"}
+                  className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <Pin className={cn("h-3.5 w-3.5", pinned && "fill-current")} />
+                </button>
+              ) : null}
+            </div>
+            <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+              {sections.map((section, sectionIndex) => (
+                <div key={section.label} className={sectionIndex ? "mt-3" : undefined}>
+                  <div className={cn("h-5 px-2 text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground transition-opacity", expanded ? "opacity-100" : "opacity-0")}>
+                    {section.label}
+                  </div>
+                  <div className="space-y-1">
+                    {section.items.map((item) => {
+                      const active = isDashboardRouteActive(pathname || "", item.to);
+                      const Icon = item.icon;
+                      return (
+                        <Link
+                          key={item.to}
+                          href={item.to}
+                          title={!expanded ? item.label : undefined}
+                          aria-current={active ? "page" : undefined}
+                          className={cn(
+                            "flex h-10 items-center rounded-lg border px-2 transition-colors",
+                            active
+                              ? "border-primary/15 bg-primary/10 text-primary"
+                              : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                          )}
+                        >
+                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md">
+                            <Icon className="h-4 w-4" strokeWidth={2} />
+                          </span>
+                          <span className={cn("ml-2 min-w-0 flex-1 truncate text-[13px] font-medium transition-opacity", expanded ? "opacity-100" : "opacity-0")}>
+                            {item.label}
+                          </span>
+                          {expanded && item.badge ? <span className="text-[9px] font-bold">{item.badge}</span> : null}
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </nav>
+            <div className="flex h-11 shrink-0 items-center border-t border-border px-4 text-[10px] text-muted-foreground">
+              <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+              <span className={cn("ml-3 whitespace-nowrap transition-opacity", expanded ? "opacity-100" : "opacity-0")}>Servidor conectado</span>
+            </div>
+          </div>
+        )}
+      </CollapsibleHoverRail>
+    );
+  }
+
   return (
     <aside
       className={cn(
@@ -108,7 +200,7 @@ export function Sidebar() {
     >
       <div className="h-12 flex items-center gap-2.5 px-3 border-b border-border">
         <div className="h-6 w-6 shrink-0 rounded-md overflow-hidden bg-primary/10 grid place-items-center border border-primary/10">
-          <img src="/omni-gestao-pro-icon.svg" alt="OmniGestão Logo" className="h-4 w-4" />
+          <Image src="/omni-gestao-pro-icon.svg" alt="OmniGestão Logo" width={16} height={16} className="h-4 w-4" />
         </div>
         <div className="leading-tight min-w-0 flex-1">
           <div className="font-display font-semibold text-[13px] text-sidebar-foreground tracking-tight truncate">

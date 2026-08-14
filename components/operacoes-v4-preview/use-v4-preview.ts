@@ -605,7 +605,7 @@ export function buildVals(
   // seleção; nunca auto-abre outra OS por fallback). Definido antes dos menus
   // porque "Trocar OS" reusa este fluxo real (GOAL 006 — fim do no-op).
   const goToOSSearch = () =>
-    update({ selectedOsId: null, module: "workspace", view: "cockpit", menu: null });
+    update({ selectedOsId: null, focus: false, left: true, module: "workspace", view: "cockpit", menu: null });
 
   // ---- menus ----
   // GOAL OPS-V4-DOCS-ASSINATURA-TERMOS-ANEXOS-012: "Termo de Garantia" e "Termo de
@@ -821,6 +821,9 @@ export function buildVals(
       module: "workspace",
       view: "cockpit",
       menu: null,
+      focus: true,
+      left: false,
+      right: false,
     });
     notify("OS " + (o.codigo || "") + " carregada");
   };
@@ -854,6 +857,9 @@ export function buildVals(
       module: "workspace",
       view: "cockpit",
       menu: null,
+      focus: true,
+      left: false,
+      right: false,
     });
     ctx.reloadOrdens();
     notify("OS criada e aberta no workspace.");
@@ -874,6 +880,9 @@ export function buildVals(
       module: "workspace",
       view: "cockpit",
       menu: null,
+      focus: true,
+      left: false,
+      right: false,
     });
     ctx.reloadOrdens();
     notify("Atendimento rápido concluído — OS criada, recebida e entregue.");
@@ -892,6 +901,9 @@ export function buildVals(
       module: "workspace",
       view: "cockpit",
       menu: null,
+      focus: true,
+      left: false,
+      right: false,
     });
     ctx.reloadOrdens();
     notify("Orçamento rápido criado — OS aberta com orçamento em rascunho.");
@@ -1027,8 +1039,8 @@ export function buildVals(
     toHistCliente: () => notify(PREVIEW_NOOP),
 
     // ---- Modo foco (recolhe rail + gavetas; só visual) ----
-    focusActive: st.focus,
-    focoLabel: st.focus ? "Sair do foco" : "Modo foco",
+    focusActive: st.focus && !!st.selectedOsId,
+    focoLabel: st.focus && st.selectedOsId ? "Sair do foco" : "Modo foco",
     onFoco: toggleFocus,
 
     // ---- Segurança (preview) ----
@@ -1232,7 +1244,7 @@ export function buildVals(
     selectOS,
     openOSFromRail,
     goToOSSearch,
-    clearSelection: () => update({ selectedOsId: null }),
+    clearSelection: () => update({ selectedOsId: null, focus: false, left: true }),
     // lista real para o seletor
     ordens: ctx.ordens,
     ordensLoading: ctx.ordensLoading,

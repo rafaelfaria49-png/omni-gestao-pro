@@ -11,9 +11,16 @@ import { HistoricoStage } from "./stages/HistoricoStage";
 import { SegurancaStage } from "./stages/SegurancaStage";
 
 export function StagePanel({ v }: { v: V4Vals }) {
+  if (v.isEntrada) {
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <EntradaStage v={v} />
+      </div>
+    );
+  }
+
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 14px" }}>
-      {v.isEntrada && <EntradaStage v={v} />}
       {v.isDiag && <DiagnosticoStage v={v} />}
       {v.isOrc && <OrcamentoStage v={v} />}
       {v.isExec && <ExecucaoStage v={v} />}
