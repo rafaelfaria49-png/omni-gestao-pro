@@ -16,6 +16,7 @@ import {
   consumeConfiguredWsdlExecutionActivation,
 } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window"
 import { runConfiguredWsdlEphemeralBatch } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-batch"
+import { isWsdlCanonicalProductionSurface } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-canonical-production-surface"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -105,6 +106,18 @@ async function requestIsClosed(request: Request, storeId: string): Promise<boole
 export async function POST(request: Request) {
   // Primeira barreira: constantes null/inválidas/fora do prazo bloqueiam antes de ACL e Prisma.
   if (!configuredWsdlExecutionWindowStatus().active) {
+    return response(404, { ok: false, code: "wsdl_execution_unavailable" })
+  }
+
+  // Segunda barreira permanente: só o Production canônico pode seguir. Preview, URL
+  // única, projeto legado e localhost saem aqui — antes de ACL, Prisma, A1 e socket.
+  if (
+    !isWsdlCanonicalProductionSurface({
+      requestUrl: request.url,
+      vercelEnv: process.env.VERCEL_ENV,
+      vercelProjectId: process.env.VERCEL_PROJECT_ID,
+    })
+  ) {
     return response(404, { ok: false, code: "wsdl_execution_unavailable" })
   }
 
