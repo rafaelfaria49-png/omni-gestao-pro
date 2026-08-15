@@ -1,7 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+
+import { CANONICAL_VERCEL_PROJECT_ID } from "@/lib/deploy/canonical-deployment"
+import { WSDL_CANONICAL_PRODUCTION_HOST } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-canonical-production-surface"
 
 const STORE = "loja-1"
 const CERT = "cert-1"
+const CANONICAL_ORIGIN = `https://${WSDL_CANONICAL_PRODUCTION_HOST}`
+const PREVIEW_ORIGIN = "https://omni-gestao-pro-git-goal-wsdl-preview-team.vercel.app"
+const UNIQUE_DEPLOYMENT_ORIGIN = "https://omni-gestao-pro-8b84c7cad369cf62-team.vercel.app"
+const LEGACY_ORIGIN = "https://omni-gestao-pi.vercel.app"
+const LOCAL_ORIGIN = "http://localhost"
 
 const h = vi.hoisted(() => {
   let store: { id: string } | null = { id: "loja-1" }
@@ -54,13 +62,23 @@ function fiscalConfig(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function request(query = "?storeId=loja-1", body?: BodyInit, headers?: HeadersInit) {
-  return new Request(`http://localhost/api/fiscal/wsdl/ephemeral-execution${query}`, {
+function request(
+  query = "?storeId=loja-1",
+  body?: BodyInit,
+  headers?: HeadersInit,
+  origin = CANONICAL_ORIGIN,
+) {
+  return new Request(`${origin}/api/fiscal/wsdl/ephemeral-execution${query}`, {
     method: "POST",
     headers: { "x-assistec-loja-id": STORE, ...headers },
     body,
     ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
   } as RequestInit & { duplex?: "half" })
+}
+
+function stubCanonicalProductionRuntime() {
+  vi.stubEnv("VERCEL_ENV", "production")
+  vi.stubEnv("VERCEL_PROJECT_ID", CANONICAL_VERCEL_PROJECT_ID)
 }
 
 async function json(response: Response): Promise<Record<string, unknown>> {
@@ -69,6 +87,7 @@ async function json(response: Response): Promise<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  stubCanonicalProductionRuntime()
   h.setStore({ id: STORE })
   h.setConfig(fiscalConfig())
   h.storeResolver.mockReturnValue(STORE)
@@ -117,6 +136,10 @@ beforeEach(() => {
   })
 })
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
   it("default dormente retorna 404 antes de ACL, Prisma, certificado, A1 e batch", async () => {
     h.windowStatus.mockReturnValue({ active: false, reason: "disabled" })
@@ -130,6 +153,99 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
     expect(h.consumeActivation).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("janela null/null/null continua 404 mesmo no Production canônico", async () => {
+    h.windowStatus.mockReturnValue({ active: false, reason: "disabled" })
+
+    const response = await POST(request())
+
+    expect(response.status).toBe(404)
+    expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_unavailable" })
+    expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("Preview + janela válida é indisponível antes de ACL, Prisma, A1 e batch", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview")
+    vi.stubEnv("VERCEL_PROJECT_ID", CANONICAL_VERCEL_PROJECT_ID)
+
+    const response = await POST(request(
+      "?storeId=loja-1",
+      undefined,
+      { "x-forwarded-host": WSDL_CANONICAL_PRODUCTION_HOST, host: WSDL_CANONICAL_PRODUCTION_HOST },
+      PREVIEW_ORIGIN,
+    ))
+
+    expect(response.status).toBe(404)
+    expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_unavailable" })
+    expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
+    expect(h.consumeActivation).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("URL única de deployment + janela válida é bloqueada antes de ACL/Prisma", async () => {
+    const response = await POST(request("?storeId=loja-1", undefined, undefined, UNIQUE_DEPLOYMENT_ORIGIN))
+
+    expect(response.status).toBe(404)
+    expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_unavailable" })
+    expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("projeto/host legado + janela válida é bloqueado antes de ACL/Prisma", async () => {
+    vi.stubEnv("VERCEL_ENV", "production")
+    vi.stubEnv("VERCEL_PROJECT_ID", "prj_legacy_test_fixture")
+
+    const response = await POST(request("?storeId=loja-1", undefined, undefined, LEGACY_ORIGIN))
+
+    expect(response.status).toBe(404)
+    expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_unavailable" })
+    expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("localhost/dev + janela válida é bloqueado antes de ACL/Prisma", async () => {
+    vi.unstubAllEnvs()
+
+    const response = await POST(request("?storeId=loja-1", undefined, undefined, LOCAL_ORIGIN))
+
+    expect(response.status).toBe(404)
+    expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_unavailable" })
+    expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("query/header com o host canônico não atravessa Preview", async () => {
+    vi.stubEnv("VERCEL_ENV", "preview")
+    vi.stubEnv("VERCEL_PROJECT_ID", CANONICAL_VERCEL_PROJECT_ID)
+
+    const response = await POST(request(
+      `?storeId=loja-1&host=${WSDL_CANONICAL_PRODUCTION_HOST}`,
+      undefined,
+      { "x-canonical-host": WSDL_CANONICAL_PRODUCTION_HOST },
+      PREVIEW_ORIGIN,
+    ))
+
+    expect(response.status).toBe(404)
+    expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("Production canônico + janela válida atravessa só a nova barreira e segue para ACL", async () => {
+    const response = await POST(request())
+
+    expect(response.status).toBe(200)
+    expect(h.requireFiscalAdmin).toHaveBeenCalledOnce()
+    expect(h.prismaEnsureConnected).toHaveBeenCalledOnce()
+    expect(h.runBatch).toHaveBeenCalledOnce()
   })
 
   it("não-admin é bloqueado antes de body, banco, certificado e consumo", async () => {
