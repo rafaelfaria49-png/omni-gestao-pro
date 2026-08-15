@@ -65,6 +65,10 @@ export async function abrirRetornoV3(storeId: string, osId: string, input: { mot
   if (!motivo) throw new Error("Informe o motivo do retorno.");
 
   const os = payload as unknown as OrdemServico;
+  const existentes = lerRetornosV3(os);
+  if (existentes.some((retorno) => retorno.status === "aberto")) {
+    throw new Error("Já existe um retorno em andamento para esta OS.");
+  }
   const garantia = lerGarantiaV3(os);
   const garantiaAtivaNaAbertura = garantia.situacao === "ativa";
   const operador = operadorLabel(session);
@@ -79,7 +83,7 @@ export async function abrirRetornoV3(storeId: string, osId: string, input: { mot
     status: "aberto",
     garantiaAtivaNaAbertura,
   };
-  const retornos = [...lerRetornosV3(os), retorno];
+  const retornos = [...existentes, retorno];
 
   const aviso = garantiaAtivaNaAbertura ? "" : " (garantia expirada/não ativa na abertura)";
   const evento = makeEvento(

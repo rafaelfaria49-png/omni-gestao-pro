@@ -108,6 +108,7 @@ import type { SalvarDadosBasicosInputV3 } from "@/lib/operacoes-v3/dados-basicos
 import { registrarEntregaV3, salvarAssinaturaRetiradaV3 } from "@/lib/operacoes-v3/entrega-actions";
 import type { EntregaSemCobrancaSolicitacaoV3 } from "@/lib/operacoes-v3/delivery-financial-guard";
 import { registrarImpressaoDocumentoV3, salvarGarantiaOSV3 } from "@/lib/operacoes-v3/garantia-actions";
+import { abrirRetornoV3, finalizarRetornoV3 } from "@/lib/operacoes-v3/retorno-actions";
 import type { DocumentoTipoV3 } from "@/lib/operacoes-v3/documentos";
 import { editorToSalvarInputV4, seedEditorFromOS, type OrcamentoEditorV4 } from "@/lib/operacoes-v4/orcamento-form";
 import { seedEntradaEditor, type EntradaEditorV4 } from "@/lib/operacoes-v4/entrada-form";
@@ -123,6 +124,7 @@ import {
   montarHistoricoHeaderV4,
 } from "@/lib/operacoes-v4/os-header-transversal";
 import { montarResumoFinanceiroOSV4 } from "@/lib/operacoes-v4/financeiro-v4";
+import { buildGarantiasPortfolioV4 } from "@/lib/operacoes-v4/posvenda-v4";
 import {
   adaptAcessoriosEntrada,
   adaptAnexos,
@@ -227,6 +229,10 @@ export interface V4DataCtx {
   // ---- Garantia da OS (GOAL OPS-V4-GARANTIA-EDITOR-IMPL-014) ----
   /** Define/edita a garantia prevista da OS (reuso de `salvarGarantiaOSV3`). */
   salvarGarantia: (input: { modeloId: string; prazoDias?: number }) => Promise<boolean>;
+  /** Abre retorno no payload da OS original via motor V3. */
+  abrirRetorno: (motivo: string) => Promise<boolean>;
+  /** Finaliza o retorno indicado via motor V3. */
+  finalizarRetorno: (retornoId: string, observacao?: string) => Promise<boolean>;
   // ---- Cancelamento de OS (GOAL OPS-V4-CANCELAR-OS-CONNECT-021) ----
   /** Cancela a OS via `aplicarTransicaoStatusV3(sid, osId, "cancelada", { motivo })` (motivo obrigatório, contrato já blindado — commit f825867). */
   cancelarOS: (motivo: string) => Promise<boolean>;
@@ -451,6 +457,7 @@ export function buildVals(
   // Pós-venda REAL (garantia/retornos em garantia/eventos de pós-venda); vazio
   // honesto quando não houver registro. Sem NPS/satisfação/follow-up fabricados.
   const posVendaReal = realOS ? adaptPosVenda(realOS) : EMPTY_POSVENDA_VIEW;
+  const garantiasPortfolio = buildGarantiasPortfolioV4(ctx.ordens, { vencendoDias: 7 });
   // Orçamento REAL — calculado cedo (GOAL 023) para gatear o item "Orçamento
   // (via cliente)" do menu Docs por dado real (`estado === "persistido"`).
   const orcamentoReal = realOS ? adaptOrcamento(realOS) : EMPTY_ORCAMENTO_VIEW;
@@ -913,12 +920,12 @@ export function buildVals(
    * Entrega, escondendo o recebimento). Quitada/prévia/sem cobrança seguem o
    * stage normal — só existe atalho quando há saldo de verdade a receber.
    */
-  const openOSFromRail = (id: string, fromPdv = false) => {
+  const openOSFromRail = (id: string, fromPdv = false, stageOverride?: V4Stage) => {
     const o = ctx.ordens.find((x) => x.id === id);
     if (!o) return;
     const projection = ctx.financialProjectionsByOsId.get(o.id);
     const temSaldoAberto = fromPdv && (projection?.financialStatus === "OPEN" || projection?.financialStatus === "PARTIAL");
-    selectOS(o, temSaldoAberto ? "financeiro" : undefined);
+    selectOS(o, stageOverride ?? (temSaldoAberto ? "financeiro" : undefined));
   };
 
   // Nova OS criada (REAL) pelo modal → fecha o modal, abre a OS recém-criada no workspace
@@ -1138,7 +1145,7 @@ export function buildVals(
     // da Entrega — leva o operador a lançar o orçamento antes de entregar (só navega).
     goOrcamento: () => update({ stage: "orcamento", module: "workspace", view: "cockpit", menu: null }),
     goHistorico: () => update({ stage: "historico", module: "workspace", view: "cockpit", menu: null }),
-    openHeaderDestino: (destino: "orcamento" | "financeiro" | "historico") =>
+    openHeaderDestino: (destino: "orcamento" | "financeiro" | "historico" | "posvenda") =>
       update({ stage: destino, module: "workspace", view: "cockpit", menu: null }),
     comercialHeader,
     financeiroHeader,
@@ -1159,6 +1166,7 @@ export function buildVals(
     checklist, check, checklistVazio,
     entradaAcessorios, entradaFotos, entradaSeguranca,
     posVenda: posVendaReal,
+    garantiasPortfolio,
     financial: {
       projection: financialProjection,
       loading: ctx.financialProjection.loading,
@@ -1288,6 +1296,8 @@ export function buildVals(
     // `salvarGarantia` reusa `salvarGarantiaOSV3` (mesmo contrato da V3, mesmo
     // campo `aberturaV3.garantiaPrevista`); consumido pelo form do EntregaStage.
     salvarGarantia: ctx.salvarGarantia,
+    abrirRetorno: ctx.abrirRetorno,
+    finalizarRetorno: ctx.finalizarRetorno,
     realOS,
 
     // ---- PDV de Serviço / recebimento real (slice PDV-SERVICO-OS-RECEBIMENTO-REAL-001) ----
@@ -1303,7 +1313,8 @@ export function buildVals(
     // ---- Diagnóstico / Orçamento REAIS (slice OPS-V4-ORCAMENTO-REAL-002) ----
     // Handlers de escrita reais (chamam actions da V3 e recarregam lista+detalhe).
     // Execução/Financeiro/Entrega/Documentos também já são reais (ver blocos acima).
-    // Só Pós-venda/WhatsApp/PDV (fora do recebimento) permanecem read-only.
+    // Pós-venda também é operacional via actions V3; WhatsApp/PDV residual
+    // permanece read-only quando não há contrato seguro conectado.
     salvarDiagnostico: ctx.salvarDiagnostico,
     gerarOrcamento: ctx.gerarOrcamento,
     salvarOrcamento: ctx.salvarOrcamento,
@@ -1496,6 +1507,11 @@ export function useV4Preview(): V4Vals {
         notify(okMsg);
         return true;
       } catch (e) {
+        // A action pode falhar porque outra sessão alterou a OS/retorno. Nesse
+        // caso a UI preserva o formulário, mas recarrega a autoridade server.
+        reloadOrdens();
+        reloadDetail();
+        reloadFinancial();
         notify(e instanceof Error ? e.message : "Não foi possível concluir a ação.");
         return false;
       }
@@ -1732,6 +1748,19 @@ export function useV4Preview(): V4Vals {
     [runWrite],
   );
 
+  // ---- Pós-venda real: contratos exatos da V3. O wrapper só recarrega depois
+  // da confirmação do servidor; nenhum retorno é projetado otimisticamente.
+  const abrirRetorno = useCallback(
+    (motivo: string) =>
+      runWrite((sid, osId) => abrirRetornoV3(sid, osId, { motivo }), "Retorno aberto."),
+    [runWrite],
+  );
+  const finalizarRetorno = useCallback(
+    (retornoId: string, observacao?: string) =>
+      runWrite((sid, osId) => finalizarRetornoV3(sid, osId, retornoId, { observacao }), "Retorno finalizado."),
+    [runWrite],
+  );
+
   // ---- "A prazo" (GOAL OPS-V4-RECEBIMENTO-A-PRAZO-MINIMO-006): mesmo wrapper
   // `runWrite` — reusa `lancarOSAPrazoV3`, uma action SEPARADA do recebimento
   // imediato (nunca liquida título, nunca movimenta caixa, nunca exige caixa
@@ -1946,6 +1975,8 @@ export function useV4Preview(): V4Vals {
       salvarAssinaturaRetirada,
       registrarImpressaoDoc,
       salvarGarantia,
+      abrirRetorno,
+      finalizarRetorno,
       lancarAPrazo,
       cancelarOS,
       pdvServico,
@@ -1998,6 +2029,8 @@ export function useV4Preview(): V4Vals {
       salvarAssinaturaRetirada,
       registrarImpressaoDoc,
       salvarGarantia,
+      abrirRetorno,
+      finalizarRetorno,
       lancarAPrazo,
       cancelarOS,
       pdvServico,

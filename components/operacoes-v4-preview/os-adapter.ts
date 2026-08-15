@@ -42,8 +42,13 @@ import { isOperacaoStatusV3, projetarStatusV2 } from "@/lib/operacoes-v3/status-
 // Reuso PURO (read-only) da garantia/entrega REAIS da V3 (GOAL OPS-V4-DOCS-
 // ASSINATURA-TERMOS-ANEXOS-012): mesma fonte já usada pelas telas de pós-venda
 // e pela impressão da OS (`aberturaV3.garantiaPrevista` / `entregaV3`).
-import { lerGarantiaV3, lerEntregaV3, GARANTIA_SITUACAO_META_V3, resumoRetornosV3 } from "@/lib/operacoes-v3/pos-venda-model";
-import { termoGarantiaDaOSV3 } from "@/lib/operacoes-v3/print-model";
+import { lerEntregaV3 } from "@/lib/operacoes-v3/pos-venda-model";
+import {
+  buildGarantiaPosVendaV4,
+  buildPosVendaV4,
+  EMPTY_POSVENDA_V4,
+  type PosVendaV4,
+} from "@/lib/operacoes-v4/posvenda-v4";
 // Reuso PURO (read-only) dos totais com faixa/grupo da V3 (GOAL OPS-V4-ORC-
 // MULTIOPCAO-MODEL-021): mesma função que a V3 usa para persistir o total.
 import { computeTotaisV3, pecaValorCliente, servicoValorCliente, type PecaV3, type ServicoV3 } from "@/lib/operacoes-v3/orcamento-model";
@@ -1323,14 +1328,6 @@ export const EMPTY_GARANTIA_VIEW: V4GarantiaView = {
   acionamentos: "",
 };
 
-const GARANTIA_TONE_MAP: Record<(typeof GARANTIA_SITUACAO_META_V3)[keyof typeof GARANTIA_SITUACAO_META_V3]["tone"], V4GarantiaView["situacaoTone"]> = {
-  neutral: "neutro",
-  info: "info",
-  warning: "warn",
-  success: "success",
-  danger: "danger",
-};
-
 /**
  * Garantia real da OS — reusa os leitores PUROS já usados pelo pós-venda e pela
  * impressão da OS (`lerGarantiaV3` para situação/prazo/vigência a partir de
@@ -1339,22 +1336,19 @@ const GARANTIA_TONE_MAP: Record<(typeof GARANTIA_SITUACAO_META_V3)[keyof typeof 
  * catálogo oficial usado no Termo de Garantia impresso). Nenhuma lógica nova.
  */
 function adaptGarantia(os: OrdemServico): V4GarantiaView {
-  const view = lerGarantiaV3(os);
+  const view = buildGarantiaPosVendaV4(os);
   if (!view.temGarantia) return EMPTY_GARANTIA_VIEW;
-
-  const situacaoMeta = GARANTIA_SITUACAO_META_V3[view.situacao];
-  const termo = termoGarantiaDaOSV3(os);
-  const acionamentos = resumoRetornosV3(os).total;
+  const acionamentos = buildPosVendaV4(os).retornos.length;
 
   return {
     temGarantia: true,
-    situacao: situacaoMeta.label,
-    situacaoTone: GARANTIA_TONE_MAP[situacaoMeta.tone],
+    situacao: view.situacaoLabel,
+    situacaoTone: view.tone,
     prazo: !view.semCobertura && view.prazoDias > 0 ? `${view.prazoDias} dias` : NI,
     inicio: view.inicio ? fmtData(view.inicio) : NI,
     fim: view.vencimento ? fmtData(view.vencimento) : NI,
-    cobertura: termo.cobertura.length ? termo.cobertura.join(" · ") : NI,
-    observacoes: termo.observacao ?? "",
+    cobertura: view.cobertura.length ? view.cobertura.join(" · ") : NI,
+    observacoes: view.observacoes ?? "",
     acionamentos: acionamentos > 0 ? String(acionamentos) : "",
   };
 }
@@ -1445,75 +1439,14 @@ export function adaptEntrega(os: OrdemServico): V4EntregaView {
   };
 }
 
-// ---- Pós-venda (GOAL OPS-V4-P0-013) ----------------------------------------
-// Read-only sobre a OS já carregada. O stage Pós-venda passa a ler só o que a OS
-// persiste: garantia real (reusa `adaptGarantia`), retornos em garantia (eventos
-// `garantia_acionada` da timeline) e os eventos reais de pós-venda (garantia /
-// entrega / retirada). O modelo NÃO tem NPS, satisfação nem follow-up → esses
-// cards viram empty honesto. Nada fabricado.
-
-/** Tipos de evento da timeline considerados de pós-venda. */
-const POSVENDA_EVENTO_TIPOS = new Set<EventoTipo>([
-  "garantia_gerada",
-  "garantia_acionada",
-  "entrega_cliente",
-  "retirada_confirmada",
-]);
-
-export interface V4PosVendaView {
-  /** true quando há QUALQUER registro real de pós-venda (garantia ou evento). */
-  temRegistro: boolean;
-  /** Garantia real da OS (operacional ou de payload). */
-  garantia: V4GarantiaView;
-  /** Retornos em garantia reais (eventos `garantia_acionada`). */
-  retornos: V4HistEvento[];
-  /** Nº de retornos em garantia registrados. */
-  retornosCount: number;
-  /** Eventos reais de pós-venda (garantia / entrega / retirada). */
-  eventos: V4HistEvento[];
-}
-
-export const EMPTY_POSVENDA_VIEW: V4PosVendaView = {
-  temRegistro: false,
-  garantia: EMPTY_GARANTIA_VIEW,
-  retornos: [],
-  retornosCount: 0,
-  eventos: [],
-};
-
+// ---- Pós-venda -------------------------------------------------------------
+// Adapter fino: a projeção inteira vive no helper puro V4, que por sua vez lê
+// exclusivamente os readers V3. Retornos vêm de `payload.retornosV3[]`, nunca
+// são reconstruídos a partir de texto da timeline.
+export type V4PosVendaView = PosVendaV4;
+export const EMPTY_POSVENDA_VIEW: V4PosVendaView = EMPTY_POSVENDA_V4;
 export function adaptPosVenda(os: OrdemServico): V4PosVendaView {
-  const garantia = adaptGarantia(os);
-  const tl = Array.isArray(os.timeline) ? os.timeline : [];
-
-  const ordenarDesc = (a: EventoTimeline, b: EventoTimeline) =>
-    new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime();
-  const mapEvento = (ev: EventoTimeline, dot: string): V4HistEvento => ({
-    id: ev.id,
-    type: "status",
-    text: txt(ev.titulo) || txt(ev.conteudo) || ev.tipo,
-    meta: `${txt(ev.autor) || "Sistema"} · ${fmtDataHora(ev.criadoEm)}`,
-    dot,
-  });
-
-  const retornos = tl
-    .filter((ev: EventoTimeline) => ev.tipo === "garantia_acionada")
-    .slice()
-    .sort(ordenarDesc)
-    .map((ev) => mapEvento(ev, C.warn));
-
-  const eventos = tl
-    .filter((ev: EventoTimeline) => POSVENDA_EVENTO_TIPOS.has(ev.tipo))
-    .slice()
-    .sort(ordenarDesc)
-    .map((ev) => mapEvento(ev, C.primary));
-
-  return {
-    temRegistro: garantia.temGarantia || eventos.length > 0,
-    garantia,
-    retornos,
-    retornosCount: retornos.length,
-    eventos,
-  };
+  return buildPosVendaV4(os);
 }
 
 // ---- Busca da lista de OS (GOAL OPS-V4-P0-002) -----------------------------

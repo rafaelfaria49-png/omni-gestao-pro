@@ -86,6 +86,17 @@ export function CommandHeader({ v }: { v: V4Vals }) {
   const historico = v.historicoHeader;
   const slaAlert = v.os.sla !== NI && /estourado|atenção|atras/i.test(v.os.sla);
   const producao = v.producaoAtual;
+  const posVendaLabel = (() => {
+    if (v.posVenda.retornoAberto) return "Retorno aberto";
+    const garantia = v.posVenda.garantia;
+    if (garantia.situacao === "ativa" && garantia.vencimento) {
+      const data = new Date(garantia.vencimento);
+      if (!Number.isNaN(data.getTime())) return `Garantia até ${new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(data)}`;
+    }
+    if (garantia.situacao === "vencida") return "Garantia vencida";
+    if (garantia.situacao === "prevista" && garantia.prazoDias > 0) return `Garantia ${garantia.prazoDias} dias`;
+    return garantia.situacao === "sem_garantia" ? "Sem cobertura" : "Sem garantia";
+  })();
   const [prodOpen, setProdOpen] = useState<null | "tec" | "prio">(null);
   const [prodBusy, setProdBusy] = useState(false);
 
@@ -206,6 +217,20 @@ export function CommandHeader({ v }: { v: V4Vals }) {
               <span className={styles.headerTicketLabel} style={{ color: TONE_FG[financeiro.tone] }}>{financeiro.label}</span>
               {financeiro.cta ? <span className={styles.headerTicketCta}>{financeiro.cta}</span> : null}
             </span>
+          </button>
+        )}
+
+        {v.osSelected && (
+          <button
+            type="button"
+            onClick={() => v.openHeaderDestino("posvenda")}
+            aria-current={v.isPos ? "page" : undefined}
+            title="Abrir pós-venda"
+            className={`${styles.headerTicket} ${v.isPos ? styles.headerTicketCurrent : ""}`}
+            style={{ maxWidth: 150 }}
+          >
+            <span className={styles.headerTicketEyebrow}>Pós-venda</span>
+            <span className={styles.headerTicketLabel} style={{ color: v.posVenda.retornoAberto ? C.warnFg : v.posVenda.garantia.tone === "success" ? C.successFg : C.muted }}>{posVendaLabel}</span>
           </button>
         )}
 

@@ -83,6 +83,7 @@ export const RAIL_DEF: Array<[string, string]> = [
   ["bancada", "Bancada"],
   ["sla", "SLA"],
   ["pdv", "PDV"],
+  ["garantias", "Garantias"],
 ];
 
 export const MODE_DEF: Array<["recepcao" | "bancada" | "auditoria", string, string, string]> = [
@@ -119,6 +120,7 @@ export const MODULE_META: Record<string, { icon: string; title: string }> = {
   bancada: { icon: "🔧", title: "Bancada" },
   sla: { icon: "⏱", title: "SLA & atrasos" },
   pdv: { icon: "💳", title: "PDV de serviço" },
+  garantias: { icon: "🛡", title: "Garantias" },
 };
 
 /* ---- auditoria ---- */
@@ -129,9 +131,9 @@ export const RESOLVED_RAW: Array<[string, string]> = [
   ["3 modos de uso", "Recepção, Bancada e Auditoria no topo — ajustam as duas laterais de uma vez e refletem o estado atual."],
   ["Aba Financeiro", "Total, forma de pagamento, plano de parcelas e histórico financeiro reais; recebido/saldo/status lidos do espelho real de pagamento (payload.pagamentoV3) quando há recebimento; CTA Receber no PDV honesto (integração ainda não conectada)."],
   ["Aba Entrega", "Retirado por, documento, data/hora, assinatura, checklist final, acessórios devolvidos, garantia e imprimir termo + estado “precisa estar Pronta”."],
-  ["Aba Pós-venda", "Garantia real (op/payload), retornos por garantia_acionada e eventos de pós-venda da timeline real — NPS, satisfação e follow-up não fazem parte do modelo de dados."],
+  ["Aba Pós-venda", "Garantia e retornos reais do payload V3, com abertura, finalização, resolução, vínculo à OS original e histórico sem eventos duplicados."],
   ["Espaços vazios", "Execução, Histórico, Financeiro e Entrega agora usam colunas densas — sem cards enormes vazios."],
-  ["Rail de ícones", "Visão geral, Fila, OS, Bancada, SLA e PDV navegáveis pelo rail. Fila e Bancada são operacionais; Visão geral, SLA e PDV permanecem somente leitura."],
+  ["Rail de ícones", "Visão geral, Fila, OS, Bancada, SLA, PDV e Garantias navegáveis pelo rail. Fila, Bancada e Pós-venda são operacionais; Garantias abre o cockpit V4."],
   ["Header e etapas", "Topo 44→40px, comando 54→46px, spine 66→52px — mais conteúdo útil por tela."],
   ["Nova OS completa (v4)", "Modal com buscar/cadastrar cliente, equipamento, marca/modelo/IMEI/cor, defeito, observações, origem e recebido por."],
   ["Segurança / acesso (v4)", "PIN, senha, padrão de 9 pontos interativo, Face/biometria, Google, iCloud, observação e aviso de máscara na impressão."],
@@ -142,9 +144,9 @@ export const RESOLVED_RAW: Array<[string, string]> = [
 ];
 
 export const PENDING = [
-  { title: "Ações de escrita reais", text: "Inputs de Entrega/Pós-venda são visuais; persistência (entregar, abrir retorno, assinar) virá pela ligação com os hooks da V3." },
+  { title: "Ações ainda sem contrato", text: "WhatsApp, portal e documentos residuais permanecem sem persistência quando não existe action V3 segura." },
   { title: "Catálogo / ProductPicker", text: "Os botões + Serviço / + Peça abrem o catálogo real do estoque na integração final." },
-  { title: "Módulos completos", text: "Visão geral, SLA e PDV seguem somente leitura. Fila e Bancada são operacionais sobre a máquina V3." },
+  { title: "Módulos completos", text: "Visão geral, SLA e PDV seguem somente leitura. Fila, Bancada e Pós-venda são operacionais sobre a máquina V3; Garantias é uma visão de carteira que abre o cockpit." },
   { title: "Responsivo < 1280px", text: "Colunas dos painéis de etapa já colapsam 3→2→1 automaticamente (auto-fit); breakpoints finos do shell (largura das gavetas/rail) ficam para a próxima fase." },
 ];
 

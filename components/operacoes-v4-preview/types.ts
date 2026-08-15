@@ -48,7 +48,7 @@ export type V4Mode = "recepcao" | "bancada" | "auditoria";
 
 export type V4View = "cockpit" | "auditoria";
 
-export type V4Module = "workspace" | "dashboard" | "fila" | "bancada" | "sla" | "pdv";
+export type V4Module = "workspace" | "dashboard" | "fila" | "bancada" | "sla" | "pdv" | "garantias";
 
 export type V4Menu = "print" | "more" | null;
 
