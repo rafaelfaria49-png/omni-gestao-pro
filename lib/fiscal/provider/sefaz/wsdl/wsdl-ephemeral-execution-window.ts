@@ -16,9 +16,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260815-1200z-a27b95ada93a0451",
+  notBeforeUtc: "2026-08-15T12:00:00Z",
+  expiresAtUtc: "2026-08-15T12:10:00Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_PILOT_STORE_ID = "loja-1" as const
