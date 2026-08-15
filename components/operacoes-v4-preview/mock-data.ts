@@ -116,7 +116,7 @@ export const HIST_FILTER_DEF: Array<[string, string]> = [
 export const MODULE_META: Record<string, { icon: string; title: string }> = {
   dashboard: { icon: "📊", title: "Visão geral" },
   fila: { icon: "📋", title: "Fila de OS" },
-  bancada: { icon: "🔧", title: "Bancada por técnico" },
+  bancada: { icon: "🔧", title: "Bancada" },
   sla: { icon: "⏱", title: "SLA & atrasos" },
   pdv: { icon: "💳", title: "PDV de serviço" },
 };

@@ -114,15 +114,54 @@ function ExecAcoesCard({ v }: { v: V4Vals }) {
   );
 }
 
+function servicoAprovadoLabel(v: V4Vals): string {
+  const orc = v.orcamento;
+  if (orc.statusLabel !== "Aprovado") return "";
+  const primeiro = orc.servicos[0];
+  if (!primeiro) return orc.total && orc.total !== "—" ? `Orçamento aprovado · ${orc.total}` : "";
+  return `${primeiro.descricao}${primeiro.valor ? `  ${primeiro.valor}` : ""}`;
+}
+
+function ProducaoResumoExecucao({ v }: { v: V4Vals }) {
+  const p = v.producaoAtual;
+  const servico = servicoAprovadoLabel(v);
+  return (
+    <div style={card}>
+      <div style={{ ...cardTitle, marginBottom: 10 }}>Execução</div>
+      <div style={{ display: "grid", gridTemplateColumns: col3, gap: 10 }}>
+        <div>
+          <div style={upLabel}>Responsável</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.tecnicoNome ?? "Sem técnico"}</div>
+        </div>
+        <div>
+          <div style={upLabel}>Prioridade</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.prioridadeLabel ?? v.prio.label}</div>
+        </div>
+        <div>
+          <div style={upLabel}>Status</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.statusLabel ?? v.statusLabel}</div>
+        </div>
+      </div>
+      {servico ? (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line3}` }}>
+          <div style={upLabel}>Serviço aprovado</div>
+          <div style={{ fontSize: 13, color: C.body }}>{servico}</div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ExecucaoStage({ v }: { v: V4Vals }) {
   const e = v.execucao;
 
   if (!e.temExecucao) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <ProducaoResumoExecucao v={v} />
         <ExecAcoesCard v={v} />
         <div style={card}>
-          <div style={{ ...cardTitle, marginBottom: 6 }}>Execução</div>
+          <div style={{ ...cardTitle, marginBottom: 6 }}>Apontamentos</div>
           <div style={emptyText}>Ainda não existe execução registrada para esta Ordem de Serviço.</div>
         </div>
       </div>
@@ -131,9 +170,10 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <ProducaoResumoExecucao v={v} />
       <ExecAcoesCard v={v} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, alignItems: "start" }}>
-        {/* Produção / Técnico (real, somente leitura) */}
+        {/* Produção / Técnico (real) */}
         <div style={card}>
           <div style={{ ...cardTitle, marginBottom: 10 }}>⚙ Produção / Técnico</div>
           <div style={{ ...upLabel, marginBottom: 5 }}>Técnico responsável</div>
@@ -143,9 +183,9 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
             <div style={{ ...emptyText, marginBottom: 6 }}>Nenhum técnico vinculado à execução.</div>
           )}
           <div style={{ display: "grid", gridTemplateColumns: col3, gap: 10, borderTop: `1px solid ${C.line3}`, paddingTop: 11 }}>
-            <div><div style={upLabel}>Prioridade</div><div style={{ fontSize: 12.5, color: v.prio.fg, fontWeight: 600 }}>{v.prio.label}</div></div>
+            <div><div style={upLabel}>Prioridade</div><div style={{ fontSize: 12.5, color: v.prio.fg, fontWeight: 600 }}>{v.producaoAtual?.prioridadeLabel ?? v.prio.label}</div></div>
             <div><div style={upLabel}>Status</div><div style={{ fontSize: 12.5, color: C.body, fontWeight: 500 }}>{v.statusLabel}</div></div>
-            <div><div style={upLabel}>SLA</div><div style={{ fontSize: 12.5, color: C.body, fontWeight: 500 }}>{v.os.sla}</div></div>
+            <div><div style={upLabel}>SLA</div><div style={{ fontSize: 12.5, color: C.body, fontWeight: 500 }}>{v.producaoAtual?.sla.texto ?? v.os.sla}</div></div>
           </div>
         </div>
 

@@ -1,0 +1,487 @@
+/* Bancada operacional V4 — painel de produção da assistência.
+   Assinatura: a faixa "Sem técnico" é a caixa de entrada da oficina
+   (barra de ticket à esquerda). Não é um quadro Kanban. */
+
+.shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.head {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 20px;
+  min-height: 52px;
+  padding: 10px 18px 12px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.headCopy {
+  min-width: 0;
+}
+
+.kicker {
+  margin: 0 0 2px;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  line-height: 1.15;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 18px 28px;
+}
+
+.ticker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 92px;
+  padding: 8px 12px 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+
+.kpiValue {
+  font-size: 22px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--foreground);
+}
+
+.kpiLabel {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.kpiWarn .kpiValue { color: var(--warning); }
+.kpiDanger .kpiValue { color: var(--destructive); }
+.kpiOk .kpiValue { color: var(--success); }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.chip {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chipOn {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, var(--card));
+  color: var(--primary);
+}
+
+.search,
+.select {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.search {
+  min-width: 180px;
+  flex: 1 1 180px;
+  max-width: 280px;
+}
+
+.inbox {
+  position: relative;
+  margin-bottom: 18px;
+  padding: 12px 12px 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--warning) 6%, var(--card));
+}
+
+.inbox::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--warning);
+}
+
+.inboxHead,
+.crewHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.inboxTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.inboxHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.count {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-foreground);
+}
+
+.crew {
+  margin-bottom: 18px;
+}
+
+.crewName {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.crewMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  gap: 10px 14px;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  text-align: left;
+}
+
+.rowHot {
+  border-color: color-mix(in srgb, var(--destructive) 35%, var(--border));
+}
+
+.rowRisk {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+}
+
+.rowId {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.osNum {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.osWho {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--foreground);
+}
+
+.osSub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pillNeutral {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.pillWarn {
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+}
+
+.pillDanger {
+  background: color-mix(in srgb, var(--destructive) 14%, transparent);
+  color: var(--destructive);
+}
+
+.pillOk {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.pillInfo {
+  background: color-mix(in srgb, var(--info) 14%, transparent);
+  color: var(--info);
+}
+
+.pillPri {
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.btn,
+.btnGhost,
+.btnPri {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btnPri {
+  border: none;
+  background: var(--primary);
+  color: var(--background);
+}
+
+.btnGhost {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.btn:disabled,
+.btnGhost:disabled,
+.btnPri:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.empty {
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.emptyStrong {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+
+.popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  right: 0;
+  width: 240px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--foreground) 16%, transparent);
+}
+
+.popoverTitle {
+  padding: 4px 8px 6px;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 8px 9px;
+  font-size: 13px;
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+.opt:hover,
+.opt:focus-visible {
+  background: var(--muted);
+  outline: none;
+}
+
+.optOn {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--primary);
+  font-weight: 650;
+}
+
+.wrap {
+  position: relative;
+}
+
+.other {
+  display: flex;
+  gap: 6px;
+  padding: 6px 4px 2px;
+}
+
+.other input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.err {
+  margin: 6px 2px 0;
+  font-size: 11.5px;
+  color: var(--destructive);
+}
+
+@media (max-width: 1366px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .actions {
+    justify-content: flex-start;
+  }
+
+  .search {
+    max-width: none;
+  }
+
+  .head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip,
+  .opt,
+  .btnGhost,
+  .btnPri {
+    transition: none;
+  }
+}

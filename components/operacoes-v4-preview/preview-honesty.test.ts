@@ -51,6 +51,10 @@ vi.mock("@/lib/operacoes-v3/prova-entrada-actions", () => ({
 vi.mock("@/lib/operacoes-v3/dados-basicos-actions", () => ({
   salvarDadosBasicosOSV3: vi.fn(async () => ({})),
 }))
+vi.mock("@/lib/operacoes-v3/producao-actions", () => ({
+  atribuirTecnicoV3: vi.fn(async () => ({})),
+  definirPrioridadeV3: vi.fn(async () => ({})),
+}))
 // Assinatura de retirada + auditoria de impressão (GOAL OPS-V4-DOCS-ASSINATURA-
 // TERMOS-ANEXOS-012): mesma razão dos mocks acima — ambas são "use server" (→ @/auth).
 vi.mock("@/lib/operacoes-v3/entrega-actions", () => ({
@@ -227,6 +231,10 @@ const ctx: V4DataCtx = {
   removerFotoEntrada: async () => false,
   salvarAssinaturaCliente: async () => false,
   salvarDadosBasicos: async () => false,
+  atribuirTecnico: async () => false,
+  removerTecnico: async () => false,
+  definirPrioridade: async () => false,
+  avancarStatusBancada: async () => false,
   enviarOrcamentoPorCanal: async () => ({ ok: false }),
   orcamentoRapidoPrefill: null,
   definirOrcamentoRapidoPrefill: () => {},
@@ -327,6 +335,7 @@ describe("Operações V4 Preview — telas de rail com identidade real (read-onl
     expect(v.dashboardResumo.temDados).toBe(false)
     expect(v.filaItens).toEqual([])
     expect(v.bancadaView.temDados).toBe(false)
+    expect(v.producaoBancada.temProducao).toBe(false)
     expect(v.slaView.temDados).toBe(false)
     expect(v.pdvView.temDados).toBe(false)
   })
@@ -3113,6 +3122,94 @@ describe("GOAL OPS-V4-NOVO-ATENDIMENTO-COMERCIAL-001 — launcher + Novo", () =>
     ]) {
       expect(launcher, `import proibido no launcher: ${proibido}`).not.toContain(proibido)
       expect(contrato, `import proibido no contrato: ${proibido}`).not.toContain(proibido)
+    }
+  })
+})
+
+describe("OPS-V4-PRODUCAO-TECNICO-BANCADA-003 — Bancada operacional reusa o motor V3", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const bancada = readFileSync(join(DIR, "parts", "BancadaV4.tsx"), "utf8")
+  const moduleView = readFileSync(join(DIR, "parts", "ModuleView.tsx"), "utf8")
+  const shell = readFileSync(join(DIR, "OperacoesV4Preview.tsx"), "utf8")
+  const header = readFileSync(join(DIR, "parts", "CommandHeader.tsx"), "utf8")
+  const execucao = readFileSync(join(DIR, "parts", "stages", "ExecucaoStage.tsx"), "utf8")
+
+  it("reusa atribuirTecnicoV3 / definirPrioridadeV3 / aplicarTransicaoStatusV3 — sem action V4 paralela", () => {
+    expect(orquestrador).toContain("atribuirTecnicoV3")
+    expect(orquestrador).toContain("definirPrioridadeV3")
+    expect(orquestrador).toContain("aplicarTransicaoStatusV3")
+    expect(orquestrador).not.toContain("atribuirTecnicoV4Action")
+    expect(orquestrador).not.toContain("definirPrioridadeV4Action")
+  })
+
+  it("remoção usa o contrato V3 (input null) e o write da Bancada passa por runWriteOnOs", () => {
+    expect(orquestrador).toContain("atribuirTecnicoV3(sid, idOs, null)")
+    expect(orquestrador).toContain("const runWriteOnOs = useCallback")
+    expect(orquestrador).toMatch(/atribuirTecnico = useCallback\([\s\S]*runWriteOnOs\(/)
+    expect(orquestrador).toMatch(/definirPrioridade = useCallback\([\s\S]*runWriteOnOs\(/)
+  })
+
+  it("Bancada deixa de ser somente leitura / protótipo", () => {
+    expect(bancada).toContain("Operacional")
+    expect(bancada).not.toContain("Somente leitura")
+    expect(bancada).not.toContain("Protótipo")
+    expect(moduleView).not.toContain("Bancada por técnico ainda não está ligada")
+    expect(shell).toContain("<BancadaV4")
+  })
+
+  it("Sem técnico, seletor, prioridade, abrir OS e filtros existem na UI", () => {
+    expect(bancada).toContain("Sem técnico")
+    expect(bancada).toContain("Atribuir técnico")
+    expect(bancada).toContain("TecnicoPickerV4")
+    expect(bancada).toContain("PrioridadePickerV4")
+    expect(bancada).toContain("Abrir OS")
+    expect(bancada).toContain("openOSFromRail")
+    expect(bancada).toContain("FILTROS_BANCADA_V4")
+    expect(bancada).toContain("OS, cliente, aparelho")
+  })
+
+  it("header e Execução exibem o técnico atual da projeção real", () => {
+    expect(header).toContain("producaoAtual")
+    expect(header).toContain("Técnico")
+    expect(header).toContain("atribuirTecnico")
+    expect(execucao).toContain("Responsável")
+    expect(execucao).toContain("producaoAtual")
+  })
+
+  it("projeção no vals: OS sem técnico entra em Sem técnico; com técnico no bucket", () => {
+    const v = buildVals(
+      makeState({ novaOS: false }),
+      () => {},
+      () => {},
+      {
+        ...ctx,
+        ordens: [
+          mkOS({ id: "a", status: "aberta", codigo: "OS-A", cliente: { nome: "Cliente A" } }),
+          mkOS({ id: "b", status: "em_execucao", codigo: "OS-B", tecnico: { id: "t1", nome: "Ana" } }),
+        ],
+      },
+    )
+    expect(v.producaoBancada.temProducao).toBe(true)
+    expect(v.producaoBancada.semTecnico.map((r) => r.osId)).toEqual(["a"])
+    expect(v.producaoBancada.tecnicos.map((t) => t.tecnicoNome)).toEqual(["Ana"])
+    expect(v.producaoAtual).toBeNull()
+  })
+
+  it("loading da mutation é por OS — não há bloqueio de tela inteira", () => {
+    expect(bancada).toContain("busy?.osId === row.osId")
+    expect(bancada).not.toContain("pointerEvents: \"none\"")
+  })
+
+  it("não importa schema/prisma/pdv/financeiro/estoque", () => {
+    for (const proibido of [
+      'from "@/lib/prisma',
+      "prisma.schema",
+      'from "@/lib/financeiro',
+      'from "@/lib/estoque',
+      'from "@/lib/pdv',
+    ]) {
+      expect(bancada).not.toContain(proibido)
+      expect(orquestrador.includes("atribuirTecnicoV4Action")).toBe(false)
     }
   })
 })

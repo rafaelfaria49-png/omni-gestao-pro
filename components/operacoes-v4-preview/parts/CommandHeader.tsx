@@ -2,13 +2,15 @@
 "use client";
 
 import type { FocusEvent, PointerEvent } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { History, UserRound } from "lucide-react";
 import { useWorkspaceFocus } from "@/components/painel-inicial/workspace-focus-context";
 import { C } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { NI } from "../os-adapter";
 import styles from "../operacoes-v4-preview.module.css";
+import { PrioridadePickerV4, TecnicoPickerV4 } from "./ProducaoControlesV4";
+import pickerStyles from "./bancada-v4.module.css";
 
 function ContextOverlayTrigger() {
   const { overlayState, openOverlay, releaseOverlay, toggleOverlayPinned } = useWorkspaceFocus();
@@ -83,6 +85,9 @@ export function CommandHeader({ v }: { v: V4Vals }) {
   const financeiro = v.financeiroHeader;
   const historico = v.historicoHeader;
   const slaAlert = v.os.sla !== NI && /estourado|atenção|atras/i.test(v.os.sla);
+  const producao = v.producaoAtual;
+  const [prodOpen, setProdOpen] = useState<null | "tec" | "prio">(null);
+  const [prodBusy, setProdBusy] = useState(false);
 
   return (
     <div className={styles.headerBar}>
@@ -97,6 +102,79 @@ export function CommandHeader({ v }: { v: V4Vals }) {
             ⏱ SLA {v.os.sla}
           </span>
         )}
+        {v.osSelected && producao ? (
+          <div className={pickerStyles.wrap} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <button
+              type="button"
+              className={styles.headerTicket}
+              style={{ maxWidth: 180, height: 34 }}
+              onClick={() => setProdOpen(prodOpen === "tec" ? null : "tec")}
+              title="Técnico responsável"
+            >
+              <span className={styles.headerTicketEyebrow}>Técnico</span>
+              <span className={styles.headerTicketLabel}>{producao.tecnicoNome ?? "Sem técnico"}</span>
+            </button>
+            <button
+              type="button"
+              className={styles.headerTicket}
+              style={{ maxWidth: 140, height: 34 }}
+              onClick={() => setProdOpen(prodOpen === "prio" ? null : "prio")}
+              title="Prioridade"
+            >
+              <span className={styles.headerTicketEyebrow}>Prioridade</span>
+              <span className={styles.headerTicketLabel}>{producao.prioridadeLabel}</span>
+            </button>
+            {prodOpen === "tec" && v.selectedOsId ? (
+              <>
+                <button type="button" onClick={() => setProdOpen(null)} style={{ position: "fixed", inset: 0, border: 0, background: "transparent", zIndex: 30 }} aria-label="Fechar" />
+                <TecnicoPickerV4
+                  conhecidos={v.producaoBancada.tecnicosConhecidos}
+                  atualNome={producao.tecnicoNome}
+                  pending={prodBusy}
+                  onAtribuir={async (nome, id) => {
+                    setProdBusy(true);
+                    try {
+                      return await v.atribuirTecnico(v.selectedOsId!, nome, id);
+                    } finally {
+                      setProdBusy(false);
+                    }
+                  }}
+                  onRemover={
+                    producao.semTecnico
+                      ? undefined
+                      : async () => {
+                          setProdBusy(true);
+                          try {
+                            return await v.removerTecnico(v.selectedOsId!);
+                          } finally {
+                            setProdBusy(false);
+                          }
+                        }
+                  }
+                  onClose={() => setProdOpen(null)}
+                />
+              </>
+            ) : null}
+            {prodOpen === "prio" && v.selectedOsId ? (
+              <>
+                <button type="button" onClick={() => setProdOpen(null)} style={{ position: "fixed", inset: 0, border: 0, background: "transparent", zIndex: 30 }} aria-label="Fechar" />
+                <PrioridadePickerV4
+                  atual={producao.prioridade}
+                  pending={prodBusy}
+                  onEscolher={async (p) => {
+                    setProdBusy(true);
+                    try {
+                      return await v.definirPrioridade(v.selectedOsId!, p);
+                    } finally {
+                      setProdBusy(false);
+                    }
+                  }}
+                  onClose={() => setProdOpen(null)}
+                />
+              </>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className={styles.headerOps}>

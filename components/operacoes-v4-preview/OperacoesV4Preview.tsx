@@ -4,10 +4,10 @@
  * Conversão React do protótipo Cloud Design `design/operacoes-v4`. Isolado da V3
  * (não importa nada dela). Os STAGES leem a OS REAL e várias ações de escrita
  * (cancelar, diagnóstico, orçamento, execução, entrega, assinatura, garantia,
- * recebimento, Nova OS) persistem de verdade via actions V3 reusadas. As telas
- * de rail seguem somente leitura (identidade própria, sem dados fabricados).
- * O estado é local (`useV4Preview`); handlers residuais sem persistência
- * avisam via toast honesto no momento do clique.
+ * recebimento, Nova OS, produção da Bancada) persistem de verdade via actions
+ * V3 reusadas. A Bancada é operacional. Visão geral, Fila, SLA e PDV de serviço
+ * continuam somente leitura. O estado é local (`useV4Preview`); handlers
+ * residuais sem persistência avisam via toast honesto no momento do clique.
  *
  * `height:100%` (e não 100vh) mantém o AppShell como dono do scroll — este
  * módulo só rola internamente no painel de etapa / nas telas de módulo.
@@ -21,6 +21,7 @@ import { TopBar } from "./parts/TopBar";
 import { IconRail } from "./parts/IconRail";
 import { WorkspaceView } from "./parts/WorkspaceView";
 import { ModuleView } from "./parts/ModuleView";
+import { BancadaV4 } from "./parts/BancadaV4";
 import { AuditoriaPage } from "./parts/AuditoriaPage";
 import { NovaOSModal } from "./parts/NovaOSModal";
 import { NovoAtendimentoLauncher } from "./parts/NovoAtendimentoLauncher";
@@ -62,7 +63,8 @@ export function OperacoesV4Preview() {
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <IconRail v={v} />
         {v.isWorkspace && <WorkspaceView v={v} />}
-        {v.isModule && <ModuleView v={v} />}
+        {v.isModule && v.moduleId === "bancada" && <BancadaV4 v={v} />}
+        {v.isModule && v.moduleId !== "bancada" && <ModuleView v={v} />}
         {v.isAuditoria && <AuditoriaPage v={v} />}
       </div>
 

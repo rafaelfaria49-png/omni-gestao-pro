@@ -18,7 +18,7 @@ function moduleTemDados(v: V4Vals): boolean {
     case "fila":
       return v.filaItens.length > 0;
     case "bancada":
-      return v.bancadaView.temDados;
+      return v.producaoBancada.temProducao;
     case "sla":
       return v.slaView.temDados;
     case "pdv":
@@ -79,7 +79,7 @@ function Body({ v }: { v: V4Vals }) {
     case "fila":
       return <FilaBody v={v} />;
     case "bancada":
-      return <BancadaBody v={v} />;
+      return null;
     case "sla":
       return <SlaBody v={v} />;
     case "pdv":
@@ -135,37 +135,6 @@ function FilaBody({ v }: { v: V4Vals }) {
       </div>
       {v.filaItens.map((row) => (
         <RailRow key={row.id} row={row} onClick={() => v.openOSFromRail(row.id)} />
-      ))}
-    </div>
-  );
-}
-
-// ---- Bancada ---------------------------------------------------------------
-
-function BancadaBody({ v }: { v: V4Vals }) {
-  if (!v.bancadaView.temDados) {
-    return (
-      <EmptyBox
-        titulo="Bancada por técnico"
-        texto="Bancada por técnico ainda não está ligada a dados reais."
-        sub="Nenhuma OS ativa tem técnico atribuído nesta loja. Quando houver, os reparos aparecem agrupados por técnico aqui — sem inventar nomes."
-      />
-    );
-  }
-  return (
-    <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-      {v.bancadaView.grupos.map((g) => (
-        <div key={g.tecnico} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>{g.tecnico}</span>
-            <span style={{ display: "inline-flex", alignItems: "center", height: 19, padding: "0 8px", background: C.primaryBg, color: C.primaryHover, borderRadius: 999, fontSize: 11, fontWeight: 600 }}>
-              {g.itens.length} {g.itens.length === 1 ? "OS" : "OS"}
-            </span>
-          </div>
-          {g.itens.map((row) => (
-            <RailRow key={row.id} row={row} onClick={() => v.openOSFromRail(row.id)} />
-          ))}
-        </div>
       ))}
     </div>
   );

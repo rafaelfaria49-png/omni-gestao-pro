@@ -42,6 +42,15 @@ import {
   recusarOrcamentoV3,
 } from "@/lib/operacoes-v3/orcamento-actions";
 import { aplicarTransicaoStatusV3 } from "@/lib/operacoes-v3/status-actions";
+import { atribuirTecnicoV3, definirPrioridadeV3 } from "@/lib/operacoes-v3/producao-actions";
+import { PRIORIDADE_META_V3, type PrioridadeV3 } from "@/lib/operacoes-v3/producao-model";
+import {
+  buildProducaoBancadaV4,
+  labelAcaoBancadaV4,
+  podeAvancarStatusBancadaV4,
+  podeMutarProducaoV4,
+  projetarOsProducaoV4,
+} from "@/lib/operacoes-v4/producao-v4";
 // Envio por canal (GOAL OPS-V4-ORC-ENVIO-WA-025) — action fina de orquestração
 // (decide enviar 1ª vez vs. só registrar reenvio); a mensagem NASCE da projeção
 // client-safe do GOAL 023, nunca do payload cru.
@@ -61,7 +70,7 @@ import {
 import { marcarSelecaoVarianteV4 } from "@/lib/operacoes-v4/orcamento-selecao";
 // Máquina única de status (pura, sem I/O) — reaproveitada para habilitar/desabilitar
 // as ações de Execução exatamente igual ao servidor decide (slice OPS-V4-EXECUCAO-REAL-007).
-import { podeTransicionarV3 } from "@/lib/operacoes-v3/status-machine";
+import { podeTransicionarV3, statusV3FromOS, type OperacaoStatusV3 } from "@/lib/operacoes-v3/status-machine";
 // PDV de Serviço V3 (slice PDV-SERVICO-OS-RECEBIMENTO-REAL-001): hook client-side
 // já pronto (carrega pagamento+sessão de caixa, expõe receber/estornar/reload) —
 // reaproveitado tal como é, sem motor novo. A V4 só adiciona o reload da lista/
@@ -235,6 +244,12 @@ export interface V4DataCtx {
   salvarAssinaturaCliente: (dataUrl: string) => Promise<boolean>;
   // ---- Dados básicos da OS (slice OPS-V4-DADOS-BASICOS-OS-REAL-003B) ----
   salvarDadosBasicos: (input: SalvarDadosBasicosInputV3) => Promise<boolean>;
+  // ---- Produção / Bancada (GOAL OPS-V4-PRODUCAO-TECNICO-BANCADA-003) ----
+  // Mutations sobre QUALQUER OS da lista (não só a selecionada). Reusam o motor V3.
+  atribuirTecnico: (osId: string, nome: string, id?: string) => Promise<boolean>;
+  removerTecnico: (osId: string) => Promise<boolean>;
+  definirPrioridade: (osId: string, prioridade: PrioridadeV3) => Promise<boolean>;
+  avancarStatusBancada: (osId: string, to: OperacaoStatusV3) => Promise<boolean>;
   // ---- Envio de orçamento por canal (GOAL OPS-V4-ORC-ENVIO-WA-025) ----
   // Diferente do padrão `runWrite` (booleano): devolve `reenvio`/`avisoRegistro`
   // porque o painel pós-envio precisa saber qual mensagem honesta mostrar.
@@ -833,6 +848,8 @@ export function buildVals(
   const dashboardResumo = buildDashboardResumo(ctx.ordens);
   const filaItens = buildFilaItens(ctx.ordens);
   const bancadaView = buildBancadaView(ctx.ordens);
+  const producaoBancada = buildProducaoBancadaV4(ctx.ordens);
+  const producaoAtual = ctx.realOS ? projetarOsProducaoV4(ctx.realOS) : null;
   const slaView = buildSlaView(ctx.ordens);
   const pdvView = buildPdvView(ctx.ordens, ctx.financialProjectionsByOsId);
 
@@ -1306,6 +1323,12 @@ export function buildVals(
     dashboardResumo,
     filaItens,
     bancadaView,
+    producaoBancada,
+    producaoAtual,
+    atribuirTecnico: ctx.atribuirTecnico,
+    removerTecnico: ctx.removerTecnico,
+    definirPrioridade: ctx.definirPrioridade,
+    avancarStatusBancada: ctx.avancarStatusBancada,
     slaView,
     pdvView,
     pdvFinancialLoading: ctx.financialRailLoading,
@@ -1422,6 +1445,38 @@ export function useV4Preview(): V4Vals {
         reloadDetail();
         reloadFinancial();
         if (after) after();
+        notify(okMsg);
+        return true;
+      } catch (e) {
+        notify(e instanceof Error ? e.message : "Não foi possível concluir a ação.");
+        return false;
+      }
+    },
+    [lojaAtivaId, selectedOsId, reloadOrdens, reloadDetail, reloadFinancial, notify],
+  );
+
+  // Mutations da Bancada / produção: mesma loja ativa e mesmo reload, mas o
+  // alvo é a OS da linha (não a selecionada no workspace).
+  const runWriteOnOs = useCallback(
+    async (
+      osIdArg: string,
+      fn: (sid: string, osId: string) => Promise<unknown>,
+      okMsg: string,
+    ): Promise<boolean> => {
+      const sid = (lojaAtivaId ?? "").trim();
+      const osId = (osIdArg ?? "").trim();
+      const gate = podeMutarProducaoV4(sid, osId);
+      if (!gate.ok) {
+        notify(gate.motivo);
+        return false;
+      }
+      try {
+        await fn(sid, osId);
+        reloadOrdens();
+        if ((selectedOsId ?? "").trim() === osId) {
+          reloadDetail();
+          reloadFinancial();
+        }
         notify(okMsg);
         return true;
       } catch (e) {
@@ -1705,6 +1760,57 @@ export function useV4Preview(): V4Vals {
     return ordens.find((o) => o.id === st.selectedOsId) ?? null;
   }, [st.selectedOsId, ordemDetail, ordens]);
 
+  const osDaLista = useCallback(
+    (osId: string): OrdemServico | null => {
+      if (realOS && realOS.id === osId) return realOS;
+      return ordens.find((o) => o.id === osId) ?? null;
+    },
+    [realOS, ordens],
+  );
+
+  const atribuirTecnico = useCallback(
+    (osId: string, nome: string, id?: string) => {
+      const label = nome.trim();
+      if (!label) {
+        notify("Informe o nome do técnico.");
+        return Promise.resolve(false);
+      }
+      const atual = osDaLista(osId);
+      return runWriteOnOs(
+        osId,
+        (sid, idOs) => atribuirTecnicoV3(sid, idOs, { nome: label, id }),
+        atual?.tecnico?.id ? "Técnico atualizado." : "Técnico atribuído.",
+      );
+    },
+    [runWriteOnOs, osDaLista, notify],
+  );
+  const removerTecnico = useCallback(
+    (osId: string) => runWriteOnOs(osId, (sid, idOs) => atribuirTecnicoV3(sid, idOs, null), "Técnico removido."),
+    [runWriteOnOs],
+  );
+  const definirPrioridade = useCallback(
+    (osId: string, prioridade: PrioridadeV3) =>
+      runWriteOnOs(
+        osId,
+        (sid, idOs) => definirPrioridadeV3(sid, idOs, prioridade),
+        `Prioridade: ${PRIORIDADE_META_V3[prioridade].label}.`,
+      ),
+    [runWriteOnOs],
+  );
+  const avancarStatusBancada = useCallback(
+    (osId: string, to: OperacaoStatusV3) => {
+      const alvo = osDaLista(osId);
+      const gate = podeAvancarStatusBancadaV4(alvo, to);
+      if (!gate.ok) {
+        notify(gate.motivo);
+        return Promise.resolve(false);
+      }
+      const from = statusV3FromOS(alvo);
+      return runWriteOnOs(osId, (sid, idOs) => aplicarTransicaoStatusV3(sid, idOs, to), `${labelAcaoBancadaV4(from, to)}.`);
+    },
+    [runWriteOnOs, osDaLista, notify],
+  );
+
   // ---- Seleção de variante (GOAL OPS-V4-ORC-APROVACAO-SELECAO-026) ----
   // Lê o orçamento REAL (não o estado local do editor de itens) para nunca
   // gravar uma seleção sobre dados desatualizados; marca via helper puro e
@@ -1773,6 +1879,10 @@ export function useV4Preview(): V4Vals {
       removerFotoEntrada,
       salvarAssinaturaCliente,
       salvarDadosBasicos,
+      atribuirTecnico,
+      removerTecnico,
+      definirPrioridade,
+      avancarStatusBancada,
       enviarOrcamentoPorCanal,
       orcamentoRapidoPrefill,
       definirOrcamentoRapidoPrefill,
@@ -1818,6 +1928,10 @@ export function useV4Preview(): V4Vals {
       removerFotoEntrada,
       salvarAssinaturaCliente,
       salvarDadosBasicos,
+      atribuirTecnico,
+      removerTecnico,
+      definirPrioridade,
+      avancarStatusBancada,
       enviarOrcamentoPorCanal,
       orcamentoRapidoPrefill,
       definirOrcamentoRapidoPrefill,

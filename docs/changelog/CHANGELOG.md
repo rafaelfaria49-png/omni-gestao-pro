@@ -1,5 +1,12 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-14 — Operações V4: Bancada operacional (técnico, prioridade, status)
+
+- A rail Bancada deixa de ser somente leitura: resumo do dia, fila Sem técnico e produção por técnico.
+- Atribuição, reatribuição, remoção, prioridade e ações rápidas de status reusam o motor V3 (`atribuirTecnicoV3`, `definirPrioridadeV3`, máquina única).
+- Técnico e prioridade também aparecem no header da OS e no início da Execução.
+- Sem Kanban da Fila, sem schema, sem motor paralelo.
+
 ## 2026-08-14 — Operações V4: pipeline operacional e header transversal
 
 - A pipeline da OS passa a ter só **Entrada → Diagnóstico → Execução → Entrega → Pós-venda**.
