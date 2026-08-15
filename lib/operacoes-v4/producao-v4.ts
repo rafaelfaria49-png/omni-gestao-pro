@@ -6,6 +6,7 @@
 // V4 reusando integralmente os readers/máquina da V3:
 //   producao-model · status-machine · dados-basicos · recepção · pre-OS.
 // Nada aqui escreve. Nada inventa técnico, SLA, capacidade ou produtividade.
+// Ações rápidas de status usam `transicoes-producao-v4` — mesma política da Fila.
 //
 // Ordenação operacional (determinística, `now` injetável):
 //   1. atrasadas
@@ -36,7 +37,6 @@ import {
 import {
   LABEL_TRANSICAO_V3,
   acaoPrimariaV3,
-  podeTransicionarV3,
   proximasTransicoesV3,
   statusMetaV3,
   statusV3FromOS,
@@ -45,22 +45,20 @@ import {
 import { lerDadosBasicosV3, LOCAL_FISICO_LABEL_V3 } from "@/lib/operacoes-v3/dados-basicos-model";
 import { lerRecepcaoV3 } from "@/lib/operacoes-v3/workspace-model";
 import { isOrcamentoPreOsAtivoV4 } from "@/lib/operacoes-v4/orcamento-pre-os";
+import {
+  DESTINOS_RAPIDOS_PRODUCAO_V4,
+  ctaComercialProducaoV4,
+  isDestinoRapidoProducaoV4,
+  vereditoTransicaoRapidaProducaoV4,
+  type CtaComercialProducaoV4,
+} from "@/lib/operacoes-v4/transicoes-producao-v4";
 
 export type { PrioridadeV3, SlaSituacaoV3, TecnicoRefV3 };
 
 const SEM_TECNICO_ID = "__sem_tecnico__";
 
-/** Destinos de chão de oficina. Entrega/recebida/cancelada ficam fora da ação rápida. */
-export const DESTINOS_RAPIDOS_BANCADA_V4: readonly OperacaoStatusV3[] = [
-  "diagnostico",
-  "aguardando_aprovacao",
-  "aprovado",
-  "aguardando_peca",
-  "em_execucao",
-  "pronta",
-];
-
-const DESTINO_RAPIDO = new Set<OperacaoStatusV3>(DESTINOS_RAPIDOS_BANCADA_V4);
+/** Destinos rápidos da Bancada — mesma política da Fila (sem pares comerciais). */
+export const DESTINOS_RAPIDOS_BANCADA_V4 = DESTINOS_RAPIDOS_PRODUCAO_V4;
 
 export type FiltroBancadaV4 = "todos" | "sem_tecnico" | "em_execucao" | "aguardando_peca" | "pronta";
 
@@ -104,6 +102,8 @@ export interface BancadaOsV4 {
   localFisico: string;
   criadoEm: string;
   acoesRapidas: AcaoRapidaBancadaV4[];
+  /** Diagnóstico / aguardando aprovação: abre a OS. Não muta status comercial. */
+  ctaComercial: CtaComercialProducaoV4 | null;
 }
 
 export interface BancadaResumoV4 {
@@ -196,7 +196,7 @@ export function montarSlaBancadaV4(os: OrdemServico, now: Date = new Date()): Ba
 }
 
 export function isDestinoRapidoBancadaV4(to: unknown): to is OperacaoStatusV3 {
-  return typeof to === "string" && DESTINO_RAPIDO.has(to as OperacaoStatusV3);
+  return isDestinoRapidoProducaoV4(to);
 }
 
 /** Rótulo de chão de oficina — destino continua vindo da máquina V3. */
@@ -207,7 +207,7 @@ export function labelAcaoBancadaV4(from: OperacaoStatusV3, to: OperacaoStatusV3)
   return LABEL_TRANSICAO_V3[to];
 }
 
-/** Ações rápidas: só o que `podeTransicionarV3` autoriza e o chão de oficina aceita. */
+/** Ações rápidas: mesma política da Fila (`destinosRapidosProducaoV4`). */
 export function acoesRapidasBancadaV4(os: OrdemServico): AcaoRapidaBancadaV4[] {
   const from = statusV3FromOS(os);
   const primary = acaoPrimariaV3(from);
@@ -215,8 +215,7 @@ export function acoesRapidasBancadaV4(os: OrdemServico): AcaoRapidaBancadaV4[] {
   const seen = new Set<OperacaoStatusV3>();
 
   const tentar = (to: OperacaoStatusV3, primaria: boolean) => {
-    if (seen.has(to) || !isDestinoRapidoBancadaV4(to)) return;
-    if (!podeTransicionarV3(from, to).ok) return;
+    if (seen.has(to) || !vereditoTransicaoRapidaProducaoV4(from, to).ok) return;
     seen.add(to);
     acoes.push({ to, label: labelAcaoBancadaV4(from, to), primaria });
   };
@@ -254,6 +253,7 @@ export function projetarOsProducaoV4(os: OrdemServico, now: Date = new Date()): 
     localFisico,
     criadoEm: txt(os.criadoEm),
     acoesRapidas: acoesRapidasBancadaV4(os),
+    ctaComercial: ctaComercialProducaoV4(status),
   };
 }
 
@@ -418,12 +418,7 @@ export function podeAvancarStatusBancadaV4(
   to: OperacaoStatusV3,
 ): { ok: true } | { ok: false; motivo: string } {
   if (!os) return { ok: false, motivo: "OS não encontrada." };
-  if (!isDestinoRapidoBancadaV4(to)) {
-    return { ok: false, motivo: "Esta transição não é uma ação rápida da Bancada." };
-  }
-  const veredito = podeTransicionarV3(statusV3FromOS(os), to);
-  if (!veredito.ok) return { ok: false, motivo: veredito.motivo ?? "Transição não permitida." };
-  return { ok: true };
+  return vereditoTransicaoRapidaProducaoV4(statusV3FromOS(os), to);
 }
 
 export { PRIORIDADE_META_V3 };

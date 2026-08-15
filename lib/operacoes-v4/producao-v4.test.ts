@@ -235,6 +235,22 @@ describe("ações rápidas — autoridade da máquina V3", () => {
     expect(podeAvancarStatusBancadaV4(row, "entregue").ok).toBe(false);
     expect(podeAvancarStatusBancadaV4(null, "diagnostico").ok).toBe(false);
   });
+
+  it("diagnóstico e aguardando aprovação não oferecem mutation comercial", () => {
+    expect(acoesRapidasBancadaV4(os({ operacaoStatusV3: "diagnostico" }))).toEqual([]);
+    expect(acoesRapidasBancadaV4(os({ operacaoStatusV3: "aguardando_aprovacao" }))).toEqual([]);
+    expect(podeAvancarStatusBancadaV4(os({ operacaoStatusV3: "diagnostico" }), "aguardando_aprovacao").ok).toBe(false);
+    expect(podeAvancarStatusBancadaV4(os({ operacaoStatusV3: "aguardando_aprovacao" }), "aprovado").ok).toBe(false);
+  });
+
+  it("CTA comercial substitui o botão de status nesses dois estados", () => {
+    const diag = projetarOsProducaoV4(os({ operacaoStatusV3: "diagnostico" }), NOW);
+    const ag = projetarOsProducaoV4(os({ operacaoStatusV3: "aguardando_aprovacao" }), NOW);
+    expect(diag.ctaComercial?.label).toBe("Abrir OS para criar/enviar orçamento");
+    expect(ag.ctaComercial?.label).toBe("Registrar aprovação na OS");
+    expect(diag.acoesRapidas).toEqual([]);
+    expect(ag.acoesRapidas).toEqual([]);
+  });
 });
 
 describe("filtros e contexto de mutation", () => {

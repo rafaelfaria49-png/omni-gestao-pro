@@ -3230,16 +3230,15 @@ describe("OPS-V4-FILA-KANBAN-WRITE-004 — Fila operacional reusa a máquina V3"
     expect(orquestrador).toMatch(/moverStatusFila = useCallback\([\s\S]*aplicarTransicaoStatusV3\(sid, idOs, to\)/)
     expect(orquestrador).toMatch(/moverStatusFila = useCallback\([\s\S]*runWriteOnOs\(/)
     expect(orquestrador).not.toContain("moverStatusFilaV4Action")
-    expect(adapter).toContain("podeTransicionarV3")
+    expect(adapter).toContain("vereditoTransicaoRapidaProducaoV4")
     expect(adapter).not.toContain("aplicarTransicaoStatusV3(")
   })
 
   it("não cria máquina de status própria e bloqueia recebida/entregue/cancelada no write", () => {
-    expect(adapter).toContain('to === "cancelada"')
-    expect(adapter).toContain('to === "recebida" || to === "entregue"')
     expect(adapter).toContain("DESTINOS_WRITE_FILA_V4")
-    expect(adapter).toContain("proximasTransicoesV3")
     expect(adapter).toContain("TRANSICOES_COMERCIAIS_FORA_DRAG_V4")
+    expect(adapter).toContain("destinosRapidosProducaoV4")
+    expect(adapter).toContain("vereditoTransicaoRapidaProducaoV4")
     expect(adapter).not.toMatch(/const TRANSICOES_V3/)
     expect(adapter).not.toContain("new StatusMachine")
   })
@@ -3316,11 +3315,13 @@ describe("OPS-V4-FILA-KANBAN-WRITE-004 — Fila operacional reusa a máquina V3"
   })
 
   it("drag não oferece Receber/Cancelar/Entregar e protege orçamento", () => {
+    const policy = readFileSync(join(process.cwd(), "lib", "operacoes-v4", "transicoes-producao-v4.ts"), "utf8")
     expect(fila).not.toContain(">Receber<")
     expect(fila).not.toContain(">Cancelar<")
     expect(fila).not.toContain(">Entregar<")
-    expect(adapter).toContain('["diagnostico", "aguardando_aprovacao"]')
-    expect(adapter).toContain('["aguardando_aprovacao", "aprovado"]')
+    expect(policy).toContain('["diagnostico", "aguardando_aprovacao"]')
+    expect(policy).toContain('["aguardando_aprovacao", "aprovado"]')
+    expect(adapter).toContain("isTransicaoComercialProtegidaV4")
   })
 
   it("não importa schema/prisma/pdv/financeiro/estoque", () => {
@@ -3334,5 +3335,38 @@ describe("OPS-V4-FILA-KANBAN-WRITE-004 — Fila operacional reusa a máquina V3"
       expect(fila, `import proibido na Fila: ${proibido}`).not.toContain(proibido)
       expect(adapter, `import proibido no adapter: ${proibido}`).not.toContain(proibido)
     }
+  })
+})
+
+describe("OPS-V4-BANCADA-COMMERCIAL-TRANSITION-GUARD-003B — Fila e Bancada compartilham a policy", () => {
+  const bancada = readFileSync(join(DIR, "parts", "BancadaV4.tsx"), "utf8")
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const producao = readFileSync(join(process.cwd(), "lib", "operacoes-v4", "producao-v4.ts"), "utf8")
+  const filaAdapter = readFileSync(join(process.cwd(), "lib", "operacoes-v4", "fila-v4.ts"), "utf8")
+  const policy = readFileSync(join(process.cwd(), "lib", "operacoes-v4", "transicoes-producao-v4.ts"), "utf8")
+
+  it("Fila e Bancada importam a mesma política de destinos rápidos", () => {
+    expect(filaAdapter).toContain('from "@/lib/operacoes-v4/transicoes-producao-v4"')
+    expect(producao).toContain('from "@/lib/operacoes-v4/transicoes-producao-v4"')
+    expect(producao).toContain("vereditoTransicaoRapidaProducaoV4")
+    expect(producao).toContain("ctaComercialProducaoV4")
+    expect(filaAdapter).toContain("destinosRapidosProducaoV4")
+    expect(policy).not.toMatch(/const TRANSICOES_V3/)
+  })
+
+  it("CTA comercial da Bancada abre a OS e não chama avancarStatusBancada", () => {
+    expect(policy).toContain("Abrir OS para criar/enviar orçamento")
+    expect(policy).toContain("Registrar aprovação na OS")
+    expect(bancada).toContain("data-cta-comercial")
+    expect(bancada).toContain("row.ctaComercial")
+    expect(bancada).toMatch(/ctaComercial[\s\S]*openOSFromRail\(row\.osId\)/)
+    expect(bancada).not.toMatch(/ctaComercial[\s\S]{0,400}avancarStatusBancada/)
+  })
+
+  it("gate da Bancada continua na frente de aplicarTransicaoStatusV3", () => {
+    expect(orquestrador).toMatch(/avancarStatusBancada = useCallback\([\s\S]*podeAvancarStatusBancadaV4/)
+    expect(orquestrador).toMatch(/avancarStatusBancada = useCallback\([\s\S]*aplicarTransicaoStatusV3/)
+    expect(policy).not.toContain("aplicarTransicaoStatusV3(")
+    expect(producao).not.toContain("aplicarTransicaoStatusV3(")
   })
 })

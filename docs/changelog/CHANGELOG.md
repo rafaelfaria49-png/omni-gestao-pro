@@ -1,5 +1,11 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-15 — Operações V4: guard comercial da Bancada
+
+- Fila e Bancada passam a usar a mesma política de transições rápidas de produção.
+- Diagnóstico→aguardando aprovação e aguardando aprovação→aprovada saem da ação rápida da Bancada.
+- Nesses estados a Bancada abre a OS (CTA comercial) em vez de mutar status sem orçamento.
+
 ## 2026-08-15 — Operações V4: Fila Kanban acionável
 
 - A rail Fila deixa de ser somente leitura: Lista e Kanban operam a mesma máquina de status da V3.

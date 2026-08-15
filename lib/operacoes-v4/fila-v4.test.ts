@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { OrdemServico } from "@/types/os";
-import { podeTransicionarV3, proximasTransicoesV3 } from "@/lib/operacoes-v3/status-machine";
-import { projetarOsProducaoV4 } from "./producao-v4";
+import { STATUS_V3_LIST, podeTransicionarV3, proximasTransicoesV3 } from "@/lib/operacoes-v3/status-machine";
+import { acoesRapidasBancadaV4, projetarOsProducaoV4 } from "./producao-v4";
+import { destinosRapidosProducaoV4 } from "./transicoes-producao-v4";
 import {
   COLUNAS_FILA_V4,
   DESTINOS_WRITE_FILA_V4,
@@ -318,6 +319,19 @@ describe("preferência de view", () => {
     expect(lerModoFilaV4("lista")).toBe("lista");
     expect(lerModoFilaV4("kanban")).toBe("kanban");
     expect(lerModoFilaV4("lixo")).toBe("kanban");
+  });
+});
+
+describe("paridade com a Bancada — mesma policy", () => {
+  it("destinos da Fila coincidem com destinos rápidos da Bancada e da policy", () => {
+    for (const from of STATUS_V3_LIST) {
+      const fila = [...destinosPermitidosFilaV4(from)].sort();
+      const bancada = acoesRapidasBancadaV4(os({ operacaoStatusV3: from }))
+        .map((a) => a.to)
+        .sort();
+      expect(fila).toEqual([...destinosRapidosProducaoV4(from)].sort());
+      expect(fila).toEqual(bancada);
+    }
   });
 });
 

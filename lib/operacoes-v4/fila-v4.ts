@@ -3,7 +3,8 @@
 // ----------------------------------------------------------------------------
 // GOAL OPS-V4-FILA-KANBAN-WRITE-004.
 // Sem I/O, sem React, sem Prisma. A Fila só projeta, agrupa e classifica destinos.
-// Autoridade de transição: máquina V3 (`podeTransicionarV3` / `proximasTransicoesV3`).
+// Autoridade de transição: máquina V3. Recorte de write rápido: política
+// compartilhada `transicoes-producao-v4` (Fila e Bancada usam a mesma).
 // Write: `aplicarTransicaoStatusV3`. Técnico / prioridade / SLA vêm dos mesmos
 // readers da Bancada (`projetarOsProducaoV4`). Nada inventa prazo ou status.
 //
@@ -23,8 +24,6 @@ import {
 import {
   LABEL_TRANSICAO_V3,
   isOperacaoStatusV3,
-  podeTransicionarV3,
-  proximasTransicoesV3,
   statusMetaV3,
   statusV3FromOS,
   type OperacaoStatusV3,
@@ -37,6 +36,15 @@ import {
   projetarOsProducaoV4,
   type BancadaOsV4,
 } from "@/lib/operacoes-v4/producao-v4";
+import {
+  DESTINOS_RAPIDOS_PRODUCAO_V4,
+  TRANSICOES_COMERCIAIS_PROTEGIDAS_V4,
+  destinosRapidosProducaoV4,
+  hintCockpitComercialV4,
+  isDestinoRapidoProducaoV4,
+  isTransicaoComercialProtegidaV4,
+  vereditoTransicaoRapidaProducaoV4,
+} from "@/lib/operacoes-v4/transicoes-producao-v4";
 
 export type { PrioridadeV3, SlaSituacaoV3, TecnicoRefV3 };
 
@@ -57,25 +65,10 @@ export const COLUNAS_FILA_V4: readonly OperacaoStatusV3[] = [
   "pronta",
 ];
 
-/**
- * Destinos cujo write é só status+timeline. Orçamento/financeiro/entrega ficam fora.
- * Confirmado no grafo V3: aberta→diagnostico; aprovado→peca|execução;
- * peca→execução; execução→pronta.
- */
-export const DESTINOS_WRITE_FILA_V4: readonly OperacaoStatusV3[] = [
-  "diagnostico",
-  "aguardando_peca",
-  "em_execucao",
-  "pronta",
-];
+/** Alias estável da Fila sobre a política compartilhada Fila+Bancada. */
+export const DESTINOS_WRITE_FILA_V4 = DESTINOS_RAPIDOS_PRODUCAO_V4;
+export const TRANSICOES_COMERCIAIS_FORA_DRAG_V4 = TRANSICOES_COMERCIAIS_PROTEGIDAS_V4;
 
-/** Pares que a máquina permite, mas o contrato comercial é outro write-path. */
-export const TRANSICOES_COMERCIAIS_FORA_DRAG_V4: readonly (readonly [OperacaoStatusV3, OperacaoStatusV3])[] = [
-  ["diagnostico", "aguardando_aprovacao"],
-  ["aguardando_aprovacao", "aprovado"],
-];
-
-const DESTINO_WRITE = new Set<OperacaoStatusV3>(DESTINOS_WRITE_FILA_V4);
 const COLUNA = new Set<OperacaoStatusV3>(COLUNAS_FILA_V4);
 
 export type ModoFilaV4 = "lista" | "kanban";
@@ -138,7 +131,7 @@ export interface FilaProjectionV4 {
 }
 
 export function isDestinoWriteFilaV4(to: unknown): to is OperacaoStatusV3 {
-  return typeof to === "string" && DESTINO_WRITE.has(to as OperacaoStatusV3);
+  return isDestinoRapidoProducaoV4(to);
 }
 
 export function isColunaFilaV4(status: unknown): status is OperacaoStatusV3 {
@@ -155,45 +148,23 @@ export function labelAcaoFilaV4(from: OperacaoStatusV3, to: OperacaoStatusV3): s
 }
 
 export function isTransicaoComercialForaDragV4(from: unknown, to: unknown): boolean {
-  return TRANSICOES_COMERCIAIS_FORA_DRAG_V4.some(([a, b]) => a === from && b === to);
+  return isTransicaoComercialProtegidaV4(from, to);
 }
 
 export function hintCockpitFilaV4(from: unknown): string | null {
-  if (from === "diagnostico") return "Abra a OS para enviar o orçamento";
-  if (from === "aguardando_aprovacao") return "Abra a OS para aprovar o orçamento";
-  return null;
+  return hintCockpitComercialV4(from);
 }
 
-/**
- * Destinos de drag/menu: `proximasTransicoesV3` ∩ recorte de produção
- * − cancelar/receber/entregar − pares comerciais (enviar/aprovar orçamento).
- */
+/** Destinos de drag/menu — mesma política da Bancada. */
 export function vereditoDestinoFilaV4(
   from: unknown,
   to: unknown,
 ): { ok: true } | { ok: false; motivo: string } {
-  if (to === "cancelada") {
-    return { ok: false, motivo: "Cancelamento não é feito por arraste na Fila. Use o cockpit da OS." };
-  }
-  if (to === "recebida" || to === "entregue") {
-    return { ok: false, motivo: "Recebimento e entrega ficam no cockpit da OS." };
-  }
-  if (isTransicaoComercialForaDragV4(from, to)) {
-    return {
-      ok: false,
-      motivo: hintCockpitFilaV4(from) ?? "Esta decisão comercial fica no cockpit da OS.",
-    };
-  }
-  if (!isDestinoWriteFilaV4(to)) {
-    return { ok: false, motivo: "Esta estação não recebe mudança de status pela Fila." };
-  }
-  const veredito = podeTransicionarV3(from, to);
-  if (!veredito.ok) return { ok: false, motivo: veredito.motivo ?? "Transição não permitida." };
-  return { ok: true };
+  return vereditoTransicaoRapidaProducaoV4(from, to);
 }
 
 export function destinosPermitidosFilaV4(from: unknown): OperacaoStatusV3[] {
-  return proximasTransicoesV3(from).filter((to) => vereditoDestinoFilaV4(from, to).ok);
+  return destinosRapidosProducaoV4(from);
 }
 
 export function destinosWriteFilaV4(from: unknown): DestinoFilaV4[] {

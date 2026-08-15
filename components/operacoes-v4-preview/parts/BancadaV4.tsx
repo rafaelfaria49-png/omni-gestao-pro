@@ -139,6 +139,17 @@ function OsRow({
           </button>
         ))}
 
+        {row.ctaComercial ? (
+          <button
+            type="button"
+            className={styles.btnPri}
+            data-cta-comercial={row.ctaComercial.kind}
+            onClick={() => v.openOSFromRail(row.osId)}
+          >
+            {row.ctaComercial.label}
+          </button>
+        ) : null}
+
         <button type="button" className={styles.btnGhost} onClick={() => v.openOSFromRail(row.osId)}>
           Abrir OS
         </button>
