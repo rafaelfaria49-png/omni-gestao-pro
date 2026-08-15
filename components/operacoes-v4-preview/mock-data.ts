@@ -131,7 +131,7 @@ export const RESOLVED_RAW: Array<[string, string]> = [
   ["Aba Entrega", "Retirado por, documento, data/hora, assinatura, checklist final, acessórios devolvidos, garantia e imprimir termo + estado “precisa estar Pronta”."],
   ["Aba Pós-venda", "Garantia real (op/payload), retornos por garantia_acionada e eventos de pós-venda da timeline real — NPS, satisfação e follow-up não fazem parte do modelo de dados."],
   ["Espaços vazios", "Execução, Histórico, Financeiro e Entrega agora usam colunas densas — sem cards enormes vazios."],
-  ["Rail de ícones", "Visão geral, Fila, OS, Bancada, SLA e PDV navegáveis pelo rail; as telas de módulo são protótipo e não exibem clientes, OS, técnicos, SLA, fila ou números fabricados."],
+  ["Rail de ícones", "Visão geral, Fila, OS, Bancada, SLA e PDV navegáveis pelo rail. Fila e Bancada são operacionais; Visão geral, SLA e PDV permanecem somente leitura."],
   ["Header e etapas", "Topo 44→40px, comando 54→46px, spine 66→52px — mais conteúdo útil por tela."],
   ["Nova OS completa (v4)", "Modal com buscar/cadastrar cliente, equipamento, marca/modelo/IMEI/cor, defeito, observações, origem e recebido por."],
   ["Segurança / acesso (v4)", "PIN, senha, padrão de 9 pontos interativo, Face/biometria, Google, iCloud, observação e aviso de máscara na impressão."],
@@ -144,7 +144,7 @@ export const RESOLVED_RAW: Array<[string, string]> = [
 export const PENDING = [
   { title: "Ações de escrita reais", text: "Inputs de Entrega/Pós-venda são visuais; persistência (entregar, abrir retorno, assinar) virá pela ligação com os hooks da V3." },
   { title: "Catálogo / ProductPicker", text: "Os botões + Serviço / + Peça abrem o catálogo real do estoque na integração final." },
-  { title: "Módulos completos", text: "Dashboard, Fila, Bancada, SLA e PDV são protótipos — exibem estado vazio honesto até serem conectados aos dados ao vivo." },
+  { title: "Módulos completos", text: "Visão geral, SLA e PDV seguem somente leitura. Fila e Bancada são operacionais sobre a máquina V3." },
   { title: "Responsivo < 1280px", text: "Colunas dos painéis de etapa já colapsam 3→2→1 automaticamente (auto-fit); breakpoints finos do shell (largura das gavetas/rail) ficam para a próxima fase." },
 ];
 

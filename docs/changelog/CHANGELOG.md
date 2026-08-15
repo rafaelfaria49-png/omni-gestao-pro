@@ -1,5 +1,13 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-15 — Operações V4: Fila Kanban acionável
+
+- A rail Fila deixa de ser somente leitura: Lista e Kanban operam a mesma máquina de status da V3.
+- Arrastar um ticket só entra em estação de produção permitida; destino inválido não aceita drop. Menu `Mover para`, tecla `M` e Lista fazem a mesma mudança.
+- Diagnóstico→aprovação e aprovação comercial ficam no cockpit (não burla orçamento). Recebimento, entrega e cancelamento por drag ficam de fora.
+- Técnico, prioridade e SLA usam os mesmos readers da Bancada. Busca + filtros + preferência de view persistida.
+- Sem schema, sem motor paralelo, sem lib de DnD nova (HTML5 nativo, como a V3).
+
 ## 2026-08-14 — Operações V4: Bancada operacional (técnico, prioridade, status)
 
 - A rail Bancada deixa de ser somente leitura: resumo do dia, fila Sem técnico e produção por técnico.

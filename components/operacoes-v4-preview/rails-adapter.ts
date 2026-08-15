@@ -1,8 +1,8 @@
 /**
  * Operações V4 Preview — adaptadores READ-ONLY das telas de rail (Visão geral,
- * Fila, SLA, PDV de serviço). A Bancada operacional vive em
- * `lib/operacoes-v4/producao-v4.ts` (`buildProducaoBancadaV4`). `buildBancadaView`
- * permanece como agrupamento legado somente leitura.
+ * SLA, PDV de serviço). A Fila operacional vive em `lib/operacoes-v4/fila-v4.ts`.
+ * A Bancada operacional vive em `lib/operacoes-v4/producao-v4.ts`.
+ * `buildFilaItens` / `buildBancadaView` permanecem como projeções leves de lista.
  *
  * Recebe a lista de `OrdemServico` REAIS da loja ativa (carregadas por `listOrdens`,
  * somente leitura) e produz os view-models que cada tela de módulo consome. Puro,

@@ -235,6 +235,9 @@ const ctx: V4DataCtx = {
   removerTecnico: async () => false,
   definirPrioridade: async () => false,
   avancarStatusBancada: async () => false,
+  moverStatusFila: async () => false,
+  modoFila: "kanban",
+  setModoFila: () => {},
   enviarOrcamentoPorCanal: async () => ({ ok: false }),
   orcamentoRapidoPrefill: null,
   definirOrcamentoRapidoPrefill: () => {},
@@ -3210,6 +3213,126 @@ describe("OPS-V4-PRODUCAO-TECNICO-BANCADA-003 — Bancada operacional reusa o mo
     ]) {
       expect(bancada).not.toContain(proibido)
       expect(orquestrador.includes("atribuirTecnicoV4Action")).toBe(false)
+    }
+  })
+})
+
+describe("OPS-V4-FILA-KANBAN-WRITE-004 — Fila operacional reusa a máquina V3", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const fila = readFileSync(join(DIR, "parts", "FilaV4.tsx"), "utf8")
+  const moduleView = readFileSync(join(DIR, "parts", "ModuleView.tsx"), "utf8")
+  const shell = readFileSync(join(DIR, "OperacoesV4Preview.tsx"), "utf8")
+  const adapter = readFileSync(join(process.cwd(), "lib", "operacoes-v4", "fila-v4.ts"), "utf8")
+
+  it("write path: adapter V4 → máquina V3 → aplicarTransicaoStatusV3 — sem action V4 paralela", () => {
+    expect(orquestrador).toContain("podeMoverStatusFilaV4")
+    expect(orquestrador).toContain("moverStatusFila")
+    expect(orquestrador).toMatch(/moverStatusFila = useCallback\([\s\S]*aplicarTransicaoStatusV3\(sid, idOs, to\)/)
+    expect(orquestrador).toMatch(/moverStatusFila = useCallback\([\s\S]*runWriteOnOs\(/)
+    expect(orquestrador).not.toContain("moverStatusFilaV4Action")
+    expect(adapter).toContain("podeTransicionarV3")
+    expect(adapter).not.toContain("aplicarTransicaoStatusV3(")
+  })
+
+  it("não cria máquina de status própria e bloqueia recebida/entregue/cancelada no write", () => {
+    expect(adapter).toContain('to === "cancelada"')
+    expect(adapter).toContain('to === "recebida" || to === "entregue"')
+    expect(adapter).toContain("DESTINOS_WRITE_FILA_V4")
+    expect(adapter).toContain("proximasTransicoesV3")
+    expect(adapter).toContain("TRANSICOES_COMERCIAIS_FORA_DRAG_V4")
+    expect(adapter).not.toMatch(/const TRANSICOES_V3/)
+    expect(adapter).not.toContain("new StatusMachine")
+  })
+
+  it("Fila deixa de ser somente leitura / protótipo", () => {
+    expect(fila).toContain("Operacional")
+    expect(fila).not.toContain("Somente leitura")
+    expect(fila).not.toContain("Protótipo")
+    expect(shell).toContain("<FilaV4")
+    expect(moduleView).not.toContain("Fila de OS")
+  })
+
+  it("Lista, Kanban, drag, menu/teclado e filtros existem na UI", () => {
+    expect(fila).toContain('escolherModo("lista")')
+    expect(fila).toContain('escolherModo("kanban")')
+    expect(fila).toContain("onDragStart")
+    expect(fila).toContain("onDrop")
+    expect(fila).toContain("Mover para")
+    expect(fila).toContain('e.key === "m"')
+    expect(fila).toContain("openOSFromRail")
+    expect(fila).toContain("Filtrar por técnico")
+    expect(fila).toContain("Filtrar por prioridade")
+    expect(fila).toContain("Filtrar por SLA")
+    expect(fila).toContain("OS, cliente, aparelho")
+    expect(orquestrador).toContain("FILA_VIEW_PREF_KEY")
+    expect(fila).toContain("data-kind")
+  })
+
+  it("reload após write atualiza Fila/Bancada/OS sem F5 (runWriteOnOs)", () => {
+    expect(orquestrador).toContain("const runWriteOnOs = useCallback")
+    expect(orquestrador).toMatch(/runWriteOnOs = useCallback\([\s\S]*reloadOrdens\(\)/)
+    expect(orquestrador).toMatch(/runWriteOnOs = useCallback\([\s\S]*reloadDetail\(\)/)
+  })
+
+  it("projeção no vals: OS ativa entra na fila; entregue fica de fora; técnico/prioridade/SLA reais", () => {
+    const v = buildVals(
+      makeState({ novaOS: false }),
+      () => {},
+      () => {},
+      {
+        ...ctx,
+        ordens: [
+          mkOS({
+            id: "a",
+            status: "aberta",
+            codigo: "OS-A",
+            cliente: { nome: "Cliente A" },
+            prioridadeV3: "urgente",
+          }),
+          mkOS({
+            id: "b",
+            status: "em_execucao",
+            codigo: "OS-B",
+            tecnico: { id: "t1", nome: "Ana" },
+          }),
+          mkOS({ id: "c", status: "entregue", codigo: "OS-C" }),
+        ],
+      },
+    )
+    expect(v.filaOperacional.temFila).toBe(true)
+    expect(v.filaOperacional.lista.map((r) => r.osId).sort()).toEqual(["a", "b"])
+    expect(v.filaOperacional.lista.find((r) => r.osId === "a")?.prioridade).toBe("urgente")
+    expect(v.filaOperacional.lista.find((r) => r.osId === "b")?.tecnicoNome).toBe("Ana")
+    expect(v.filaOperacional.colunas.map((c) => c.status)).not.toContain("recebida")
+    expect(v.filaOperacional.colunas.find((c) => c.status === "em_execucao")?.aceitaWrite).toBe(true)
+  })
+
+  it("erro de move não some com o ticket — loading por card, board não trava", () => {
+    expect(fila).toContain("MSG_ERRO_MOVER_FILA_V4")
+    expect(fila).toContain("erros[row.osId]")
+    expect(fila).toContain("ticketBusy")
+    expect(fila).toContain("if (busy[osId]) return false")
+    expect(orquestrador).toMatch(/moverStatusFila = useCallback\([\s\S]*reloadOrdens\(\)/)
+  })
+
+  it("drag não oferece Receber/Cancelar/Entregar e protege orçamento", () => {
+    expect(fila).not.toContain(">Receber<")
+    expect(fila).not.toContain(">Cancelar<")
+    expect(fila).not.toContain(">Entregar<")
+    expect(adapter).toContain('["diagnostico", "aguardando_aprovacao"]')
+    expect(adapter).toContain('["aguardando_aprovacao", "aprovado"]')
+  })
+
+  it("não importa schema/prisma/pdv/financeiro/estoque", () => {
+    for (const proibido of [
+      'from "@/lib/prisma',
+      "prisma.schema",
+      'from "@/lib/financeiro',
+      'from "@/lib/estoque',
+      'from "@/lib/pdv',
+    ]) {
+      expect(fila, `import proibido na Fila: ${proibido}`).not.toContain(proibido)
+      expect(adapter, `import proibido no adapter: ${proibido}`).not.toContain(proibido)
     }
   })
 })

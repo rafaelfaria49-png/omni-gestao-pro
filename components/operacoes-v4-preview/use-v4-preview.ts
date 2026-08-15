@@ -51,6 +51,15 @@ import {
   podeMutarProducaoV4,
   projetarOsProducaoV4,
 } from "@/lib/operacoes-v4/producao-v4";
+import {
+  buildFilaOperacionalV4,
+  FILA_VIEW_PREF_KEY,
+  labelAcaoFilaV4,
+  lerModoFilaV4,
+  MSG_SEM_TECNICO_INICIO_V4,
+  podeMoverStatusFilaV4,
+  type ModoFilaV4,
+} from "@/lib/operacoes-v4/fila-v4";
 // Envio por canal (GOAL OPS-V4-ORC-ENVIO-WA-025) — action fina de orquestração
 // (decide enviar 1ª vez vs. só registrar reenvio); a mensagem NASCE da projeção
 // client-safe do GOAL 023, nunca do payload cru.
@@ -250,6 +259,11 @@ export interface V4DataCtx {
   removerTecnico: (osId: string) => Promise<boolean>;
   definirPrioridade: (osId: string, prioridade: PrioridadeV3) => Promise<boolean>;
   avancarStatusBancada: (osId: string, to: OperacaoStatusV3) => Promise<boolean>;
+  // ---- Fila / Kanban (GOAL OPS-V4-FILA-KANBAN-WRITE-004) ----
+  // Mesma action V3; o recorte de destinos (sem recebida/entregue/cancelada) vive no adapter.
+  moverStatusFila: (osId: string, to: OperacaoStatusV3) => Promise<boolean>;
+  modoFila: ModoFilaV4;
+  setModoFila: (modo: ModoFilaV4) => void;
   // ---- Envio de orçamento por canal (GOAL OPS-V4-ORC-ENVIO-WA-025) ----
   // Diferente do padrão `runWrite` (booleano): devolve `reenvio`/`avisoRegistro`
   // porque o painel pós-envio precisa saber qual mensagem honesta mostrar.
@@ -281,6 +295,15 @@ export const RIGHT_RAIL_PREF_KEY = "omnigestao:operacoes-v4:right-rail-open";
  * sem o usuário ter escolhido nada). Sem storage (SSR, teste em node,
  * navegação privada), vira no-op e o aberto/fechado segue em memória.
  */
+function persistFilaViewPref(modo: ModoFilaV4) {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(FILA_VIEW_PREF_KEY, modo);
+  } catch {
+    /* preferência visual — falha silenciosa */
+  }
+}
+
 function persistRightRailPref(open: boolean) {
   try {
     if (typeof window === "undefined") return;
@@ -677,7 +700,7 @@ export function buildVals(
   if (status !== "entregue" && status !== "cancelada")
     moreItems.push({ icon: "✕", label: "Cancelar OS", color: C.danger, onClick: () => update({ cancelamentoOS: true }) });
 
-  // ---- módulos (rail) — só metadados; as telas de módulo são protótipo sem dados fake ----
+  // ---- módulos (rail) — metadados; Fila e Bancada são operacionais, demais rails RO ----
   const mod = MODULE_META[st.module] || MODULE_META.dashboard;
 
   // ---- auditoria ----
@@ -847,6 +870,7 @@ export function buildVals(
   // real e empty state honesto específico do módulo. Sem número/técnico/SLA fabricado.
   const dashboardResumo = buildDashboardResumo(ctx.ordens);
   const filaItens = buildFilaItens(ctx.ordens);
+  const filaOperacional = buildFilaOperacionalV4(ctx.ordens);
   const bancadaView = buildBancadaView(ctx.ordens);
   const producaoBancada = buildProducaoBancadaV4(ctx.ordens);
   const producaoAtual = ctx.realOS ? projetarOsProducaoV4(ctx.realOS) : null;
@@ -1322,6 +1346,7 @@ export function buildVals(
     moduleId: st.module,
     dashboardResumo,
     filaItens,
+    filaOperacional,
     bancadaView,
     producaoBancada,
     producaoAtual,
@@ -1329,6 +1354,9 @@ export function buildVals(
     removerTecnico: ctx.removerTecnico,
     definirPrioridade: ctx.definirPrioridade,
     avancarStatusBancada: ctx.avancarStatusBancada,
+    moverStatusFila: ctx.moverStatusFila,
+    modoFila: ctx.modoFila,
+    setModoFila: ctx.setModoFila,
     slaView,
     pdvView,
     pdvFinancialLoading: ctx.financialRailLoading,
@@ -1341,6 +1369,7 @@ export type V4Vals = ReturnType<typeof buildVals>;
 /** Hook principal do Preview: mantém o estado e devolve o objeto `vals`. */
 export function useV4Preview(): V4Vals {
   const [st, setSt] = useState<V4State>(INITIAL);
+  const [modoFila, setModoFilaState] = useState<ModoFilaV4>("kanban");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { lojaAtivaId } = useLojaAtiva();
@@ -1408,9 +1437,15 @@ export function useV4Preview(): V4Vals {
         const right = saved === "1";
         setSt((prev) => (prev.right === right ? prev : { ...prev, right }));
       }
+      setModoFilaState(lerModoFilaV4(window.localStorage.getItem(FILA_VIEW_PREF_KEY)));
     } catch {
       // storage indisponível — mantém o default em memória
     }
+  }, []);
+
+  const setModoFila = useCallback((modo: ModoFilaV4) => {
+    setModoFilaState(modo);
+    persistFilaViewPref(modo);
   }, []);
 
   const update = useCallback((p: Patch) => {
@@ -1810,6 +1845,34 @@ export function useV4Preview(): V4Vals {
     },
     [runWriteOnOs, osDaLista, notify],
   );
+  const moverStatusFila = useCallback(
+    async (osId: string, to: OperacaoStatusV3) => {
+      const alvo = osDaLista(osId);
+      const gate = podeMoverStatusFilaV4(alvo, to);
+      if (!gate.ok) {
+        notify(gate.motivo);
+        return false;
+      }
+      const from = statusV3FromOS(alvo);
+      const semTecnico = !(`${alvo?.tecnico?.id ?? ""}`.trim() || `${alvo?.tecnico?.nome ?? ""}`.trim());
+      const ok = await runWriteOnOs(
+        osId,
+        (sid, idOs) => aplicarTransicaoStatusV3(sid, idOs, to),
+        `${labelAcaoFilaV4(from, to)}.`,
+      );
+      if (!ok) {
+        reloadOrdens();
+        if ((selectedOsId ?? "").trim() === osId) {
+          reloadDetail();
+          reloadFinancial();
+        }
+        return false;
+      }
+      if (to === "em_execucao" && semTecnico) notify(MSG_SEM_TECNICO_INICIO_V4);
+      return true;
+    },
+    [runWriteOnOs, osDaLista, notify, reloadOrdens, reloadDetail, reloadFinancial, selectedOsId],
+  );
 
   // ---- Seleção de variante (GOAL OPS-V4-ORC-APROVACAO-SELECAO-026) ----
   // Lê o orçamento REAL (não o estado local do editor de itens) para nunca
@@ -1883,6 +1946,9 @@ export function useV4Preview(): V4Vals {
       removerTecnico,
       definirPrioridade,
       avancarStatusBancada,
+      moverStatusFila,
+      modoFila,
+      setModoFila,
       enviarOrcamentoPorCanal,
       orcamentoRapidoPrefill,
       definirOrcamentoRapidoPrefill,
@@ -1932,6 +1998,9 @@ export function useV4Preview(): V4Vals {
       removerTecnico,
       definirPrioridade,
       avancarStatusBancada,
+      moverStatusFila,
+      modoFila,
+      setModoFila,
       enviarOrcamentoPorCanal,
       orcamentoRapidoPrefill,
       definirOrcamentoRapidoPrefill,

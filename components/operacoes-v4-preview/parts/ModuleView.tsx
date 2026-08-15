@@ -1,10 +1,10 @@
 /**
- * Operações V4 Preview — telas de módulo do rail (Visão geral, Fila, Bancada, SLA, PDV).
+ * Operações V4 Preview — telas de módulo do rail (Visão geral, SLA, PDV).
+ * Fila e Bancada têm superfícies próprias (`FilaV4`, `BancadaV4`).
  *
- * Cada módulo tem IDENTIDADE PRÓPRIA e lê dados REAIS (somente leitura) da lista de OS
- * já carregada da loja ativa (`v.*` derivados de `listOrdens`). Quando não há base real
- * para aquele módulo, exibe um estado vazio ESPECÍFICO e honesto — nunca cliente, OS,
- * técnico, SLA ou número fabricado. Clicar numa OS abre o Workspace real dela.
+ * Cada módulo lê dados REAIS da lista de OS já carregada da loja ativa. Quando
+ * não há base real, exibe um estado vazio ESPECÍFICO e honesto — nunca cliente,
+ * OS, técnico, SLA ou número fabricado. Clicar numa OS abre o Workspace real.
  */
 import { C, card } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
@@ -15,8 +15,6 @@ function moduleTemDados(v: V4Vals): boolean {
   switch (v.moduleId) {
     case "dashboard":
       return v.dashboardResumo.temDados;
-    case "fila":
-      return v.filaItens.length > 0;
     case "bancada":
       return v.producaoBancada.temProducao;
     case "sla":
@@ -76,8 +74,6 @@ function Body({ v }: { v: V4Vals }) {
   switch (v.moduleId) {
     case "dashboard":
       return <DashboardBody v={v} />;
-    case "fila":
-      return <FilaBody v={v} />;
     case "bancada":
       return null;
     case "sla":
@@ -118,24 +114,6 @@ function DashboardBody({ v }: { v: V4Vals }) {
       <p style={{ margin: 0, fontSize: 11.5, color: C.subtle, lineHeight: 1.5 }}>
         Resumo somente leitura da loja ativa. Abra uma OS na Fila ou no Workspace para ver os dados completos.
       </p>
-    </div>
-  );
-}
-
-// ---- Fila ------------------------------------------------------------------
-
-function FilaBody({ v }: { v: V4Vals }) {
-  if (v.filaItens.length === 0) {
-    return <EmptyBox titulo="Fila de OS" texto="Nenhuma OS aberta ou em andamento na fila desta loja." />;
-  }
-  return (
-    <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ fontSize: 11.5, color: C.subtle, fontWeight: 600 }}>
-        {v.filaItens.length} {v.filaItens.length === 1 ? "OS na fila" : "OS na fila"} · clique para abrir o Workspace
-      </div>
-      {v.filaItens.map((row) => (
-        <RailRow key={row.id} row={row} onClick={() => v.openOSFromRail(row.id)} />
-      ))}
     </div>
   );
 }
