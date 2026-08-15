@@ -122,6 +122,7 @@ import {
   montarFinanceiroHeaderV4,
   montarHistoricoHeaderV4,
 } from "@/lib/operacoes-v4/os-header-transversal";
+import { montarResumoFinanceiroOSV4 } from "@/lib/operacoes-v4/financeiro-v4";
 import {
   adaptAcessoriosEntrada,
   adaptAnexos,
@@ -334,6 +335,7 @@ const INITIAL: V4State = {
   atendimentoRapido: false,
   orcamentoRapido: false,
   estornoRecebimento: false,
+  receberPagamento: false,
   cancelamentoOS: false,
   selectedOsId: null,
   focus: false,
@@ -730,6 +732,12 @@ export function buildVals(
     status: orcStatusRaw,
     total: typeof orcRaw?.total === "number" ? orcRaw.total : financialProjection?.approvedBudgetTotal,
   });
+  const financeiroResumo = montarResumoFinanceiroOSV4({
+    loading: ctx.financialProjection.loading,
+    error: ctx.financialProjection.error,
+    projection: financialProjection,
+    caixaAberto: !!ctx.pdvServico.sessao?.aberta,
+  });
   const financeiroHeader = montarFinanceiroHeaderV4({
     loading: ctx.financialProjection.loading,
     error: ctx.financialProjection.error,
@@ -857,6 +865,7 @@ export function buildVals(
     financeiroCarregando: leituraFinanceiraBloqueada && ctx.financialProjection.loading,
     financeiroErro: leituraFinanceiraBloqueada ? ctx.financialProjection.error : null,
     financeiroMotivo: financialProjection?.consistencyIssues[0] ?? null,
+    saldoPendente: saldoPendenteConfirmado ? financialProjection?.balance ?? null : null,
   };
 
   // ---- Entrada/Recepção (slice 003): seed do editor a partir da OS real ----
@@ -1122,6 +1131,9 @@ export function buildVals(
     // GOAL OPS-V4-PDV-SERVICO-FINANCEIRO-SHORTCUT-005: usado pelo bloqueio "saldo em
     // aberto" da Entrega — só navega (o recebimento real vive no botão do Financeiro).
     goFinanceiro: () => update({ stage: "financeiro", module: "workspace", view: "cockpit", menu: null }),
+    openReceberPagamento: () => update({ stage: "financeiro", receberPagamento: true, module: "workspace", view: "cockpit", menu: null }),
+    closeReceberPagamento: () => update({ receberPagamento: false }),
+    receberPagamentoOpen: st.receberPagamento,
     // GOAL OPS-V4-ENTREGA-GUARD-SEM-COBRANCA-002: usado pelo alerta "OS sem cobrança"
     // da Entrega — leva o operador a lançar o orçamento antes de entregar (só navega).
     goOrcamento: () => update({ stage: "orcamento", module: "workspace", view: "cockpit", menu: null }),
@@ -1130,6 +1142,7 @@ export function buildVals(
       update({ stage: destino, module: "workspace", view: "cockpit", menu: null }),
     comercialHeader,
     financeiroHeader,
+    financeiroResumo,
     historicoHeader,
     backFromSeguranca: () => update({ stage: "execucao", module: "workspace", view: "cockpit", menu: null }),
 
@@ -1533,10 +1546,12 @@ export function useV4Preview(): V4Vals {
         reloadOrdens();
         reloadDetail();
         reloadFinancial();
+      } else {
+        notify("Não foi possível registrar o pagamento.");
       }
       return ok;
     },
-    [receberPdvV3, reloadOrdens, reloadDetail, reloadFinancial],
+    [receberPdvV3, reloadOrdens, reloadDetail, reloadFinancial, notify],
   );
   // ---- Estorno de recebimento (slice OPS-V4-RECEBIMENTO-ESTORNO-016): mesmo
   // padrão do `receberPagamentoV4` acima — envolve `estornar` (já pronto no hook

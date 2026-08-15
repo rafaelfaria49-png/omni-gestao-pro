@@ -1,5 +1,12 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-15 — Operações V4: recebimento financeiro transversal
+
+- O ticket Financeiro da OS passa a operar o caixa da ordem: total, recebido, saldo e situação reais.
+- Receber, split, parcial/quitação, lançar a prazo, histórico, comprovante e estorno usam os motores V3 já existentes.
+- Entrega com saldo pendente abre a mesma superfície (`Receber pagamento`). Caixa fechado não abre sessão sozinho.
+- Sem motor financeiro V4, sem schema e sem venda fictícia.
+
 ## 2026-08-15 — Operações V4: guard comercial da Bancada
 
 - Fila e Bancada passam a usar a mesma política de transições rápidas de produção.

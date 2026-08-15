@@ -4,9 +4,10 @@
  * Conversão React do protótipo Cloud Design `design/operacoes-v4`. Isolado da V3
  * (não importa nada dela). Os STAGES leem a OS REAL e várias ações de escrita
  * (cancelar, diagnóstico, orçamento, execução, entrega, assinatura, garantia,
- * recebimento, Nova OS, produção da Bancada, Fila/Kanban) persistem de verdade via
- * actions V3 reusadas. Bancada e Fila são operacionais. Visão geral, SLA e PDV de
- * serviço continuam somente leitura. O estado é local (`useV4Preview`); handlers
+ * recebimento operacional da OS, Nova OS, produção da Bancada, Fila/Kanban)
+ * persistem de verdade via actions V3 reusadas. Bancada e Fila são operacionais.
+ * O Financeiro transversal da OS recebe de verdade (`receberOSV3`) — não é
+ * preview/read-only. Visão geral, SLA e o rail PDV de serviço continuam somente leitura. O estado é local (`useV4Preview`); handlers
  * residuais sem persistência avisam via toast honesto no momento do clique.
  *
  * `height:100%` (e não 100vh) mantém o AppShell como dono do scroll — este

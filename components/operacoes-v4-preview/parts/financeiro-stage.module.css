@@ -1,0 +1,192 @@
+/*
+ * Operações V4 — painel de caixa da OS.
+ * Assinatura: fita de caixa (till tape) — densa, tabular, operacional.
+ */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tape {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.tapeHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.tapeEyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+.cell {
+  min-width: 0;
+  padding: 10px 14px 12px;
+  border-right: 1px solid var(--border);
+}
+
+.cell:last-child {
+  border-right: none;
+}
+
+.cellLabel {
+  margin-bottom: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.cellValue {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.meta {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px 12px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.metaLabel {
+  color: var(--muted-foreground);
+}
+
+.metaValue {
+  min-width: 0;
+  color: var(--foreground);
+  font-weight: 600;
+  text-align: right;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 14px 12px;
+}
+
+.history {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px 14px;
+}
+
+.historyTitle {
+  margin-bottom: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.historyItem {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  gap: 10px;
+  padding-bottom: 11px;
+}
+
+.historyItem:last-child {
+  padding-bottom: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.empty {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.issue {
+  margin: 0 14px 12px;
+  padding: 10px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1366px) {
+  .strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cell {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 14px;
+  }
+  .cell:last-child {
+    border-bottom: none;
+  }
+  .cellLabel {
+    margin-bottom: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tape,
+  .history {
+    transition: none;
+  }
+}

@@ -73,6 +73,8 @@ export interface V4State {
   orcamentoRapido: boolean;
   /** Modal de confirmação "Estornar recebimento" (GOAL OPS-V4-RECEBIMENTO-ESTORNO-016). */
   estornoRecebimento: boolean;
+  /** Sheet de recebimento imediato (GOAL OPS-V4-RECEBIMENTO-TRANSVERSAL-005). */
+  receberPagamento: boolean;
   /** Modal de confirmação "Cancelar OS" (GOAL OPS-V4-CANCELAR-OS-CONNECT-021). */
   cancelamentoOS: boolean;
   /** null = tela limpa (empty state); id = OS real selecionada. */

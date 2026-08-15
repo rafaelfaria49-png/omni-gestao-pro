@@ -6,13 +6,18 @@
  * PDV-SERVICO-OS-RECEBIMENTO-REAL-001: quando existe um recebimento real desta
  * sessão (`v.pdvServico.ultimoRecibo`, resultado de `receberOSV3`), mostra o
  * comprovante de verdade — mesma estrutura de dados do `ComprovanteReciboV3` da
- * V3, só a apresentação é V4-nativa (não importa `ReciboPreviewV3`, que usa
- * Tailwind/shadcn do V3). Sem impressão nesta etapa — só preview em tela. */
+ * V3, só a apresentação é V4-nativa. A impressão reusa o motor real
+ * `ReciboPreviewV3` (browser print — sem PDF novo). */
+"use client";
+
+import { useState } from "react";
 import { C, fmt } from "../tokens";
 import { fmtDataHora } from "../os-adapter";
 import type { V4Vals } from "../use-v4-preview";
+import { ReciboPreviewV3 } from "@/components/operacoes-v3/components/print/ReciboPreviewV3";
 
 export function ReciboModal({ v }: { v: V4Vals }) {
+  const [printOpen, setPrintOpen] = useState(false);
   if (!v.reciboOpen) return null;
   const recibo = v.pdvServico.ultimoRecibo;
   return (
@@ -54,9 +59,15 @@ export function ReciboModal({ v }: { v: V4Vals }) {
               </div>
             </div>
           )}
-          <button type="button" onClick={v.closeRecibo} style={{ width: "100%", height: 34, marginTop: 14, border: `1px solid ${C.inputBd}`, background: C.surface, color: C.body, borderRadius: 9, fontSize: 12.5, fontWeight: 500, cursor: "pointer" }}>Fechar</button>
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            {recibo ? (
+              <button type="button" onClick={() => setPrintOpen(true)} style={{ flex: 1, height: 34, border: "none", background: C.primary, color: C.white, borderRadius: 9, fontSize: 12.5, fontWeight: 600, cursor: "pointer" }}>Imprimir comprovante</button>
+            ) : null}
+            <button type="button" onClick={v.closeRecibo} style={{ flex: 1, height: 34, border: `1px solid ${C.inputBd}`, background: C.surface, color: C.body, borderRadius: 9, fontSize: 12.5, fontWeight: 500, cursor: "pointer" }}>Fechar</button>
+          </div>
         </div>
       </div>
+      {printOpen && recibo ? <ReciboPreviewV3 recibo={recibo} onClose={() => setPrintOpen(false)} /> : null}
     </div>
   );
 }

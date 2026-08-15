@@ -26,7 +26,7 @@
  * da V3: só modelo + prazo (sem termo customizado nesta etapa).
  */
 import { useEffect, useState, type ReactNode } from "react";
-import { C, card, cardTitle, upLabel, pill, inputBase } from "../../tokens";
+import { C, card, cardTitle, fmt, upLabel, pill, inputBase } from "../../tokens";
 import type { V4Vals } from "../../use-v4-preview";
 import { SignaturePadV3 } from "@/components/operacoes-v3/components/SignaturePadV3";
 import { lerGarantiaV3 } from "@/lib/operacoes-v3/pos-venda-model";
@@ -107,15 +107,18 @@ function EntregaAcaoCard({ v }: { v: V4Vals }) {
     return (
       <div style={card}>
         <div style={{ ...cardTitle, marginBottom: 6 }}>Entrega</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.warnFg, marginBottom: 4 }}>
+          Pagamento pendente{ea.saldoPendente != null ? `  ${fmt(ea.saldoPendente)}` : ""}
+        </div>
         <div style={{ fontSize: 11.5, color: C.warnFg, lineHeight: 1.5, marginBottom: 10 }}>
-          Há saldo em aberto. Receba o pagamento (ou lance a prazo) na aba Financeiro antes de confirmar a entrega.
+          Receba o pagamento (ou lance a prazo) antes de confirmar a entrega.
         </div>
         <button
           type="button"
-          onClick={v.goFinanceiro}
+          onClick={v.openReceberPagamento}
           style={{ height: 30, padding: "0 12px", border: `1px solid ${C.inputBd}`, background: C.surface, color: C.body, borderRadius: 8, fontSize: 11.5, fontWeight: 500, cursor: "pointer" }}
         >
-          Ir para Financeiro →
+          Receber pagamento
         </button>
       </div>
     );

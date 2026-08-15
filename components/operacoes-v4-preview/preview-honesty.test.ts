@@ -167,6 +167,7 @@ function makeState(over: Partial<V4State> = {}): V4State {
     atendimentoRapido: false,
     orcamentoRapido: false,
     estornoRecebimento: false,
+    receberPagamento: false,
     cancelamentoOS: false,
     selectedOsId: null,
     focus: false,
@@ -691,7 +692,7 @@ describe("OPS-V4-PIPELINE-DEDUP-004 — a spine é a única fonte da etapa atual
       },
     )
     expect(v.comercialHeader.label).toBe("R$ 400,00 · Aprovado")
-    expect(v.financeiroHeader.label).toBe("A receber R$ 400,00")
+    expect(v.financeiroHeader.label).toBe("R$ 400,00 a receber")
     expect(v.historicoHeader.label).toBe("Histórico")
     expect(v.goOrcamento).toBeTypeOf("function")
     expect(v.goFinanceiro).toBeTypeOf("function")
@@ -1540,6 +1541,20 @@ describe("OPS-V4-ORC-VIEWMODEL-DOC-023 — documento 'Orçamento (via cliente)'"
         expect(src, `proibido "${proibido}" encontrado em ${alvo}`).not.toContain(proibido)
       }
     }
+  })
+})
+
+describe("OPS-V4-RECEBIMENTO-TRANSVERSAL-005 — Financeiro da OS é recebimento operacional, não preview/read-only", () => {
+  it("não classifica o Financeiro transversal como somente leitura depois do recebimento conectado", () => {
+    const stage = readFileSync(join(DIR, "parts", "stages", "FinanceiroStage.tsx"), "utf8")
+    const receber = readFileSync(join(DIR, "parts", "ReceberPagamentoV4.tsx"), "utf8")
+    const orchestrator = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+    expect(stage).toContain("<ReceberPagamentoV4")
+    expect(receber).toContain("receberOSV3")
+    expect(orchestrator).toContain("receberOSV3")
+    expect(orchestrator).toContain("lancarOSAPrazoV3")
+    expect(stage).not.toMatch(/em breve/i)
+    expect(stage + receber).not.toContain("Financeiro completo")
   })
 })
 

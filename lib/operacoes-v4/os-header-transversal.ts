@@ -7,6 +7,12 @@
 // estágios reais já existentes ao clicar.
 // ============================================================================
 
+import {
+  labelTicketFinanceiroV4,
+  situacaoFinanceiraOSV4,
+  type SituacaoFinanceiraOSV4,
+} from "./financeiro-v4";
+
 export type HeaderChipToneV4 = "neutro" | "info" | "warn" | "success" | "danger";
 export type HeaderChipDestinoV4 = "orcamento" | "financeiro" | "historico";
 
@@ -140,8 +146,8 @@ export type FinancialStatusHeaderV4 =
   | "REVERSED";
 
 /**
- * Situação financeira compacta.
- * Caixa fechado / leitura indisponível NÃO vira "Cobrança não definida".
+ * Situação financeira compacta — mesmo view-model do FinanceiroStage.
+ * Caixa fechado / leitura indisponível NÃO vira "Sem cobrança".
  */
 export function montarFinanceiroHeaderV4(input: {
   loading?: boolean;
@@ -172,121 +178,41 @@ export function montarFinanceiroHeaderV4(input: {
   }
 
   const status = input.financialStatus;
-  const expected = money(input.expectedTotal);
-  const received = money(input.receivedTotal);
-  const balance = money(input.balance);
+  const situacao: SituacaoFinanceiraOSV4 = status ? situacaoFinanceiraOSV4(status) : "revisar";
+  const label = labelTicketFinanceiroV4({
+    situacao,
+    total: input.expectedTotal ?? null,
+    saldo: input.balance ?? input.expectedTotal ?? null,
+  });
 
   if (!status || status === "NO_PRICE" || status === "AUTHORIZED_NO_CHARGE") {
-    return {
-      eyebrow: "Financeiro",
-      label: "Cobrança não definida",
-      cta: "Definir cobrança",
-      tone: "neutro",
-      destino: "orcamento",
-    };
+    return { eyebrow: "Financeiro", label, cta: "Definir cobrança", tone: "neutro", destino: "orcamento" };
   }
-
+  if (status === "PRICE_DEFINED") {
+    return { eyebrow: "Financeiro", label, cta: "Definir cobrança", tone: "neutro", destino: "orcamento" };
+  }
   if (status === "UNKNOWN") {
-    return {
-      eyebrow: "Financeiro",
-      label: "Financeiro indisponível",
-      cta: "Financeiro",
-      tone: "danger",
-      destino: "financeiro",
-    };
+    return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "danger", destino: "financeiro" };
   }
-
   if (status === "INCONSISTENT") {
-    return {
-      eyebrow: "Financeiro",
-      label: "Financeiro inconsistente",
-      cta: "Financeiro",
-      tone: "danger",
-      destino: "financeiro",
-    };
+    return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "danger", destino: "financeiro" };
   }
-
   if (status === "PAID") {
-    return {
-      eyebrow: "Financeiro",
-      label: expected ? `Quitado ${expected}` : "Quitado",
-      cta: null,
-      tone: "success",
-      destino: "financeiro",
-    };
+    return { eyebrow: "Financeiro", label, cta: null, tone: "success", destino: "financeiro" };
   }
-
   if (status === "PARTIAL") {
-    const parts = [
-      received ? `Recebido ${received}` : null,
-      balance ? `Saldo ${balance}` : null,
-    ].filter(Boolean);
-    return {
-      eyebrow: "Financeiro",
-      label: parts.join(" · ") || "Recebimento parcial",
-      cta: "Financeiro",
-      tone: "warn",
-      destino: "financeiro",
-    };
+    return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "warn", destino: "financeiro" };
   }
-
-  if (status === "OPEN") {
-    return {
-      eyebrow: "Financeiro",
-      label: expected ? `A receber ${expected}` : "A receber",
-      cta: "Financeiro",
-      tone: "warn",
-      destino: "financeiro",
-    };
+  if (status === "OPEN" || status === "CHARGE_NOT_CREATED") {
+    return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "warn", destino: "financeiro" };
   }
-
   if (status === "AUTHORIZED_CREDIT") {
-    return {
-      eyebrow: "Financeiro",
-      label: expected ? `A prazo ${expected}` : "Autorizado a prazo",
-      cta: "Financeiro",
-      tone: "info",
-      destino: "financeiro",
-    };
+    return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "info", destino: "financeiro" };
   }
-
-  if (status === "CANCELLED") {
-    return {
-      eyebrow: "Financeiro",
-      label: "Cobrança cancelada",
-      cta: "Financeiro",
-      tone: "danger",
-      destino: "financeiro",
-    };
+  if (status === "CANCELLED" || status === "REVERSED") {
+    return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "danger", destino: "financeiro" };
   }
-
-  if (status === "REVERSED") {
-    return {
-      eyebrow: "Financeiro",
-      label: "Pagamento estornado",
-      cta: "Financeiro",
-      tone: "danger",
-      destino: "financeiro",
-    };
-  }
-
-  if (status === "PRICE_DEFINED" || status === "CHARGE_NOT_CREATED") {
-    return {
-      eyebrow: "Financeiro",
-      label: expected ? `Preço ${expected}` : "Revisar cobrança",
-      cta: "Financeiro",
-      tone: "info",
-      destino: "financeiro",
-    };
-  }
-
-  return {
-    eyebrow: "Financeiro",
-    label: "Revisar cobrança",
-    cta: "Financeiro",
-    tone: "warn",
-    destino: "financeiro",
-  };
+  return { eyebrow: "Financeiro", label, cta: "Financeiro", tone: "warn", destino: "financeiro" };
 }
 
 export function montarHistoricoHeaderV4(eventCount: number): HistoricoHeaderV4 {

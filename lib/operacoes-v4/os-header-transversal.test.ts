@@ -33,31 +33,37 @@ describe("header comercial transversal", () => {
 describe("header financeiro transversal", () => {
   it("sem valor definido oferece Definir cobrança e vai ao orçamento", () => {
     const chip = montarFinanceiroHeaderV4({ financialStatus: "NO_PRICE" });
-    expect(chip.label).toBe("Cobrança não definida");
+    expect(chip.label).toBe("Sem cobrança");
     expect(chip.cta).toBe("Definir cobrança");
     expect(chip.destino).toBe("orcamento");
   });
 
+  it("prévia comercial não se disfarça de cobrança real", () => {
+    const chip = montarFinanceiroHeaderV4({ financialStatus: "PRICE_DEFINED", expectedTotal: 400 });
+    expect(chip.label).toBe("Prévia sem cobrança");
+    expect(chip.destino).toBe("orcamento");
+  });
+
   it("orçamento aprovado sem recebimento → A receber", () => {
-    const chip = montarFinanceiroHeaderV4({ financialStatus: "OPEN", expectedTotal: 400 });
-    expect(chip.label).toBe("A receber R$ 400,00");
+    const chip = montarFinanceiroHeaderV4({ financialStatus: "OPEN", expectedTotal: 400, balance: 400 });
+    expect(chip.label).toBe("R$ 400,00 a receber");
     expect(chip.cta).toBe("Financeiro");
     expect(chip.destino).toBe("financeiro");
   });
 
-  it("recebimento parcial mostra recebido e saldo", () => {
+  it("recebimento parcial mostra o saldo pendente", () => {
     const chip = montarFinanceiroHeaderV4({
       financialStatus: "PARTIAL",
       expectedTotal: 400,
       receivedTotal: 100,
       balance: 300,
     });
-    expect(chip.label).toBe("Recebido R$ 100,00 · Saldo R$ 300,00");
+    expect(chip.label).toBe("Parcial  R$ 300,00 pendente");
   });
 
   it("quitado não pede CTA de cobrança", () => {
     const chip = montarFinanceiroHeaderV4({ financialStatus: "PAID", expectedTotal: 400 });
-    expect(chip.label).toBe("Quitado R$ 400,00");
+    expect(chip.label).toBe("Quitado");
     expect(chip.cta).toBeNull();
     expect(chip.destino).toBe("financeiro");
   });

@@ -18,10 +18,12 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { C, fmt } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import { RealActionNotice } from "./RealActionNotice";
+import sheetStyles from "./receber-pagamento.module.css";
 import {
   FORMAS_RECEBIMENTO_V3,
   somaSplitV3,
@@ -29,9 +31,14 @@ import {
   type FormaRecebimentoV3,
   type SplitLinhaV3,
 } from "@/lib/operacoes-v3/payment-model";
+import {
+  INTENCOES_RECEBIMENTO_V4,
+  valorSugeridoRecebimentoV4,
+  type IntencaoRecebimentoV4,
+} from "@/lib/operacoes-v4/receber-pagamento-form";
 
 const box = {
-  marginTop: 12,
+  marginTop: 0,
   padding: 11,
   border: `1px solid ${C.line2}`,
   borderRadius: 9,
@@ -100,7 +107,7 @@ function fmtDataBR(iso: string): string {
 function APrazoResumo({ amount, dueAt }: { amount: number; dueAt: string | null }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, background: C.infoBg, border: `1px solid ${C.infoBd}`, borderRadius: 9, padding: "9px 11px", marginBottom: 12 }}>
-      <span style={{ fontSize: 11.5, fontWeight: 600, color: C.infoFg }}>Conta a receber criada — lançamento a prazo</span>
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: C.infoFg }}>Conta a receber criada</span>
       <span style={{ fontSize: 11, color: C.infoFg }}>Valor: {fmt(amount)} · Vencimento: {dueAt ? fmtDataBR(dueAt) : "Não registrado"}</span>
       <span style={{ fontSize: 10.5, color: C.infoFg }}>Esta operação não movimentou caixa.</span>
     </div>
@@ -112,24 +119,39 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
   const [open, setOpen] = useState(false);
   const [linhas, setLinhas] = useState<LinhaDraft[]>([{ forma: "dinheiro", valorStr: "" }]);
   const [observacao, setObservacao] = useState("");
+  const [intencao, setIntencao] = useState<IntencaoRecebimentoV4>("quitacao");
   const [openAPrazo, setOpenAPrazo] = useState(false);
   const [vencimento, setVencimento] = useState("");
   const [obsAPrazo, setObsAPrazo] = useState("");
   const [busyAPrazo, setBusyAPrazo] = useState(false);
   const [erroAPrazo, setErroAPrazo] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  const projectionSeed = v.financial.projection;
+  const saldoSeed = projectionSeed?.balance
+    ?? (projectionSeed?.financialStatus === "CHARGE_NOT_CREATED" ? projectionSeed.expectedTotal : 0)
+    ?? 0;
+  useEffect(() => {
+    if (!v.receberPagamentoOpen) return;
+    setIntencao("quitacao");
+    setLinhas([{ forma: "pix", valorStr: saldoSeed > 0 ? String(saldoSeed) : "" }]);
+    setObservacao("");
+    setOpen(true);
+  }, [v.receberPagamentoOpen, saldoSeed]);
 
   if (!v.osSelected) return null;
   if (v.financial.loading) {
     return <div style={box}><div style={{ fontSize: 11.5, color: C.subtle }}>Carregando projeção financeira…</div></div>;
   }
   const projection = v.financial.projection;
-  if (v.financial.error || !projection || projection.expectedTotal == null || projection.receivedTotal == null || projection.balance == null) {
+  if (v.financial.error || !projection || projection.expectedTotal == null) {
     return <div style={box}><div style={{ fontSize: 11.5, color: C.dangerFg, lineHeight: 1.5 }}>Recebimento bloqueado: situação financeira indisponível ou incompleta.</div></div>;
   }
   const pagamento = {
     total: projection.expectedTotal,
-    recebido: projection.receivedTotal,
-    saldo: projection.balance,
+    recebido: projection.receivedTotal ?? 0,
+    saldo: projection.balance ?? (projection.financialStatus === "CHARGE_NOT_CREATED" ? projection.expectedTotal : 0),
   };
   const authorizedCredit = projection.financialStatus === "AUTHORIZED_CREDIT";
   const creditInstallment = authorizedCredit ? projection.installments[0] ?? null : null;
@@ -137,17 +159,24 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
   // Gating vem pré-computado de `buildVals` (mesma regra do servidor — ver
   // `v.recebimento` em use-v4-preview.ts) para ficar testável sem renderizar React.
   const { semTotal, previaNaoMaterializada, quitado, caixaAberto } = v.recebimento;
+  const formAberto = open || v.receberPagamentoOpen;
 
-  const openForm = () => {
-    setLinhas([{ forma: "dinheiro", valorStr: String(pagamento.saldo) }]);
+  const seedForm = () => {
+    setIntencao("quitacao");
+    setLinhas([{ forma: "pix", valorStr: String(pagamento.saldo) }]);
     setObservacao("");
+  };
+  const openForm = () => {
+    seedForm();
     setOpen(true);
     setOpenAPrazo(false);
+    v.openReceberPagamento();
   };
   const cancelar = () => {
     setOpen(false);
     setLinhas([{ forma: "dinheiro", valorStr: "" }]);
     setObservacao("");
+    v.closeReceberPagamento();
   };
   const openFormAPrazo = () => {
     setVencimento("");
@@ -155,6 +184,7 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
     setErroAPrazo(null);
     setOpenAPrazo(true);
     setOpen(false);
+    v.closeReceberPagamento();
   };
   const cancelarAPrazo = () => {
     setOpenAPrazo(false);
@@ -213,7 +243,7 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
             disabled={!podeConfirmarAPrazo}
             style={{ ...btnPrimary, flex: 1, cursor: podeConfirmarAPrazo ? "pointer" : "default", opacity: podeConfirmarAPrazo ? 1 : 0.6 }}
           >
-            {busyAPrazo ? "Lançando…" : "Lançar a prazo e liberar entrega"}
+            {busyAPrazo ? "Lançando…" : "Lançar a prazo"}
           </button>
           <button type="button" onClick={cancelarAPrazo} disabled={busyAPrazo} style={{ ...btnGhost, flex: "none" }}>Cancelar</button>
         </div>
@@ -243,7 +273,7 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
       <div style={box}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <span style={{ fontSize: 11.5, color: C.muted }}>Recebimento desta OS</span>
-          <span style={{ height: 21, padding: "0 9px", display: "inline-flex", alignItems: "center", background: C.successBg, color: C.successFg, borderRadius: 999, fontSize: 11, fontWeight: 600 }}>✓ Quitado</span>
+          <span style={{ height: 21, padding: "0 9px", display: "inline-flex", alignItems: "center", background: C.successBg, color: C.successFg, borderRadius: 999, fontSize: 11, fontWeight: 600 }}>Quitado</span>
         </div>
         {/* GOAL OPS-V4-ENTREGA-REAL-E-CTA-QUITADO-008: só navega — a ação real de
             entrega vive no botão dedicado da aba Entrega (v.confirmarEntrega). */}
@@ -257,7 +287,7 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
     );
   }
 
-  if (!projection.canReceive) {
+  if (!projection.canReceive && projection.financialStatus !== "CHARGE_NOT_CREATED") {
     return (
       <div style={box}>
         <div style={{ fontSize: 11.5, color: C.warnFg, lineHeight: 1.5 }}>
@@ -275,19 +305,22 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
     return (
       <div style={box}>
         {authorizedCredit && <APrazoResumo amount={creditInstallment?.amount ?? pagamento.saldo} dueAt={creditInstallment?.dueAt ?? null} />}
-        <div style={{ fontSize: 11.5, color: C.warnFg, lineHeight: 1.5, fontWeight: 500 }}>
-          Caixa fechado — abra o caixa no PDV/Caixa antes de receber esta OS.
+        <div style={{ fontSize: 13, color: C.warnFg, lineHeight: 1.4, fontWeight: 700 }}>Caixa fechado</div>
+        <div style={{ fontSize: 11.5, color: C.warnFg, lineHeight: 1.5, marginTop: 4 }}>
+          Abra uma sessão de caixa antes de receber este pagamento.
         </div>
         <div style={{ fontSize: 10.5, color: C.subtle, marginTop: 5, marginBottom: 9 }}>Saldo a receber: {fmt(pagamento.saldo)}</div>
-        {/* "A prazo" NÃO exige caixa aberto — não movimenta caixa. */}
-        {!authorizedCredit && (
-          <button type="button" onClick={openFormAPrazo} style={{ ...btnGhost, height: 30, padding: "0 12px", fontSize: 11.5 }}>📄 Lançar a prazo</button>
-        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <a href="/dashboard/vendas" style={{ ...btnPrimary, display: "inline-flex", alignItems: "center", textDecoration: "none" }}>Abrir Caixa</a>
+          {!authorizedCredit && (
+            <button type="button" onClick={openFormAPrazo} style={{ ...btnGhost, height: 34, padding: "0 12px", fontSize: 11.5 }}>Lançar a prazo</button>
+          )}
+        </div>
       </div>
     );
   }
 
-  if (!open) {
+  if (!formAberto) {
     return (
       <div style={box}>
         {authorizedCredit && <APrazoResumo amount={creditInstallment?.amount ?? pagamento.saldo} dueAt={creditInstallment?.dueAt ?? null} />}
@@ -297,7 +330,7 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
             {!authorizedCredit && (
               <button type="button" onClick={openFormAPrazo} style={{ ...btnGhost, height: 32, padding: "0 12px", fontSize: 11.5 }}>Lançar a prazo</button>
             )}
-            <button type="button" onClick={openForm} style={{ ...btnPrimary, height: 32, padding: "0 14px", fontSize: 12 }}>Receber pagamento</button>
+            <button type="button" onClick={openForm} style={{ ...btnPrimary, height: 32, padding: "0 14px", fontSize: 12 }}>Receber {fmt(pagamento.saldo)}</button>
           </div>
         </div>
       </div>
@@ -313,7 +346,8 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
   const totalInformado = somaSplitV3(linhasValidas);
   const saldoRestante = Math.max(0, pagamento.saldo - totalInformado);
   const veredito = validarSplitV3(linhasValidas, pagamento.saldo);
-  const podeConfirmar = veredito.ok && !algumaLinhaInvalida && !pdv.recebendo;
+  const quitacaoIncompleta = intencao === "quitacao" && saldoRestante > 0.009;
+  const podeConfirmar = veredito.ok && !algumaLinhaInvalida && !pdv.recebendo && !quitacaoIncompleta;
 
   const addLinha = () => {
     const restanteAtual = Math.max(0, pagamento.saldo - totalInformado);
@@ -329,12 +363,18 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
       return arr.map((l, idx) => (idx === i ? { ...l, valorStr: restante > 0 ? String(restante) : "" } : l));
     });
   };
+  const escolherIntencao = (next: IntencaoRecebimentoV4) => {
+    setIntencao(next);
+    const sugerido = valorSugeridoRecebimentoV4(next, pagamento.saldo);
+    if (next === "quitacao") setLinhas([{ forma: linhas[0]?.forma ?? "pix", valorStr: String(sugerido) }]);
+  };
 
   const onConfirmar = async () => {
-    if (!podeConfirmar || !pdv.sessao?.sessaoId) return;
+    if (!podeConfirmar || !pdv.sessao?.sessaoId || pdv.recebendo) return;
     const ok = await pdv.receber({
       linhas: linhasValidas,
       sessaoId: pdv.sessao.sessaoId,
+      intencao: intencao === "quitacao" ? undefined : intencao,
       observacao: observacao.trim() || undefined,
     });
     if (ok) {
@@ -343,87 +383,125 @@ export function ReceberPagamentoV4({ v }: { v: V4Vals }) {
     }
   };
 
-  return (
-    <div style={box}>
-      <RealActionNotice kind="pagamento" />
-      <div style={{ fontSize: 11.5, color: C.muted, marginBottom: 9 }}>Saldo a receber: <b style={{ color: C.warnFg }}>{fmt(pagamento.saldo)}</b></div>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
-        {linhas.map((l, i) => (
-          <div key={i} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) auto auto", gap: 6, alignItems: "end" }}>
-            <div>
-              {i === 0 && <div style={{ fontSize: 10, color: C.subtle, marginBottom: 3 }}>Forma</div>}
-              <select
-                value={l.forma}
-                onChange={(e) => setLinhas((arr) => arr.map((x, idx) => (idx === i ? { ...x, forma: e.target.value as FormaRecebimentoV3 } : x)))}
-                style={{ ...cellInput, width: "100%", cursor: "pointer" }}
-              >
-                {FORMAS_SUPORTADAS.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              {i === 0 && <div style={{ fontSize: 10, color: C.subtle, marginBottom: 3 }}>Valor</div>}
-              <input
-                type="text"
-                inputMode="decimal"
-                value={l.valorStr}
-                onChange={(e) => setLinhas((arr) => arr.map((x, idx) => (idx === i ? { ...x, valorStr: e.target.value } : x)))}
-                placeholder="0,00"
-                style={{ ...cellInput, width: "100%" }}
-              />
-            </div>
-            <button type="button" onClick={() => usarRestante(i)} style={btnGhostSm}>Usar restante</button>
-            <button
-              type="button"
-              onClick={() => removeLinha(i)}
-              disabled={linhas.length <= 1}
-              style={{ ...btnGhostSm, opacity: linhas.length <= 1 ? 0.5 : 1, cursor: linhas.length <= 1 ? "default" : "pointer" }}
-              aria-label="Remover forma"
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
-
-      <button type="button" onClick={addLinha} style={{ ...btnGhost, marginBottom: 9 }}>+ Adicionar forma</button>
-
-      <div style={{ marginBottom: 9, display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11 }}>
-        <span style={{ color: C.subtle }}>Total informado: <b style={{ color: C.body }}>{fmt(totalInformado)}</b></span>
-        <span style={{ color: saldoRestante <= 0.009 ? C.successFg : C.warnFg }}>Saldo restante: <b>{fmt(saldoRestante)}</b></span>
-      </div>
-
-      <div style={{ marginBottom: 9 }}>
-        <div style={{ fontSize: 10, color: C.subtle, marginBottom: 3 }}>Observação (opcional)</div>
-        <input
-          type="text"
-          value={observacao}
-          onChange={(e) => setObservacao(e.target.value)}
-          maxLength={200}
-          placeholder="Ex.: sinal para retirar peça"
-          style={{ ...cellInput, width: "100%" }}
-        />
-      </div>
-      {(algumaLinhaInvalida || !veredito.ok) && (
-        <div style={{ fontSize: 11, color: C.dangerFg, marginBottom: 9 }}>
-          {algumaLinhaInvalida ? "Informe um valor maior que zero em todas as formas adicionadas." : veredito.motivo}
+  if (!mounted) return null;
+  return createPortal(
+    <div className={sheetStyles.overlay} role="dialog" aria-labelledby="receber-os-title">
+      <div className={sheetStyles.sheet}>
+        <div className={sheetStyles.head}>
+          <div id="receber-os-title" style={{ fontSize: 14, fontWeight: 700, color: C.ink }}>Receber pagamento</div>
+          <button type="button" onClick={cancelar} disabled={pdv.recebendo} style={{ width: 26, height: 26, border: "none", background: C.muted50, borderRadius: 7, color: C.muted, fontSize: 15, cursor: "pointer" }}>×</button>
         </div>
-      )}
-      {pdv.error && <div style={{ fontSize: 11, color: C.dangerFg, marginBottom: 9 }}>{pdv.error}</div>}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button
-          type="button"
-          onClick={onConfirmar}
-          disabled={!podeConfirmar}
-          style={{ ...btnPrimary, flex: 1, cursor: podeConfirmar ? "pointer" : "default", opacity: podeConfirmar ? 1 : 0.6 }}
-        >
-          {pdv.recebendo ? "Confirmando…" : "Confirmar recebimento real"}
-        </button>
-        <button type="button" onClick={cancelar} disabled={pdv.recebendo} style={{ ...btnGhost, flex: "none" }}>Cancelar</button>
+        <div className={sheetStyles.body}>
+          <RealActionNotice kind="pagamento" />
+          <div style={{ fontSize: 10, letterSpacing: ".08em", textTransform: "uppercase", color: C.subtle, marginBottom: 3 }}>Saldo da OS</div>
+          <div className={sheetStyles.money} style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-.03em", color: C.warnFg, marginBottom: 12 }}>{fmt(pagamento.saldo)}</div>
+
+          <div style={{ fontSize: 10, color: C.subtle, marginBottom: 6 }}>Tipo</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+            {INTENCOES_RECEBIMENTO_V4.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => escolherIntencao(item.value)}
+                style={{
+                  height: 28,
+                  padding: "0 10px",
+                  borderRadius: 999,
+                  border: `1px solid ${intencao === item.value ? C.primaryBd : C.inputBd}`,
+                  background: intencao === item.value ? C.primarySoft : C.surface,
+                  color: intencao === item.value ? C.primaryHover : C.body,
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 }}>
+            {linhas.map((l, i) => (
+              <div key={i} className={sheetStyles.linha}>
+                <div>
+                  {i === 0 && <div style={{ fontSize: 10, color: C.subtle, marginBottom: 3 }}>Forma {linhas.length > 1 ? i + 1 : "1"}</div>}
+                  <select
+                    value={l.forma}
+                    onChange={(e) => setLinhas((arr) => arr.map((x, idx) => (idx === i ? { ...x, forma: e.target.value as FormaRecebimentoV3 } : x)))}
+                    style={{ ...cellInput, width: "100%", cursor: "pointer" }}
+                  >
+                    {FORMAS_SUPORTADAS.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  {i === 0 && <div style={{ fontSize: 10, color: C.subtle, marginBottom: 3 }}>Valor</div>}
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={l.valorStr}
+                    onChange={(e) => setLinhas((arr) => arr.map((x, idx) => (idx === i ? { ...x, valorStr: e.target.value } : x)))}
+                    placeholder="0,00"
+                    className={sheetStyles.money}
+                    style={{ ...cellInput, width: "100%" }}
+                  />
+                </div>
+                <div className={sheetStyles.linhaActions}>
+                  <button type="button" onClick={() => usarRestante(i)} style={btnGhostSm}>Usar restante</button>
+                  <button
+                    type="button"
+                    onClick={() => removeLinha(i)}
+                    disabled={linhas.length <= 1}
+                    style={{ ...btnGhostSm, opacity: linhas.length <= 1 ? 0.5 : 1, cursor: linhas.length <= 1 ? "default" : "pointer" }}
+                    aria-label="Remover forma"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button type="button" onClick={addLinha} style={{ ...btnGhost, marginBottom: 9 }}>+ Dividir pagamento</button>
+
+          <div style={{ marginBottom: 9, display: "flex", justifyContent: "space-between", gap: 8, fontSize: 11 }}>
+            <span style={{ color: C.subtle }}>Informado: <b className={sheetStyles.money} style={{ color: C.body }}>{fmt(totalInformado)}</b></span>
+            <span style={{ color: saldoRestante <= 0.009 ? C.successFg : C.warnFg }}>Restante: <b className={sheetStyles.money}>{fmt(saldoRestante)}</b></span>
+          </div>
+
+          <div style={{ marginBottom: 9 }}>
+            <div style={{ fontSize: 10, color: C.subtle, marginBottom: 3 }}>Observação (opcional)</div>
+            <input
+              type="text"
+              value={observacao}
+              onChange={(e) => setObservacao(e.target.value)}
+              maxLength={200}
+              placeholder="Ex.: sinal para retirar peça"
+              style={{ ...cellInput, width: "100%" }}
+            />
+          </div>
+          {(algumaLinhaInvalida || !veredito.ok || quitacaoIncompleta) && (
+            <div style={{ fontSize: 11, color: C.dangerFg, marginBottom: 9 }}>
+              {algumaLinhaInvalida ? "Informe um valor maior que zero em todas as formas adicionadas." : quitacaoIncompleta ? "Para quitar, o informado precisa cobrir o saldo." : veredito.motivo}
+            </div>
+          )}
+          {pdv.error && <div style={{ fontSize: 11, color: C.dangerFg, marginBottom: 9 }}>{pdv.error}</div>}
+        </div>
+        <div className={sheetStyles.footer}>
+          <button
+            type="button"
+            onClick={onConfirmar}
+            disabled={!podeConfirmar}
+            style={{ ...btnPrimary, flex: 1, cursor: podeConfirmar ? "pointer" : "default", opacity: podeConfirmar ? 1 : 0.6 }}
+          >
+            {pdv.recebendo ? "Confirmando…" : `Confirmar ${fmt(totalInformado)}`}
+          </button>
+          <button type="button" onClick={cancelar} disabled={pdv.recebendo} style={{ ...btnGhost, flex: "none" }}>Cancelar</button>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
