@@ -333,7 +333,7 @@ export function TrocasDevolucao({
    * 3) Se devolvido > nova compra e cliente escolheu "dinheiro", o saldo remanescente do vale é
    *    devolvido em dinheiro (debita do `customerCredits` local).
    */
-  const handleFinalizarTroca = () => {
+  const handleFinalizarTroca = async () => {
     if (!sale) return
     if (!caixa.isOpen) {
       toast({ title: "Caixa fechado", description: "Abra o caixa antes de finalizar a troca.", variant: "destructive" })
@@ -371,16 +371,6 @@ export function TrocasDevolucao({
       return
     }
 
-    const predictedNovaVendaId = (() => {
-      const year = new Date().getFullYear()
-      let max = 0
-      for (const s of sales) {
-        const m = s.id.match(/^VDA-(\d{4})-(\d+)$/)
-        if (m && parseInt(m[1], 10) === year) max = Math.max(max, parseInt(m[2], 10))
-      }
-      return `VDA-${year}-${String(max + 1).padStart(4, "0")}`
-    })()
-
     const excessoDinheiro = creditoRestante > 0 && excessHandling === "dinheiro" ? creditoRestante : 0
     const creditoFinal = Math.max(0, creditoRestante - excessoDinheiro)
     const usaVale = valePassivelAbatimento
@@ -391,7 +381,7 @@ export function TrocasDevolucao({
       linhas: lines,
       modo: "troca_imediata",
       vendaOriginalId: sale.id,
-      novaVendaId: predictedNovaVendaId,
+      novaVendaId: null,
       valorDevolvido,
       totalNovaCompra,
       diferencaPaga: diff > 0 ? diff : 0,
@@ -428,7 +418,7 @@ export function TrocasDevolucao({
       else if (diffPayMethod === "credito") pb.cartaoCredito = diff
     }
 
-    const novaVenda = finalizeSaleTransaction({
+    const novaVenda = await finalizeSaleTransaction({
       lines: trocaCart.map((l) => ({ inventoryId: l.inventoryId, quantity: l.quantity, name: l.name, unitPrice: l.unitPrice })),
       total: totalNovaCompra,
       paymentBreakdown: pb,
@@ -489,7 +479,7 @@ export function TrocasDevolucao({
       tipo: "troca",
       devolucaoId: dev.devolucaoId,
       vendaOrigemId: sale.id,
-      novaVendaId: novaVenda.saleId,
+      novaVendaId: novaVenda.pending ? null : novaVenda.saleId,
       clienteNome: nome,
       clienteCpf: cpf,
       operador: nomeLoja,

@@ -89,6 +89,19 @@ describe("saleFromDbRow — saneamento de marcadores client-only", () => {
     expect(outro.lines[0]!.name).toBe("Brinquedo")
     expect(outro.paymentBreakdown.dinheiro).toBe(0)
   })
+
+  it("projeta clientSaleId e serverId da linha persistida", () => {
+    const sale = saleFromDbRow(
+      row({
+        clientSaleId: "cs_attempt_aaaaaa",
+        serverId: "cuid_venda_1",
+        payload: payloadLegado({ clientSaleId: "cs_attempt_aaaaaa" }),
+      }),
+    )
+    expect(sale.clientSaleId).toBe("cs_attempt_aaaaaa")
+    expect(sale.serverId).toBe("cuid_venda_1")
+    expect(sale.syncPending).toBeUndefined()
+  })
 })
 
 describe("stripClientSyncFlags", () => {

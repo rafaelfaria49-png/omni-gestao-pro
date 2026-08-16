@@ -87,6 +87,7 @@ import { useClienteSearch } from "@/lib/hooks/use-cliente-search"
 import { PdvClientePicker, type PdvClienteResult } from "./pdv-cliente-picker"
 import { PaymentModal, type PaymentMethod, type PaymentMethodType } from "./payment-modal"
 import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
+import { displaySaleNumber } from "@/lib/vendas/local-sale-identity"
 import { TrocasDevolucao } from "./trocas-devolucao"
 import { ItemAvulsoModal, type ItemAvulsoPayload } from "./item-avulso-modal"
 import { PdvRecebimentoModal } from "./pdv-recebimento-modal"
@@ -1769,7 +1770,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   }
 
   // ── Payment confirm ────────────────────────────────────────────────────────────
-  const handlePaymentConfirm = (
+  const handlePaymentConfirm = async (
     payments: PaymentMethod[],
     meta?: { cashierId?: string; discountAuthorizedByAdminId?: string; discountReais?: number; discountPercent?: number },
   ) => {
@@ -1818,7 +1819,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
     }
     const _hadItems = cart.length > 0
 
-    const result = finalizeSaleTransaction({
+    const result = await finalizeSaleTransaction({
       lines: cart.map((l) => ({
         inventoryId: l.inventoryId,
         quantity: l.qty,
@@ -1864,9 +1865,9 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       toast({ title: "Falha ao finalizar", description: result.reason, variant: "destructive" })
       return
     }
-    _printInput.numeroVenda = result.saleId
+    _printInput.numeroVenda = displaySaleNumber(result.saleId, result.pending)
     // Saldo à prazo → Conta a Receber (cache local; o servidor é a fonte da verdade).
-    if (aPrazo > 0.02 && (customerName.trim() || selectedClienteId)) {
+    if (aPrazo > 0.02 && (customerName.trim() || selectedClienteId) && !result.pending) {
       appendContaReceberTituloPdvAprazo({
         lojaId: storeIdKey,
         saleId: result.saleId,

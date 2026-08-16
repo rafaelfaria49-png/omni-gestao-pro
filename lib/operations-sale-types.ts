@@ -58,7 +58,18 @@ export interface SaleLineRecord {
 }
 
 export interface SaleRecord {
+  /**
+   * Número comercial exibido (`pedidoId` / VDA) depois da reconciliação.
+   * No fluxo V2 offline, começa como referência provisória `PEND-…` — nunca um VDA inventado.
+   */
   id: string
+  /**
+   * Identidade técnica estável da tentativa (UUID opaco). Única por loja.
+   * Não é número comercial e não vai a recibo.
+   */
+  clientSaleId?: string
+  /** `Venda.id` técnico devolvido pelo banco após persistência confirmada. */
+  serverId?: string
   at: string
   lines: SaleLineRecord[]
   total: number

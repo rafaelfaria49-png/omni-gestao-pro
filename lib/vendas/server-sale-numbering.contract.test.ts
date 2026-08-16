@@ -51,6 +51,11 @@ describe("contrato estático da infraestrutura de numeração", () => {
     }
   })
 
+  it("o Writer V2 é o único consumidor produtivo do allocator", () => {
+    expect(read("lib/vendas/sale-writer-v2.ts")).toContain("allocateSaleNumber")
+    expect(read("lib/ops-upsert-venda.ts")).not.toContain("from \"@/lib/vendas/server-sale-numbering\"")
+  })
+
   it("mantém todos os novos metadados de Venda nullable", () => {
     for (const field of [
       "clientSaleId",

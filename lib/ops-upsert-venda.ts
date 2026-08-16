@@ -10,6 +10,10 @@ import {
   buildLegacySaleFingerprint,
   isLegacySaleFactsComparable,
 } from "@/lib/vendas/legacy-sale-fingerprint"
+import {
+  parseClientSaleId,
+  type ClientSaleIdRejectionReason,
+} from "@/lib/vendas/sale-identity-contracts"
 
 /**
  * Lançada pela baixa de estoque do PDV quando `enforceStock` está ativo e o saldo
@@ -159,6 +163,56 @@ export class VendaCreateUniqueConflictError extends Error {
   }
 }
 
+export class InvalidClientSaleIdError extends Error {
+  readonly code = "CLIENT_SALE_ID_REQUIRED"
+  readonly reason: ClientSaleIdRejectionReason
+  constructor(reason: ClientSaleIdRejectionReason) {
+    super("clientSaleId obrigatório e válido para o writer V2.")
+    this.name = "InvalidClientSaleIdError"
+    this.reason = reason
+  }
+}
+
+/** Mesmo `clientSaleId` reutilizado com fatos canônicos diferentes. */
+export class ClientSaleIdReusedError extends Error {
+  readonly code = "IDEMPOTENCY_KEY_REUSED"
+  readonly clientSaleId: string
+  constructor(clientSaleId: string) {
+    super("Esta chave de tentativa já identifica outra venda. Nada foi alterado.")
+    this.name = "ClientSaleIdReusedError"
+    this.clientSaleId = clientSaleId
+  }
+}
+
+/**
+ * Sinal interno: o `Venda.create` perdeu a unique `(storeId, clientSaleId)`.
+ * A transação já está abortada; o caller relê o vencedor fora dela.
+ */
+export class VendaClientKeyUniqueConflictError extends Error {
+  readonly code = "P2002"
+  readonly clientSaleId: string
+  constructor(clientSaleId: string, cause: unknown) {
+    super("Conflito concorrente na chave de tentativa da venda.")
+    this.name = "VendaClientKeyUniqueConflictError"
+    this.clientSaleId = clientSaleId
+    ;(this as Error & { cause?: unknown }).cause = cause
+  }
+}
+
+/** Número comercial e metadados da série, alocados pelo caller (inversão). */
+export type VendaNumberingAssignment = {
+  pedidoId: string
+  serieVendaId: string
+  anoNumero: number
+  numeroSequencial: number
+  numeradaEm?: Date
+}
+
+export type UpsertVendaV2Options = {
+  clientSaleId: string
+  allocate: (tx: Prisma.TransactionClient) => Promise<VendaNumberingAssignment>
+}
+
 export function isPrismaUniqueConstraintError(error: unknown): boolean {
   return (
     error !== null &&
@@ -196,10 +250,17 @@ export type UpsertVendaOptions = {
    * `syncedAt`/`reason`. Sem esse flag, o mesmo cenário falha com `CaixaOriginalFechadoError`.
    */
   allowClosedOriginalSession?: boolean
+  /**
+   * Fluxo V2: o caller traz `clientSaleId` e um callback que aloca o número
+   * comercial DENTRO desta transação. Este módulo NÃO importa o allocator.
+   */
+  v2?: UpsertVendaV2Options
 }
 
 export type SalePayload = {
   id?: string
+  /** Identidade técnica da tentativa. Obrigatória no fluxo V2; ignorada no V1. */
+  clientSaleId?: string
   at?: string
   total?: number
   customerName?: string
@@ -273,6 +334,7 @@ export const VENDA_REPLAY_SELECT = {
   id: true,
   storeId: true,
   pedidoId: true,
+  clientSaleId: true,
   payload: true,
   total: true,
   at: true,
@@ -288,6 +350,7 @@ export type VendaPersistView = {
   id: string
   storeId: string
   pedidoId: string
+  clientSaleId: string | null
   total: number
   at: string
   clienteNome: string | null
@@ -326,12 +389,52 @@ function vendaPersistView(existing: VendaReplayRecord): VendaPersistView {
     id: existing.id,
     storeId: existing.storeId,
     pedidoId: existing.pedidoId,
+    clientSaleId: existing.clientSaleId ?? null,
     total: existing.total,
     at: existing.at.toISOString(),
     clienteNome: existing.clienteNome,
     clienteId: existing.clienteId,
     terminalId: existing.terminalId,
     status: existing.status,
+  }
+}
+
+function prismaUniqueTargetIncludes(error: unknown, field: string): boolean {
+  if (!error || typeof error !== "object" || !("meta" in error)) return false
+  const target = (error as { meta?: { target?: unknown } }).meta?.target
+  if (Array.isArray(target)) return target.some((item) => String(item).includes(field))
+  if (typeof target === "string") return target.includes(field)
+  return false
+}
+
+export function classifyExistingVendaReplayByClientSaleId(
+  lojaId: string,
+  sale: SalePayload,
+  existing: VendaReplayRecord,
+  clientSaleId: string,
+): UpsertVendaResult {
+  if (existing.storeId !== lojaId) {
+    throw new PedidoIdDeOutraLojaError(existing.pedidoId, existing.storeId)
+  }
+  if (existing.clientSaleId !== clientSaleId) {
+    throw new ClientSaleIdReusedError(clientSaleId)
+  }
+
+  const incomingFingerprint = buildLegacySaleFingerprint(sale)
+  const existingFacts = factsFromExistingVenda(existing)
+  const existingFingerprint = buildLegacySaleFingerprint(existingFacts)
+  if (
+    !isLegacySaleFactsComparable(sale) ||
+    !isLegacySaleFactsComparable(existingFacts) ||
+    incomingFingerprint !== existingFingerprint
+  ) {
+    throw new ClientSaleIdReusedError(clientSaleId)
+  }
+
+  return {
+    replayed: true,
+    fingerprint: incomingFingerprint,
+    venda: vendaPersistView(existing),
   }
 }
 
@@ -409,24 +512,52 @@ export async function upsertVendaInTransaction(
   options?: UpsertVendaOptions
 ): Promise<UpsertVendaResult> {
   const enforceStock = options?.enforceStock === true
-  const pedidoId = typeof sale.id === "string" && sale.id.trim() ? sale.id.trim() : ""
-  if (!pedidoId) throw new Error("sale.id inválido")
+  const v2 = options?.v2
+  let pedidoId = ""
+  let clientSaleId: string | null = null
+  let numbering: VendaNumberingAssignment | null = null
 
-  // ── GUARD FAIL-CLOSED: `pedidoId` já pertence a OUTRA loja ──────────────────
-  // PRIMEIRA coisa depois de validar o id, ANTES de qualquer leitura de negócio,
-  // validação de caixa, `Venda.create`, criação de itens, baixa de estoque, movimentação
-  // financeira ou título a receber — nada foi escrito quando isto dispara. Rodar antes
-  // do gate de caixa também garante que `allowClosedOriginalSession` (ação manual de
-  // "Sincronizar retroativo") NUNCA contorne a colisão: o erro de colisão tem
-  // precedência sobre `CAIXA_ORIGINAL_FECHADO`.
-  const vendaExistente = await tx.venda.findUnique({
-    where: { pedidoId },
-    select: VENDA_REPLAY_SELECT,
-  })
-  if (vendaExistente) {
-    // Replay legítimo retorna antes de caixa, itens, estoque, financeiro, crédito e
-    // títulos. Fatos diferentes ou outra loja falham antes de qualquer escrita.
-    return classifyExistingVendaReplay(lojaId, sale, vendaExistente)
+  if (v2) {
+    const parsed = parseClientSaleId(v2.clientSaleId)
+    if (!parsed.ok) throw new InvalidClientSaleIdError(parsed.reason)
+    clientSaleId = parsed.clientSaleId
+
+    const existingByClientSaleId = await tx.venda.findFirst({
+      where: { storeId: lojaId, clientSaleId },
+      select: VENDA_REPLAY_SELECT,
+    })
+    if (existingByClientSaleId) {
+      return classifyExistingVendaReplayByClientSaleId(
+        lojaId,
+        sale,
+        existingByClientSaleId,
+        clientSaleId,
+      )
+    }
+
+    numbering = await v2.allocate(tx)
+    pedidoId = typeof numbering.pedidoId === "string" ? numbering.pedidoId.trim() : ""
+    if (!pedidoId) throw new Error("allocate() não devolveu pedidoId")
+  } else {
+    pedidoId = typeof sale.id === "string" && sale.id.trim() ? sale.id.trim() : ""
+    if (!pedidoId) throw new Error("sale.id inválido")
+
+    // ── GUARD FAIL-CLOSED: `pedidoId` já pertence a OUTRA loja ──────────────────
+    // PRIMEIRA coisa depois de validar o id, ANTES de qualquer leitura de negócio,
+    // validação de caixa, `Venda.create`, criação de itens, baixa de estoque, movimentação
+    // financeira ou título a receber — nada foi escrito quando isto dispara. Rodar antes
+    // do gate de caixa também garante que `allowClosedOriginalSession` (ação manual de
+    // "Sincronizar retroativo") NUNCA contorne a colisão: o erro de colisão tem
+    // precedência sobre `CAIXA_ORIGINAL_FECHADO`.
+    const vendaExistente = await tx.venda.findUnique({
+      where: { pedidoId },
+      select: VENDA_REPLAY_SELECT,
+    })
+    if (vendaExistente) {
+      // Replay legítimo retorna antes de caixa, itens, estoque, financeiro, crédito e
+      // títulos. Fatos diferentes ou outra loja falham antes de qualquer escrita.
+      return classifyExistingVendaReplay(lojaId, sale, vendaExistente)
+    }
   }
 
   const total = typeof sale.total === "number" && Number.isFinite(sale.total) ? sale.total : 0
@@ -532,6 +663,8 @@ export async function upsertVendaInTransaction(
   // pelo cliente, calculados aqui no servidor no momento da gravação.
   const salePayloadForStorage: SalePayload = {
     ...salePersistivel,
+    id: pedidoId,
+    ...(clientSaleId ? { clientSaleId } : {}),
     lines,
     ...(isRetroactiveSync
       ? {
@@ -564,11 +697,24 @@ export async function upsertVendaInTransaction(
         clienteId,
         operador,
         ...(terminalId ? { terminalId } : {}),
+        ...(clientSaleId ? { clientSaleId } : {}),
+        ...(numbering
+          ? {
+              serieVendaId: numbering.serieVendaId,
+              anoNumero: numbering.anoNumero,
+              numeroSequencial: numbering.numeroSequencial,
+              numeradaEm: numbering.numeradaEm ?? new Date(),
+              numeracaoOrigem: "SERVER_V1" as const,
+            }
+          : {}),
       },
       select: VENDA_REPLAY_SELECT,
     })
   } catch (error) {
     if (isPrismaUniqueConstraintError(error)) {
+      if (clientSaleId && prismaUniqueTargetIncludes(error, "clientSaleId")) {
+        throw new VendaClientKeyUniqueConflictError(clientSaleId, error)
+      }
       // Não consultar nada nesta transação: Postgres/Prisma a considera abortada.
       throw new VendaCreateUniqueConflictError(pedidoId, error)
     }

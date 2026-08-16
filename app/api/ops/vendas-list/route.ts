@@ -45,6 +45,8 @@ export async function GET(req: Request) {
         clienteNome: r.clienteNome,
         status: r.status,
         payload: r.payload,
+        clientSaleId: r.clientSaleId,
+        serverId: r.id,
         itens: r.itens,
       })
     )

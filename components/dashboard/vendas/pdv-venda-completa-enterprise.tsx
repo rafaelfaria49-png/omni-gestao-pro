@@ -72,6 +72,7 @@ import { useClienteSearch } from "@/lib/hooks/use-cliente-search"
 import { filterPdvCatalogBySearch } from "@/lib/pdv-product-search"
 import { findPdvProductByScan } from "@/lib/pdv-scan-product"
 import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
+import { displaySaleNumber } from "@/lib/vendas/local-sale-identity"
 import { appendAuditLog } from "@/lib/audit-log"
 import {
   PaymentModal,
@@ -448,7 +449,7 @@ export function PdvVendaCompletaEnterprise({
   }
 
   // ── Finalization ──────────────────────────────────────────────────────────
-  function handleConfirmPayment(
+  async function handleConfirmPayment(
     payments: PaymentMethod[],
     meta?: {
       cashierId?: string
@@ -494,7 +495,7 @@ export function PdvVendaCompletaEnterprise({
       else if (p.type === "credito_vale") creditoVale += p.value
     }
 
-    const result = finalizeSaleTransaction({
+    const result = await finalizeSaleTransaction({
       lines: saleLines,
       total,
       paymentBreakdown: {
@@ -524,7 +525,7 @@ export function PdvVendaCompletaEnterprise({
     }
 
     // aPrazo → Contas a Receber (localStorage cache)
-    if (aPrazo > 0.02 && selectedCliente) {
+    if (aPrazo > 0.02 && selectedCliente && !result.pending) {
       appendContaReceberTituloPdvAprazo({
         lojaId: storeId,
         saleId: result.saleId,
@@ -538,7 +539,7 @@ export function PdvVendaCompletaEnterprise({
     appendAuditLog({
       action: "sale_finalized",
       userLabel: (empresaDocumentos.nomeFantasia || "Loja").trim(),
-      detail: `Venda Enterprise ${result.saleId} | Cliente: ${selectedCliente?.name ?? "—"} | Total ${brl(total)}`,
+      detail: `Venda Enterprise ${displaySaleNumber(result.saleId, result.pending)} | Cliente: ${selectedCliente?.name ?? "—"} | Total ${brl(total)}`,
     })
 
     // Enriquece payload JSONB com dados enterprise (não bloqueia)
@@ -553,8 +554,9 @@ export function PdvVendaCompletaEnterprise({
         observacao: l.detail?.observacao,
       }))
 
-    void enrichVendaEnterprise({
-      pedidoId: result.saleId,
+    if (!result.pending) {
+      void enrichVendaEnterprise({
+        pedidoId: result.saleId,
       storeId,
       clienteId: selectedCliente?.id,
       clienteNome: selectedCliente?.name,
@@ -568,6 +570,7 @@ export function PdvVendaCompletaEnterprise({
         : undefined,
       linhasDetalhe,
     }).catch(() => {})
+    }
 
     // Cupom
     const storeDisplayName =
@@ -579,7 +582,7 @@ export function PdvVendaCompletaEnterprise({
 
     const tipoVendaLabel = TIPOS_VENDA.find((t) => t.value === tipoVenda)?.label
     const cupom: CupomData = {
-      numeroPedido: result.saleId,
+      numeroPedido: displaySaleNumber(result.saleId, result.pending),
       at: new Date().toISOString(),
       lojaNome: storeDisplayName,
       clienteNome: selectedCliente?.name ?? null,

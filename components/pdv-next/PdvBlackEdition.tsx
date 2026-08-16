@@ -346,7 +346,7 @@ export function PdvBlackEdition() {
   }, [handleShortcutAction, selectedLineId, removeSelectedLine])
 
   // ── Confirmar pagamento ────────────────────────────────────────────────────
-  const handlePaymentConfirm = useCallback((payments: PaymentMethod[]) => {
+  const handlePaymentConfirm = useCallback(async (payments: PaymentMethod[]) => {
     // Persistência REAL alinhada ao core (Black continua GATED por env).
     // Elimina o "ghost sale": grava Venda + estoque + financeiro via
     // finalizeSaleTransaction (mesmo motor dos demais PDVs, idempotente + retry).
@@ -379,7 +379,7 @@ export function PdvBlackEdition() {
       name: r.description,
     }))
     const aPrazoPayment = payments.find((p) => p.type === "a_prazo")
-    const result = finalizeSaleTransaction({
+    const result = await finalizeSaleTransaction({
       lines: saleLines,
       total,
       paymentBreakdown: reducePaymentsToBreakdown(payments),

@@ -9,13 +9,13 @@ import { normalizeSaleNumberingCode } from "@/lib/vendas/server-sale-numbering"
 import { normalizeStoreSaleNumberingCode } from "./store-sale-numbering-code"
 
 /**
- * Contrato estático do GOAL 002C-0.
+ * Contratos estáticos de identidade/numeração (002C-0 + Writer V2 do GOAL 003).
  *
- * Prova, por leitura dos arquivos-fonte, que os contratos introduzidos aqui:
- * - são puros (sem Prisma, sem `server-only`, sem I/O) onde precisam ser;
- * - não têm NENHUM call site no writer real, nas rotas, nos PDVs ou no store;
- * - não duplicam o ID canônico de projeto nem o expõem em log;
- * - não derivam `clientSaleId` de `pedidoId`.
+ * Prova, por leitura dos arquivos-fonte, que:
+ * - os módulos puros continuam puros;
+ * - `clientSaleId` nunca deriva de `pedidoId`;
+ * - o allocator só é chamado no Writer V2 (inversão em ops-upsert-venda);
+ * - o gate não está acoplado ao writer V1.
  */
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
@@ -34,24 +34,8 @@ const GATE_MODULES = [
   "lib/vendas/sale-numbering-runtime-gate.ts",
 ] as const
 
-/** Símbolos exportados pelo 002C-0 que não podem aparecer no caminho produtivo. */
-const CONTRACT_MODULE_SPECIFIERS = [
-  "sale-identity-contracts",
-  "store-sale-numbering-code",
-  "sale-numbering-runtime-gate",
-  "canonical-deployment",
-] as const
-
-/**
- * Superfícies que o GOAL declara intocadas. A lista replica os arquivos proibidos
- * do 002C-0 e os seis chamadores de `finalizeSaleTransaction`.
- */
-const PRODUCTIVE_SURFACES = [
-  "lib/ops-upsert-venda.ts",
-  "app/api/ops/venda-persist/route.ts",
-  "app/api/ops/sync-legacy-vendas/route.ts",
+const CLIENT_SURFACES = [
   "lib/operations-store.tsx",
-  "lib/operations-sales-merge.ts",
   "components/dashboard/vendas/pdv-classic.tsx",
   "components/dashboard/vendas/pdv-supermercado.tsx",
   "components/dashboard/vendas/pdv-assistencia-enterprise.tsx",
@@ -166,18 +150,8 @@ describe("contratos 002C-0 — gate de runtime", () => {
   })
 })
 
-describe("contratos 002C-0 — zero call site produtivo", () => {
-  it("nenhum writer, rota, store ou PDV consome os contratos novos", () => {
-    for (const path of PRODUCTIVE_SURFACES) {
-      const source = read(path)
-      for (const specifier of CONTRACT_MODULE_SPECIFIERS) {
-        expect(source, `${path} :: ${specifier}`).not.toContain(specifier)
-      }
-      expect(source, path).not.toContain("SALE_SERVER_NUMBERING_ENABLED")
-    }
-  })
-
-  it("o allocator do 002B permanece sem call site produtivo", () => {
+describe("contratos 002C-0 / 003 — call sites produtivos", () => {
+  it("o writer V1, a rota legado e o store não chamam o allocator", () => {
     for (const path of [
       "app/api/ops/venda-persist/route.ts",
       "app/api/ops/sync-legacy-vendas/route.ts",
@@ -189,11 +163,50 @@ describe("contratos 002C-0 — zero call site produtivo", () => {
     }
   })
 
-  it("o gate ainda não tem consumidor em lugar algum do repositório", () => {
-    // Só o próprio módulo, seus testes e o ADR podem citar a flag.
+  it("o único call site produtivo de allocateSaleNumber é o Writer V2", () => {
+    const writer = read("lib/vendas/sale-writer-v2.ts")
+    expect(writer).toContain("allocateSaleNumber")
+    expect(writer).toContain("from \"@/lib/vendas/server-sale-numbering\"")
+    expect(read("app/actions/operacoes.ts")).not.toContain("allocateSaleNumber(")
+    expect(read("app/actions/operacoes.ts")).toContain("allocateSaleNumberForWriter")
+    expect(read("lib/ops-upsert-venda.ts")).not.toContain("allocateSaleNumber")
+  })
+
+  it("o gate tem consumidores explícitos no Writer V2 e na OS, sem acoplar o writer V1", () => {
     const source = read("lib/vendas/sale-numbering-runtime-gate.ts")
     expect(source).toContain("SALE_SERVER_NUMBERING_ENABLED")
     expect(read("lib/ops-upsert-venda.ts")).not.toContain("resolveSaleNumberingWriter")
     expect(read("app/api/ops/venda-persist/route.ts")).not.toContain("resolveSaleNumberingWriter")
+    expect(read("app/api/ops/venda-persist/v2/route.ts")).toContain("resolveSaleNumberingWriter")
+    expect(read("app/actions/operacoes.ts")).toContain("resolveSaleNumberingWriter")
+  })
+
+  it("o store não importa o allocator nem liga a flag de Production", () => {
+    const store = read("lib/operations-store.tsx")
+    expect(store).not.toContain("allocateSaleNumber")
+    expect(store).not.toContain("SALE_SERVER_NUMBERING_ENABLED")
+    expect(store).toContain("shouldFallbackV2ToV1")
+    expect(store).toContain("buildProvisionalSaleRef")
+  })
+
+  it("PDVs e o store cliente não importam o gate server-only nem o allocator", () => {
+    for (const path of CLIENT_SURFACES) {
+      const source = read(path)
+      expect(source, path).not.toContain("sale-numbering-runtime-gate")
+      expect(source, path).not.toContain("allocateSaleNumber")
+      expect(source, path).not.toContain("SALE_SERVER_NUMBERING_ENABLED")
+      expect(source, path).not.toContain("canonical-deployment")
+    }
+  })
+
+  it("o Histórico não renderiza menu vazio e separa remote vs quarentena", () => {
+    const source = read("components/dashboard/vendas/vendas-arquivo-geral.tsx")
+    expect(source).toContain("menuAcoes.length > 0")
+    expect(source).toContain("Ver conflito")
+    expect(source).toContain("Recuperar venda")
+    expect(source).toContain("Venda precisa de recuperação")
+    expect(source).toContain("O número desta venda já estava em uso")
+    expect(source).toContain("openRecoverDialog")
+    expect(source).not.toContain("predictedNovaVendaId")
   })
 })

@@ -42,6 +42,7 @@ import { filterPdvCatalogBySearch } from "@/lib/pdv-product-search"
 import { findPdvProductByScan } from "@/lib/pdv-scan-product"
 import { lookupPdvScanRemote } from "@/lib/pdv-scan-lookup"
 import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
+import { displaySaleNumber } from "@/lib/vendas/local-sale-identity"
 import { PaymentModal, type PaymentMethod } from "./payment-modal"
 import type { APrazoConfig } from "@/lib/operations-sale-types"
 import { appendAuditLog } from "@/lib/audit-log"
@@ -642,7 +643,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
       }
       const paymentBreakdown = { dinheiro, pix, cartaoDebito, cartaoCredito, aPrazo, carne, creditoVale }
 
-      const result = finalizeSaleTransaction({
+      const result = await finalizeSaleTransaction({
         lines: saleLines,
         total,
         paymentBreakdown,
@@ -688,7 +689,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
         /* fila é auxiliar — não interrompe o pós-venda */
       }
 
-      if (aPrazo > 0.02) {
+      if (aPrazo > 0.02 && !result.pending) {
         appendContaReceberTituloPdvAprazo({
           lojaId: storeId,
           saleId: result.saleId,
@@ -702,7 +703,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
       appendAuditLog({
         action: "sale_finalized",
         userLabel: (empresaDocumentos.nomeFantasia || "Loja").trim(),
-        detail: `Venda Completa Enterprise ${result.saleId} | ${selectedCliente.name} | ${pagamentosResumo} | ${brl(total)}`,
+        detail: `Venda Completa Enterprise ${displaySaleNumber(result.saleId, result.pending)} | ${selectedCliente.name} | ${pagamentosResumo} | ${brl(total)}`,
       })
 
       const linhasDetalhe = cart
@@ -717,7 +718,9 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
         }))
 
       // enrichVendaEnterprise awaited — persiste dados completos no DB
-      const enrichResult = await enrichVendaEnterprise({
+      const enrichResult = result.pending
+        ? { ok: false as const }
+        : await enrichVendaEnterprise({
         pedidoId: result.saleId,
         storeId,
         clienteId: selectedCliente.id,
@@ -746,7 +749,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
 
       const tipoVendaLabel = TIPOS_VENDA.find((t) => t.value === tipoVenda)?.label
       const cupom: CupomData = {
-        numeroPedido: result.saleId,
+        numeroPedido: displaySaleNumber(result.saleId, result.pending),
         at: new Date().toISOString(),
         lojaNome: storeDisplayName,
         clienteNome: selectedCliente.name,

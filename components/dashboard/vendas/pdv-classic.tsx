@@ -59,6 +59,7 @@ import {
 } from "@/lib/pdv-formas-pagamento"
 import { opsLojaIdFromStorageKey } from "@/lib/ops-loja-id"
 import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
+import { displaySaleNumber } from "@/lib/vendas/local-sale-identity"
 import { cn } from "@/lib/utils"
 import { normalizeDocDigits } from "@/lib/cpf"
 
@@ -1842,7 +1843,7 @@ export function PdvClassic({
         multipayHint={multipayMode}
         onRequireCustomer={() => setAPrazoClientePickerOpen(true)}
         cashierId={cashierId}
-        onConfirm={(payments, meta) => {
+        onConfirm={async (payments, meta) => {
           const saleLines = cart
             .filter(
               (item) =>
@@ -1897,7 +1898,7 @@ export function PdvClassic({
           _printInput.pagamentos = buildPagamentosResumo({
             dinheiro, pix, cartaoDebito, cartaoCredito, carne, aPrazo, creditoVale,
           })
-          const result = finalizeSaleTransaction({
+          const result = await finalizeSaleTransaction({
             lines: saleLines,
             total,
             linkedOsId,
@@ -1925,7 +1926,7 @@ export function PdvClassic({
             toast({ title: "Falha transacional", description: result.reason })
             return false
           }
-          _printInput.numeroVenda = result.saleId
+          _printInput.numeroVenda = displaySaleNumber(result.saleId, result.pending)
           // Fila "Produtos a cadastrar": registra os itens avulsos vendidos para revisão posterior.
           // Não toca estoque/venda/caixa e nunca lança (não pode afetar a venda já concluída).
           try {
@@ -1963,7 +1964,7 @@ export function PdvClassic({
             setPostSalePrintInput(_printInput)
             setPostSalePrintOpen(true)
           }
-          if (aPrazo > 0.02 && selectedCustomer) {
+          if (aPrazo > 0.02 && selectedCustomer && !result.pending) {
             appendContaReceberTituloPdvAprazo({
               lojaId: lojaKey,
               saleId: result.saleId,
@@ -1975,7 +1976,7 @@ export function PdvClassic({
           appendAuditLog({
             action: "sale_finalized",
             userLabel: auditUser(),
-            detail: `Venda ${result.saleId} Total ${formatBrlAudit(total)} | Din ${formatBrlAudit(dinheiro)} Pix ${formatBrlAudit(pix)} Déb ${formatBrlAudit(cartaoDebito)} Créd ${formatBrlAudit(cartaoCredito)} Carnê ${formatBrlAudit(carne)} Prazo ${formatBrlAudit(aPrazo)} Vale ${formatBrlAudit(creditoVale)}`,
+            detail: `Venda ${displaySaleNumber(result.saleId, result.pending)} Total ${formatBrlAudit(total)} | Din ${formatBrlAudit(dinheiro)} Pix ${formatBrlAudit(pix)} Déb ${formatBrlAudit(cartaoDebito)} Créd ${formatBrlAudit(cartaoCredito)} Carnê ${formatBrlAudit(carne)} Prazo ${formatBrlAudit(aPrazo)} Vale ${formatBrlAudit(creditoVale)}`,
           })
           if (subtotal > 0 && discountTotal > 0) {
             const pct = (discountTotal / subtotal) * 100

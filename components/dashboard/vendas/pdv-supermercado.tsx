@@ -51,6 +51,7 @@ import { useOperationsStore, type InventoryItem } from "@/lib/operations-store"
 import { PaymentModal, type PaymentMethodType } from "./payment-modal"
 import { PdvClientePicker, type PdvClienteResult } from "./pdv-cliente-picker"
 import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
+import { displaySaleNumber } from "@/lib/vendas/local-sale-identity"
 import { newPdvLineId, type PdvCatalogProduct } from "@/lib/pdv-catalog"
 import { findPdvProductByScan } from "@/lib/pdv-scan-product"
 import { lookupPdvScanRemote } from "@/lib/pdv-scan-lookup"
@@ -1384,7 +1385,7 @@ export function PdvSupermercado({
         multipayHint={multipayMode}
         onRequireCustomer={() => setAPrazoClientePickerOpen(true)}
         cashierId={cashierId}
-        onConfirm={(payments, meta) => {
+        onConfirm={async (payments, meta) => {
           // Capturar dados de impressão ANTES de limpar o cart
           const _nomeFantasia = (empresaDocumentos?.nomeFantasia || "").trim() || "Loja"
           const _cnpj = (empresaDocumentos?.cnpj || "").trim()
@@ -1440,7 +1441,7 @@ export function PdvSupermercado({
             dinheiro, pix, cartaoDebito, cartaoCredito, carne, aPrazo, creditoVale,
           })
 
-          const result = finalizeSaleTransaction({
+          const result = await finalizeSaleTransaction({
             lines: saleLines,
             total,
             linkedOsId,
@@ -1469,9 +1470,8 @@ export function PdvSupermercado({
             toast({ title: "Falha transacional", description: result.reason })
             return
           }
-          _printInput.numeroVenda = result.saleId
-          // Saldo à prazo → Conta a Receber (cache local; o servidor é a fonte da verdade).
-          if (aPrazo > 0.02 && selectedCustomer) {
+          _printInput.numeroVenda = displaySaleNumber(result.saleId, result.pending)
+          if (aPrazo > 0.02 && selectedCustomer && !result.pending) {
             appendContaReceberTituloPdvAprazo({
               lojaId: lojaKey,
               saleId: result.saleId,

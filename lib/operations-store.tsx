@@ -32,6 +32,23 @@ import {
   SALE_IDENTITY_CONFLICT_GUIDANCE,
   SALE_IDENTITY_CONFLICT_TITLE,
 } from "@/lib/vendas/sale-identity-conflict"
+import {
+  assertGeneratedClientSaleId,
+  buildProvisionalSaleRef,
+  generateClientSaleId,
+  isProvisionalSaleRef,
+  saleLocalKey,
+} from "@/lib/vendas/local-sale-identity"
+import {
+  classifySaleWriterCapability,
+  extractConfirmedVenda,
+  parseSalePersistError,
+  recoverQuarantinedSaleUrl,
+  shouldFallbackV2ToV1,
+  vendaByClientSaleIdUrl,
+  vendaPersistV2Url,
+  type SaleWriterCapability,
+} from "@/lib/vendas/sale-client-sync"
 
 const VENDA_AUTO_RETRY_HOLD_MS = 5 * 60_000
 
@@ -186,9 +203,21 @@ function vendaPersistUrl(lojaId: string): string {
   return `/api/ops/venda-persist?storeId=${encodeURIComponent(lojaId)}`
 }
 
+function persistHeaders(lojaId: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    [ASSISTEC_LOJA_HEADER]: lojaId,
+  }
+}
+
+function saleMatches(s: SaleRecord, token: { id: string; clientSaleId?: string }): boolean {
+  if (token.clientSaleId && s.clientSaleId === token.clientSaleId) return true
+  return s.id === token.id
+}
+
 function persistedSaleIdentityConflictCode(
   storageKey: string,
-  sale: Pick<SaleRecord, "id" | "syncBlockedCode">,
+  sale: Pick<SaleRecord, "id" | "clientSaleId" | "syncBlockedCode">,
 ): string | undefined {
   if (isSaleIdentityConflictCode(sale.syncBlockedCode)) return sale.syncBlockedCode
   if (typeof window === "undefined") return undefined
@@ -197,7 +226,7 @@ function persistedSaleIdentityConflictCode(
     if (!raw) return undefined
     const parsed = JSON.parse(raw) as { sales?: SaleRecord[] }
     const persisted = Array.isArray(parsed.sales)
-      ? parsed.sales.find((candidate) => candidate.id === sale.id)
+      ? parsed.sales.find((candidate) => saleMatches(candidate, sale))
       : undefined
     return isSaleIdentityConflictCode(persisted?.syncBlockedCode)
       ? persisted.syncBlockedCode
@@ -352,7 +381,10 @@ interface OperationsContextType {
       discountPercent?: number
     }
     aPrazoConfig?: APrazoConfig
-  }) => { ok: true; saleId: string } | { ok: false; reason: string }
+  }) => Promise<
+    | { ok: true; saleId: string; pending?: boolean; clientSaleId?: string; serverId?: string }
+    | { ok: false; reason: string }
+  >
   registrarDevolucao: (input: {
     saleId: string
     lines: { inventoryId: string; quantity: number }[]
@@ -394,6 +426,11 @@ interface OperationsContextType {
   retrySyncSaleRetroactive: (
     saleId: string,
   ) => Promise<{ ok: true } | { ok: false; reason: string; code?: string }>
+  recoverQuarantinedSale: (input: {
+    saleId: string
+    motivo: string
+    allowClosedOriginalSession?: boolean
+  }) => Promise<{ ok: true; saleId: string; replayed?: boolean } | { ok: false; reason: string; code?: string }>
   /**
    * Verifica no servidor se a venda existe antes de descartar localmente.
    * - Se o servidor tem (HTTP 200): NÃO descarta — apenas reconcilia `syncPending=false`.
@@ -966,6 +1003,159 @@ export function OperationsProvider({
   // `allowClosedOriginalSession`/`retroactiveClosedSession` — sync retroativo de sessão
   // original fechada é sempre ação manual e explícita (ver `retrySyncSaleRetroactive`).
   const vendaAutoRetryHoldRef = useRef<Map<string, number>>(new Map())
+  const writerCapabilityRef = useRef<SaleWriterCapability>("unknown")
+
+  const probeWriterCapability = useCallback(async (lojaId: string): Promise<SaleWriterCapability> => {
+    const cached = writerCapabilityRef.current
+    if (cached === "v1" || cached === "v2") return cached
+    try {
+      const res = await fetch(vendaPersistV2Url(lojaId), {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: persistHeaders(lojaId),
+      })
+      if (!res.ok) return "unknown"
+      const body: unknown = await res.json().catch(() => null)
+      const cap = classifySaleWriterCapability(body)
+      if (cap === "v1" || cap === "v2") writerCapabilityRef.current = cap
+      return cap
+    } catch {
+      return "unknown"
+    }
+  }, [])
+
+  const markSaleConfirmed = useCallback(
+    (token: { id: string; clientSaleId?: string }, confirmed?: { pedidoId: string; id: string; clientSaleId?: string | null }) => {
+      vendaAutoRetryHoldRef.current.delete(token.id)
+      if (token.clientSaleId) vendaAutoRetryHoldRef.current.delete(token.clientSaleId)
+      setState((prev) => ({
+        ...prev,
+        sales: prev.sales.map((s) => {
+          if (!saleMatches(s, token)) return s
+          if (!confirmed) {
+            return { ...s, syncPending: false, syncBlockedCode: undefined }
+          }
+          return {
+            ...s,
+            id: confirmed.pedidoId,
+            serverId: confirmed.id,
+            clientSaleId: s.clientSaleId ?? confirmed.clientSaleId ?? undefined,
+            syncPending: false,
+            syncBlockedCode: undefined,
+          }
+        }),
+      }))
+    },
+    [],
+  )
+
+  const markSaleBlocked = useCallback((token: { id: string; clientSaleId?: string }, code?: string) => {
+    if (!code) return
+    setState((prev) => ({
+      ...prev,
+      sales: prev.sales.map((s) => (saleMatches(s, token) ? { ...s, syncBlockedCode: code } : s)),
+    }))
+  }, [])
+
+  const postV1Sale = useCallback(
+    async (lojaId: string, sale: SaleRecord, retroactive: boolean) => {
+      return fetch(vendaPersistUrl(lojaId), {
+        method: "POST",
+        credentials: "include",
+        headers: persistHeaders(lojaId),
+        body: JSON.stringify(retroactive ? { sale, allowClosedOriginalSession: true } : { sale }),
+      })
+    },
+    [],
+  )
+
+  const postV2Sale = useCallback(
+    async (lojaId: string, sale: SaleRecord, retroactive: boolean) => {
+      return fetch(vendaPersistV2Url(lojaId), {
+        method: "POST",
+        credentials: "include",
+        headers: persistHeaders(lojaId),
+        body: JSON.stringify({
+          sale,
+          clientSaleId: sale.clientSaleId,
+          ...(retroactive ? { allowClosedOriginalSession: true } : {}),
+        }),
+      })
+    },
+    [],
+  )
+
+  const convertPendingV2ToV1 = useCallback(
+    (sale: SaleRecord): SaleRecord => {
+      const sales = stateRef.current.sales
+      const withoutSelf = sales.filter((s) => !saleMatches(s, sale))
+      const vda = nextSaleId(withoutSelf)
+      const converted: SaleRecord = { ...sale, id: vda }
+      setState((prev) => ({
+        ...prev,
+        sales: prev.sales.map((s) => (saleMatches(s, sale) ? converted : s)),
+      }))
+      writerCapabilityRef.current = "v1"
+      return converted
+    },
+    [],
+  )
+
+  const persistPendingSale = useCallback(
+    async (
+      sale: SaleRecord,
+      lojaId: string,
+      retroactive: boolean,
+    ): Promise<{
+      ok: true
+      pedidoId?: string
+      serverId?: string
+      clientSaleId?: string
+    } | { ok: false; reason: string; code?: string; networkError?: boolean }> => {
+      const token = { id: sale.id, clientSaleId: sale.clientSaleId }
+      const useV2 = Boolean(sale.clientSaleId) && (isProvisionalSaleRef(sale.id) || writerCapabilityRef.current !== "v1")
+      try {
+        const res = useV2 ? await postV2Sale(lojaId, sale, retroactive) : await postV1Sale(lojaId, sale, retroactive)
+        const body = await res.text().catch(() => "")
+        if (res.ok) {
+          let confirmed: ReturnType<typeof extractConfirmedVenda> = null
+          try {
+            confirmed = extractConfirmedVenda(JSON.parse(body) as unknown)
+          } catch {
+            confirmed = null
+          }
+          markSaleConfirmed(token, confirmed ?? undefined)
+          return {
+            ok: true,
+            pedidoId: confirmed?.pedidoId,
+            serverId: confirmed?.id,
+            clientSaleId: sale.clientSaleId ?? confirmed?.clientSaleId ?? undefined,
+          }
+        }
+        const parsed = parseSalePersistError(body)
+        const code = parsed.code ?? extractVendaPersistErrorCode(body)
+        if (useV2 && shouldFallbackV2ToV1({ httpStatus: res.status, code })) {
+          const converted = convertPendingV2ToV1(sale)
+          const v1 = await postV1Sale(lojaId, converted, retroactive)
+          const v1Body = await v1.text().catch(() => "")
+          if (v1.ok) {
+            markSaleConfirmed({ id: converted.id, clientSaleId: converted.clientSaleId })
+            return { ok: true, pedidoId: converted.id, clientSaleId: converted.clientSaleId }
+          }
+          const v1Parsed = parseSalePersistError(v1Body)
+          markSaleBlocked({ id: converted.id, clientSaleId: converted.clientSaleId }, v1Parsed.code)
+          return { ok: false, reason: `HTTP ${v1.status} — ${v1Parsed.message}`, code: v1Parsed.code }
+        }
+        markSaleBlocked(token, code)
+        return { ok: false, reason: `HTTP ${res.status} — ${parsed.message}`, ...(code ? { code } : {}) }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, reason: `Falha de rede: ${msg}`, networkError: true }
+      }
+    },
+    [convertPendingV2ToV1, markSaleBlocked, markSaleConfirmed, postV1Sale, postV2Sale],
+  )
 
   const flushPendingSales = useCallback(() => {
     const pending = stateRef.current.sales.filter((s) => s.syncPending === true)
@@ -974,46 +1164,16 @@ export function OperationsProvider({
     const agora = Date.now()
     for (const sale of pending) {
       if (persistedSaleIdentityConflictCode(storageKey, sale)) continue
-      if ((vendaAutoRetryHoldRef.current.get(sale.id) ?? 0) > agora) continue
-      void fetch(vendaPersistUrl(lj), {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          [ASSISTEC_LOJA_HEADER]: lj,
-        },
-        body: JSON.stringify({ sale }),
+      if ((vendaAutoRetryHoldRef.current.get(saleLocalKey(sale)) ?? 0) > agora) continue
+      void persistPendingSale(sale, lj, false).then((result) => {
+        if (result.ok) return
+        if (result.code && !result.networkError) {
+          vendaAutoRetryHoldRef.current.set(saleLocalKey(sale), Date.now() + VENDA_AUTO_RETRY_HOLD_MS)
+        }
+        console.warn("[venda-persist] re-sync", sale.id, "lojaId:", lj, result.reason)
       })
-        .then(async (res) => {
-          if (res.ok) {
-            vendaAutoRetryHoldRef.current.delete(sale.id)
-            setState((prev) => ({
-              ...prev,
-              sales: prev.sales.map((s) =>
-                s.id === sale.id ? { ...s, syncPending: false, syncBlockedCode: undefined } : s
-              ),
-            }))
-          } else {
-            if (res.status >= 400 && res.status < 500) {
-              vendaAutoRetryHoldRef.current.set(sale.id, Date.now() + VENDA_AUTO_RETRY_HOLD_MS)
-            }
-            const body = await res.text().catch(() => "")
-            const detail = formatVendaPersistErrorBody(body, res.status)
-            const code = extractVendaPersistErrorCode(body)
-            console.warn("[venda-persist] re-sync HTTP", res.status, sale.id, "lojaId:", lj, "body:", detail)
-            if (code) {
-              setState((prev) => ({
-                ...prev,
-                sales: prev.sales.map((s) => (s.id === sale.id ? { ...s, syncBlockedCode: code } : s)),
-              }))
-            }
-          }
-        })
-        .catch((err: unknown) => {
-          console.warn("[venda-persist] re-sync rede", sale.id, "lojaId:", lj, err)
-        })
     }
-  }, [storageKey])
+  }, [persistPendingSale, storageKey])
 
   const refreshSalesFromServer = useCallback<OperationsContextType["refreshSalesFromServer"]>(
     async () => {
@@ -1051,7 +1211,9 @@ export function OperationsProvider({
       saleId: string,
       retroactive: boolean,
     ): Promise<{ ok: true } | { ok: false; reason: string; code?: string }> => {
-      const sale = stateRef.current.sales.find((s) => s.id === saleId && s.syncPending === true)
+      const sale = stateRef.current.sales.find(
+        (s) => s.syncPending === true && (s.id === saleId || s.clientSaleId === saleId),
+      )
       if (!sale) {
         return { ok: false, reason: "Venda local pendente não encontrada (talvez já tenha sincronizado)." }
       }
@@ -1064,46 +1226,12 @@ export function OperationsProvider({
         }
       }
       const lj = opsLojaIdFromStorageKey(storageKey)
-      try {
-        const res = await fetch(vendaPersistUrl(lj), {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            [ASSISTEC_LOJA_HEADER]: lj,
-          },
-          body: JSON.stringify(retroactive ? { sale, allowClosedOriginalSession: true } : { sale }),
-        })
-        if (res.ok) {
-          vendaAutoRetryHoldRef.current.delete(saleId)
-          setState((prev) => ({
-            ...prev,
-            sales: prev.sales.map((s) =>
-              s.id === saleId ? { ...s, syncPending: false, syncBlockedCode: undefined } : s
-            ),
-          }))
-          return { ok: true }
-        }
-        const body = await res.text().catch(() => "")
-        const detail = formatVendaPersistErrorBody(body, res.status)
-        const code = extractVendaPersistErrorCode(body)
-        console.warn("[venda-persist] retry HTTP", res.status, saleId, "lojaId:", lj, "body:", detail)
-        if (code) {
-          setState((prev) => ({
-            ...prev,
-            sales: prev.sales.map((s) => (s.id === saleId ? { ...s, syncBlockedCode: code } : s)),
-          }))
-        }
-        // `code` sobe junto com a razão para a UI orientar por causa (os conflitos
-        // permanentes de identidade não devem sugerir novo reenvio nem abrir caixa).
-        return { ok: false, reason: `HTTP ${res.status} — ${detail}`, ...(code ? { code } : {}) }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.warn("[venda-persist] retry rede", saleId, "lojaId:", lj, err)
-        return { ok: false, reason: `Falha de rede: ${msg}` }
-      }
+      const result = await persistPendingSale(sale, lj, retroactive)
+      if (result.ok) return { ok: true }
+      console.warn("[venda-persist] retry", saleId, "lojaId:", lj, result.reason)
+      return { ok: false, reason: result.reason, ...(result.code ? { code: result.code } : {}) }
     },
-    [storageKey],
+    [persistPendingSale, storageKey],
   )
 
   const retrySyncSale = useCallback<OperationsContextType["retrySyncSale"]>(
@@ -1122,9 +1250,63 @@ export function OperationsProvider({
     [doRetrySyncSale],
   )
 
+  const recoverQuarantinedSale = useCallback<OperationsContextType["recoverQuarantinedSale"]>(
+    async ({ saleId, motivo, allowClosedOriginalSession }) => {
+      const sale = stateRef.current.sales.find(
+        (s) => s.syncPending === true && (s.id === saleId || s.clientSaleId === saleId),
+      )
+      if (!sale) return { ok: false, reason: "Venda local em quarentena não encontrada." }
+      if (!isSaleIdentityConflictCode(sale.syncBlockedCode) && !persistedSaleIdentityConflictCode(storageKey, sale)) {
+        return { ok: false, reason: "Esta venda não está em conflito de identificação." }
+      }
+      const clientSaleId = sale.clientSaleId ?? assertGeneratedClientSaleId(generateClientSaleId())
+      if (!sale.clientSaleId) {
+        setState((prev) => ({
+          ...prev,
+          sales: prev.sales.map((s) => (saleMatches(s, sale) ? { ...s, clientSaleId } : s)),
+        }))
+      }
+      const lj = opsLojaIdFromStorageKey(storageKey)
+      try {
+        const res = await fetch(recoverQuarantinedSaleUrl(lj), {
+          method: "POST",
+          credentials: "include",
+          headers: persistHeaders(lj),
+          body: JSON.stringify({
+            sale: { ...sale, clientSaleId },
+            clientSaleId,
+            motivo,
+            conflictingPedidoId: sale.id,
+            conflictCode: sale.syncBlockedCode,
+            ...(allowClosedOriginalSession ? { allowClosedOriginalSession: true } : {}),
+          }),
+        })
+        const body = await res.text().catch(() => "")
+        if (!res.ok) {
+          const parsed = parseSalePersistError(body)
+          return { ok: false, reason: parsed.message, code: parsed.code }
+        }
+        let confirmed: ReturnType<typeof extractConfirmedVenda> = null
+        try {
+          confirmed = extractConfirmedVenda(JSON.parse(body) as unknown)
+        } catch {
+          confirmed = null
+        }
+        markSaleConfirmed({ id: sale.id, clientSaleId }, confirmed ?? undefined)
+        return { ok: true, saleId: confirmed?.pedidoId ?? sale.id, replayed: confirmed ? undefined : true }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, reason: `Falha de rede: ${msg}` }
+      }
+    },
+    [markSaleConfirmed, storageKey],
+  )
+
   const discardLocalPendingSale = useCallback<OperationsContextType["discardLocalPendingSale"]>(
     async (saleId) => {
-      const sale = stateRef.current.sales.find((s) => s.id === saleId && s.syncPending === true)
+      const sale = stateRef.current.sales.find(
+        (s) => s.syncPending === true && (s.id === saleId || s.clientSaleId === saleId),
+      )
       if (!sale) {
         return { ok: false, reason: "Venda local pendente não encontrada." }
       }
@@ -1136,6 +1318,35 @@ export function OperationsProvider({
       }
       const lj = opsLojaIdFromStorageKey(storageKey)
       try {
+        if (sale.clientSaleId) {
+          const res = await fetch(vendaByClientSaleIdUrl(lj, sale.clientSaleId), {
+            credentials: "include",
+            cache: "no-store",
+            headers: persistHeaders(lj),
+          })
+          if (res.ok) {
+            const body: unknown = await res.json().catch(() => null)
+            const confirmed = extractConfirmedVenda(body)
+            markSaleConfirmed({ id: sale.id, clientSaleId: sale.clientSaleId }, confirmed ?? undefined)
+            return {
+              ok: true,
+              mode: "reconciled",
+              reason: "Venda já existe no servidor — marcada como sincronizada (não descartada).",
+            }
+          }
+          if (res.status === 404) {
+            setState((prev) => ({
+              ...prev,
+              sales: prev.sales.filter((s) => !saleMatches(s, sale)),
+            }))
+            return { ok: true, mode: "discarded" }
+          }
+          const body = await res.text().catch(() => "")
+          return {
+            ok: false,
+            reason: `Verificação no servidor falhou (HTTP ${res.status}). Nada foi descartado. ${body.trim().slice(0, 160)}`,
+          }
+        }
         const res = await fetch(`/api/vendas/${encodeURIComponent(saleId)}`, {
           credentials: "include",
           cache: "no-store",
@@ -1173,7 +1384,7 @@ export function OperationsProvider({
         return { ok: false, reason: `Falha de rede ao verificar no servidor: ${msg}` }
       }
     },
-    [storageKey],
+    [markSaleConfirmed, storageKey],
   )
 
   const bulkDiscardLocalPendingSales = useCallback<
@@ -1444,7 +1655,7 @@ export function OperationsProvider({
   }, [])
 
   const finalizeSaleTransaction = useCallback<OperationsContextType["finalizeSaleTransaction"]>(
-    ({
+    async ({
       lines,
       total,
       linkedOsId,
@@ -1554,7 +1765,11 @@ export function OperationsProvider({
       next.dailyLedger.vendasAPrazo = (next.dailyLedger.vendasAPrazo ?? 0) + pb.aPrazo
       next.dailyLedger.vendasCreditoVale += pb.creditoVale
 
-      const saleId = nextSaleId(next.sales)
+      const lj = opsLojaIdFromStorageKey(storageKey)
+      const capability = await probeWriterCapability(lj)
+      const useV2 = capability !== "v1"
+      const clientSaleId = useV2 ? assertGeneratedClientSaleId(generateClientSaleId()) : undefined
+      const saleId = useV2 && clientSaleId ? buildProvisionalSaleRef(clientSaleId) : nextSaleId(next.sales)
       const saleLines: SaleLineRecord[] = lines.map((ln) => {
         const itemType = resolveSaleLineItemType(ln)
         const item = itemType === "produto"
@@ -1568,6 +1783,7 @@ export function OperationsProvider({
       })
       next.sales.push({
         id: saleId,
+        ...(clientSaleId ? { clientSaleId } : {}),
         at: new Date().toISOString(),
         lines: saleLines,
         total,
@@ -1600,80 +1816,51 @@ export function OperationsProvider({
       }
 
       setState(next)
-      const lj = opsLojaIdFromStorageKey(storageKey)
       const saleRow = next.sales[next.sales.length - 1]
       if (saleRow) {
-        emitEvent("venda_finalizada", { storeId: lj, entityId: saleRow.id, data: saleRow })
-        void fetch(vendaPersistUrl(lj), {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-            [ASSISTEC_LOJA_HEADER]: lj,
-          },
-          body: JSON.stringify({ sale: saleRow }),
+        emitEvent("venda_finalizada", {
+          storeId: lj,
+          entityId: saleRow.clientSaleId ?? saleRow.id,
+          data: saleRow,
         })
-          .then(async (res) => {
-            if (res.ok) {
-              setState((prev) => ({
-                ...prev,
-                sales: prev.sales.map((s) =>
-                  s.id === saleId ? { ...s, syncPending: false, syncBlockedCode: undefined } : s
-                ),
-              }))
-            } else {
-              const body = await res.text().catch(() => "")
-              const detail = formatVendaPersistErrorBody(body, res.status)
-              const code = extractVendaPersistErrorCode(body)
-              if (code) {
-                setState((prev) => ({
-                  ...prev,
-                  sales: prev.sales.map((s) =>
-                    s.id === saleId ? { ...s, syncBlockedCode: code } : s
-                  ),
-                }))
-              }
-              console.error(
-                "[venda-persist] HTTP",
-                res.status,
-                saleRow.id,
-                "lojaId:",
-                lj,
-                "body:",
-                detail,
-                "raw:",
-                body,
-              )
-              toast({
-                variant: "destructive",
-                title: isSaleIdentityConflictCode(code)
-                  ? SALE_IDENTITY_CONFLICT_TITLE
-                  : `Venda ${saleRow.id} ficou pendente (HTTP ${res.status})`,
-                description: isSaleIdentityConflictCode(code)
-                  ? SALE_IDENTITY_CONFLICT_GUIDANCE
-                  : `${detail.slice(0, 200)} · Abra "Vendas" e use Reenviar sync para tentar novamente.`,
-              })
-              // Recusa por sessão de caixa: a sessão pode ter sido fechada entre a
-              // checagem do PDV e a gravação. Reconsulta a sessão ativa para que a
-              // PRÓXIMA venda já saia certa. NÃO reenvia esta venda — ela fica em
-              // `syncPending` e só volta por ação do operador (evita duplicidade).
-              if (isCaixaSessionRejectionCode(code)) {
-                void refreshCaixaSession()
-              }
-            }
-          })
-          .catch((err: unknown) => {
-            console.error("[venda-persist] rede", saleRow.id, "lojaId:", lj, err)
-            toast({
-              variant: "destructive",
-              title: "Venda não confirmada no servidor",
-              description: `Venda ${saleRow.id} salva localmente. Verifique a conexão e o status do caixa.`,
-            })
-          })
+        const persistResult = await persistPendingSale(saleRow, lj, false)
+        if (persistResult.ok) {
+          const confirmedId = persistResult.pedidoId ?? saleRow.id
+          const pending = isProvisionalSaleRef(confirmedId)
+          return {
+            ok: true,
+            saleId: confirmedId,
+            pending,
+            clientSaleId: persistResult.clientSaleId ?? saleRow.clientSaleId,
+            serverId: persistResult.serverId,
+          }
+        }
+        const code = persistResult.code
+        console.error("[venda-persist]", saleRow.id, "lojaId:", lj, persistResult.reason)
+        toast({
+          variant: "destructive",
+          title: isSaleIdentityConflictCode(code)
+            ? SALE_IDENTITY_CONFLICT_TITLE
+            : isProvisionalSaleRef(saleRow.id)
+              ? "Venda pendente — aguardando número do servidor"
+              : `Venda ${saleRow.id} ficou pendente (HTTP)`,
+          description: isSaleIdentityConflictCode(code)
+            ? SALE_IDENTITY_CONFLICT_GUIDANCE
+            : `${persistResult.reason.slice(0, 200)} · Abra "Vendas" e use Reenviar sync para tentar novamente.`,
+        })
+        if (isCaixaSessionRejectionCode(code)) {
+          void refreshCaixaSession()
+        }
+        return {
+          ok: true,
+          saleId: saleRow.id,
+          pending: true,
+          clientSaleId: saleRow.clientSaleId,
+        }
       }
-      return { ok: true, saleId }
+      return { ok: true, saleId, pending: useV2, clientSaleId }
     },
-    [refreshCaixaSession, storageKey]
+    [persistPendingSale, probeWriterCapability, refreshCaixaSession, storageKey]
   )
 
   const registrarDevolucao = useCallback<OperationsContextType["registrarDevolucao"]>((input) => {
@@ -1907,6 +2094,7 @@ export function OperationsProvider({
       refreshSalesFromServer,
       retrySyncSale,
       retrySyncSaleRetroactive,
+      recoverQuarantinedSale,
       discardLocalPendingSale,
       bulkDiscardLocalPendingSales,
     }),
@@ -1930,6 +2118,7 @@ export function OperationsProvider({
       refreshSalesFromServer,
       retrySyncSale,
       retrySyncSaleRetroactive,
+      recoverQuarantinedSale,
       discardLocalPendingSale,
       bulkDiscardLocalPendingSales,
     ]

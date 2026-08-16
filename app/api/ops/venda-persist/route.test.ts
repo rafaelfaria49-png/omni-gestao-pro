@@ -132,6 +132,7 @@ describe("POST /api/ops/venda-persist — recuperação concorrente P2002", () =
         clienteId: null,
         terminalId: "PDV1",
         status: "concluida",
+        clientSaleId: null,
       },
     })
     expect(h.transaction).toHaveBeenCalledTimes(1)

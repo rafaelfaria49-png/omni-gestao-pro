@@ -62,6 +62,9 @@ import type { EnterprisePermissions } from "@/lib/auth/enterprise-permissions"
 import { getOperatorLabelFromSession } from "@/lib/auth/session-operator";
 import { registrarAuditoriaFinanceira } from "@/lib/financeiro/services/auditoria-financeira-service";
 import { assertActiveStoreId } from "@/lib/operacoes/assert-active-store";
+import { resolveSaleNumberingWriter } from "@/lib/vendas/sale-numbering-runtime-gate"
+import { SALE_WRITER_FLOW } from "@/lib/vendas/sale-identity-contracts"
+import { allocateSaleNumberForWriter } from "@/lib/vendas/sale-writer-v2"
 
 export type OSPrioridade = "baixa" | "media" | "alta" | "critica";
 
@@ -1151,14 +1154,19 @@ export async function listVendasHub(storeId: string): Promise<Venda[]> {
 
 export async function criarVendaDeOSAction(os: OrdemServico): Promise<Venda> {
   if (!os.orcamento) throw new Error("OS sem orçamento — impossível faturar");
+  const orcamento = os.orcamento
   await requireOperacaoAuth(
     os.storeId,
     (p) => p.hubs.vendas && p.operacoes.editarOs,
     "Sem permissão para criar venda a partir da OS.",
   );
   const year = new Date().getFullYear();
-  const count = await prisma.venda.count({ where: { storeId: os.storeId } })
-  const pedidoId = `VND-${year}-${(count + 1).toString().padStart(5, "0")}`
+  const gate = resolveSaleNumberingWriter()
+  const numberingV2 = gate.writer === SALE_WRITER_FLOW.V2
+  // Writer V1: contrato legado VND-{ano}-{count+1}. Writer V2: mesma série server-side do PDV.
+  const pedidoIdLegado = numberingV2
+    ? null
+    : `VND-${year}-${((await prisma.venda.count({ where: { storeId: os.storeId } })) + 1).toString().padStart(5, "0")}`
   // Resolve nome do cliente sem cair em ID quando o snapshot do payload não trouxe nome.
   const clienteNomeOS = (os.cliente?.nome ?? "").trim()
   const clienteIdOS = (os.clienteId ?? "").trim() || null
@@ -1173,23 +1181,52 @@ export async function criarVendaDeOSAction(os: OrdemServico): Promise<Venda> {
     clienteId: clienteIdOS,
     origem: "os",
     origemRefId: os.id,
-    itens: os.orcamento.pecas,
-    servicos: os.orcamento.servicos,
-    desconto: os.orcamento.desconto,
+    itens: orcamento.pecas,
+    servicos: orcamento.servicos,
+    desconto: orcamento.desconto,
     status: "emitida",
   }
-  const venda = await prisma.venda.create({
+  const venda = numberingV2
+    ? await prisma.$transaction(async (tx) => {
+        const numbering = await allocateSaleNumberForWriter(tx, os.storeId)
+        payload.id = numbering.pedidoId
+        return tx.venda.create({
+          data: {
+            storeId: os.storeId,
+            pedidoId: numbering.pedidoId,
+            total: orcamento.total,
+            clienteNome,
+            ...(clienteIdOS ? { clienteId: clienteIdOS } : {}),
+            payload,
+            serieVendaId: numbering.serieVendaId,
+            anoNumero: numbering.anoNumero,
+            numeroSequencial: numbering.numeroSequencial,
+            numeradaEm: new Date(),
+            numeracaoOrigem: "SERVER_V1",
+            itens: {
+              create: orcamento.pecas.map((p) => ({
+                inventoryId: p.produtoId ?? p.id,
+                nome: p.nome,
+                quantidade: p.quantidade,
+                precoUnitario: p.valorUnitario ?? 0,
+                lineTotal: p.quantidade * (p.valorUnitario ?? 0),
+              })),
+            },
+          },
+        })
+      })
+    : await prisma.venda.create({
     data: {
       storeId: os.storeId,
-      pedidoId,
-      total: os.orcamento.total,
+      pedidoId: pedidoIdLegado!,
+      total: orcamento.total,
       clienteNome,
       // FK real Venda → Cliente (Goal 4 Cadastros). Mantém o vínculo histórico
       // mesmo se o nome do cliente mudar depois no cadastro.
       ...(clienteIdOS ? { clienteId: clienteIdOS } : {}),
       payload,
       itens: {
-        create: os.orcamento.pecas.map((p) => ({
+        create: orcamento.pecas.map((p) => ({
           inventoryId: p.produtoId ?? p.id,
           nome: p.nome,
           quantidade: p.quantidade,
@@ -1199,6 +1236,7 @@ export async function criarVendaDeOSAction(os: OrdemServico): Promise<Venda> {
       },
     },
   })
+  const pedidoId = venda.pedidoId
   return {
     id: venda.id,
     storeId: venda.storeId,
@@ -1206,10 +1244,10 @@ export async function criarVendaDeOSAction(os: OrdemServico): Promise<Venda> {
     clienteId: os.clienteId,
     origem: "os",
     origemRefId: os.id,
-    itens: os.orcamento.pecas,
-    servicos: os.orcamento.servicos,
-    desconto: os.orcamento.desconto,
-    total: os.orcamento.total,
+    itens: orcamento.pecas,
+    servicos: orcamento.servicos,
+    desconto: orcamento.desconto,
+    total: orcamento.total,
     status: "emitida",
     criadoEm: venda.at.toISOString(),
   }

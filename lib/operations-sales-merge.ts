@@ -2,41 +2,82 @@ import type { SaleRecord } from "@/lib/operations-sale-types"
 import { isSaleIdentityConflictCode } from "@/lib/vendas/sale-identity-conflict"
 import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
 
+function reconcileConfirmed(
+  local: SaleRecord,
+  remote: SaleRecord,
+): SaleRecord {
+  const nextStatus = remote.status ?? local.status
+  const confirmed: SaleRecord = {
+    ...stripClientSyncFlags(local),
+    id: remote.id,
+    serverId: remote.serverId ?? local.serverId,
+    clientSaleId: local.clientSaleId ?? remote.clientSaleId,
+    status: nextStatus,
+    syncPending: false,
+  }
+  delete confirmed.syncBlockedCode
+  return confirmed
+}
+
+function sameClientSaleId(local: SaleRecord, remote: SaleRecord): boolean {
+  return Boolean(local.clientSaleId && remote.clientSaleId && local.clientSaleId === remote.clientSaleId)
+}
+
+function isDistinctIdentityCollision(local: SaleRecord, remote: SaleRecord): boolean {
+  if (sameClientSaleId(local, remote)) return false
+  if (local.clientSaleId && remote.clientSaleId && local.clientSaleId !== remote.clientSaleId) {
+    return true
+  }
+  return isSaleIdentityConflictCode(local.syncBlockedCode)
+}
+
 /**
- * Mescla vendas do Postgres preservando o que já veio do localStorage (mesmo `id`),
- * EXCETO o `status`, que é a coluna autoritativa do banco. O payload JSONB da venda
- * local não é reescrito no cancelamento (feito na tela Vendas / servidor), então sem
- * propagar o `status` remoto a venda cancelada continuaria contando como concluída no
- * caixa/fechamento. Apenas `status` (e a baixa dos marcadores de sync) é sincronizado —
- * `lines`/`qtyReturned` permanecem locais para não descartar devolução offline pendente.
+ * Mescla vendas do Postgres com o localStorage.
  *
- * Estar no `remote` normalmente significa estar no banco, ou seja, CONFIRMADA. A exceção
- * é uma cópia local em quarentena por colisão de `pedidoId`: a venda remota de mesmo id
- * pode ser justamente a venda diferente que causou o conflito e não confirma a cópia
- * local. Nesse caso o bloqueio e `syncPending` são monotônicos. Para pendências comuns,
- * os marcadores locais são zerados e nunca reinjetados por vendas remotas extras.
- *
- * Função PURA (sem React) para ser testável de forma isolada.
+ * V1: casa por `id` (`pedidoId`), preservando `status` autoritativo do banco.
+ * V2: casa por `clientSaleId`. Local provisório `PEND-…` reconcilia in-place para o
+ * `pedidoId` remoto. Colisão de `pedidoId` com `clientSaleId` diferente NÃO confirma
+ * a cópia local — as duas entidades permanecem na projeção.
  */
 export function mergeSalesById(local: SaleRecord[], remote: SaleRecord[]): SaleRecord[] {
+  const remoteByClientSaleId = new Map<string, SaleRecord>()
   const remoteById = new Map<string, SaleRecord>()
   for (const r of remote) {
+    if (r.clientSaleId) remoteByClientSaleId.set(r.clientSaleId, r)
     if (r.id) remoteById.set(r.id, r)
   }
+
   let changed = false
+  const consumedRemote = new Set<SaleRecord>()
   const mergedLocal = local.map((s) => {
+    const remoteByKey = s.clientSaleId ? remoteByClientSaleId.get(s.clientSaleId) : undefined
+    if (remoteByKey) {
+      consumedRemote.add(remoteByKey)
+      const next = reconcileConfirmed(s, remoteByKey)
+      if (
+        next.id !== s.id ||
+        next.status !== s.status ||
+        next.serverId !== s.serverId ||
+        s.syncPending === true ||
+        s.syncBlockedCode !== undefined
+      ) {
+        changed = true
+        return next
+      }
+      return s
+    }
+
     const r = s.id ? remoteById.get(s.id) : undefined
     if (!r) return s
-    if (isSaleIdentityConflictCode(s.syncBlockedCode)) {
-      if (s.syncPending === true) return s
+
+    if (isDistinctIdentityCollision(s, r)) {
+      if (s.syncPending === true && isSaleIdentityConflictCode(s.syncBlockedCode)) return s
       changed = true
       return { ...s, syncPending: true }
     }
-    // Nunca apaga um status local com `undefined` remoto (legado): só sobrescreve quando
-    // o servidor tem um status concreto.
+
+    consumedRemote.add(r)
     const nextStatus = r.status ?? s.status
-    // Converge: depois da primeira limpeza os campos somem e a comparação vira estável
-    // (sem churn de referência nos merges seguintes).
     const limpaMarcadores = s.syncPending === true || s.syncBlockedCode !== undefined
     if (nextStatus !== s.status || limpaMarcadores) {
       changed = true
@@ -46,8 +87,10 @@ export function mergeSalesById(local: SaleRecord[], remote: SaleRecord[]): SaleR
     }
     return s
   })
-  const ids = new Set(mergedLocal.map((s) => s.id))
-  const extra = remote.filter((s) => s.id && !ids.has(s.id)).map((s) => stripClientSyncFlags(s))
+
+  const extra = remote
+    .filter((s) => s.id && !consumedRemote.has(s))
+    .map((s) => stripClientSyncFlags(s))
   if (extra.length === 0 && !changed) return local
   return [...mergedLocal, ...extra].sort((a, b) => a.at.localeCompare(b.at))
 }

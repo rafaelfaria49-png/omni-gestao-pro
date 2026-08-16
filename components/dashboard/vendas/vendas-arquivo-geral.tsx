@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
   Search, RefreshCw,
   TrendingUp, BarChart3, AlertTriangle,
@@ -84,6 +84,11 @@ import {
   SALE_IDENTITY_CONFLICT_TITLE,
   saleSyncActionsForCode,
 } from "@/lib/vendas/sale-identity-conflict"
+import {
+  classifyLocalSaleSync,
+  displaySaleNumber,
+  isProvisionalSaleRef,
+} from "@/lib/vendas/local-sale-identity"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -102,6 +107,9 @@ type VendaItem = {
   cancelada: boolean
   canceladaEm: string | null
   motivoCancelamento: string | null
+  rowKey: string
+  kind: "REMOTE_CONFIRMED" | "LOCAL_PENDING" | "LOCAL_QUARANTINED"
+  clientSaleId?: string
 }
 
 type TerminalOption = {
@@ -270,17 +278,14 @@ function saleRecordToPagamentos(s: SaleRecord): Array<{ label: string; valor: nu
 
 function saleRecordToVendaItem(s: SaleRecord): VendaItem {
   const formas = paymentBreakdownLabels(s.paymentBreakdown)
+  const kind = classifyLocalSaleSync(s)
   return {
     id: s.id,
-    dbId: s.id,
+    dbId: s.serverId ?? s.id,
     at: s.at,
     cliente: s.customerName?.trim() || "—",
     total: s.total,
     status: "concluida",
-    // Operador legível: o `cashierId` salvo na venda é exibido SOMENTE quando é um
-    // nome (ex.: pdv-next). Se for id técnico (UUID/timestamp-hash) → oculta ("—").
-    // Filtro puro: o id permanece no SaleRecord para auditoria; nunca inventamos
-    // nem substituímos pelo operador atual.
     operador: sanitizeOperatorLabel(s.cashierId) || null,
     terminalId: s.terminalId ?? null,
     formaPagamento: formas.length > 0 ? formas.join(" + ") : "—",
@@ -288,6 +293,9 @@ function saleRecordToVendaItem(s: SaleRecord): VendaItem {
     cancelada: false,
     canceladaEm: null,
     motivoCancelamento: null,
+    rowKey: `local:${s.clientSaleId || s.id}`,
+    kind,
+    clientSaleId: s.clientSaleId,
   }
 }
 
@@ -306,6 +314,7 @@ export function VendasArquivoGeral() {
     retrySyncSaleRetroactive,
     discardLocalPendingSale,
     bulkDiscardLocalPendingSales,
+    recoverQuarantinedSale,
   } = useOperationsStore()
   const { toast } = useToast()
   
@@ -357,7 +366,14 @@ export function VendasArquivoGeral() {
    * precisar espelhar manualmente o snapshot do drawer.
    */
   const pendenteLocalLive = useMemo(
-    () => (detalhePendenteLocal ? opsSales.find((s) => s.id === detalhePendenteLocal.id) ?? detalhePendenteLocal : null),
+    () =>
+      detalhePendenteLocal
+        ? opsSales.find(
+            (s) =>
+              (detalhePendenteLocal.clientSaleId && s.clientSaleId === detalhePendenteLocal.clientSaleId) ||
+              s.id === detalhePendenteLocal.id,
+          ) ?? detalhePendenteLocal
+        : null,
     [detalhePendenteLocal, opsSales],
   )
   const pendingSaleSyncActions = saleSyncActionsForCode(pendenteLocalLive?.syncBlockedCode)
@@ -389,6 +405,10 @@ export function VendasArquivoGeral() {
   // `retroativoLoading` cobre o próprio reenvio.
   const [retroativoConfirmId, setRetroativoConfirmId] = useState<string | null>(null)
   const [retroativoLoading, setRetroativoLoading] = useState(false)
+  const [recoveringSaleId, setRecoveringSaleId] = useState<string | null>(null)
+  const [recoverMotivo, setRecoverMotivo] = useState("")
+  const [recoverLoading, setRecoverLoading] = useState(false)
+  const [recoverClosedSessionConfirm, setRecoverClosedSessionConfirm] = useState(false)
 
   // Workspace Enterprise — ficha completa + correções (única via de correção de venda)
   const [workspaceVendaId, setWorkspaceVendaId] = useState<string | null>(null)
@@ -420,7 +440,12 @@ export function VendasArquivoGeral() {
       // (fallback de `cashierId` quando a venda foi gravada sem sessão). Nome
       // legível é mantido; UUID/timestamp-hash → null ("—"). Nunca substitui.
       setVendas(
-        (data.vendas ?? []).map((v) => ({ ...v, operador: sanitizeOperatorLabel(v.operador) || null })),
+        (data.vendas ?? []).map((v) => ({
+          ...v,
+          operador: sanitizeOperatorLabel(v.operador) || null,
+          rowKey: v.rowKey || `remote:${v.id}`,
+          kind: v.kind ?? "REMOTE_CONFIRMED",
+        })),
       )
       setTotal(data.total ?? 0)
       setKpis(data.kpis ?? { totalVendas: 0, faturamento: 0, cancelamentos: 0, devolvidas: 0, concluidas: 0, ticketMedio: 0 })
@@ -483,6 +508,9 @@ export function VendasArquivoGeral() {
 
   const { mergedVendas, pendingSyncIds, conflitoIdentidadeIds } = useMemo(() => {
     const historicoIds = new Set(vendas.map((v) => v.id))
+    const remoteClientSaleIds = new Set(
+      vendas.map((v) => v.clientSaleId).filter((id): id is string => Boolean(id)),
+    )
 
     // Ids pendentes SEM filtro: alimentam o botão "Limpar pendentes locais" e os
     // guards de ação mesmo quando a linha está oculta por algum filtro ativo.
@@ -514,7 +542,10 @@ export function VendasArquivoGeral() {
 
     const extraLocal = opsSales
       .filter((s) => {
-        if (!s.id || s.syncPending !== true || historicoIds.has(s.id)) return false
+        if (!s.id || s.syncPending !== true) return false
+        if (s.clientSaleId && remoteClientSaleIds.has(s.clientSaleId)) return false
+        const quarantined = isSaleIdentityConflictCode(s.syncBlockedCode)
+        if (historicoIds.has(s.id) && !quarantined && !s.clientSaleId) return false
         if (!dentroDoPeriodo(s.at)) return false
         // Pendentes locais são sempre "concluída" na prática — filtros de outro
         // status as escondem, como aconteceria se estivessem no servidor.
@@ -555,8 +586,23 @@ export function VendasArquivoGeral() {
     [pendingSyncIds],
   )
 
+  const hasRemoteConfirmed = useCallback(
+    (vendaId: string) => mergedVendas.some((v) => v.id === vendaId && v.kind === "REMOTE_CONFIRMED"),
+    [mergedVendas],
+  )
+
+  const blocksConfirmedSaleAction = useCallback(
+    (vendaId: string) => isVendaPendenteSync(vendaId) && !hasRemoteConfirmed(vendaId),
+    [hasRemoteConfirmed, isVendaPendenteSync],
+  )
+
   const getPendingSaleRecord = useCallback(
-    (vendaId: string) => opsSales.find((s) => s.id === vendaId && s.syncPending === true) ?? null,
+    (vendaId: string) =>
+      opsSales.find(
+        (s) =>
+          s.syncPending === true &&
+          (s.id === vendaId || s.clientSaleId === vendaId || `local:${s.clientSaleId || s.id}` === vendaId),
+      ) ?? null,
     [opsSales],
   )
 
@@ -719,13 +765,71 @@ export function VendasArquivoGeral() {
     }
   }, [bulkDiscardLocalPendingSales, fetchRemoteSales, load, toast])
 
+  const recoveringSale = useMemo(
+    () => (recoveringSaleId ? getPendingSaleRecord(recoveringSaleId) : null),
+    [recoveringSaleId, getPendingSaleRecord],
+  )
+
+  const openRecoverDialog = useCallback((vendaId: string) => {
+    setRecoveringSaleId(vendaId)
+    setRecoverMotivo("")
+    setRecoverClosedSessionConfirm(false)
+  }, [])
+
+  const handleRecoverQuarantined = useCallback(
+    async (allowClosedOriginalSession: boolean) => {
+      if (!recoveringSaleId || recoverMotivo.trim().length < 5) return
+      setRecoverLoading(true)
+      const res = await recoverQuarantinedSale({
+        saleId: recoveringSaleId,
+        motivo: recoverMotivo.trim(),
+        allowClosedOriginalSession,
+      })
+      setRecoverLoading(false)
+      if (res.ok) {
+        toast({
+          title: "Venda recuperada",
+          description: `Novo número server-side: ${res.saleId}. A venda que ocupava o número antigo permanece intacta.`,
+        })
+        setRecoveringSaleId(null)
+        setRecoverMotivo("")
+        setRecoverClosedSessionConfirm(false)
+        setDetalheOpen(false)
+        void fetchRemoteSales()
+        load()
+        return
+      }
+      if (res.code === "CAIXA_ORIGINAL_FECHADO" && !allowClosedOriginalSession) {
+        setRecoverClosedSessionConfirm(true)
+        return
+      }
+      toast({
+        title: "Não foi possível recuperar",
+        description: res.reason.slice(0, 220),
+        variant: "destructive",
+      })
+    },
+    [recoveringSaleId, recoverMotivo, recoverQuarantinedSale, fetchRemoteSales, load, toast],
+  )
+
   // ── Detalhe ──────────────────────────────────────────────────────────────────
-  const openDetalhe = useCallback(async (vendaId: string) => {
+  const openDetalhe = useCallback(async (rowKeyOrId: string) => {
     setDetalheOpen(true)
     setSaldoCredito(null)
 
-    if (isVendaPendenteSync(vendaId)) {
-      const local = getPendingSaleRecord(vendaId)
+    const row =
+      mergedVendas.find((v) => v.rowKey === rowKeyOrId) ??
+      mergedVendas.find((v) => v.kind === "REMOTE_CONFIRMED" && v.id === rowKeyOrId) ??
+      mergedVendas.find((v) => v.id === rowKeyOrId)
+    const isLocalEntity = row?.kind === "LOCAL_PENDING" || row?.kind === "LOCAL_QUARANTINED"
+
+    if (isLocalEntity && row) {
+      const local =
+        opsSales.find(
+          (s) =>
+            s.syncPending === true &&
+            ((row.clientSaleId && s.clientSaleId === row.clientSaleId) || s.id === row.id),
+        ) ?? getPendingSaleRecord(row.id)
       setDetalheLoading(false)
       setDetalhe(null)
       setDetalhePendenteLocal(local)
@@ -742,6 +846,7 @@ export function VendasArquivoGeral() {
     setDetalhePendenteLocal(null)
     setDetalheLoading(true)
     setDetalhe(null)
+    const vendaId = row?.id ?? rowKeyOrId
     try {
       const res = await fetch(`/api/vendas/${encodeURIComponent(vendaId)}`, {
         credentials: "include",
@@ -778,7 +883,7 @@ export function VendasArquivoGeral() {
     } finally {
       setDetalheLoading(false)
     }
-  }, [storeId, toast, isVendaPendenteSync, getPendingSaleRecord])
+  }, [storeId, toast, mergedVendas, opsSales, getPendingSaleRecord])
 
   // ── Cupom ────────────────────────────────────────────────────────────────────
   const openCupom = useCallback((d: VendaDetalhe) => {
@@ -806,7 +911,7 @@ export function VendasArquivoGeral() {
   }, [empresaDocumentos])
 
   const openCupomFromRow = useCallback(async (vendaId: string) => {
-    if (isVendaPendenteSync(vendaId)) {
+    if (blocksConfirmedSaleAction(vendaId)) {
       toastVendaPendenteBloqueada("imprimir")
       return
     }
@@ -820,12 +925,12 @@ export function VendasArquivoGeral() {
     } catch {
       toast({ title: "Erro", description: "Não foi possível carregar os dados do cupom.", variant: "destructive" })
     }
-  }, [storeId, openCupom, toast, isVendaPendenteSync, toastVendaPendenteBloqueada])
+  }, [storeId, openCupom, toast, blocksConfirmedSaleAction, toastVendaPendenteBloqueada])
 
   // ── Cancelamento ─────────────────────────────────────────────────────────────
   const handleCancelar = useCallback(async (forcar = false) => {
     if (!cancelandoId || !cancelMotivo.trim()) return
-    if (isVendaPendenteSync(cancelandoId)) {
+    if (blocksConfirmedSaleAction(cancelandoId)) {
       toastVendaPendenteBloqueada("cancelar")
       setCancelandoId(null)
       setCancelMotivo("")
@@ -870,11 +975,11 @@ export function VendasArquivoGeral() {
     } finally {
       setCancelLoading(false)
     }
-  }, [cancelandoId, cancelMotivo, storeId, detalhe, openDetalhe, load, toast, isVendaPendenteSync, toastVendaPendenteBloqueada])
+  }, [cancelandoId, cancelMotivo, storeId, detalhe, openDetalhe, load, toast, blocksConfirmedSaleAction, toastVendaPendenteBloqueada])
 
   const openTroca = useCallback(
     (vendaId: string) => {
-      if (isVendaPendenteSync(vendaId)) {
+      if (blocksConfirmedSaleAction(vendaId)) {
         toastVendaPendenteBloqueada("troca")
         return
       }
@@ -882,7 +987,7 @@ export function VendasArquivoGeral() {
       setTrocaInitialSale(remoteSales.find((s) => s.id === vendaId))
       setTrocaOpen(true)
     },
-    [remoteSales, isVendaPendenteSync, toastVendaPendenteBloqueada],
+    [remoteSales, blocksConfirmedSaleAction, toastVendaPendenteBloqueada],
   )
 
   const closeTroca = useCallback(() => {
@@ -892,14 +997,14 @@ export function VendasArquivoGeral() {
   }, [])
 
   const startCancel = useCallback((vendaId: string) => {
-    if (isVendaPendenteSync(vendaId)) {
+    if (blocksConfirmedSaleAction(vendaId)) {
       toastVendaPendenteBloqueada("cancelar")
       return
     }
     setCancelandoId(vendaId)
     setCancelMotivo("")
     setCancelConfirmForcar(false)
-  }, [isVendaPendenteSync, toastVendaPendenteBloqueada])
+  }, [blocksConfirmedSaleAction, toastVendaPendenteBloqueada])
 
   const clearAllFilters = useCallback(() => {
     setStatusFiltro("todos")
@@ -1386,13 +1491,100 @@ export function VendasArquivoGeral() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  mergedVendas.map((v) => {
+                    mergedVendas.map((v) => {
                     const { date, time } = fmtDateParts(v.at)
-                    const isPendenteSync = pendingSyncIds.has(v.id)
+                    const isPendenteSync = v.kind === "LOCAL_PENDING"
+                    const isQuarantined = v.kind === "LOCAL_QUARANTINED"
+                    const pendingSale = isPendenteSync || isQuarantined ? getPendingSaleRecord(v.id) : null
+                    const displayId =
+                      v.kind === "LOCAL_PENDING"
+                        ? "Venda pendente"
+                        : v.kind === "LOCAL_QUARANTINED"
+                          ? "Conflito de identificação"
+                          : v.id
+                    const menuAcoes: Array<{ key: string; node: ReactNode }> = []
+                    if (v.kind === "REMOTE_CONFIRMED") {
+                      menuAcoes.push({
+                        key: "workspace",
+                        node: (
+                          <DropdownMenuItem onClick={() => setWorkspaceVendaId(v.id)}>
+                            <PanelsTopLeft className="h-4 w-4 mr-2" /> Workspace · Corrigir
+                          </DropdownMenuItem>
+                        ),
+                      })
+                      if (!v.cancelada) {
+                        menuAcoes.push({
+                          key: "troca",
+                          node: (
+                            <DropdownMenuItem onClick={() => openTroca(v.id)}>
+                              <RotateCcw className="h-4 w-4 mr-2" /> Troca / Devolução
+                            </DropdownMenuItem>
+                          ),
+                        })
+                        menuAcoes.push({
+                          key: "cancel",
+                          node: (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => startCancel(v.id)}>
+                                <XCircle className="h-4 w-4 mr-2" /> Cancelar venda
+                              </DropdownMenuItem>
+                            </>
+                          ),
+                        })
+                      }
+                    } else if (v.kind === "LOCAL_PENDING") {
+                      menuAcoes.push({
+                        key: "retry",
+                        node: (
+                          <DropdownMenuItem onClick={() => void handleReenviarSync(v.id)}>
+                            <Send className="h-4 w-4 mr-2" /> Reenviar sincronização
+                          </DropdownMenuItem>
+                        ),
+                      })
+                      if (pendingSale?.syncBlockedCode === "CAIXA_ORIGINAL_FECHADO") {
+                        menuAcoes.push({
+                          key: "retro",
+                          node: (
+                            <DropdownMenuItem onClick={() => setRetroativoConfirmId(v.id)}>
+                              <Clock className="h-4 w-4 mr-2" /> Sincronizar retroativo
+                            </DropdownMenuItem>
+                          ),
+                        })
+                      }
+                      menuAcoes.push({
+                        key: "discard",
+                        node: (
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDescartandoLocalId(v.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" /> Descartar venda local
+                          </DropdownMenuItem>
+                        ),
+                      })
+                    } else if (isQuarantined) {
+                      menuAcoes.push({
+                        key: "conflict",
+                        node: (
+                          <DropdownMenuItem onClick={() => void openDetalhe(v.rowKey)}>
+                            <AlertTriangle className="h-4 w-4 mr-2" /> Ver conflito
+                          </DropdownMenuItem>
+                        ),
+                      })
+                      menuAcoes.push({
+                        key: "recover",
+                        node: (
+                          <DropdownMenuItem onClick={() => openRecoverDialog(v.id)}>
+                            <RotateCcw className="h-4 w-4 mr-2" /> Recuperar venda
+                          </DropdownMenuItem>
+                        ),
+                      })
+                    }
                     return (
                       <TableRow
-                        key={v.id}
-                        onClick={() => void openDetalhe(v.id)}
+                        key={v.rowKey}
+                        onClick={() => void openDetalhe(v.rowKey)}
                         className={cn(
                           "group cursor-pointer border-border transition-colors hover:bg-muted/30",
                           v.cancelada && "opacity-80 bg-destructive/[0.02]",
@@ -1404,13 +1596,21 @@ export function VendasArquivoGeral() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-mono text-xs font-semibold text-foreground">{v.id}</span>
-                            {pendingSyncIds.has(v.id) && (
+                            <span className="font-mono text-xs font-semibold text-foreground">{displayId}</span>
+                            {(isPendenteSync || v.kind === "LOCAL_PENDING") && (
                               <Badge variant="outline" className="border-warning/30 bg-warning/10 text-[9px] px-1 py-0 text-warning">
                                 Pendente
                               </Badge>
                             )}
+                            {isQuarantined && (
+                              <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-[9px] px-1 py-0 text-destructive">
+                                Quarentena
+                              </Badge>
+                            )}
                           </div>
+                          {isQuarantined && v.id !== displayId && (
+                            <p className="mt-0.5 font-mono text-[10px] text-muted-foreground">{v.id}</p>
+                          )}
                         </TableCell>
                         <TableCell>
                           <span className="text-sm text-foreground truncate max-w-[160px] inline-block" title={v.cliente}>
@@ -1457,13 +1657,13 @@ export function VendasArquivoGeral() {
                           <div className="flex items-center justify-end gap-1.5 whitespace-nowrap">
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void openDetalhe(v.id)}>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void openDetalhe(v.rowKey)}>
                                   <Eye className="h-4 w-4" />
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent>Detalhes</TooltipContent>
                             </Tooltip>
-                            {!isPendenteSync ? (
+                            {!isPendenteSync && !isQuarantined ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void openCupomFromRow(v.id)}>
@@ -1472,7 +1672,7 @@ export function VendasArquivoGeral() {
                                 </TooltipTrigger>
                                 <TooltipContent>Imprimir</TooltipContent>
                               </Tooltip>
-                            ) : conflitoIdentidadeIds.has(v.id) ? (
+                            ) : isQuarantined ? (
                               // Quarentena técnica: a ação disponível é apenas abrir a
                               // orientação; reenvio/retroativo/descarte ficam ausentes.
                               <Tooltip>
@@ -1482,7 +1682,7 @@ export function VendasArquivoGeral() {
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                    onClick={() => void openDetalhe(v.id)}
+                                    onClick={() => void openDetalhe(v.rowKey)}
                                   >
                                     <AlertTriangle className="h-4 w-4" />
                                   </Button>
@@ -1510,6 +1710,7 @@ export function VendasArquivoGeral() {
                                 <TooltipContent>Reenviar sincronização</TooltipContent>
                               </Tooltip>
                             )}
+                            {menuAcoes.length > 0 && (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button type="button" variant="ghost" size="icon" className="h-8 w-8">
@@ -1517,34 +1718,12 @@ export function VendasArquivoGeral() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-52">
-                                {!isPendenteSync && (
-                                  <DropdownMenuItem onClick={() => setWorkspaceVendaId(v.id)}>
-                                    <PanelsTopLeft className="h-4 w-4 mr-2" /> Workspace · Corrigir
-                                  </DropdownMenuItem>
-                                )}
-                                {!v.cancelada && !isPendenteSync && (
-                                  <DropdownMenuItem onClick={() => openTroca(v.id)}>
-                                    <RotateCcw className="h-4 w-4 mr-2" /> Troca / Devolução
-                                  </DropdownMenuItem>
-                                )}
-                                {isPendenteSync && !conflitoIdentidadeIds.has(v.id) && (
-                                  <DropdownMenuItem
-                                    className="text-destructive focus:text-destructive"
-                                    onClick={() => setDescartandoLocalId(v.id)}
-                                  >
-                                    <Trash2 className="h-4 w-4 mr-2" /> Descartar venda local
-                                  </DropdownMenuItem>
-                                )}
-                                {!v.cancelada && !isPendenteSync && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => startCancel(v.id)}>
-                                      <XCircle className="h-4 w-4 mr-2" /> Cancelar venda
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
+                                {menuAcoes.map((acao) => (
+                                  <div key={acao.key}>{acao.node}</div>
+                                ))}
                               </DropdownMenuContent>
                             </DropdownMenu>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1593,7 +1772,9 @@ export function VendasArquivoGeral() {
               <div className="min-w-0">
                 <SheetTitle className="flex flex-wrap items-center gap-2 text-lg font-bold leading-tight text-foreground">
                   {detalhePendenteLocal
-                    ? `Venda ${detalhePendenteLocal.id}`
+                    ? isProvisionalSaleRef(detalhePendenteLocal.id)
+                      ? displaySaleNumber(detalhePendenteLocal.id, true)
+                      : `Venda ${detalhePendenteLocal.id}`
                     : detalhe
                       ? `Venda ${detalhe.id}`
                       : "Detalhes da Venda"}
@@ -1778,11 +1959,14 @@ export function VendasArquivoGeral() {
                   <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive space-y-1">
                     <p className="font-semibold flex items-center gap-1.5">
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                      {SALE_IDENTITY_CONFLICT_TITLE}
+                      Venda precisa de recuperação
                     </p>
-                    <p>{SALE_IDENTITY_CONFLICT_GUIDANCE}</p>
-                    <p className="font-medium">
-                      Reenvio, sincronização retroativa e descarte estão bloqueados para preservar a única cópia local.
+                    <p>
+                      O número desta venda já estava em uso. Seus dados foram preservados e nenhuma venda existente foi
+                      alterada.
+                    </p>
+                    <p className="text-muted-foreground">
+                      Número conflitante: <span className="font-mono text-foreground">{detalhePendenteLocal.id}</span>
                     </p>
                   </div>
                 )}
@@ -1803,10 +1987,8 @@ export function VendasArquivoGeral() {
                   <p className="font-medium text-foreground">Próximos passos</p>
                   {conflitoIdentidade ? (
                     <p>
-                      Preserve a venda{" "}
-                      <span className="font-medium text-foreground">{detalhePendenteLocal.id}</span> neste dispositivo.
-                      A recuperação deve ser conduzida por um fluxo administrado; o sistema não altera o número
-                      automaticamente.
+                      Preserve os dados desta venda neste dispositivo. A recuperação gera um <span className="font-medium text-foreground">novo número server-side</span> e
+                      nunca altera a venda que já ocupa o número conflitante.
                     </p>
                   ) : (
                     <>
@@ -1827,6 +2009,16 @@ export function VendasArquivoGeral() {
                 </div>
 
                 <div className="flex flex-col gap-2 pt-1">
+                  {conflitoIdentidade && (
+                    <Button
+                      type="button"
+                      className="h-10 gap-2 text-sm"
+                      onClick={() => openRecoverDialog(detalhePendenteLocal.id)}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      Recuperar venda
+                    </Button>
+                  )}
                   {pendingSaleSyncActions.canManualRetry && (
                     <Button
                       type="button"
@@ -2391,6 +2583,121 @@ export function VendasArquivoGeral() {
             >
               {retroativoLoading && <Loader2 className="h-4 w-4 animate-spin" />}
               {retroativoLoading ? "Sincronizando…" : "Confirmar sincronização retroativa"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <Dialog
+        open={!!recoveringSaleId && !recoverClosedSessionConfirm}
+        onOpenChange={(o) => {
+          if (!o && !recoverLoading) {
+            setRecoveringSaleId(null)
+            setRecoverMotivo("")
+          }
+        }}
+      >
+        <DialogContent className="border-border bg-card max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">Venda precisa de recuperação</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm text-muted-foreground">
+            <p>
+              O número desta venda já estava em uso. Seus dados foram preservados e nenhuma venda existente foi
+              alterada.
+            </p>
+            {recoveringSale && (
+              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2.5 text-xs space-y-1">
+                <p>Número conflitante: <span className="font-mono text-foreground">{recoveringSale.id}</span></p>
+                <p>Data: <span className="text-foreground">{fmtDate(recoveringSale.at)}</span></p>
+                <p>Total: <span className="text-foreground">{fmtBrl(recoveringSale.total)}</span></p>
+                <p>
+                  Pagamento:{" "}
+                  <span className="text-foreground">
+                    {paymentBreakdownLabels(recoveringSale.paymentBreakdown).join(" + ") || "—"}
+                  </span>
+                </p>
+                <p>Itens: <span className="text-foreground">{recoveringSale.lines.length}</span></p>
+                <p>Terminal: <span className="text-foreground">{recoveringSale.terminalId || "Sem terminal"}</span></p>
+                <p>Sessão original: <span className="font-mono text-foreground">{recoveringSale.sessaoId || "—"}</span></p>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="recover-motivo" className="text-sm text-foreground">
+                Motivo da recuperação <span className="text-destructive">*</span>
+              </Label>
+              <Textarea
+                id="recover-motivo"
+                placeholder="Descreva o motivo (mínimo 5 caracteres)…"
+                value={recoverMotivo}
+                onChange={(e) => setRecoverMotivo(e.target.value)}
+                className="min-h-[88px] resize-none bg-background border-border"
+                disabled={recoverLoading}
+              />
+            </div>
+            <p className="text-xs">
+              A recuperação usa o Writer V2, gera um novo número server-side e aplica estoque/financeiro uma única vez.
+              A venda antiga permanece intacta.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={recoverLoading}
+                onClick={() => {
+                  setRecoveringSaleId(null)
+                  setRecoverMotivo("")
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                disabled={recoverLoading || recoverMotivo.trim().length < 5}
+                onClick={() => void handleRecoverQuarantined(false)}
+              >
+                {recoverLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                Recuperar venda
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={recoverClosedSessionConfirm}
+        onOpenChange={(o) => {
+          if (!o && !recoverLoading) setRecoverClosedSessionConfirm(false)
+        }}
+      >
+        <AlertDialogContent className="border-border bg-card max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-foreground text-left">Lançamento retroativo</AlertDialogTitle>
+            <AlertDialogDescription className="text-muted-foreground text-left space-y-2">
+              <span className="block">
+                A sessão de caixa original desta venda já está fechada. A recuperação usa a sessão original — não joga
+                no caixa atual.
+              </span>
+              <span className="block">
+                A venda que ocupa o número antigo permanece intacta. Um novo número será gerado no servidor. Estoque e
+                financeiro são aplicados uma única vez.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel className="border-border" disabled={recoverLoading}>
+              Voltar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-warning text-warning-foreground hover:bg-warning/90 gap-2"
+              disabled={recoverLoading}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleRecoverQuarantined(true)
+              }}
+            >
+              {recoverLoading && <Loader2 className="h-4 w-4 animate-spin" />}
+              Confirmar lançamento retroativo
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

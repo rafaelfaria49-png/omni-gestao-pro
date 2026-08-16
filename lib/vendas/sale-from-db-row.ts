@@ -32,6 +32,8 @@ export type VendaDbRow = {
   clienteNome: string | null
   status: string
   payload: unknown
+  clientSaleId?: string | null
+  serverId?: string | null
   itens: Array<{
     inventoryId: string | null
     nome: string
@@ -43,13 +45,22 @@ export type VendaDbRow = {
 
 export function saleFromDbRow(r: VendaDbRow): SaleRecord {
   const dbStatus = r.status as SaleRecord["status"] | undefined
+  const technicalId = r.serverId?.trim() || undefined
+  const clientSaleId =
+    (typeof r.clientSaleId === "string" && r.clientSaleId.trim() ? r.clientSaleId.trim() : undefined) ||
+    undefined
   const p = r.payload
   if (p && typeof p === "object") {
     const o = p as Partial<SaleRecord>
     if (typeof o.id === "string" && o.id === r.pedidoId && Array.isArray(o.lines)) {
-      // Sempre sobrescreve status com o valor autoritativo do banco (o payload pode estar
-      // desatualizado) e sempre remove os marcadores client-only do payload legado.
-      return { ...stripClientSyncFlags(o as SaleRecord), status: dbStatus }
+      const payloadClientSaleId =
+        typeof o.clientSaleId === "string" && o.clientSaleId.trim() ? o.clientSaleId.trim() : undefined
+      return {
+        ...stripClientSyncFlags(o as SaleRecord),
+        status: dbStatus,
+        serverId: technicalId,
+        clientSaleId: clientSaleId ?? payloadClientSaleId,
+      }
     }
   }
 
@@ -74,5 +85,7 @@ export function saleFromDbRow(r: VendaDbRow): SaleRecord {
     status: dbStatus,
     customerName: r.clienteNome ?? undefined,
     paymentBreakdown: zeroPb,
+    ...(technicalId ? { serverId: technicalId } : {}),
+    ...(clientSaleId ? { clientSaleId } : {}),
   }
 }
