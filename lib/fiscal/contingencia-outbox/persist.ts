@@ -95,6 +95,17 @@ function bytesFromXml(xml: string): Uint8Array {
   return Uint8Array.from(Buffer.from(xml, "utf8"))
 }
 
+/** Amarração identidade↔bytes sem parse/rebuild: o XML persistido deve conter a chave/nNF/série informados. */
+function xmlContainsIssuedIdentity(xml: string, issue: ContingenciaOutboxIssue): boolean {
+  return (
+    xml.includes(issue.chave) &&
+    xml.includes(`Id="NFe${issue.chave}"`) &&
+    xml.includes("<tpEmis>9</tpEmis>") &&
+    xml.includes(`<nNF>${issue.nNF}</nNF>`) &&
+    xml.includes(`<serie>${issue.serie}</serie>`)
+  )
+}
+
 function parseDhCont(dhCont: string): Date | null {
   const parsed = new Date(dhCont)
   return Number.isNaN(parsed.getTime()) ? null : parsed
@@ -169,13 +180,26 @@ function validateInput(
       sha256Informado,
     })
   }
+  const issueNormalizado: ContingenciaOutboxIssue = {
+    ...issue,
+    exactBytes: bytes,
+    sha256: sha256Informado,
+    chave,
+  }
+  if (!xmlContainsIssuedIdentity(xml, issueNormalizado)) {
+    return fail(
+      "bytes_identidade_divergente",
+      "exactBytes não contêm a chave/nNF/série/tpEmis informados; gravação recusada.",
+      { storeId, chave, sha256Informado },
+    )
+  }
   if (!parseDhCont(dhCont)) {
     return fail("dh_cont_invalido", "dhCont não é um instante válido; gravação recusada.", {
       storeId,
       chave,
     })
   }
-  return { ok: true, storeId, vendaId, issue: { ...issue, exactBytes: bytes, sha256: sha256Informado, chave }, bytes, xml }
+  return { ok: true, storeId, vendaId, issue: issueNormalizado, bytes, xml }
 }
 
 function deadlinePersistido(): ContingenciaOutboxDeadlinePersistido {
@@ -341,13 +365,6 @@ async function findJobByDedupe(
   )
 }
 
-function persistedSha256(nota: NotaRow, job: JobRow | null): string | null {
-  if (nota.xmlAssinado) {
-    return sha256Hex(bytesFromXml(nota.xmlAssinado))
-  }
-  return job ? payloadSha256(job.payload) : null
-}
-
 function conflictSameChave(
   storeId: string,
   chave: string,
@@ -363,58 +380,122 @@ function conflictSameChave(
   )
 }
 
+function inconsistente(
+  storeId: string,
+  chave: string,
+  mensagem: string,
+  extra: Pick<ContingenciaOutboxPersistError, "notaFiscalId" | "jobId" | "sha256Informado" | "sha256Persistido"> = {},
+): ContingenciaOutboxPersistError {
+  return fail("identidade_fiscal_conflito", mensagem, { storeId, chave, ...extra })
+}
+
+function pairIsDormantContingencia(input: {
+  storeId: string
+  vendaId: string
+  issue: ContingenciaOutboxIssue
+  nota: NotaRow
+  job: JobRow
+}): ContingenciaOutboxPersistError | null {
+  const { storeId, vendaId, issue, nota, job } = input
+  if (nota.storeId !== storeId || job.storeId !== storeId) {
+    return inconsistente(storeId, issue.chave, "Documento/job não pertence à loja solicitada.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  if (nota.vendaId !== vendaId || job.vendaId !== vendaId) {
+    return inconsistente(storeId, issue.chave, "vendaId do par persistido diverge do pedido.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  if (nota.chaveAcesso !== issue.chave) {
+    return inconsistente(storeId, issue.chave, "chaveAcesso persistida diverge da informada.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  if (nota.tipoEmissao !== "CONTINGENCIA_OFFLINE" || nota.status !== "CONTINGENCIA") {
+    return inconsistente(storeId, issue.chave, "Documento persistido não está em contingência off-line.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  if (!nota.xmlAssinado) {
+    return inconsistente(storeId, issue.chave, "exactBytes persistidos ausentes; recusado.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  if (!xmlContainsIssuedIdentity(nota.xmlAssinado, issue)) {
+    return inconsistente(storeId, issue.chave, "Bytes persistidos não conferem com a identidade informada.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  const hashNota = sha256Hex(bytesFromXml(nota.xmlAssinado))
+  const hashJob = payloadSha256(job.payload)
+  if (hashNota !== issue.sha256) {
+    return conflictSameChave(storeId, issue.chave, issue.sha256, hashNota, nota.id, job.id)
+  }
+  if (hashJob != null && hashJob !== hashNota) {
+    return conflictSameChave(storeId, issue.chave, issue.sha256, hashNota, nota.id, job.id)
+  }
+  if (
+    job.tipo !== CONTINGENCIA_OUTBOX_JOB_TIPO ||
+    job.status !== CONTINGENCIA_OUTBOX_JOB_STATUS_DORMENTE ||
+    job.proximaTentativaEm != null ||
+    job.notaFiscalId !== nota.id ||
+    job.dedupeKey !== buildContingenciaOutboxDedupeKey(issue.chave)
+  ) {
+    return inconsistente(storeId, issue.chave, "Job persistido não é a outbox dormente desta contingência.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  const payload = record(job.payload)
+  const contingencia = record(payload.contingencia)
+  const exactRef = record(contingencia.exactBytesRef)
+  if (
+    payload.executeAutomatico !== false ||
+    str(contingencia.estado) !== CONTINGENCIA_OUTBOX_ESTADO ||
+    str(contingencia.chave) !== issue.chave ||
+    str(contingencia.sha256) !== issue.sha256 ||
+    Number(contingencia.tpEmis) !== CONTINGENCIA_TP_EMIS ||
+    str(exactRef.kind) !== "NotaFiscal.xmlAssinado" ||
+    str(exactRef.notaFiscalId) !== nota.id ||
+    exactRef.rebuildForbidden !== true
+  ) {
+    return inconsistente(storeId, issue.chave, "Metadata da outbox persistida está incompleta ou divergente.", {
+      notaFiscalId: nota.id,
+      jobId: job.id,
+    })
+  }
+  return null
+}
+
 function interpretExisting(input: {
   storeId: string
   vendaId: string
   issue: ContingenciaOutboxIssue
   nota: NotaRow | null
   job: JobRow | null
-}): PersistNfceContingenciaOutboxResult | { kind: "missing" } | { kind: "repair-job"; nota: NotaRow } {
-  const { storeId, issue, nota, job } = input
+}): PersistNfceContingenciaOutboxResult | { kind: "missing" } {
+  const { storeId, vendaId, issue, nota, job } = input
   if (!nota && !job) return { kind: "missing" }
 
-  if (nota && nota.storeId !== storeId) {
-    return fail("identidade_fiscal_conflito", "Documento não pertence à loja solicitada.", {
-      storeId,
-      chave: issue.chave,
-    })
-  }
-  if (job && job.storeId !== storeId) {
-    return fail("identidade_fiscal_conflito", "Job não pertence à loja solicitada.", {
-      storeId,
-      chave: issue.chave,
-    })
-  }
-
-  const hashNota = nota ? persistedSha256(nota, null) : null
-  const hashJob = job ? payloadSha256(job.payload) : null
-  const hashPersistido = hashNota ?? hashJob
-
-  if (hashPersistido && hashPersistido !== issue.sha256) {
-    return conflictSameChave(
+  if (!nota || !job) {
+    return inconsistente(
       storeId,
       issue.chave,
-      issue.sha256,
-      hashPersistido,
-      nota?.id ?? null,
-      job?.id ?? null,
+      "Par documento+outbox incompleto; recusado para não completar parcialmente.",
+      { notaFiscalId: nota?.id ?? null, jobId: job?.id ?? null },
     )
   }
-  if (hashNota && hashJob && hashNota !== hashJob) {
-    return conflictSameChave(storeId, issue.chave, issue.sha256, hashNota, nota?.id ?? null, job?.id ?? null)
-  }
 
-  if (nota && job) {
-    return toSuccess({ kind: "idempotent", storeId, vendaId: input.vendaId, nota, job, issue })
-  }
-  if (nota && !job) {
-    return { kind: "repair-job", nota }
-  }
-  return fail(
-    "identidade_fiscal_conflito",
-    "Job dormente sem documento correspondente; recusado para não completar parcialmente.",
-    { storeId, chave: issue.chave, jobId: job?.id ?? null },
-  )
+  const broken = pairIsDormantContingencia({ storeId, vendaId, issue, nota, job })
+  if (broken) return broken
+  return toSuccess({ kind: "idempotent", storeId, vendaId, nota, job, issue })
 }
 
 async function createPair(
@@ -425,7 +506,6 @@ async function createPair(
     ambiente: PersistNfceContingenciaOutboxInput["ambiente"]
     issue: ContingenciaOutboxIssue
     xml: string
-    nota?: NotaRow
   },
 ): Promise<{ nota: NotaRow; job: JobRow }> {
   const localKey = buildContingenciaDocumentoLocalKey(input.storeId, input.issue.chave)
@@ -435,39 +515,36 @@ async function createPair(
     throw new Error("dhCont inválido após validação.")
   }
 
-  let nota = input.nota ?? null
-  if (!nota) {
-    nota = asNota(
-      await tx.notaFiscal.create({
-        data: {
-          storeId: input.storeId,
-          vendaId: input.vendaId,
-          modelo: "NFCE",
-          ambiente: input.ambiente,
-          tipoEmissao: "CONTINGENCIA_OFFLINE",
-          status: "CONTINGENCIA",
-          vigente: true,
-          serie: input.issue.serie,
-          numero: input.issue.nNF,
-          chaveAcesso: input.issue.chave,
-          xmlAssinado: input.xml,
-          localKey,
-          dataContingencia: dhContDate,
-          justContingencia: input.issue.xJust,
-        },
-        select: {
-          id: true,
-          storeId: true,
-          vendaId: true,
-          chaveAcesso: true,
-          xmlAssinado: true,
-          status: true,
-          tipoEmissao: true,
-          localKey: true,
-        },
-      }),
-    )
-  }
+  const nota = asNota(
+    await tx.notaFiscal.create({
+      data: {
+        storeId: input.storeId,
+        vendaId: input.vendaId,
+        modelo: "NFCE",
+        ambiente: input.ambiente,
+        tipoEmissao: "CONTINGENCIA_OFFLINE",
+        status: "CONTINGENCIA",
+        vigente: true,
+        serie: input.issue.serie,
+        numero: input.issue.nNF,
+        chaveAcesso: input.issue.chave,
+        xmlAssinado: input.xml,
+        localKey,
+        dataContingencia: dhContDate,
+        justContingencia: input.issue.xJust,
+      },
+      select: {
+        id: true,
+        storeId: true,
+        vendaId: true,
+        chaveAcesso: true,
+        xmlAssinado: true,
+        status: true,
+        tipoEmissao: true,
+        localKey: true,
+      },
+    }),
+  )
   if (!nota) {
     throw new Error("Falha ao persistir NotaFiscal de contingência.")
   }
@@ -566,17 +643,6 @@ async function persistInTransaction(
     job: existingJob,
   })
   if ("ok" in interpreted) return interpreted
-  if (interpreted.kind === "repair-job") {
-    const created = await createPair(tx, { ...input, nota: interpreted.nota })
-    return toSuccess({
-      kind: "created",
-      storeId: input.storeId,
-      vendaId: input.vendaId,
-      nota: created.nota,
-      job: created.job,
-      issue: input.issue,
-    })
-  }
 
   const created = await createPair(tx, input)
   return toSuccess({

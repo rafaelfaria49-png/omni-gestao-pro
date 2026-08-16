@@ -39,19 +39,37 @@ function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex")
 }
 
+function xmlIdentidade(input: {
+  chave?: string
+  nNF?: number
+  serie?: number
+  marker?: string
+}): string {
+  const chave = input.chave ?? CHAVE_A
+  const nNF = input.nNF ?? 55
+  const serie = input.serie ?? 1
+  const marker = input.marker ?? "bytes-exatos"
+  return `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${chave}"><ide><tpEmis>9</tpEmis><serie>${serie}</serie><nNF>${nNF}</nNF></ide><marker>${marker}</marker></infNFe></NFe>`
+}
+
 function issue(over: Partial<ContingenciaOutboxIssue> & { xml?: string } = {}): ContingenciaOutboxIssue {
-  const xml = over.xml ?? `<NFe xmlns="http://www.portalfiscal.inf.br/nfe"><infNFe Id="NFe${CHAVE_A}"/></NFe>`
+  const chave = over.chave ?? CHAVE_A
+  const nNF = over.nNF ?? 55
+  const serie = over.serie ?? 1
+  const xml =
+    over.xml ??
+    xmlIdentidade({ chave, nNF, serie })
   const exactBytes = over.exactBytes ?? Uint8Array.from(Buffer.from(xml, "utf8"))
   return {
     exactBytes,
     sha256: over.sha256 ?? sha256Hex(exactBytes),
-    chave: over.chave ?? CHAVE_A,
+    chave,
     tpEmis: over.tpEmis ?? CONTINGENCIA_TP_EMIS,
     dhEmi: over.dhEmi ?? DH_EMI,
     dhCont: over.dhCont ?? DH_CONT,
     xJust: over.xJust ?? X_JUST,
-    nNF: over.nNF ?? 55,
-    serie: over.serie ?? 1,
+    nNF,
+    serie,
   }
 }
 
@@ -250,7 +268,7 @@ describe("identidade idempotente", () => {
 
 describe("persistNfceContingenciaOutbox · exactBytes e hash", () => {
   it("persiste exatamente os bytes recebidos e o sha256 informado", async () => {
-    const xml = `<NFe>bytes-exatos-${Date.now()}</NFe>`
+    const xml = xmlIdentidade({ marker: `bytes-exatos-${Date.now()}` })
     const offline = issue({ xml })
     const client = createMockClient()
     const result = await persistNfceContingenciaOutbox(persistInput({ offline }), {
@@ -302,6 +320,21 @@ describe("persistNfceContingenciaOutbox · exactBytes e hash", () => {
     if (!tpEmis.ok) expect(tpEmis.code).toBe("tp_emis_invalido")
     expect(client.$transaction).not.toHaveBeenCalled()
   })
+
+  it("recusa exactBytes cuja identidade (chave/nNF/série) diverge do informado", async () => {
+    const client = createMockClient()
+    const xmlDeOutraChave = xmlIdentidade({ chave: CHAVE_B, marker: "outro-documento" })
+    const result = await persistNfceContingenciaOutbox(
+      persistInput({ offline: issue({ chave: CHAVE_A, xml: xmlDeOutraChave }) }),
+      { client: client as never },
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("deveria falhar")
+    expect(result.code).toBe("bytes_identidade_divergente")
+    expect(client._state.notas).toHaveLength(0)
+    expect(client._state.jobs).toHaveLength(0)
+    expect(client.$transaction).not.toHaveBeenCalled()
+  })
 })
 
 describe("persistNfceContingenciaOutbox · idempotência e conflito", () => {
@@ -321,13 +354,13 @@ describe("persistNfceContingenciaOutbox · idempotência e conflito", () => {
 
   it("mesma chave com sha256 diferente é conflito crítico e não sobrescreve", async () => {
     const client = createMockClient()
-    const original = issue({ xml: "<NFe>original</NFe>" })
+    const original = issue({ xml: xmlIdentidade({ marker: "original" }) })
     const first = await persistNfceContingenciaOutbox(persistInput({ offline: original }), {
       client: client as never,
     })
     expect(first.ok).toBe(true)
 
-    const adulterado = issue({ xml: "<NFe>adulterado</NFe>" })
+    const adulterado = issue({ xml: xmlIdentidade({ marker: "adulterado" }) })
     const second = await persistNfceContingenciaOutbox(persistInput({ offline: adulterado }), {
       client: client as never,
     })
@@ -338,8 +371,55 @@ describe("persistNfceContingenciaOutbox · idempotência e conflito", () => {
     expect(second.sha256Informado).toBe(adulterado.sha256)
     expect(second.sha256Persistido).toBe(original.sha256)
     expect(client._state.notas).toHaveLength(1)
-    expect(client._state.notas[0]?.xmlAssinado).toBe("<NFe>original</NFe>")
+    expect(client._state.notas[0]?.xmlAssinado).toBe(xmlIdentidade({ marker: "original" }))
     expect(client._state.jobs).toHaveLength(1)
+  })
+
+  it("par incompleto (documento sem job) não é reparado — falha fechada", async () => {
+    const client = createMockClient()
+    const first = await persistNfceContingenciaOutbox(persistInput(), { client: client as never })
+    expect(first.ok).toBe(true)
+    client._state.jobs.splice(0, client._state.jobs.length)
+
+    const second = await persistNfceContingenciaOutbox(persistInput(), { client: client as never })
+    expect(second.ok).toBe(false)
+    if (second.ok) throw new Error("não deveria reparar")
+    expect(second.code).toBe("identidade_fiscal_conflito")
+    expect(client._state.jobs).toHaveLength(0)
+    expect(client._state.notas).toHaveLength(1)
+  })
+
+  it("não trata como idempotente um par com metadata/job incompatíveis", async () => {
+    const client = createMockClient()
+    const first = await persistNfceContingenciaOutbox(persistInput(), { client: client as never })
+    expect(first.ok).toBe(true)
+    const nota = client._state.notas[0]!
+    nota.tipoEmissao = "NORMAL"
+    nota.status = "RASCUNHO"
+    const job = client._state.jobs[0]!
+    job.tipo = "EMISSAO"
+    job.status = "PENDENTE"
+
+    const second = await persistNfceContingenciaOutbox(persistInput(), { client: client as never })
+    expect(second.ok).toBe(false)
+    if (second.ok) throw new Error("não deveria aceitar par corrompido")
+    expect(second.code).toBe("identidade_fiscal_conflito")
+    expect(client._state.notas).toHaveLength(1)
+    expect(client._state.jobs).toHaveLength(1)
+    expect(client._state.notas[0]?.tipoEmissao).toBe("NORMAL")
+    expect(client._state.jobs[0]?.tipo).toBe("EMISSAO")
+  })
+
+  it("xmlAssinado ausente no documento existente não é idempotente", async () => {
+    const client = createMockClient()
+    const first = await persistNfceContingenciaOutbox(persistInput(), { client: client as never })
+    expect(first.ok).toBe(true)
+    client._state.notas[0]!.xmlAssinado = ""
+
+    const second = await persistNfceContingenciaOutbox(persistInput(), { client: client as never })
+    expect(second.ok).toBe(false)
+    if (second.ok) throw new Error("não deveria aceitar bytes ausentes")
+    expect(second.code).toBe("identidade_fiscal_conflito")
   })
 })
 
@@ -352,7 +432,7 @@ describe("persistNfceContingenciaOutbox · multi-loja", () => {
     expect(a.ok).toBe(true)
 
     const b = await persistNfceContingenciaOutbox(
-      persistInput({ storeId: STORE_B, vendaId: "venda-b", offline: issue({ chave: CHAVE_B, xml: "<NFe>loja-b</NFe>" }) }),
+      persistInput({ storeId: STORE_B, vendaId: "venda-b", offline: issue({ chave: CHAVE_B, xml: xmlIdentidade({ chave: CHAVE_B, marker: "loja-b" }) }) }),
       { client: client as never },
     )
     expect(b.ok).toBe(true)

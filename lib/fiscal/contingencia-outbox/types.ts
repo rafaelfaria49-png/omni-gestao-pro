@@ -86,6 +86,7 @@ export type ContingenciaOutboxPersistErrorCode =
   | "parametros_invalidos"
   | "sha256_divergente"
   | "tp_emis_invalido"
+  | "bytes_identidade_divergente"
   | "chave_bytes_conflito"
   | "identidade_fiscal_conflito"
   | "transicao_invalida"
