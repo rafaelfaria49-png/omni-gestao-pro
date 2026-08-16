@@ -2,5 +2,8 @@
 *.xsd -text
 *.zip binary
 *.pdf binary
+*.html -text
 manifest.json -text
 manifest.sha256 -text
+adjudication-040.json -text
+adjudication-040.sha256 -text
