@@ -44,6 +44,18 @@ describe("montarChaveAcesso", () => {
     expect(chave.slice(0, 43)).toBe("3526061122233300018165001000000123100000001")
   })
 
+  it("tpEmis entra na composição e muda o cDV quando 1 → 9", () => {
+    const normal = montarChaveAcesso(base)
+    const offline = montarChaveAcesso({ ...base, tpEmis: 9 })
+    expect(normal).toHaveLength(44)
+    expect(offline).toHaveLength(44)
+    expect(normal).not.toBe(offline)
+    expect(normal[34]).toBe("1")
+    expect(offline[34]).toBe("9")
+    expect(offline.slice(-1)).toBe(calcularDigitoVerificadorChave(offline.slice(0, 43)))
+    expect(offline.slice(-1)).not.toBe(normal.slice(-1))
+  })
+
   it("é determinística (mesma entrada → mesma chave)", () => {
     expect(montarChaveAcesso(base)).toBe(montarChaveAcesso(base))
   })

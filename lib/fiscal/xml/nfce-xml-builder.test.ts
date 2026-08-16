@@ -221,6 +221,38 @@ describe("buildNfceXmlResult · compatibilidade com o snapshot atual + numeraç�
     expect(r.xml).toContain("<nNF>55</nNF>")
     expect(r.chaveAcesso).toHaveLength(44)
   })
+
+  it("tpEmis=9 + dhCont/xJust emite o grupo de contingência sem alterar nNF/série/cNF", () => {
+    const r = buildNfceXmlResult(snap(), {
+      serie: 1,
+      numero: 55,
+      cNF: "00000007",
+      tpEmis: 9,
+      dhCont: "2026-08-16T15:00:00-03:00",
+      xJust: "Falha de conectividade com a SEFAZ",
+    })
+    expect(r.xml).toContain("<tpEmis>9</tpEmis>")
+    expect(r.xml).toContain("<dhCont>2026-08-16T15:00:00-03:00</dhCont>")
+    expect(r.xml).toContain("<xJust>Falha de conectividade com a SEFAZ</xJust>")
+    expect(r.xml).toContain("<nNF>55</nNF>")
+    expect(r.xml).toContain("<serie>1</serie>")
+    expect(r.xml).toContain("<cNF>00000007</cNF>")
+    expect(r.chaveAcesso[34]).toBe("9")
+    expect(r.xml).toContain(`Id="NFe${r.chaveAcesso}"`)
+  })
+
+  it("tpEmis=1 omite dhCont/xJust mesmo se o contexto os trouxer", () => {
+    const xml = buildNfceXml(snap(), {
+      serie: 1,
+      numero: 55,
+      tpEmis: 1,
+      dhCont: "2026-08-16T15:00:00-03:00",
+      xJust: "Falha de conectividade com a SEFAZ",
+    })
+    expect(xml).toContain("<tpEmis>1</tpEmis>")
+    expect(xml).not.toContain("<dhCont>")
+    expect(xml).not.toContain("<xJust>")
+  })
 })
 
 describe("buildNfceXml · CSOSN 500 (ST substituído) → grupo ICMSSN500 (GOAL-006)", () => {
