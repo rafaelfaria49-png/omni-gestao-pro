@@ -43,6 +43,11 @@ import { findPdvProductByScan } from "@/lib/pdv-scan-product"
 import { lookupPdvScanRemote } from "@/lib/pdv-scan-lookup"
 import { appendContaReceberTituloPdvAprazo } from "@/lib/pdv-append-conta-receber"
 import { displaySaleNumber } from "@/lib/vendas/local-sale-identity"
+import {
+  claimSaleFinalizeLock,
+  isSaleFinalizeBusy,
+  releaseSaleFinalizeLock,
+} from "@/lib/vendas/sale-finalize-busy"
 import { PaymentModal, type PaymentMethod } from "./payment-modal"
 import type { APrazoConfig } from "@/lib/operations-sale-types"
 import { appendAuditLog } from "@/lib/audit-log"
@@ -204,6 +209,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
   // ── Pagamento (modal compartilhado: à vista / múltiplo / à prazo + entrada) ──
   const [isPaymentOpen, setIsPaymentOpen] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const isProcessingRef = useRef(false)
 
   // ── Cupom ─────────────────────────────────────────────────────────────────
   const [cupomOpen, setCupomOpen] = useState(false)
@@ -337,6 +343,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
       switch (e.key) {
         case "F1":
           e.preventDefault()
+          if (isSaleFinalizeBusy(isProcessingRef)) break
           if (!anyModalOpen) handleClickFinalize()
           break
         case "F2":
@@ -576,6 +583,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
 
   // ── Validações e abertura do modal ────────────────────────────────────────
   function handleClickFinalize() {
+    if (isSaleFinalizeBusy(isProcessingRef)) return
     if (!selectedCliente) {
       toast({ title: "Cliente obrigatório", description: "Selecione o cliente antes de finalizar [F2].", variant: "destructive" })
       clienteInputRef.current?.focus()
@@ -602,11 +610,11 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
   }
 
   // ── Confirmação e finalização ─────────────────────────────────────────────
-  async function handleConfirmPayment(payments: PaymentMethod[]) {
-    if (!selectedCliente || cart.length === 0 || total <= 0) return
+  async function handleConfirmPayment(payments: PaymentMethod[]): Promise<boolean> {
+    if (!selectedCliente || cart.length === 0 || total <= 0) return false
     if (payments.length === 0) {
       toast({ title: "Selecione a forma de pagamento", variant: "destructive" })
-      return
+      return false
     }
     // Segunda porta: a sessão pode ter fechado (ou sido reconciliada para
     // "sem caixa") com o modal de pagamento já aberto. Bloqueia ANTES de
@@ -614,8 +622,9 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
     // nasce, e o carrinho e as formas digitadas continuam montados.
     if (!isCaixaProntoParaFinalizar({ isOpen: caixa.isOpen, sessaoId })) {
       void garantirSessao()
-      return
+      return false
     }
+    if (!claimSaleFinalizeLock(isProcessingRef)) return false
 
     setIsProcessing(true)
     try {
@@ -660,7 +669,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
 
       if (!result.ok) {
         toast({ title: "Falha ao registrar venda", description: result.reason, variant: "destructive" })
-        return
+        return false
       }
 
       // Fila "Produtos a cadastrar": itens avulsos vendidos → revisão posterior.
@@ -785,7 +794,9 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
       setObservacaoGeral("")
       setEnderecoEntrega(EMPTY_ENDERECO)
       setShowEnderecoForm(false)
+      return true
     } finally {
+      releaseSaleFinalizeLock(isProcessingRef)
       setIsProcessing(false)
     }
   }
@@ -1506,7 +1517,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
             <Button
               type="button"
               className="h-12 w-full rounded-xl bg-emerald-600 text-sm font-bold text-zinc-950 shadow-lg hover:bg-emerald-500 disabled:opacity-50"
-              disabled={!canFinalize}
+              disabled={!canFinalize || isProcessing}
               onClick={handleClickFinalize}
             >
               <span>Finalizar Venda</span>
@@ -1549,9 +1560,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
           setSelectedCliente((prev) => (prev && prev.id === id ? { ...prev, document: cpf } : prev))
         }
         onRequireCustomer={() => clienteInputRef.current?.focus()}
-        onConfirm={(payments) => {
-          void handleConfirmPayment(payments)
-        }}
+        onConfirm={handleConfirmPayment}
       />
 
       {/* ── Modal de ajuda ── */}
