@@ -1,0 +1,6 @@
+# Bytes oficiais: hashes regulatórios quebram com conversão de fim de linha.
+*.xsd -text
+*.zip binary
+*.pdf binary
+manifest.json -text
+manifest.sha256 -text
