@@ -39,6 +39,21 @@ export function classifySaleWriterCapability(input: unknown): SaleWriterCapabili
   return "unknown"
 }
 
+/** Mensagem do botão individual quando o Writer V2 ainda não está ativo. */
+export const INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE =
+  "Recuperação indisponível enquanto a numeração server-side não estiver ativa."
+
+/**
+ * O mesmo gate do preview global: recovery individual só inicia com
+ * `writerEnabled === true` (Writer V2). `false`, `null` e `unknown` bloqueiam
+ * a UI; o backend continua sendo a fonte da verdade.
+ */
+export function canStartIndividualQuarantineRecovery(
+  writerEnabled: boolean | null | undefined,
+): boolean {
+  return writerEnabled === true
+}
+
 /**
  * Único caso em que uma pendência V2 pode ser convertida para o writer legado:
  * o SERVIDOR respondeu `SALE_WRITER_V1_ACTIVE`.

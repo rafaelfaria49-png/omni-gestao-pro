@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  canStartIndividualQuarantineRecovery,
   classifySaleWriterCapability,
   extractConfirmedVenda,
   IDEMPOTENCY_KEY_REUSED,
+  INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE,
   SALE_WRITER_V1_ACTIVE,
   shouldFallbackV2ToV1,
 } from "./sale-client-sync"
@@ -54,5 +56,23 @@ describe("extractConfirmedVenda", () => {
       pedidoId: "VDA-RC02-2026-000001",
       clientSaleId: "cs_localattempt01",
     })
+  })
+})
+
+describe("canStartIndividualQuarantineRecovery", () => {
+  it("Writer V1 / unknown / null não inicia o fluxo individual", () => {
+    expect(canStartIndividualQuarantineRecovery(false)).toBe(false)
+    expect(canStartIndividualQuarantineRecovery(null)).toBe(false)
+    expect(canStartIndividualQuarantineRecovery(undefined)).toBe(false)
+  })
+
+  it("Writer V2 habilitado permite abrir o fluxo individual", () => {
+    expect(canStartIndividualQuarantineRecovery(true)).toBe(true)
+  })
+
+  it("expõe a mensagem operacional do botão individual", () => {
+    expect(INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE).toBe(
+      "Recuperação indisponível enquanto a numeração server-side não estiver ativa.",
+    )
   })
 })

@@ -56,6 +56,11 @@ describe("PDV-V1-ATOMIC-REPLAY-CONFLICT-HARDEN-001 — quarentena client-side", 
     "const recoverQuarantinedSale = useCallback",
     "const discardLocalPendingSale = useCallback",
   )
+  const recoverIndividual = between(
+    store,
+    "const recoverQuarantinedSale = useCallback",
+    "const collectQuarantinedCandidates = useCallback",
+  )
   const individual = between(
     store,
     "const discardLocalPendingSale = useCallback",
@@ -135,5 +140,21 @@ describe("PDV-V1-ATOMIC-REPLAY-CONFLICT-HARDEN-001 — quarentena client-side", 
     expect(archive).toContain("recoverQuarantinedSale")
     expect(archive).toContain("Recuperar venda")
     expect(archive).toContain("Venda precisa de recuperação")
+  })
+
+  it("recovery individual reconcilia só por clientSaleId — nunca pelo VDA antigo", () => {
+    expect(recoverIndividual).toContain("buildIndividualRecoveryConfirmations")
+    expect(recoverIndividual).toContain("applyRecoveryConfirmations")
+    expect(recoverIndividual).not.toContain("markSaleConfirmed")
+    expect(recoverIndividual).not.toContain("saleMatches(s, token)")
+  })
+
+  it("botão individual fica indisponível com Writer V1 e abre com Writer V2", () => {
+    expect(archive).toContain("canStartIndividualQuarantineRecovery")
+    expect(archive).toContain("probeSaleWriterCapability")
+    expect(archive).toContain("INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE")
+    expect(archive).toContain("disabled={!individualRecoveryEnabled}")
+    expect(archive).toContain("openRecoverDialog")
+    expect(archive).toMatch(/if \(!canStartIndividualQuarantineRecovery\(writerEnabled\)\) return/)
   })
 })

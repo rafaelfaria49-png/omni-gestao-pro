@@ -191,6 +191,30 @@ describe("POST /api/ops/vendas/quarantine-recovery/batch", () => {
     expect(call.sale).not.toHaveProperty("pedidoId")
   })
 
+  it("grava occupantStoreId real da loja-B sem alterar a ocupante", async () => {
+    h.findUnique.mockImplementation(async ({ where }: { where: { pedidoId: string } }) => ({
+      ...occupantFor(where.pedidoId),
+      storeId: "loja-B",
+    }))
+    const res = await POST(
+      req({
+        motivo: "colisao de numero comercial",
+        candidates: [candidate({ syncBlockedCode: "PEDIDO_ID_DE_OUTRA_LOJA" })],
+      }),
+    )
+    expect(res.status).toBe(200)
+    const call = h.persist.mock.calls[0][0]
+    expect(call.storeId).toBe(STORE)
+    expect(call.sale.recovery).toMatchObject({
+      recoveredFromPedidoId: "VDA-2026-0615",
+      motivo: "colisao de numero comercial",
+      conflictCode: "PEDIDO_ID_DE_OUTRA_LOJA",
+      occupantStoreId: "loja-B",
+    })
+    expect(call.sale.recovery.occupantStoreId).not.toBe("other")
+    expectOccupantUntouched()
+  })
+
   it("a mesma venda executada duas vezes não cria segunda venda", async () => {
     const body = { motivo: "retry do lote", candidates: [candidate()] }
 

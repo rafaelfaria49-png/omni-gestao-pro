@@ -54,6 +54,7 @@ import {
 import {
   QUARANTINE_RECOVERY_CHUNK,
   applyRecoveryConfirmations,
+  buildIndividualRecoveryConfirmations,
   buildRecoveryConfirmations,
   chunk,
   isQuarantinedLocalSale,
@@ -443,6 +444,11 @@ interface OperationsContextType {
     motivo: string
     allowClosedOriginalSession?: boolean
   }) => Promise<{ ok: true; saleId: string; replayed?: boolean } | { ok: false; reason: string; code?: string }>
+  /**
+   * Capability do writer (GET `/api/ops/venda-persist/v2`). O mesmo gate do
+   * preview global: a UI individual só inicia recovery quando o resultado é `v2`.
+   */
+  probeSaleWriterCapability: () => Promise<SaleWriterCapability>
   /**
    * Verifica no servidor se a venda existe antes de descartar localmente.
    * - Se o servidor tem (HTTP 200): NÃO descarta — apenas reconcilia `syncPending=false`.
@@ -1113,6 +1119,14 @@ export function OperationsProvider({
     }
   }, [])
 
+  const probeSaleWriterCapability = useCallback<OperationsContextType["probeSaleWriterCapability"]>(
+    async () => {
+      const lj = opsLojaIdFromStorageKey(storageKey)
+      return probeWriterCapability(lj)
+    },
+    [probeWriterCapability, storageKey],
+  )
+
   const markSaleConfirmed = useCallback(
     (token: { id: string; clientSaleId?: string }, confirmed?: { pedidoId: string; id: string; clientSaleId?: string | null }) => {
       vendaAutoRetryHoldRef.current.delete(token.id)
@@ -1380,14 +1394,39 @@ export function OperationsProvider({
         } catch {
           confirmed = null
         }
-        markSaleConfirmed({ id: sale.id, clientSaleId }, confirmed ?? undefined)
-        return { ok: true, saleId: confirmed?.pedidoId ?? sale.id, replayed: confirmed ? undefined : true }
+        const confirmations = buildIndividualRecoveryConfirmations({
+          clientSaleId,
+          venda: confirmed
+            ? {
+                id: confirmed.id,
+                pedidoId: confirmed.pedidoId,
+                clientSaleId: confirmed.clientSaleId,
+              }
+            : null,
+        })
+        // Sem evidência server-side a quarentena permanece — inclusive a de
+        // outra venda que compartilhe o VDA antigo.
+        if (confirmations.length === 0) {
+          return {
+            ok: false,
+            reason: "Servidor não devolveu evidência da venda recuperada. A quarentena foi preservada.",
+          }
+        }
+        for (const confirmation of confirmations) {
+          vendaAutoRetryHoldRef.current.delete(confirmation.clientSaleId)
+          vendaAutoRetryHoldRef.current.delete(confirmation.pedidoId)
+        }
+        setState((prev) => ({
+          ...prev,
+          sales: applyRecoveryConfirmations(prev.sales, confirmations).sales,
+        }))
+        return { ok: true, saleId: confirmations[0].pedidoId, replayed: confirmed ? undefined : true }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return { ok: false, reason: `Falha de rede: ${msg}` }
       }
     },
-    [markSaleConfirmed, storageKey],
+    [storageKey],
   )
 
   /**
@@ -1434,7 +1473,8 @@ export function OperationsProvider({
 
   /**
    * Tira da quarentena SOMENTE as cópias locais com evidência server-side, casando
-   * por `clientSaleId` EXATO.
+   * por `clientSaleId` EXATO. O recovery individual usa o mesmo helper
+   * (`buildIndividualRecoveryConfirmations` → `applyRecoveryConfirmations`).
    *
    * Não reutiliza `markSaleConfirmed` de propósito: `saleMatches` cai no `id` quando o
    * `clientSaleId` não bate, e duas quarentenas distintas podem compartilhar o MESMO
@@ -2352,6 +2392,7 @@ export function OperationsProvider({
       retrySyncSale,
       retrySyncSaleRetroactive,
       recoverQuarantinedSale,
+      probeSaleWriterCapability,
       previewQuarantineRecovery,
       recoverQuarantinedSalesBatch,
       discardLocalPendingSale,
@@ -2378,6 +2419,7 @@ export function OperationsProvider({
       retrySyncSale,
       retrySyncSaleRetroactive,
       recoverQuarantinedSale,
+      probeSaleWriterCapability,
       previewQuarantineRecovery,
       recoverQuarantinedSalesBatch,
       discardLocalPendingSale,

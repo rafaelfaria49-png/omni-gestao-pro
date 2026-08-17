@@ -318,7 +318,7 @@ async function confirmConflict(
   clientSaleId: string,
   candidate: QuarantineCandidate,
 ): Promise<
-  | { ok: true; occupantOtherStore: boolean }
+  | { ok: true; occupantOtherStore: boolean; occupantStoreId: string }
   | { ok: false; code: string; reason: string }
 > {
   const occupant = await db.venda.findUnique({
@@ -356,7 +356,7 @@ async function confirmConflict(
       reason: "Não há conflito confirmado para este número. Use o reenvio normal.",
     }
   }
-  return { ok: true, occupantOtherStore }
+  return { ok: true, occupantOtherStore, occupantStoreId: occupant.storeId }
 }
 
 /**
@@ -473,7 +473,7 @@ export async function executeQuarantineRecovery(
         (confirmed.occupantOtherStore
           ? "PEDIDO_ID_DE_OUTRA_LOJA"
           : "PEDIDO_ID_CONFLITO_MESMA_LOJA"),
-      occupantStoreId: confirmed.occupantOtherStore ? "other" : storeId,
+      occupantStoreId: confirmed.occupantStoreId,
     },
   } as SalePayload
 

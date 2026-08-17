@@ -173,6 +173,31 @@ export function buildRecoveryConfirmations(
 }
 
 /**
+ * Confirmação do recovery INDIVIDUAL — a MESMA regra do lote.
+ *
+ * Só casa por `clientSaleId` EXATO. Sem evidência server-side (`venda` com
+ * `pedidoId` + `id`), devolve vazio e a quarentena permanece. Nunca usa o
+ * `pedidoId` antigo: duas quarentenas podem compartilhar o mesmo VDA.
+ */
+export function buildIndividualRecoveryConfirmations(input: {
+  readonly clientSaleId: string
+  readonly venda: {
+    readonly id: string
+    readonly pedidoId: string
+    readonly clientSaleId?: string | null
+  } | null
+}): RecoveryConfirmation[] {
+  return buildRecoveryConfirmations([
+    {
+      conflictingPedidoId: "",
+      clientSaleId: input.clientSaleId,
+      status: "RECOVERED",
+      venda: input.venda,
+    },
+  ])
+}
+
+/**
  * Aplica as confirmações às vendas locais.
  *
  * Casa por `clientSaleId` EXATO — nunca por `id`. Duas quarentenas distintas podem

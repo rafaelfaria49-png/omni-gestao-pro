@@ -90,6 +90,10 @@ import {
   displaySaleNumber,
   isProvisionalSaleRef,
 } from "@/lib/vendas/local-sale-identity"
+import {
+  canStartIndividualQuarantineRecovery,
+  INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE,
+} from "@/lib/vendas/sale-client-sync"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -326,6 +330,7 @@ export function VendasArquivoGeral() {
     discardLocalPendingSale,
     bulkDiscardLocalPendingSales,
     recoverQuarantinedSale,
+    probeSaleWriterCapability,
   } = useOperationsStore()
   const { toast } = useToast()
   
@@ -594,6 +599,19 @@ export function VendasArquivoGeral() {
     }
   }, [vendas, opsSales, fromDate, toDate, busca, statusFiltro, pagamentoFiltro, terminalFiltro, operadorFiltro])
 
+  const [writerEnabled, setWriterEnabled] = useState(false)
+  useEffect(() => {
+    if (conflitoIdentidadeIds.size === 0) return
+    let cancelled = false
+    void probeSaleWriterCapability().then((cap) => {
+      if (!cancelled) setWriterEnabled(cap === "v2")
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [conflitoIdentidadeIds.size, probeSaleWriterCapability])
+  const individualRecoveryEnabled = canStartIndividualQuarantineRecovery(writerEnabled)
+
   const isVendaPendenteSync = useCallback(
     (vendaId: string) => pendingSyncIds.has(vendaId),
     [pendingSyncIds],
@@ -784,13 +802,22 @@ export function VendasArquivoGeral() {
   )
 
   const openRecoverDialog = useCallback((vendaId: string) => {
+    if (!canStartIndividualQuarantineRecovery(writerEnabled)) return
     setRecoveringSaleId(vendaId)
     setRecoverMotivo("")
     setRecoverClosedSessionConfirm(false)
-  }, [])
+  }, [writerEnabled])
 
   const handleRecoverQuarantined = useCallback(
     async (allowClosedOriginalSession: boolean) => {
+      if (!canStartIndividualQuarantineRecovery(writerEnabled)) {
+        toast({
+          title: "Recuperação indisponível",
+          description: INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE,
+          variant: "destructive",
+        })
+        return
+      }
       if (!recoveringSaleId || recoverMotivo.trim().length < 5) return
       setRecoverLoading(true)
       const res = await recoverQuarantinedSale({
@@ -822,7 +849,7 @@ export function VendasArquivoGeral() {
         variant: "destructive",
       })
     },
-    [recoveringSaleId, recoverMotivo, recoverQuarantinedSale, fetchRemoteSales, load, toast],
+    [recoveringSaleId, recoverMotivo, recoverQuarantinedSale, fetchRemoteSales, load, toast, writerEnabled],
   )
 
   // ── Detalhe ──────────────────────────────────────────────────────────────────
@@ -1612,9 +1639,23 @@ export function VendasArquivoGeral() {
                       menuAcoes.push({
                         key: "recover",
                         node: (
-                          <DropdownMenuItem onClick={() => openRecoverDialog(v.id)}>
-                            <RotateCcw className="h-4 w-4 mr-2" /> Recuperar venda
-                          </DropdownMenuItem>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="block min-w-0 w-full">
+                                <DropdownMenuItem
+                                  disabled={!individualRecoveryEnabled}
+                                  onClick={() => openRecoverDialog(v.id)}
+                                >
+                                  <RotateCcw className="h-4 w-4 mr-2" /> Recuperar venda
+                                </DropdownMenuItem>
+                              </span>
+                            </TooltipTrigger>
+                            {!individualRecoveryEnabled && (
+                              <TooltipContent className="max-w-xs">
+                                {INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE}
+                              </TooltipContent>
+                            )}
+                          </Tooltip>
                         ),
                       })
                     }
@@ -2067,14 +2108,26 @@ export function VendasArquivoGeral() {
 
                 <div className="flex flex-col gap-2 pt-1">
                   {conflitoIdentidade && (
-                    <Button
-                      type="button"
-                      className="h-10 gap-2 text-sm"
-                      onClick={() => openRecoverDialog(detalhePendenteLocal.id)}
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      Recuperar venda
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="block min-w-0">
+                          <Button
+                            type="button"
+                            className="h-10 gap-2 text-sm"
+                            disabled={!individualRecoveryEnabled}
+                            onClick={() => openRecoverDialog(detalhePendenteLocal.id)}
+                          >
+                            <RotateCcw className="h-4 w-4" />
+                            Recuperar venda
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {!individualRecoveryEnabled && (
+                        <TooltipContent className="max-w-xs">
+                          {INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE}
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
                   )}
                   {pendingSaleSyncActions.canManualRetry && (
                     <Button
@@ -2696,6 +2749,9 @@ export function VendasArquivoGeral() {
               A recuperação usa o Writer V2, gera um novo número server-side e aplica estoque/financeiro uma única vez.
               A venda antiga permanece intacta.
             </p>
+            {!individualRecoveryEnabled && (
+              <p className="text-xs text-warning">{INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE}</p>
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <Button
                 type="button"
@@ -2710,7 +2766,11 @@ export function VendasArquivoGeral() {
               </Button>
               <Button
                 type="button"
-                disabled={recoverLoading || recoverMotivo.trim().length < 5}
+                disabled={
+                  recoverLoading ||
+                  recoverMotivo.trim().length < 5 ||
+                  !individualRecoveryEnabled
+                }
                 onClick={() => void handleRecoverQuarantined(false)}
               >
                 {recoverLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}

@@ -8,6 +8,12 @@ const h = vi.hoisted(() => ({
   gate: vi.fn(),
   findFirst: vi.fn(),
   findUnique: vi.fn(),
+  vendaUpdate: vi.fn(),
+  vendaUpdateMany: vi.fn(),
+  vendaDelete: vi.fn(),
+  vendaDeleteMany: vi.fn(),
+  vendaUpsert: vi.fn(),
+  vendaCreate: vi.fn(),
   sessaoFindFirst: vi.fn(),
   produtoFindFirst: vi.fn(),
   ensureConnected: vi.fn(async () => undefined),
@@ -17,7 +23,16 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    venda: { findFirst: h.findFirst, findUnique: h.findUnique },
+    venda: {
+      findFirst: h.findFirst,
+      findUnique: h.findUnique,
+      update: h.vendaUpdate,
+      updateMany: h.vendaUpdateMany,
+      delete: h.vendaDelete,
+      deleteMany: h.vendaDeleteMany,
+      upsert: h.vendaUpsert,
+      create: h.vendaCreate,
+    },
     sessaoCaixa: { findFirst: h.sessaoFindFirst },
     produto: { findFirst: h.produtoFindFirst },
   },
@@ -88,6 +103,15 @@ function req(body: unknown) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   })
+}
+
+function expectOccupantUntouched() {
+  expect(h.vendaUpdate).not.toHaveBeenCalled()
+  expect(h.vendaUpdateMany).not.toHaveBeenCalled()
+  expect(h.vendaDelete).not.toHaveBeenCalled()
+  expect(h.vendaDeleteMany).not.toHaveBeenCalled()
+  expect(h.vendaUpsert).not.toHaveBeenCalled()
+  expect(h.vendaCreate).not.toHaveBeenCalled()
 }
 
 beforeEach(() => {
@@ -191,6 +215,45 @@ describe("POST /api/ops/vendas/recover-quarantined", () => {
     expect(res.status).toBe(409)
     await expect(res.json()).resolves.toMatchObject({ code: "SALE_WRITER_V1_ACTIVE" })
     expect(h.persist).not.toHaveBeenCalled()
+    expectOccupantUntouched()
+  })
+
+  it("grava occupantStoreId real em conflito cross-loja e não altera a ocupante", async () => {
+    const occupantLojaB = { ...occupant, storeId: "loja-B" }
+    h.findUnique.mockResolvedValue(occupantLojaB)
+    h.persist.mockResolvedValue({
+      replayed: false,
+      fingerprint: "fp",
+      venda: {
+        id: "venda-b",
+        storeId: STORE,
+        pedidoId: "VDA-RC02-2026-000099",
+        clientSaleId: CLIENT,
+        total: 18,
+        at: "2026-06-15T18:00:00.000Z",
+        status: "concluida",
+      },
+    })
+    const res = await POST(
+      req({
+        sale: localSale,
+        clientSaleId: CLIENT,
+        motivo: "colisao de numero comercial",
+        conflictingPedidoId: "VDA-2026-0615",
+        conflictCode: "PEDIDO_ID_DE_OUTRA_LOJA",
+      }),
+    )
+    expect(res.status).toBe(200)
+    const call = h.persist.mock.calls[0][0]
+    expect(call.storeId).toBe(STORE)
+    expect(call.sale.recovery).toMatchObject({
+      recoveredFromPedidoId: "VDA-2026-0615",
+      motivo: "colisao de numero comercial",
+      conflictCode: "PEDIDO_ID_DE_OUTRA_LOJA",
+      occupantStoreId: "loja-B",
+    })
+    expect(call.sale.recovery.occupantStoreId).not.toBe("other")
+    expectOccupantUntouched()
   })
 
   it("bloqueia venda à vista sem sessão original — nunca lança no caixa de hoje", async () => {

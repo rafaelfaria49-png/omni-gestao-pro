@@ -4,6 +4,7 @@ import { classifyLocalSaleSync } from "@/lib/vendas/local-sale-identity"
 import {
   QUARANTINE_RECOVERY_CHUNK,
   applyRecoveryConfirmations,
+  buildIndividualRecoveryConfirmations,
   buildRecoveryConfirmations,
   chunk,
   isQuarantinedLocalSale,
@@ -175,6 +176,73 @@ describe("applyRecoveryConfirmations", () => {
     const snapshot = JSON.stringify(sales)
     applyRecoveryConfirmations(sales, buildRecoveryConfirmations([result()]))
     expect(JSON.stringify(sales)).toBe(snapshot)
+  })
+})
+
+describe("recovery INDIVIDUAL — sem cross-match pelo VDA antigo", () => {
+  it("Q1 recuperada não reconcilia Q2 com o mesmo número antigo", () => {
+    // Servidor confirma somente A. B compartilha VDA-X e TEM de permanecer
+    // LOCAL_QUARANTINED — o fallback por `id` do markSaleConfirmed/saleMatches
+    // limparia B, e isso é P0.
+    const q1 = localSale({ id: "VDA-X", clientSaleId: "cs_attempt_aaaaaa" })
+    const q2 = localSale({ id: "VDA-X", clientSaleId: "cs_attempt_bbbbbb" })
+    const confirmations = buildIndividualRecoveryConfirmations({
+      clientSaleId: "cs_attempt_aaaaaa",
+      venda: {
+        id: "venda-a",
+        pedidoId: "VDA-RC02-2026-000099",
+        clientSaleId: "cs_attempt_aaaaaa",
+      },
+    })
+
+    const { sales: next, reconciled } = applyRecoveryConfirmations([q1, q2], confirmations)
+
+    expect(reconciled).toBe(1)
+    expect(classifyLocalSaleSync(next[0])).toBe("REMOTE_CONFIRMED")
+    expect(next[0]).toMatchObject({
+      id: "VDA-RC02-2026-000099",
+      clientSaleId: "cs_attempt_aaaaaa",
+      syncPending: false,
+      syncBlockedCode: undefined,
+    })
+    expect(classifyLocalSaleSync(next[1])).toBe("LOCAL_QUARANTINED")
+    expect(next[1]).toMatchObject({
+      id: "VDA-X",
+      clientSaleId: "cs_attempt_bbbbbb",
+      syncPending: true,
+      syncBlockedCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
+    })
+    expect(next[1]).toEqual(q2)
+  })
+
+  it("a mesma clientSaleId correta é reconciliada", () => {
+    const sale = localSale({ id: "VDA-X", clientSaleId: "cs_attempt_aaaaaa" })
+    const confirmations = buildIndividualRecoveryConfirmations({
+      clientSaleId: "cs_attempt_aaaaaa",
+      venda: {
+        id: "venda-a",
+        pedidoId: "VDA-RC02-2026-000099",
+        clientSaleId: "cs_attempt_aaaaaa",
+      },
+    })
+    const { sales: next, reconciled } = applyRecoveryConfirmations([sale], confirmations)
+    expect(reconciled).toBe(1)
+    expect(classifyLocalSaleSync(next[0])).toBe("REMOTE_CONFIRMED")
+    expect(next[0].id).toBe("VDA-RC02-2026-000099")
+  })
+
+  it("sem evidência server-side não confirma ninguém — nem pelo VDA antigo", () => {
+    const q1 = localSale({ id: "VDA-X", clientSaleId: "cs_attempt_aaaaaa" })
+    const q2 = localSale({ id: "VDA-X", clientSaleId: "cs_attempt_bbbbbb" })
+    const confirmations = buildIndividualRecoveryConfirmations({
+      clientSaleId: "cs_attempt_aaaaaa",
+      venda: null,
+    })
+    expect(confirmations).toEqual([])
+    const { sales: next, reconciled } = applyRecoveryConfirmations([q1, q2], confirmations)
+    expect(reconciled).toBe(0)
+    expect(next[0]).toEqual(q1)
+    expect(next[1]).toEqual(q2)
   })
 })
 
