@@ -8,6 +8,8 @@ const h = vi.hoisted(() => ({
   gate: vi.fn(),
   findFirst: vi.fn(),
   findUnique: vi.fn(),
+  sessaoFindFirst: vi.fn(),
+  produtoFindFirst: vi.fn(),
   ensureConnected: vi.fn(async () => undefined),
   requireAdmin: vi.fn(),
   canAccessStore: vi.fn(() => true),
@@ -16,6 +18,8 @@ const h = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     venda: { findFirst: h.findFirst, findUnique: h.findUnique },
+    sessaoCaixa: { findFirst: h.sessaoFindFirst },
+    produto: { findFirst: h.produtoFindFirst },
   },
   prismaEnsureConnected: h.ensureConnected,
 }))
@@ -61,11 +65,19 @@ const occupant = {
   status: "concluida",
 }
 
+/**
+ * Venda local em quarentena. `sessaoId` é obrigatório para a recuperação de uma
+ * venda com receita à vista: sem sessão original identificável o núcleo bloqueia,
+ * porque lançar no caixa de hoje deixaria o dinheiro invisível em toda conferência
+ * (a `MovimentacaoFinanceira` usa a data ORIGINAL da venda). Ver o teste
+ * "bloqueia venda à vista sem sessão original".
+ */
 const localSale = {
   id: "VDA-2026-0615",
   total: 18,
   at: "2026-06-15T18:00:00.000Z",
   customerName: "Consumidor",
+  sessaoId: "sess-original-1",
   lines: [{ inventoryId: "p-tvbox", name: "CONTROLE TV BOX", quantity: 1, unitPrice: 18 }],
   paymentBreakdown: { dinheiro: 18 },
 }
@@ -85,6 +97,12 @@ beforeEach(() => {
   h.canAccessStore.mockReturnValue(true)
   h.findFirst.mockResolvedValue(null)
   h.findUnique.mockResolvedValue(occupant)
+  h.sessaoFindFirst.mockResolvedValue({ status: "ABERTA" })
+  h.produtoFindFirst.mockResolvedValue({
+    id: "prod-tvbox",
+    name: "CONTROLE TV BOX",
+    stock: 5,
+  })
 })
 
 describe("POST /api/ops/vendas/recover-quarantined", () => {
@@ -158,5 +176,84 @@ describe("POST /api/ops/vendas/recover-quarantined", () => {
       venda: { pedidoId: "VDA-RC02-2026-000099" },
     })
     expect(h.persist).not.toHaveBeenCalled()
+  })
+
+  it("bloqueia recovery quando o writer V1 está ativo", async () => {
+    h.gate.mockReturnValue({ writer: "v1", reason: "flag-absent" })
+    const res = await POST(
+      req({
+        sale: localSale,
+        clientSaleId: CLIENT,
+        motivo: "colisao de numero comercial",
+        conflictCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
+      }),
+    )
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toMatchObject({ code: "SALE_WRITER_V1_ACTIVE" })
+    expect(h.persist).not.toHaveBeenCalled()
+  })
+
+  it("bloqueia venda à vista sem sessão original — nunca lança no caixa de hoje", async () => {
+    const { sessaoId, ...semSessao } = localSale
+    void sessaoId
+    const res = await POST(
+      req({
+        sale: semSessao,
+        clientSaleId: CLIENT,
+        motivo: "colisao de numero comercial",
+        conflictCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
+      }),
+    )
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toMatchObject({ code: "MISSING_ORIGINAL_SESSION" })
+    expect(h.persist).not.toHaveBeenCalled()
+  })
+
+  it("sessão original FECHADA exige confirmação explícita", async () => {
+    h.sessaoFindFirst.mockResolvedValue({ status: "FECHADA" })
+    const res = await POST(
+      req({
+        sale: localSale,
+        clientSaleId: CLIENT,
+        motivo: "colisao de numero comercial",
+        conflictCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
+      }),
+    )
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toMatchObject({ code: "CAIXA_ORIGINAL_FECHADO" })
+    expect(h.persist).not.toHaveBeenCalled()
+  })
+
+  it("sessão original FECHADA com confirmação repassa a autorização ao motor", async () => {
+    h.sessaoFindFirst.mockResolvedValue({ status: "FECHADA" })
+    h.persist.mockResolvedValue({
+      replayed: false,
+      fingerprint: "fp",
+      venda: {
+        id: "venda-b",
+        storeId: STORE,
+        pedidoId: "VDA-RC02-2026-000100",
+        clientSaleId: CLIENT,
+        total: 18,
+        at: "2026-06-15T18:00:00.000Z",
+        status: "concluida",
+      },
+    })
+    const res = await POST(
+      req({
+        sale: localSale,
+        clientSaleId: CLIENT,
+        motivo: "colisao de numero comercial",
+        conflictCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
+        allowClosedOriginalSession: true,
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(h.persist).toHaveBeenCalledTimes(1)
+    expect(h.persist.mock.calls[0][0].options).toMatchObject({
+      allowClosedOriginalSession: true,
+      enforceStock: true,
+      requireCaixaSession: true,
+    })
   })
 })

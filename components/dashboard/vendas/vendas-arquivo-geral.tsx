@@ -74,6 +74,7 @@ import { sanitizeOperatorLabel } from "@/lib/pdv-operator-label"
 import { CupomNaoFiscal, type CupomData } from "./cupom-nao-fiscal"
 import { TrocasDevolucao } from "./trocas-devolucao"
 import { WorkspaceCorrecaoVenda } from "./workspace-correcao-venda"
+import { QuarentenaRecoveryDialog } from "./quarentena-recovery-dialog"
 import { useToast } from "@/hooks/use-toast"
 import type { SaleRecord } from "@/lib/operations-sale-types"
 import { useOperationsStore } from "@/lib/operations-store"
@@ -156,6 +157,16 @@ type VendaDetalhe = {
   terminalId?: string | null
   terminal?: { id: string; code: string; name: string } | null
   observacao: string | null
+  /**
+   * Presente só quando a venda nasceu de uma recuperação de quarentena. Guarda o
+   * número ANTIGO como auditoria — a identidade atual continua sendo `id`.
+   */
+  recovery?: {
+    recoveredFromPedidoId: string
+    recoveredAt: string | null
+    motivo: string | null
+    conflictCode: string | null
+  } | null
   correcoes: Array<{
     at: string
     operador: string
@@ -409,6 +420,8 @@ export function VendasArquivoGeral() {
   const [recoverMotivo, setRecoverMotivo] = useState("")
   const [recoverLoading, setRecoverLoading] = useState(false)
   const [recoverClosedSessionConfirm, setRecoverClosedSessionConfirm] = useState(false)
+  /** Console administrativo de recuperação EM LOTE das quarentenas. */
+  const [quarentenaRecoveryOpen, setQuarentenaRecoveryOpen] = useState(false)
 
   // Workspace Enterprise — ficha completa + correções (única via de correção de venda)
   const [workspaceVendaId, setWorkspaceVendaId] = useState<string | null>(null)
@@ -1174,6 +1187,30 @@ export function VendasArquivoGeral() {
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {conflitoIdentidadeIds.size > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10"
+                  onClick={() => setQuarentenaRecoveryOpen(true)}
+                >
+                  <ShieldCheck className="h-4 w-4" />
+                  Recuperar vendas em quarentena
+                  <Badge
+                    variant="outline"
+                    className="border-destructive/30 bg-destructive/15 text-[9px] px-1 py-0 text-destructive"
+                  >
+                    {conflitoIdentidadeIds.size}
+                  </Badge>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Analisa e recupera vendas reais cujo número colidiu — nenhuma venda existente é alterada
+              </TooltipContent>
+            </Tooltip>
+          )}
           {pendingSyncIds.size > 0 && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1843,6 +1880,26 @@ export function VendasArquivoGeral() {
                   </p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/*
+            Procedência de recuperação. Deliberadamente discreta e em tom neutro: a
+            venda é normal e o número atual é o canônico. O número antigo aparece
+            apenas como trilha de auditoria, nunca como erro permanente.
+          */}
+          {!detalhePendenteLocal && detalhe?.recovery && (
+            <div className="shrink-0 border-b border-border bg-muted/20 px-6 py-2.5">
+              <p className="flex items-start gap-2 text-xs text-muted-foreground">
+                <ShieldCheck className="mt-px h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0">
+                  Venda recuperada de conflito de identificação · Número original{" "}
+                  <span className="font-mono text-foreground">
+                    {detalhe.recovery.recoveredFromPedidoId}
+                  </span>
+                  {detalhe.recovery.recoveredAt && <> · {fmtDate(detalhe.recovery.recoveredAt)}</>}
+                </span>
+              </p>
             </div>
           )}
 
@@ -2702,6 +2759,17 @@ export function VendasArquivoGeral() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* ── Recuperação administrada EM LOTE das quarentenas ──────────────────── */}
+      <QuarentenaRecoveryDialog
+        open={quarentenaRecoveryOpen}
+        onOpenChange={setQuarentenaRecoveryOpen}
+        unidadeLabel={unidadeLabel || undefined}
+        onFinished={() => {
+          void fetchRemoteSales()
+          load()
+        }}
+      />
 
       {/* ── Limpeza em lote de pendentes locais (administrativa) ──────────────── */}
       <AlertDialog

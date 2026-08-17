@@ -44,11 +44,23 @@ import {
   extractConfirmedVenda,
   parseSalePersistError,
   recoverQuarantinedSaleUrl,
+  quarantineRecoveryPreviewUrl,
+  quarantineRecoveryBatchUrl,
   shouldFallbackV2ToV1,
   vendaByClientSaleIdUrl,
   vendaPersistV2Url,
   type SaleWriterCapability,
 } from "@/lib/vendas/sale-client-sync"
+import {
+  QUARANTINE_RECOVERY_CHUNK,
+  applyRecoveryConfirmations,
+  buildRecoveryConfirmations,
+  chunk,
+  isQuarantinedLocalSale,
+  summarizePlanItems,
+  summarizeRecoveryResults,
+  type RecoveryConfirmation,
+} from "@/lib/vendas/quarantine-local-reconciliation"
 
 const VENDA_AUTO_RETRY_HOLD_MS = 5 * 60_000
 
@@ -455,6 +467,82 @@ interface OperationsContextType {
     reconciled: number
     conflicts: number
   }>
+  /**
+   * DRY-RUN de TODAS as vendas locais em quarentena. Read-only no servidor: apenas
+   * classifica. Cunha e persiste localmente a identidade técnica que estiver faltando
+   * ANTES de qualquer chamada — assim a execução (e qualquer retry posterior) reusa a
+   * MESMA chave de idempotência, sem risco de criar venda duplicada.
+   */
+  previewQuarantineRecovery: () => Promise<
+    | {
+        ok: true
+        writerEnabled: boolean
+        items: QuarantineRecoveryPlanItemView[]
+        summary: QuarantineRecoverySummaryView
+      }
+    | { ok: false; reason: string; code?: string }
+  >
+  /**
+   * Recuperação administrada EM LOTE. Uma transação por venda no servidor; o estado
+   * local só é reconciliado para os itens com evidência server-side (`RECOVERED` /
+   * `ALREADY_RECOVERED` com venda). Quarentena de item bloqueado permanece intacta.
+   */
+  recoverQuarantinedSalesBatch: (input: {
+    motivo: string
+    allowClosedOriginalSession?: boolean
+  }) => Promise<
+    | {
+        ok: true
+        results: QuarantineRecoveryResultView[]
+        summary: {
+          total: number
+          recovered: number
+          alreadyRecovered: number
+          requiresConfirmation: number
+          blocked: number
+          failed: number
+        }
+        /** Quantas cópias locais saíram da quarentena (só com evidência server-side). */
+        reconciled: number
+      }
+    | { ok: false; reason: string; code?: string }
+  >
+}
+
+/** Recorte do item do planner consumido pela UI. */
+export type QuarantineRecoveryPlanItemView = {
+  conflictingPedidoId: string
+  clientSaleId: string | null
+  klass: string
+  bucket: "READY" | "ALREADY_RECOVERED" | "REQUIRES_CONFIRMATION" | "BLOCKED"
+  reason: string
+  total: number
+  valorAVista: number
+  at: string | null
+  customerName: string | null
+  originalSessionStatus: string
+  alreadyRecoveredPedidoId: string | null
+}
+
+export type QuarantineRecoverySummaryView = {
+  total: number
+  ready: number
+  alreadyRecovered: number
+  requiresConfirmation: number
+  blocked: number
+  valorTotal: number
+  valorExecutavel: number
+  byClass: Record<string, number>
+}
+
+export type QuarantineRecoveryResultView = {
+  conflictingPedidoId: string
+  clientSaleId: string | null
+  status: "RECOVERED" | "ALREADY_RECOVERED" | "REQUIRES_CONFIRMATION" | "BLOCKED" | "FAILED"
+  code: string | null
+  reason: string
+  venda: { id: string; pedidoId: string; clientSaleId: string | null } | null
+  replayed: boolean
 }
 
 const OperationsContext = createContext<OperationsContextType | null>(null)
@@ -1302,6 +1390,175 @@ export function OperationsProvider({
     [markSaleConfirmed, storageKey],
   )
 
+  /**
+   * Coleta TODAS as vendas locais em quarentena e garante que cada uma tenha
+   * `clientSaleId`, persistindo o que for cunhado ANTES de qualquer rede.
+   *
+   * Cunhar antes é requisito de segurança, não conveniência: se a identidade técnica
+   * fosse gerada a cada tentativa, um retry após timeout criaria uma SEGUNDA venda
+   * para a mesma venda física. A chave é sempre a mesma, então o servidor reconhece
+   * replay e devolve a venda já criada.
+   */
+  const collectQuarantinedCandidates = useCallback((): SaleRecord[] => {
+    const current = stateRef.current.sales
+    const mintedByIndex = new Map<number, string>()
+    const candidates: SaleRecord[] = []
+
+    current.forEach((sale, index) => {
+      if (!sale.id || sale.syncPending !== true) return
+      const quarantined =
+        isQuarantinedLocalSale(sale) || Boolean(persistedSaleIdentityConflictCode(storageKey, sale))
+      if (!quarantined) return
+      if (sale.clientSaleId) {
+        candidates.push(sale)
+        return
+      }
+      const clientSaleId = assertGeneratedClientSaleId(generateClientSaleId())
+      mintedByIndex.set(index, clientSaleId)
+      candidates.push({ ...sale, clientSaleId })
+    })
+
+    if (mintedByIndex.size > 0) {
+      setState((prev) => ({
+        ...prev,
+        sales: prev.sales.map((sale, index) => {
+          const minted = mintedByIndex.get(index)
+          // `!sale.clientSaleId` evita sobrescrever identidade já existente.
+          return minted && !sale.clientSaleId ? { ...sale, clientSaleId: minted } : sale
+        }),
+      }))
+    }
+
+    return candidates
+  }, [storageKey])
+
+  /**
+   * Tira da quarentena SOMENTE as cópias locais com evidência server-side, casando
+   * por `clientSaleId` EXATO.
+   *
+   * Não reutiliza `markSaleConfirmed` de propósito: `saleMatches` cai no `id` quando o
+   * `clientSaleId` não bate, e duas quarentenas distintas podem compartilhar o MESMO
+   * número antigo (é justamente a colisão que gerou o incidente). Casar por id ali
+   * confirmaria a venda errada e apagaria o bloqueio de uma venda que nunca foi
+   * persistida.
+   */
+  const reconcileRecoveredSales = useCallback(
+    (confirmations: readonly RecoveryConfirmation[]): number => {
+      if (confirmations.length === 0) return 0
+      for (const confirmation of confirmations) {
+        vendaAutoRetryHoldRef.current.delete(confirmation.clientSaleId)
+        vendaAutoRetryHoldRef.current.delete(confirmation.pedidoId)
+      }
+      setState((prev) => ({
+        ...prev,
+        sales: applyRecoveryConfirmations(prev.sales, confirmations).sales,
+      }))
+      return applyRecoveryConfirmations(stateRef.current.sales, confirmations).reconciled
+    },
+    [],
+  )
+
+  const previewQuarantineRecovery = useCallback<
+    OperationsContextType["previewQuarantineRecovery"]
+  >(async () => {
+    const candidates = collectQuarantinedCandidates()
+    if (candidates.length === 0) {
+      return {
+        ok: true,
+        writerEnabled: false,
+        items: [],
+        summary: {
+          total: 0,
+          ready: 0,
+          alreadyRecovered: 0,
+          requiresConfirmation: 0,
+          blocked: 0,
+          valorTotal: 0,
+          valorExecutavel: 0,
+          byClass: {},
+        },
+      }
+    }
+    const lj = opsLojaIdFromStorageKey(storageKey)
+    const items: QuarantineRecoveryPlanItemView[] = []
+    let writerEnabled = false
+    try {
+      for (const slice of chunk(candidates, QUARANTINE_RECOVERY_CHUNK)) {
+        const res = await fetch(quarantineRecoveryPreviewUrl(lj), {
+          method: "POST",
+          credentials: "include",
+          cache: "no-store",
+          headers: persistHeaders(lj),
+          body: JSON.stringify({ candidates: slice }),
+        })
+        const body = await res.text().catch(() => "")
+        if (!res.ok) {
+          const parsed = parseSalePersistError(body)
+          return { ok: false, reason: parsed.message, code: parsed.code }
+        }
+        const json = JSON.parse(body) as {
+          writerEnabled?: boolean
+          items?: QuarantineRecoveryPlanItemView[]
+        }
+        writerEnabled = json.writerEnabled === true
+        if (Array.isArray(json.items)) items.push(...json.items)
+      }
+      return { ok: true, writerEnabled, items, summary: summarizePlanItems(items) }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { ok: false, reason: `Falha de rede: ${msg}` }
+    }
+  }, [collectQuarantinedCandidates, storageKey])
+
+  const recoverQuarantinedSalesBatch = useCallback<
+    OperationsContextType["recoverQuarantinedSalesBatch"]
+  >(
+    async ({ motivo, allowClosedOriginalSession }) => {
+      const candidates = collectQuarantinedCandidates()
+      if (candidates.length === 0) {
+        return { ok: false, reason: "Nenhuma venda em quarentena para recuperar." }
+      }
+      const lj = opsLojaIdFromStorageKey(storageKey)
+      const results: QuarantineRecoveryResultView[] = []
+      try {
+        // Fatias sequenciais: mantém cada requisição curta e abaixo do teto da rota.
+        // Uma fatia que falhe na rede não desfaz as anteriores — as vendas já
+        // recuperadas continuam recuperadas, e o retry as reconhece como replay.
+        for (const slice of chunk(candidates, QUARANTINE_RECOVERY_CHUNK)) {
+          const res = await fetch(quarantineRecoveryBatchUrl(lj), {
+            method: "POST",
+            credentials: "include",
+            headers: persistHeaders(lj),
+            body: JSON.stringify({
+              candidates: slice,
+              motivo,
+              ...(allowClosedOriginalSession ? { allowClosedOriginalSession: true } : {}),
+            }),
+          })
+          const body = await res.text().catch(() => "")
+          if (!res.ok) {
+            // Reconcilia o que já foi confirmado antes de relatar a falha.
+            reconcileRecoveredSales(buildRecoveryConfirmations(results))
+            const parsed = parseSalePersistError(body)
+            return { ok: false, reason: parsed.message, code: parsed.code }
+          }
+          const json = JSON.parse(body) as { results?: QuarantineRecoveryResultView[] }
+          if (Array.isArray(json.results)) results.push(...json.results)
+        }
+
+        // Só sai da quarentena o que tem venda real no servidor. `REQUIRES_CONFIRMATION`,
+        // `BLOCKED` e `FAILED` preservam a cópia local intacta.
+        const reconciled = reconcileRecoveredSales(buildRecoveryConfirmations(results))
+        return { ok: true, results, summary: summarizeRecoveryResults(results), reconciled }
+      } catch (err) {
+        reconcileRecoveredSales(buildRecoveryConfirmations(results))
+        const msg = err instanceof Error ? err.message : String(err)
+        return { ok: false, reason: `Falha de rede: ${msg}` }
+      }
+    },
+    [collectQuarantinedCandidates, reconcileRecoveredSales, storageKey],
+  )
+
   const discardLocalPendingSale = useCallback<OperationsContextType["discardLocalPendingSale"]>(
     async (saleId) => {
       const sale = stateRef.current.sales.find(
@@ -2095,6 +2352,8 @@ export function OperationsProvider({
       retrySyncSale,
       retrySyncSaleRetroactive,
       recoverQuarantinedSale,
+      previewQuarantineRecovery,
+      recoverQuarantinedSalesBatch,
       discardLocalPendingSale,
       bulkDiscardLocalPendingSales,
     }),
@@ -2119,6 +2378,8 @@ export function OperationsProvider({
       retrySyncSale,
       retrySyncSaleRetroactive,
       recoverQuarantinedSale,
+      previewQuarantineRecovery,
+      recoverQuarantinedSalesBatch,
       discardLocalPendingSale,
       bulkDiscardLocalPendingSales,
     ]

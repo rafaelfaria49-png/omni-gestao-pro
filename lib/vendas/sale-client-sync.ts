@@ -76,6 +76,16 @@ export function recoverQuarantinedSaleUrl(lojaId: string): string {
   return `/api/ops/vendas/recover-quarantined?storeId=${encodeURIComponent(lojaId)}`
 }
 
+/** DRY-RUN do lote — read-only, nunca muta. */
+export function quarantineRecoveryPreviewUrl(lojaId: string): string {
+  return `/api/ops/vendas/quarantine-recovery/preview?storeId=${encodeURIComponent(lojaId)}`
+}
+
+/** Execução do lote — uma transação por venda, no MESMO núcleo do recovery individual. */
+export function quarantineRecoveryBatchUrl(lojaId: string): string {
+  return `/api/ops/vendas/quarantine-recovery/batch?storeId=${encodeURIComponent(lojaId)}`
+}
+
 export type ConfirmedVendaView = {
   id: string
   storeId: string

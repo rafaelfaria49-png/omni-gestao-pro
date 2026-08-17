@@ -1,27 +1,18 @@
 import { NextResponse } from "next/server"
-import { prisma, prismaEnsureConnected } from "@/lib/prisma"
+import { prismaEnsureConnected } from "@/lib/prisma"
 import { opsLojaIdFromRequestForWrite } from "@/lib/ops-api-gate"
 import { requireAdmin } from "@/lib/require-admin"
 import { canAccessStore } from "@/lib/auth/enterprise-permissions"
 import { getOperatorLabelFromSession } from "@/lib/auth/session-operator"
-import {
-  InsufficientStockError,
-  UnresolvedProductError,
-  CaixaSessaoInvalidaError,
-  CaixaOriginalFechadoError,
-  ClientSaleIdReusedError,
-  InvalidClientSaleIdError,
-  PedidoIdDeOutraLojaError,
-  PedidoIdConflitoMesmaLojaError,
-  VENDA_REPLAY_SELECT,
-  type SalePayload,
-} from "@/lib/ops-upsert-venda"
-import { persistSaleV2 } from "@/lib/vendas/sale-writer-v2"
+import type { SalePayload } from "@/lib/ops-upsert-venda"
 import { parseClientSaleId, SALE_WRITER_FLOW } from "@/lib/vendas/sale-identity-contracts"
 import { resolveSaleNumberingWriter } from "@/lib/vendas/sale-numbering-runtime-gate"
-import { isSaleNumberingError } from "@/lib/vendas/server-sale-numbering"
 import { isSaleIdentityConflictCode } from "@/lib/vendas/sale-identity-conflict"
-import { buildLegacySaleFingerprint, isLegacySaleFactsComparable } from "@/lib/vendas/legacy-sale-fingerprint"
+import type { QuarantineCandidate } from "@/lib/vendas/quarantine-recovery-planner"
+import {
+  QUARANTINE_RECOVERY_STATUS,
+  executeQuarantineRecovery,
+} from "@/lib/vendas/quarantine-recovery-service"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -31,24 +22,13 @@ function jsonError(error: string, code: string, status: number, extra?: Record<s
   return NextResponse.json({ error, code, ...extra }, { status })
 }
 
-function factsFromPayload(existing: { pedidoId: string; payload: unknown; total: number; clienteNome: string | null; clienteId: string | null; terminalId: string | null }) {
-  const payload =
-    existing.payload !== null && typeof existing.payload === "object" && !Array.isArray(existing.payload)
-      ? (existing.payload as Record<string, unknown>)
-      : {}
-  return {
-    ...payload,
-    id: existing.pedidoId,
-    total: "total" in payload ? payload.total : existing.total,
-    customerName: payload.customerName ?? existing.clienteNome,
-    clienteId: payload.clienteId ?? existing.clienteId,
-    terminalId: payload.terminalId ?? existing.terminalId,
-  }
-}
-
 /**
- * Recovery ADMINISTRADO de venda em quarentena (colisão de pedidoId).
- * Gera novo número server-side via Writer V2. Nunca altera a venda ocupante.
+ * Recovery ADMINISTRADO de UMA venda em quarentena (colisão de `pedidoId`).
+ *
+ * A decisão e a escrita vivem no núcleo compartilhado
+ * (`lib/vendas/quarantine-recovery-service.ts`), o MESMO usado pelo lote — esta rota
+ * só faz gate, validação de entrada e tradução do resultado para HTTP. Gera novo
+ * número server-side via Writer V2 e nunca altera a venda ocupante.
  */
 export async function POST(req: Request) {
   const lojaId = opsLojaIdFromRequestForWrite(req)
@@ -67,11 +47,7 @@ export async function POST(req: Request) {
 
   const gate = resolveSaleNumberingWriter()
   if (gate.writer !== SALE_WRITER_FLOW.V2) {
-    return jsonError(
-      "Writer V1 ativo. Recovery V2 indisponível.",
-      "SALE_WRITER_V1_ACTIVE",
-      409,
-    )
+    return jsonError("Writer V1 ativo. Recovery V2 indisponível.", "SALE_WRITER_V1_ACTIVE", 409)
   }
 
   let body: unknown
@@ -127,123 +103,49 @@ export async function POST(req: Request) {
   const allowClosedOriginalSession =
     bodyObj.allowClosedOriginalSession === true || bodyObj.retroactiveClosedSession === true
 
+  // O núcleo classifica pelo `syncBlockedCode` da cópia local; a rota aceita também o
+  // `conflictCode` explícito do corpo (contrato histórico deste endpoint). Ambos são
+  // validados contra a lista fechada de códigos, e o conflito real continua sendo
+  // confirmado contra a ocupante — o código sozinho não autoriza nada.
+  const localCode =
+    typeof (sale as { syncBlockedCode?: unknown }).syncBlockedCode === "string"
+      ? (sale as { syncBlockedCode?: string }).syncBlockedCode
+      : undefined
+  const candidate: QuarantineCandidate = {
+    ...(sale as unknown as Record<string, unknown>),
+    id: conflictingPedidoId,
+    clientSaleId: parsed.clientSaleId,
+    syncBlockedCode: isSaleIdentityConflictCode(localCode) ? localCode : conflictCode,
+  }
+
   await prismaEnsureConnected()
 
-  const already = await prisma.venda.findFirst({
-    where: { storeId: lojaId, clientSaleId: parsed.clientSaleId },
-    select: VENDA_REPLAY_SELECT,
+  const result = await executeQuarantineRecovery({
+    storeId: lojaId,
+    candidate,
+    motivo,
+    operadorLabel: getOperatorLabelFromSession(adminGate.session),
+    allowClosedOriginalSession,
   })
-  if (already) {
-    return NextResponse.json({
-      ok: true,
-      replayed: true,
-      recovered: true,
-      venda: {
-        id: already.id,
-        storeId: already.storeId,
-        pedidoId: already.pedidoId,
-        clientSaleId: already.clientSaleId,
-        total: already.total,
-        at: already.at.toISOString(),
-        clienteNome: already.clienteNome,
-        clienteId: already.clienteId,
-        terminalId: already.terminalId,
-        status: already.status,
-      },
-    })
-  }
 
-  const occupant = await prisma.venda.findUnique({
-    where: { pedidoId: conflictingPedidoId },
-    select: VENDA_REPLAY_SELECT,
-  })
-  if (!occupant) {
-    return jsonError(
-      "Não há conflito confirmado para este número. Use o reenvio normal.",
-      "CONFLICT_NOT_CONFIRMED",
-      409,
-    )
-  }
-  if (occupant.clientSaleId === parsed.clientSaleId && occupant.storeId === lojaId) {
-    return jsonError(
-      "Esta tentativa já está gravada com o número informado.",
-      "CONFLICT_NOT_CONFIRMED",
-      409,
-    )
-  }
-
-  const occupantOtherStore = occupant.storeId !== lojaId
-  const occupantSameStoreDifferentFacts = occupant.storeId === lojaId && (
-    occupant.clientSaleId !== parsed.clientSaleId ||
-    !isLegacySaleFactsComparable(sale) ||
-    !isLegacySaleFactsComparable(factsFromPayload(occupant)) ||
-    buildLegacySaleFingerprint(sale) !== buildLegacySaleFingerprint(factsFromPayload(occupant))
-  )
-  if (!occupantOtherStore && !occupantSameStoreDifferentFacts) {
-    return jsonError(
-      "Não há conflito confirmado para este número. Use o reenvio normal.",
-      "CONFLICT_NOT_CONFIRMED",
-      409,
-    )
-  }
-
-  const recoverySale: SalePayload = {
-    ...sale,
-    clientSaleId: parsed.clientSaleId,
-    recovery: {
-      recoveredFromPedidoId: conflictingPedidoId,
-      recoveredAt: new Date().toISOString(),
-      motivo,
-      conflictCode: conflictCode ?? (occupantOtherStore ? "PEDIDO_ID_DE_OUTRA_LOJA" : "PEDIDO_ID_CONFLITO_MESMA_LOJA"),
-      occupantStoreId: occupantOtherStore ? "other" : lojaId,
-    },
-  } as SalePayload & { recovery?: unknown }
-
-  try {
-    const result = await persistSaleV2({
-      storeId: lojaId,
-      sale: recoverySale,
-      clientSaleId: parsed.clientSaleId,
-      operadorLabel: getOperatorLabelFromSession(adminGate.session),
-      options: {
-        enforceStock: true,
-        requireCaixaSession: true,
-        allowClosedOriginalSession,
-      },
-    })
+  if (
+    result.status === QUARANTINE_RECOVERY_STATUS.RECOVERED ||
+    result.status === QUARANTINE_RECOVERY_STATUS.ALREADY_RECOVERED
+  ) {
     return NextResponse.json({
       ok: true,
       replayed: result.replayed,
       recovered: true,
       venda: result.venda,
     })
-  } catch (e) {
-    if (e instanceof InvalidClientSaleIdError) {
-      return jsonError(e.message, e.code, 400)
-    }
-    if (e instanceof ClientSaleIdReusedError) {
-      return jsonError(e.message, e.code, 409)
-    }
-    if (e instanceof PedidoIdDeOutraLojaError || e instanceof PedidoIdConflitoMesmaLojaError) {
-      return jsonError(e.message, e.code, 409)
-    }
-    if (e instanceof CaixaSessaoInvalidaError || e instanceof CaixaOriginalFechadoError) {
-      return jsonError(e.message, e.code, 409)
-    }
-    if (e instanceof UnresolvedProductError) {
-      return jsonError(e.message, e.code, 409)
-    }
-    if (e instanceof InsufficientStockError) {
-      return NextResponse.json(
-        { error: "Estoque insuficiente", detail: e.message, code: e.code },
-        { status: 409 },
-      )
-    }
-    if (isSaleNumberingError(e)) {
-      return jsonError(e.message, e.code, 409)
-    }
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error("[ops/vendas/recover-quarantined]", lojaId, msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
   }
+
+  if (result.status === QUARANTINE_RECOVERY_STATUS.FAILED) {
+    console.error("[ops/vendas/recover-quarantined]", lojaId, result.reason)
+    return NextResponse.json({ error: result.reason }, { status: 500 })
+  }
+
+  // BLOCKED e REQUIRES_CONFIRMATION são 409 — inclusive `CAIXA_ORIGINAL_FECHADO`,
+  // que a UI usa para pedir a confirmação de lançamento retroativo.
+  return jsonError(result.reason, result.code ?? "RECOVERY_BLOCKED", 409)
 }

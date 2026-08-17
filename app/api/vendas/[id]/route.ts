@@ -139,6 +139,25 @@ export async function GET(
         )
       : null
 
+    // Procedência de recuperação: presente só em vendas renumeradas a partir de uma
+    // quarentena de identidade. O número ANTIGO vive aqui, como trilha de auditoria —
+    // nunca como identidade atual da venda.
+    const recoveryRaw =
+      venda.payload && typeof venda.payload === "object"
+        ? ((venda.payload as Record<string, unknown>).recovery as Record<string, unknown> | undefined)
+        : undefined
+    const recovery =
+      recoveryRaw && typeof recoveryRaw.recoveredFromPedidoId === "string"
+        ? {
+            recoveredFromPedidoId: recoveryRaw.recoveredFromPedidoId,
+            recoveredAt:
+              typeof recoveryRaw.recoveredAt === "string" ? recoveryRaw.recoveredAt : null,
+            motivo: typeof recoveryRaw.motivo === "string" ? recoveryRaw.motivo : null,
+            conflictCode:
+              typeof recoveryRaw.conflictCode === "string" ? recoveryRaw.conflictCode : null,
+          }
+        : null
+
     // Forma de pagamento bruta (espelho do payload) — usada pelo Workspace.
     const pbRaw =
       venda.payload && typeof venda.payload === "object"
@@ -236,6 +255,7 @@ export async function GET(
         dbId: venda.id,
         at: venda.at.toISOString(),
         paymentBreakdown: pbRaw,
+        recovery,
         ...enterprise,
         clienteNome: venda.clienteNome || null,
         clienteId: venda.clienteId || null,
