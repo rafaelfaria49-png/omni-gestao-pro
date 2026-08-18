@@ -6,8 +6,9 @@
  * segredo em logs. Mais validações (TAREFA 5): sem/já assinado, certificado/senha inválidos,
  * digest/signature inválidos, campos obrigatórios. Usa o XML real de BL-FISCAL-004.
  */
-import { createHash } from "node:crypto"
+import { createHash, createPublicKey } from "node:crypto"
 import { describe, it, expect, vi, afterEach } from "vitest"
+import { createQrV3OfflinePemSigner, verifyQrV3OfflineSignature } from "@/lib/fiscal/danfce/qr-v3"
 import { buildVendaFiscalSnapshot, type BuildSnapshotInput, type SnapshotLojaInput } from "../venda-fiscal-snapshot"
 import { sanitizeProdutoFiscal } from "@/lib/produto-fiscal"
 import { buildNfceXml, buildNfceXmlAssinavel } from "../xml"
@@ -471,5 +472,53 @@ describe("signNfceXml · infNFeSupl QR v3 online não entra no digest", () => {
     const v = verifyNfceSignature(infTocado)
     expect(v.valido).toBe(false)
     expect(v.digestConfere).toBe(false)
+  })
+})
+
+const QR_OFFLINE_SIGN = createQrV3OfflinePemSigner(TEST_KEY_PLAIN_PEM)
+const QR_OFFLINE_V3 = {
+  qrCodeBaseUrl: "https://qr.example.test/nfce",
+  urlChave: "https://qr.example.test/consulta",
+  sign: QR_OFFLINE_SIGN,
+} as const
+
+function nfceXmlQrOffline(): string {
+  const r = buildVendaFiscalSnapshot(snapshotInput())
+  if (!r.ok) throw new Error(`snapshot inválido: ${r.code}`)
+  return buildNfceXmlAssinavel(r.snapshot, { serie: 1, numero: 42, tpEmis: 9, qrOfflineV3: { ...QR_OFFLINE_V3 } })
+}
+
+describe("signNfceXml · infNFeSupl QR v3 offline não entra no digest", () => {
+  const qrPublicKey = createPublicKey(TEST_CERT_PEM)
+
+  it("QR offline e XMLDSig são assinaturas distintas; Signature vem depois de infNFeSupl", () => {
+    const xml = nfceXmlQrOffline()
+    expect(xml).toContain("<infNFeSupl>")
+    expect(xml).not.toContain("<Signature")
+    expect(nfeChildOpenings(xml)).toEqual(["infNFe", "infNFeSupl"])
+
+    const qrCode = xml.match(/<qrCode>([^<]+)<\/qrCode>/)?.[1] ?? ""
+    const p = qrCode.split("?p=")[1] ?? ""
+    const segs = p.split("|")
+    expect(segs.length).toBeGreaterThanOrEqual(8)
+    const canonical = segs.slice(0, 7).join("|")
+    const assinaturaQr = segs.slice(7).join("|")
+    expect(verifyQrV3OfflineSignature(canonical, assinaturaQr, qrPublicKey)).toBe(true)
+
+    const signed = signNfceXmlDetailed(xml, CERT_PLAIN, "", OPTS)
+    expect(nfeChildOpenings(signed.xml)).toEqual(["infNFe", "infNFeSupl", "Signature"])
+    expect(signed.xml).toContain(`<Reference URI="#${signed.referenciaId}">`)
+    const v = verifyNfceSignature(signed.xml)
+    expect(v).toMatchObject({ valido: true, digestConfere: true, assinaturaConfere: true })
+    expect(signed.xml.indexOf("<Signature")).toBeGreaterThan(signed.xml.indexOf("</infNFeSupl>"))
+  })
+
+  it("DigestValue é só infNFe: adulterar infNFeSupl não invalida XMLDSig", () => {
+    const signed = signNfceXml(nfceXmlQrOffline(), CERT_PLAIN, "", OPTS)
+    const tocado = signed.replace(`<urlChave>${QR_OFFLINE_V3.urlChave}</urlChave>`, "<urlChave>https://qr.example.test/outra-consulta</urlChave>")
+    expect(tocado).not.toBe(signed)
+    expect(verifyNfceSignature(tocado)).toMatchObject({ valido: true, digestConfere: true, assinaturaConfere: true })
+    const infTocado = signed.replace("<vNF>50.00</vNF>", "<vNF>5000.00</vNF>")
+    expect(verifyNfceSignature(infTocado).digestConfere).toBe(false)
   })
 })

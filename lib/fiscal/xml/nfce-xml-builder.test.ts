@@ -11,8 +11,10 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { describe, it, expect } from "vitest"
-import { encodeNfceQrV3OnlineUrl } from "@/lib/fiscal/danfce/qr-v3"
+import { encodeNfceQrV3OfflineUrl, encodeNfceQrV3OnlineUrl, createQrV3OfflinePemSigner } from "@/lib/fiscal/danfce/qr-v3"
 import { sanitizeProdutoFiscal, PRODUTO_FISCAL_VAZIO } from "@/lib/produto-fiscal"
+import { TEST_KEY_PLAIN_PEM } from "../signing/__fixtures__/test-cert"
+import { formatDhEmi } from "./nfce-chave-acesso"
 import {
   buildVendaFiscalSnapshot,
   type BuildSnapshotInput,
@@ -432,6 +434,189 @@ describe("buildNfceXml · QR v3 online opt-in (infNFeSupl)", () => {
           stdio: ["ignore", "pipe", "pipe"],
         }),
       ).toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+const QR_OFFLINE_SIGN = createQrV3OfflinePemSigner(TEST_KEY_PLAIN_PEM)
+const QR_OFFLINE_V3 = {
+  qrCodeBaseUrl: "https://qr.example.test/nfce",
+  urlChave: "https://qr.example.test/consulta",
+  sign: QR_OFFLINE_SIGN,
+}
+
+function payloadP(qrCode: string): string {
+  const p = qrCode.split("?p=")[1]
+  if (!p) throw new Error("qrCode sem ?p=")
+  return p
+}
+
+describe("buildNfceXml · QR v3 offline opt-in (infNFeSupl, tpEmis=9)", () => {
+  const leiaute = readFileSync(LEIAUTE_XSD, "utf8")
+  const xsdV3Offline = new RegExp(`^${extractXsdPattern(leiaute, "QRCODE V3 OFFLINE")}$`)
+  const ctxOff = { serie: 1, numero: 42, tpEmis: 9, qrOfflineV3: { ...QR_OFFLINE_V3 } }
+
+  it("sem QR o XML legado (inclusive tpEmis=9 sem infNFeSupl) permanece byte a byte igual", () => {
+    const s = snap()
+    expect(buildNfceXml(s)).toBe(buildNfceXml(s, { qrOfflineV3: undefined }))
+    const semQr = buildNfceXml(s, { serie: 1, numero: 42, tpEmis: 9 })
+    expect(semQr).toBe(buildNfceXml(s, { serie: 1, numero: 42, tpEmis: 9, qrOfflineV3: undefined }))
+    expect(semQr).not.toContain("<infNFeSupl>")
+    expect(semQr).toContain("<tpEmis>9</tpEmis>")
+  })
+
+  it("o caminho online 021B permanece inalterado", () => {
+    const s = snap()
+    const online = buildNfceXmlResult(s, { serie: 1, numero: 42, qrOnlineV3: { ...QR_ONLINE_V3 } })
+    expect(online.xml).toContain("|3|2")
+    expect(online.xml).not.toContain("<tpEmis>9</tpEmis>")
+    expect(online.infNFeSupl?.qrCode).toBe(`${QR_ONLINE_V3.qrCodeBaseUrl}?p=${online.chaveAcesso}|3|2`)
+  })
+
+  it("tpEmis=9 + qrOfflineV3 emite infNFeSupl após infNFe, sem Signature, qrCode v3 offline", () => {
+    const r = buildNfceXmlResult(snap(), ctxOff)
+    expect(r.chaveAcesso[34]).toBe("9")
+    expect(r.xml).toContain("<tpEmis>9</tpEmis>")
+    expect(r.xml).not.toContain("<Signature")
+    expect(nfeChildOpenings(r.xml)).toEqual(["infNFe", "infNFeSupl"])
+    const inf = r.xml.match(/<infNFe[\s\S]*?<\/infNFe>/)?.[0] ?? ""
+    expect(inf).not.toContain("infNFeSupl")
+    expect(r.infNFeSupl?.qrCode).toMatch(xsdV3Offline)
+    expect(r.infNFeSupl?.urlChave).toBe(QR_OFFLINE_V3.urlChave)
+    expect(r.xml).toMatch(/<infNFeSupl>\s*<qrCode>[^<]+<\/qrCode>\s*<urlChave>[^<]+<\/urlChave>\s*<\/infNFeSupl>/)
+  })
+
+  it("deriva chave/tpAmb/dia/vNF do infNFe; destinatário ausente vira || na concatenação 1–7", () => {
+    const r = buildNfceXmlResult(snap(), ctxOff)
+    const dhEmi = formatDhEmi("2026-06-18T12:00:00.000Z")
+    const encoded = encodeNfceQrV3OfflineUrl({
+      chave: r.chaveAcesso,
+      tpAmb: 2,
+      dhEmi,
+      vNF: "50.00",
+      destinatario: { kind: "ausente" },
+      sign: QR_OFFLINE_SIGN,
+      baseUrl: QR_OFFLINE_V3.qrCodeBaseUrl,
+    })
+    expect(encoded.ok).toBe(true)
+    if (!encoded.ok) return
+    expect(r.infNFeSupl?.qrCode).toBe(encoded.url)
+    expect(payloadP(r.infNFeSupl!.qrCode).startsWith(`${r.chaveAcesso}|3|2|${dhEmi.slice(8, 10)}|50.00||`)).toBe(true)
+    expect(r.xml).toContain(`<dhEmi>${dhEmi}</dhEmi>`)
+    expect(r.xml).toContain("<vNF>50.00</vNF>")
+    expect(r.xml).not.toContain("<dest>")
+  })
+
+  it("destinatário CPF/CNPJ do XML alimenta tpId/idDest; paralelo recusado", () => {
+    const cpfCliente: SnapshotClienteInput = {
+      nome: "Maria Consumidora",
+      documento: "123.456.789-09",
+      kind: "PF",
+      telefone: "",
+      email: "",
+      municipio: "São Paulo",
+    }
+    const cnpjCliente: SnapshotClienteInput = {
+      nome: "Empresa Dest LTDA",
+      documento: "33.445.556/0001-77",
+      kind: "PJ",
+      telefone: "",
+      email: "",
+      municipio: "São Paulo",
+    }
+    const cpf = buildNfceXmlResult(snap({ cliente: cpfCliente }), ctxOff)
+    const cnpj = buildNfceXmlResult(snap({ cliente: cnpjCliente }), ctxOff)
+    expect(cpf.xml).toContain("<CPF>12345678909</CPF>")
+    expect(cnpj.xml).toContain("<CNPJ>33445556000177</CNPJ>")
+    expect(payloadP(cpf.infNFeSupl!.qrCode).includes("|2|12345678909|")).toBe(true)
+    expect(payloadP(cnpj.infNFeSupl!.qrCode).includes("|1|33445556000177|")).toBe(true)
+    expect(() =>
+      buildNfceXml(snap(), {
+        ...ctxOff,
+        qrOfflineV3: { ...QR_OFFLINE_V3, dhEmi: "2026-06-18T09:00:00-03:00" } as typeof QR_OFFLINE_V3 & { dhEmi: string },
+      }),
+    ).toThrow(NfceXmlError)
+  })
+
+  it("fail-closed: online+offline juntos, tpEmis incompatível, URL ou assinatura ausente", () => {
+    const s = snap()
+    const both = () =>
+      buildNfceXml(s, {
+        serie: 1,
+        numero: 42,
+        tpEmis: 9,
+        qrOnlineV3: { ...QR_ONLINE_V3 },
+        qrOfflineV3: { ...QR_OFFLINE_V3 },
+      })
+    const onlineEm9 = () => buildNfceXml(s, { serie: 1, numero: 42, tpEmis: 9, qrOnlineV3: { ...QR_ONLINE_V3 } })
+    const offlineEm1 = () => buildNfceXml(s, { serie: 1, numero: 42, tpEmis: 1, qrOfflineV3: { ...QR_OFFLINE_V3 } })
+    const semAssinatura = () =>
+      buildNfceXml(s, {
+        serie: 1,
+        numero: 42,
+        tpEmis: 9,
+        qrOfflineV3: { qrCodeBaseUrl: QR_OFFLINE_V3.qrCodeBaseUrl, urlChave: QR_OFFLINE_V3.urlChave },
+      })
+    const semUrl = () =>
+      buildNfceXml(s, {
+        serie: 1,
+        numero: 42,
+        tpEmis: 9,
+        qrOfflineV3: { qrCodeBaseUrl: QR_OFFLINE_V3.qrCodeBaseUrl, urlChave: "", sign: QR_OFFLINE_SIGN },
+      })
+    expect(both).toThrow(NfceXmlError)
+    expect(onlineEm9).toThrow(NfceXmlError)
+    expect(offlineEm1).toThrow(NfceXmlError)
+    expect(semAssinatura).toThrow(NfceXmlError)
+    expect(semUrl).toThrow(NfceXmlError)
+    try {
+      both()
+    } catch (e) {
+      expect(e).toMatchObject({ code: "qr_modo_incompativel" })
+    }
+    try {
+      offlineEm1()
+    } catch (e) {
+      expect(e).toMatchObject({ code: "qr_modo_incompativel", campo: "qrOfflineV3" })
+    }
+  })
+
+  it("não emite CSC/idCSC/token e não inventa host SEFAZ-SP", () => {
+    const xml = buildNfceXml(snap(), ctxOff)
+    expect(xml).not.toMatch(/csc|idcsc|cidtoken|chashqrcode|cIdToken|DigestValue/i)
+    expect(xml).not.toMatch(/fazenda\.sp\.gov|nfce\.fazenda/i)
+    expect(xml).toContain("https://qr.example.test/nfce?p=")
+  })
+
+  it("xmllint --nonet valida infNFeSupl offline contra o recorte oficial", () => {
+    const r = buildNfceXmlResult(snap(), ctxOff)
+    const supl = r.xml.match(/<infNFeSupl>[\s\S]*?<\/infNFeSupl>/)?.[0]
+    expect(supl).toBeTruthy()
+    const start = leiaute.indexOf('<xs:element name="infNFeSupl" minOccurs="0">')
+    const end = leiaute.indexOf('<xs:element ref="ds:Signature"/>')
+    const elementDef = leiaute.slice(start, end).replace(' minOccurs="0"', "")
+    const schema = `<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns="http://www.portalfiscal.inf.br/nfe" xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.portalfiscal.inf.br/nfe" elementFormDefault="qualified" attributeFormDefault="unqualified">
+  <xs:include schemaLocation="${TIPOS_XSD}"/>
+  ${elementDef}
+</xs:schema>`
+    const dir = mkdtempSync(join(tmpdir(), "nfce-infnfesupl-off-"))
+    try {
+      const xsdPath = join(dir, "infnfesupl.xsd")
+      const xmlPath = join(dir, "infnfesupl.xml")
+      writeFileSync(xsdPath, schema)
+      writeFileSync(
+        xmlPath,
+        `<?xml version="1.0" encoding="UTF-8"?>\n${supl!.replace("<infNFeSupl>", '<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">')}\n`,
+      )
+      expect(() =>
+        execFileSync("xmllint", ["--noout", "--nonet", "--schema", xsdPath, xmlPath], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ).not.toThrow()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
