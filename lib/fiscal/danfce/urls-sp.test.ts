@@ -27,7 +27,14 @@ describe("P-URL-SP · catálogo oficial SEFAZ-SP", () => {
     expect(homo.qrCodeBaseUrl).toBe("https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode")
     expect(homo.urlChave).toBe("https://www.homologacao.nfce.fazenda.sp.gov.br/consulta")
     expect(prod.qrCodeBaseUrl).toBe("https://www.nfce.fazenda.sp.gov.br/qrcode")
-    expect(prod.urlChave).toBe("https://www.nfce.fazenda.sp.gov.br/consulta")
+    expect(prod.urlChave).toBe("https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica")
+    expect(prod.urlChaveAliases).toEqual(["https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica"])
+    expect(prod.urlChave.length).toBeGreaterThanOrEqual(21)
+    expect(prod.urlChave.length).toBeLessThanOrEqual(85)
+    expect(homo.urlChaveAliases).toEqual([
+      "https://www.homologacao.nfce.fazenda.sp.gov.br/consulta",
+      "https://www.homologacao.nfce.fazenda.sp.gov.br/NFCeConsultaPublica",
+    ])
     expect(homo.fonteOficial).toBe(NFCE_SP_URL_FONTE_OFICIAL)
     expect(homo.confirmadoEm).toBe(NFCE_SP_URL_CONFIRMADO_EM)
     expect(NFCE_SP_PUBLIC_URL_CATALOG).toHaveLength(2)
@@ -44,6 +51,11 @@ describe("P-URL-SP · catálogo oficial SEFAZ-SP", () => {
       ),
     ).toBe(true)
     expect(isOfficialNfceSpUrlChave("https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica", "PRODUCAO")).toBe(true)
+    expect(isOfficialNfceSpUrlChave("https://www.homologacao.nfce.fazenda.sp.gov.br/consulta", "HOMOLOGACAO")).toBe(
+      true,
+    )
+    expect(isOfficialNfceSpUrlChave("https://www.nfce.fazenda.sp.gov.br/consulta", "PRODUCAO")).toBe(false)
+    expect(isOfficialNfceSpUrlChave("https://www.nfce.fazenda.sp.gov.br/consulta")).toBe(false)
     expect(isOfficialNfceSpQrBaseUrl("https://qr.example.test/nfce")).toBe(false)
     expect(isOfficialNfceSpUrlChave("https://consulta.example.test")).toBe(false)
     expect(qrCodeBaseFromPersisted("https://www.nfce.fazenda.sp.gov.br/qrcode?p=ABC|3|1")).toBe(
@@ -54,6 +66,7 @@ describe("P-URL-SP · catálogo oficial SEFAZ-SP", () => {
   it("não contém endpoints SOAP nem lê process.env", () => {
     const src = readFileSync(resolve(HERE, "urls-sp.ts"), "utf8")
     expect(src).not.toMatch(/\.asmx|NFeAutorizacao|statusServico|process\.env/i)
+    expect(src).not.toMatch(/urlChave:\s*"https:\/\/www\.nfce\.fazenda\.sp\.gov\.br\/consulta"/)
     const fetchSpy = vi.spyOn(globalThis, "fetch")
     selectNfceSpPublicUrls("HOMOLOGACAO")
     expect(fetchSpy).not.toHaveBeenCalled()

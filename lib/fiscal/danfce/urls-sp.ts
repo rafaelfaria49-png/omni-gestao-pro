@@ -7,9 +7,10 @@
  * Fonte oficial confirmada em 2026-08-18:
  * https://portal.fazenda.sp.gov.br/servicos/nfce/Paginas/WebServices.aspx
  *
- * A página lista, por ambiente, o endereço longo histórico e o atalho curto.
- * Este GOAL adjudica os atalhos curtos como canônicos do DANFC-e/QR v3
- * (`qrcode` / `consulta`), e aceita os longos como alias oficiais da mesma fonte.
+ * Homologação: a página publica atalho curto e path longo; ambos são oficiais.
+ * Produção: a página NÃO publica `/consulta`. Não inferir por paralelismo com
+ * homologação. `https://www.nfce.fazenda.sp.gov.br/consulta` NÃO é oficial até
+ * existir publicação explícita na fonte.
  *
  * Homologação (página oficial):
  *   QR:  https://www.homologacao.nfce.fazenda.sp.gov.br/qrcode
@@ -20,9 +21,7 @@
  * Produção (página oficial):
  *   QR:  https://www.nfce.fazenda.sp.gov.br/qrcode
  *        https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx
- *   chave: a página lista https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica
- *          o atalho https://www.nfce.fazenda.sp.gov.br/consulta é adjudicado neste
- *          GOAL por paralelismo com o atalho de homologação publicado na mesma fonte.
+ *   chave: https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica
  *
  * Confirmação auxiliar (ENCAT, URLs por UF): https://nfce.encat.org/desenvolvedor/qrcode/
  */
@@ -71,13 +70,12 @@ const PRODUCAO: NfceSpPublicUrls = Object.freeze({
   ambiente: "PRODUCAO",
   tpAmb: "1",
   qrCodeBaseUrl: "https://www.nfce.fazenda.sp.gov.br/qrcode",
-  urlChave: "https://www.nfce.fazenda.sp.gov.br/consulta",
+  urlChave: "https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica",
   qrCodeBaseUrlAliases: Object.freeze([
     "https://www.nfce.fazenda.sp.gov.br/qrcode",
     "https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica/Paginas/ConsultaQRCode.aspx",
   ]),
   urlChaveAliases: Object.freeze([
-    "https://www.nfce.fazenda.sp.gov.br/consulta",
     "https://www.nfce.fazenda.sp.gov.br/NFCeConsultaPublica",
   ]),
   fonteOficial: NFCE_SP_URL_FONTE_OFICIAL,
