@@ -89,11 +89,17 @@ import {
   classifyLocalSaleSync,
   displaySaleNumber,
   isProvisionalSaleRef,
+  type LocalSaleSyncKind,
 } from "@/lib/vendas/local-sale-identity"
 import {
   canStartIndividualQuarantineRecovery,
   INDIVIDUAL_QUARANTINE_RECOVERY_UNAVAILABLE,
 } from "@/lib/vendas/sale-client-sync"
+import {
+  blocksConfirmedSaleAction as blocksServerSaleAction,
+  confirmCancelarVendaHistorico,
+  type SaleIdentityRef,
+} from "@/lib/vendas/cancelar-venda-historico"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -406,9 +412,12 @@ export function VendasArquivoGeral() {
 
   // Cancel dialog
   const [cancelandoId, setCancelandoId] = useState<string | null>(null)
+  const [cancelandoKind, setCancelandoKind] = useState<LocalSaleSyncKind | null>(null)
   const [cancelMotivo, setCancelMotivo] = useState("")
   const [cancelLoading, setCancelLoading] = useState(false)
   const [cancelConfirmForcar, setCancelConfirmForcar] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const cancelInFlightRef = useRef(false)
 
   // Reenvio / descarte de vendas locais pendentes (limpeza LOCAL, não cancela no servidor)
   const [reenviandoId, setReenviandoId] = useState<string | null>(null)
@@ -617,15 +626,44 @@ export function VendasArquivoGeral() {
     [pendingSyncIds],
   )
 
-  const hasRemoteConfirmed = useCallback(
-    (vendaId: string) => mergedVendas.some((v) => v.id === vendaId && v.kind === "REMOTE_CONFIRMED"),
-    [mergedVendas],
-  )
+  const remoteSaleEvidence = useMemo((): SaleIdentityRef[] => {
+    const rows: SaleIdentityRef[] = vendas.map((v) => ({
+      id: v.id,
+      clientSaleId: v.clientSaleId,
+      kind: "REMOTE_CONFIRMED" as const,
+    }))
+    for (const sale of remoteSales) {
+      rows.push({
+        id: sale.id,
+        clientSaleId: sale.clientSaleId,
+        kind: "REMOTE_CONFIRMED",
+      })
+    }
+    if (detalhe && !detalhePendenteLocal) {
+      rows.push({ id: detalhe.id, kind: "REMOTE_CONFIRMED" })
+    }
+    return rows
+  }, [vendas, remoteSales, detalhe, detalhePendenteLocal])
 
   const blocksConfirmedSaleAction = useCallback(
-    (vendaId: string) => isVendaPendenteSync(vendaId) && !hasRemoteConfirmed(vendaId),
-    [hasRemoteConfirmed, isVendaPendenteSync],
+    (vendaId: string, actionKind?: LocalSaleSyncKind | null) =>
+      blocksServerSaleAction({
+        vendaId,
+        actionKind,
+        serverDetailOk: Boolean(detalhe && detalhe.id === vendaId && !detalhePendenteLocal),
+        remoteRows: remoteSaleEvidence,
+        localSales: opsSales,
+      }),
+    [detalhe, detalhePendenteLocal, remoteSaleEvidence, opsSales],
   )
+
+  const resetCancelDialog = useCallback(() => {
+    setCancelandoId(null)
+    setCancelandoKind(null)
+    setCancelMotivo("")
+    setCancelConfirmForcar(false)
+    setCancelError(null)
+  }, [])
 
   const getPendingSaleRecord = useCallback(
     (vendaId: string) =>
@@ -950,8 +988,8 @@ export function VendasArquivoGeral() {
     setCupomOpen(true)
   }, [empresaDocumentos])
 
-  const openCupomFromRow = useCallback(async (vendaId: string) => {
-    if (blocksConfirmedSaleAction(vendaId)) {
+  const openCupomFromRow = useCallback(async (vendaId: string, kind?: LocalSaleSyncKind) => {
+    if (blocksConfirmedSaleAction(vendaId, kind)) {
       toastVendaPendenteBloqueada("imprimir")
       return
     }
@@ -969,57 +1007,65 @@ export function VendasArquivoGeral() {
 
   // ── Cancelamento ─────────────────────────────────────────────────────────────
   const handleCancelar = useCallback(async (forcar = false) => {
-    if (!cancelandoId || !cancelMotivo.trim()) return
-    if (blocksConfirmedSaleAction(cancelandoId)) {
+    if (!cancelandoId || !cancelMotivo.trim() || cancelLoading) return
+    setCancelError(null)
+    setCancelLoading(true)
+    const result = await confirmCancelarVendaHistorico({
+      pedidoId: cancelandoId,
+      storeId,
+      motivo: cancelMotivo,
+      canceladaPor: "Operador",
+      forcar,
+      actionKind: cancelandoKind,
+      serverDetailOk: Boolean(detalhe && detalhe.id === cancelandoId && !detalhePendenteLocal),
+      remoteRows: remoteSaleEvidence,
+      localSales: opsSales,
+      inFlight: cancelInFlightRef,
+    })
+    if (result.status === "in_flight") return
+    setCancelLoading(false)
+    if (result.status === "empty_motivo") return
+    if (result.status === "blocked") {
       toastVendaPendenteBloqueada("cancelar")
-      setCancelandoId(null)
-      setCancelMotivo("")
-      setCancelConfirmForcar(false)
+      setCancelError(result.error)
       return
     }
-    setCancelLoading(true)
-    try {
-      const res = await fetch(`/api/vendas/${encodeURIComponent(cancelandoId)}/cancelar`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          "x-assistec-loja-id": storeId,
-        },
-        body: JSON.stringify({
-          motivo: cancelMotivo.trim(),
-          canceladaPor: "Operador",
-          forcar,
-        }),
-      })
-      const data = await res.json()
-      if (!data.ok) {
-        if (data.requireConfirm && !forcar) {
-          setCancelConfirmForcar(true)
-          return
-        }
-        toast({ title: "Erro", description: data.error ?? "Falha ao cancelar venda.", variant: "destructive" })
-        return
-      }
-      toast({ title: "Venda cancelada", description: `${cancelandoId} cancelada com sucesso.` })
-      setCancelandoId(null)
-      setCancelMotivo("")
-      setCancelConfirmForcar(false)
-      // Refresh detail if open
-      if (detalhe?.id === cancelandoId) {
-        await openDetalhe(cancelandoId)
-      }
-      load()
-    } catch {
-      toast({ title: "Erro", description: "Falha ao cancelar venda.", variant: "destructive" })
-    } finally {
-      setCancelLoading(false)
+    if (result.status === "require_confirm") {
+      setCancelConfirmForcar(true)
+      return
     }
-  }, [cancelandoId, cancelMotivo, storeId, detalhe, openDetalhe, load, toast, blocksConfirmedSaleAction, toastVendaPendenteBloqueada])
+    if (result.status === "error") {
+      setCancelError(result.error)
+      toast({ title: "Erro", description: result.error, variant: "destructive" })
+      return
+    }
+    toast({ title: "Venda cancelada", description: `${cancelandoId} cancelada com sucesso.` })
+    const cancelledId = cancelandoId
+    resetCancelDialog()
+    if (detalhe?.id === cancelledId) {
+      await openDetalhe(cancelledId)
+    }
+    load()
+  }, [
+    cancelandoId,
+    cancelandoKind,
+    cancelMotivo,
+    cancelLoading,
+    storeId,
+    detalhe,
+    detalhePendenteLocal,
+    remoteSaleEvidence,
+    opsSales,
+    openDetalhe,
+    load,
+    toast,
+    toastVendaPendenteBloqueada,
+    resetCancelDialog,
+  ])
 
   const openTroca = useCallback(
-    (vendaId: string) => {
-      if (blocksConfirmedSaleAction(vendaId)) {
+    (vendaId: string, kind?: LocalSaleSyncKind) => {
+      if (blocksConfirmedSaleAction(vendaId, kind)) {
         toastVendaPendenteBloqueada("troca")
         return
       }
@@ -1036,15 +1082,21 @@ export function VendasArquivoGeral() {
     setTrocaInitialSale(undefined)
   }, [])
 
-  const startCancel = useCallback((vendaId: string) => {
-    if (blocksConfirmedSaleAction(vendaId)) {
+  const startCancel = useCallback((vendaId: string, kind?: LocalSaleSyncKind) => {
+    const resolvedKind =
+      kind ??
+      mergedVendas.find((v) => v.id === vendaId && v.kind === "REMOTE_CONFIRMED")?.kind ??
+      mergedVendas.find((v) => v.id === vendaId)?.kind
+    if (blocksConfirmedSaleAction(vendaId, resolvedKind)) {
       toastVendaPendenteBloqueada("cancelar")
       return
     }
     setCancelandoId(vendaId)
+    setCancelandoKind(resolvedKind ?? null)
     setCancelMotivo("")
     setCancelConfirmForcar(false)
-  }, [blocksConfirmedSaleAction, toastVendaPendenteBloqueada])
+    setCancelError(null)
+  }, [blocksConfirmedSaleAction, mergedVendas, toastVendaPendenteBloqueada])
 
   const clearAllFilters = useCallback(() => {
     setStatusFiltro("todos")
@@ -1580,7 +1632,7 @@ export function VendasArquivoGeral() {
                         menuAcoes.push({
                           key: "troca",
                           node: (
-                            <DropdownMenuItem onClick={() => openTroca(v.id)}>
+                            <DropdownMenuItem onClick={() => openTroca(v.id, v.kind)}>
                               <RotateCcw className="h-4 w-4 mr-2" /> Troca / Devolução
                             </DropdownMenuItem>
                           ),
@@ -1590,7 +1642,7 @@ export function VendasArquivoGeral() {
                           node: (
                             <>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => startCancel(v.id)}>
+                              <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => startCancel(v.id, v.kind)}>
                                 <XCircle className="h-4 w-4 mr-2" /> Cancelar venda
                               </DropdownMenuItem>
                             </>
@@ -1744,7 +1796,7 @@ export function VendasArquivoGeral() {
                             {!isPendenteSync && !isQuarantined ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
-                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void openCupomFromRow(v.id)}>
+                                  <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => void openCupomFromRow(v.id, v.kind)}>
                                     <Printer className="h-4 w-4" />
                                   </Button>
                                 </TooltipTrigger>
@@ -2459,7 +2511,7 @@ export function VendasArquivoGeral() {
                     <Button
                       variant="outline"
                       className="flex-1 h-10 gap-2 text-sm"
-                      onClick={() => openTroca(detalhe.id)}
+                      onClick={() => openTroca(detalhe.id, "REMOTE_CONFIRMED")}
                     >
                       <RotateCcw className="h-4 w-4" />
                       Trocar / Devolver
@@ -2468,11 +2520,7 @@ export function VendasArquivoGeral() {
                   <Button
                     variant="ghost"
                     className="h-10 gap-2 px-4 text-sm text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => {
-                      setCancelandoId(detalhe.id)
-                      setCancelMotivo("")
-                      setCancelConfirmForcar(false)
-                    }}
+                    onClick={() => startCancel(detalhe.id, "REMOTE_CONFIRMED")}
                   >
                     <XCircle className="h-4 w-4" />
                     Cancelar
@@ -2488,11 +2536,7 @@ export function VendasArquivoGeral() {
       <AlertDialog
         open={!!cancelandoId}
         onOpenChange={(o) => {
-          if (!o && !cancelLoading) {
-            setCancelandoId(null)
-            setCancelMotivo("")
-            setCancelConfirmForcar(false)
-          }
+          if (!o && !cancelLoading) resetCancelDialog()
         }}
       >
         <AlertDialogContent className="border-border bg-card max-w-md">
@@ -2538,7 +2582,10 @@ export function VendasArquivoGeral() {
                   id="cancel-motivo"
                   placeholder="Descreva o motivo (obrigatório)…"
                   value={cancelMotivo}
-                  onChange={(e) => setCancelMotivo(e.target.value)}
+                  onChange={(e) => {
+                    setCancelMotivo(e.target.value)
+                    if (cancelError) setCancelError(null)
+                  }}
                   className="min-h-[88px] resize-none bg-background border-border"
                   disabled={cancelLoading}
                   autoFocus
@@ -2550,6 +2597,12 @@ export function VendasArquivoGeral() {
           {cancelConfirmForcar && (
             <div className="rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2.5 text-xs text-muted-foreground">
               Deseja continuar mesmo assim?
+            </div>
+          )}
+
+          {cancelError && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-xs text-destructive">
+              {cancelError}
             </div>
           )}
 

@@ -1,5 +1,10 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-18 — Histórico de Vendas: cancelar venda confirmada após recovery
+
+- O diálogo de cancelamento de uma venda `REMOTE_CONFIRMED` (ou com detalhe `GET /api/vendas/[id]` ok) envia o POST oficial `/api/vendas/{id}/cancelar` mesmo se existir cópia local stale do mesmo id.
+- Venda realmente `LOCAL_PENDING` ou `LOCAL_QUARANTINED` continua bloqueada. Motivo vazio, double-submit e `forcar=true` automático não passam. Erro da API permanece visível no diálogo.
+
 ## 2026-08-15 — Operações V4: recebimento financeiro transversal
 
 - O ticket Financeiro da OS passa a operar o caixa da ordem: total, recebido, saldo e situação reais.
