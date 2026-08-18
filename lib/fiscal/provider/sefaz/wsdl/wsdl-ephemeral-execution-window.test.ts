@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest"
+import { createHash } from "node:crypto"
+import { describe, expect, it, vi } from "vitest"
 import { SEFAZ_WSDL_ACQUISITION_TARGETS } from "./wsdl-acquisition-target"
 import {
   WSDL_EPHEMERAL_EXECUTION_WINDOW,
@@ -10,6 +11,17 @@ import {
   type WsdlActivationLedgerClient,
   type WsdlExecutionWindowConfig,
 } from "./wsdl-ephemeral-execution-window"
+
+const NEW_ACTIVATION_ID = "wsdl-h9h10-20260818-1800z-0152a8c5b96f3ffc"
+const DEAD_ACTIVATION_IDS = [
+  "wsdl-h9h10-20260817-1200z-aacb10409a3a805b",
+  "wsdl-h9h10-20260814-2000z-8b84c7cad369cf62",
+  "wsdl-h9h10-20260815-1200z-a27b95ada93a0451",
+] as const
+
+function sha256Utf8(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex")
+}
 
 const DISABLED_CONFIG: WsdlExecutionWindowConfig = Object.freeze({
   activationId: null,
@@ -97,6 +109,63 @@ describe("janela efêmera WSDL versionada", () => {
       active: false,
       reason: "disabled",
     })
+  })
+
+  it("materializa a NOVA janela H-9/H-10 sem reutilizar activation histórica", () => {
+    expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
+      activationId: NEW_ACTIVATION_ID,
+      notBeforeUtc: "2026-08-18T18:00:00Z",
+      expiresAtUtc: "2026-08-18T18:10:00Z",
+    })
+    for (const deadId of DEAD_ACTIVATION_IDS) {
+      expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
+    }
+    expect(Object.values(WSDL_EPHEMERAL_EXECUTION_WINDOW)).not.toEqual(
+      expect.arrayContaining([...DEAD_ACTIVATION_IDS]),
+    )
+    expect(
+      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.expiresAtUtc!).getTime() -
+        new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.notBeforeUtc!).getTime(),
+    ).toBe(10 * 60 * 1_000)
+  })
+
+  it("gera hash e dedupe próprios da nova activation, distintos da activation morta", () => {
+    const newHash = sha256Utf8(NEW_ACTIVATION_ID)
+    const deadHash = sha256Utf8("wsdl-h9h10-20260817-1200z-aacb10409a3a805b")
+    expect(newHash).toBe("8df97eb89fd0061371f9a5087f7610a5a2a130ba70a4e9dfbccb5fa11c744df6")
+    expect(deadHash).toBe("c7471a2a693938f16aaeb69e7f486c70ce4483f412ebbc8421430f024f622ed5")
+    expect(newHash).not.toBe(deadHash)
+    expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).toBe(
+      "fiscal:wsdl:h9-h10:v1:8df97eb89fd0061371f9a5087f7610a5a2a130ba70a4e9dfbccb5fa11c744df6",
+    )
+    expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).not.toBe(`fiscal:wsdl:h9-h10:v1:${deadHash}`)
+  })
+
+  it("avalia a janela materializada: not_started, active, expired em expiresAt e após", () => {
+    const config = WSDL_EPHEMERAL_EXECUTION_WINDOW
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-18T17:59:59Z"))).toEqual({
+      active: false,
+      reason: "not_started",
+    })
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-18T18:00:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-18T18:05:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-18T18:09:59Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-18T18:10:00Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-18T18:10:01Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
+  })
+
+  it("não dispara rede ao avaliar a janela materializada nem ao hashear a activation", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-08-18T18:05:00Z"))
+    sha256Utf8(NEW_ACTIVATION_ID)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
   })
 
   it("aceita a constante versionada somente dormente ou integralmente configurada", () => {
@@ -213,6 +282,33 @@ describe("ledger persistente global one-shot", () => {
       code: "already_consumed_or_persistence_unavailable",
     })
     expect(shared.jobs).toHaveLength(1)
+  })
+
+  it("ledger da nova activation grava dedupe e hash próprios, sem activation histórica", async () => {
+    const shared = sharedLedger()
+    const gate = createWsdlExecutionGateTestHarness({
+      client: ledgerClient(shared),
+      config: WSDL_EPHEMERAL_EXECUTION_WINDOW,
+      clock: () => new Date("2026-08-18T18:05:00Z"),
+    })
+    const consumed = await gate.consume({ storeId: "loja-1", operatorId: "admin" })
+    expect(consumed.ok).toBe(true)
+    expect(shared.jobs).toHaveLength(1)
+    expect(shared.logs).toHaveLength(1)
+    expect(shared.jobs[0]).toMatchObject({
+      storeId: "loja-1",
+      vendaId: "wsdl-h9-h10:8df97eb89fd0061371f9a5087f7610a5a2a130ba70a4e9dfbccb5fa11c744df6",
+      dedupeKey:
+        "fiscal:wsdl:h9-h10:v1:8df97eb89fd0061371f9a5087f7610a5a2a130ba70a4e9dfbccb5fa11c744df6",
+      payload: expect.objectContaining({
+        activationHash: "8df97eb89fd0061371f9a5087f7610a5a2a130ba70a4e9dfbccb5fa11c744df6",
+        targetCount: WSDL_EXECUTION_EXPECTED_TARGETS,
+      }),
+    })
+    expect(JSON.stringify(shared)).not.toContain("wsdl-h9h10-20260817-1200z-aacb10409a3a805b")
+    expect(JSON.stringify(shared)).not.toContain(
+      "c7471a2a693938f16aaeb69e7f486c70ce4483f412ebbc8421430f024f622ed5",
+    )
   })
 
   it("não consome para outra loja nem fora da janela", async () => {
