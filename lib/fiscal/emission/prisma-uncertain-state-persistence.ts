@@ -109,6 +109,9 @@ async function loadDocument(
         protocolo: true,
         cStat: true,
         xMotivo: true,
+        digestValue: true,
+        qrCodeData: true,
+        urlConsulta: true,
       },
     }),
     findEmissionJob(client, locator),
@@ -133,6 +136,9 @@ async function loadDocument(
     protocolo: stringOrNull(note.protocolo),
     cStat: stringOrNull(note.cStat),
     xMotivo: stringOrNull(note.xMotivo),
+    digestValue: stringOrNull(note.digestValue),
+    qrCodeData: stringOrNull(note.qrCodeData),
+    urlConsulta: stringOrNull(note.urlConsulta),
   }
 }
 
@@ -141,6 +147,42 @@ function mergePayload(
   updates: UnknownRecord,
 ): UnknownRecord {
   return { ...record(payloadValue), ...updates }
+}
+
+/**
+ * Campo opcional do resultado AUTHORIZED: ausente/vazio não apaga o persistido;
+ * igual converge; diferente falha fechado. Nunca recalcula QR.
+ */
+function incomingOptionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== "string" || value.length === 0) return undefined
+  return value
+}
+
+function assertQrMetadataImmutable(
+  existing: UnknownRecord,
+  result: { digestValue?: string | null; qrCodeData?: string | null; urlConsulta?: string | null },
+): void {
+  const campos = [
+    ["digestValue", existing.digestValue, result.digestValue],
+    ["qrCodeData", existing.qrCodeData, result.qrCodeData],
+    ["urlConsulta", existing.urlConsulta, result.urlConsulta],
+  ] as const
+  for (const [campo, persisted, incoming] of campos) {
+    const prev = stringOrNull(persisted)
+    const next = incomingOptionalString(incoming)
+    if (next === undefined || prev === null || prev === next) continue
+    throw new AuthorizedDivergenceError(
+      "metadados_qr_imutavel_diverge",
+      `Tentativa de substituir ${campo} persistido por valor divergente; operação bloqueada.`,
+    )
+  }
+}
+
+function preserveOrFillQrField(existing: unknown, incoming: unknown): string | null {
+  const next = incomingOptionalString(incoming)
+  if (next === undefined) return stringOrNull(existing)
+  return next
 }
 
 export function createPrismaUncertainStatePersistence(
@@ -171,6 +213,9 @@ export function createPrismaUncertainStatePersistence(
             numero: document.numero,
             chaveAcesso: document.chaveAcesso,
             xmlAssinado: document.xmlAssinado,
+            digestValue: document.digestValue ?? null,
+            qrCodeData: document.qrCodeData ?? null,
+            urlConsulta: document.urlConsulta ?? null,
             status: "TRANSMITINDO",
             ultimoErro: null,
           },
@@ -210,6 +255,9 @@ export function createPrismaUncertainStatePersistence(
               ambiente: document.ambiente,
               modelo: document.modelo,
               persistedAt: now.toISOString(),
+              digestValuePersistido: Boolean(document.digestValue),
+              qrCodeDataPersistido: Boolean(document.qrCodeData),
+              urlConsultaPersistido: Boolean(document.urlConsulta),
             },
           },
         })
@@ -357,6 +405,9 @@ export function createPrismaUncertainStatePersistence(
             protocolo: true,
             cStat: true,
             xMotivo: true,
+            digestValue: true,
+            qrCodeData: true,
+            urlConsulta: true,
           },
         }))
         if (!existing.id) {
@@ -378,8 +429,14 @@ export function createPrismaUncertainStatePersistence(
             "Tentativa de trocar o protocolo de autorização; operação bloqueada.",
           )
         }
+        assertQrMetadataImmutable(existing, result)
+        const digestValue = preserveOrFillQrField(existing.digestValue, result.digestValue)
+        const qrCodeData = preserveOrFillQrField(existing.qrCodeData, result.qrCodeData)
+        const urlConsulta = preserveOrFillQrField(existing.urlConsulta, result.urlConsulta)
         // Autorização completa já persistida: reprocessamento com os mesmos
         // bytes converge sem escrever nada (idempotência — ADR-0018 §2.3.1).
+        // Metadata QR omitida no resultado é preservada (não chega a esta
+        // escrita); metadata divergente já falhou fechado acima.
         if (existingXml !== null && existingProtocolo !== null) {
           if (
             stringOrNull(existing.cStat) !== stringOrNull(result.cStat) ||
@@ -419,9 +476,9 @@ export function createPrismaUncertainStatePersistence(
             xMotivo: result.xMotivo,
             dataAutorizacao: now,
             xmlAutorizado: result.xmlAutorizado,
-            digestValue: result.digestValue ?? null,
-            qrCodeData: result.qrCodeData ?? null,
-            urlConsulta: result.urlConsulta ?? null,
+            digestValue,
+            qrCodeData,
+            urlConsulta,
             ultimoErro: null,
           },
         })
@@ -468,9 +525,9 @@ export function createPrismaUncertainStatePersistence(
               source,
               protocoloPersistido: true,
               xmlAutorizadoPersistido: true,
-              digestValuePersistido: Boolean(result.digestValue),
-              qrCodeDataPersistido: Boolean(result.qrCodeData),
-              urlConsultaPersistido: Boolean(result.urlConsulta),
+              digestValuePersistido: Boolean(digestValue),
+              qrCodeDataPersistido: Boolean(qrCodeData),
+              urlConsultaPersistido: Boolean(urlConsulta),
             },
           },
         })

@@ -1,0 +1,175 @@
+/**
+ * Preparer canônico da NFC-e finalizada (GOAL 021 · persistência QR pré-transmissão).
+ *
+ * Única composição sancionada para o documento que entra em
+ * `persistBeforeTransmission`: snapshot congelado → `buildNfceXmlAssinavelResult`
+ * (QR v3 online ou offline) → `signNfceXmlDetailed` → `FinalizedFiscalDocument`
+ * com identidade, `xmlAssinado`, `digestValue`, `qrCodeData` e `urlConsulta`.
+ *
+ * `qrCodeData`/`urlConsulta` vêm de `infNFeSupl` estrutural — não de regex no XML.
+ * URLs entram só por configuração injetada (P-URL-SP aberto). Sem QR no caminho
+ * SEFAZ-ready: fail closed, nada é persistido nem transmitido.
+ * Offline (`tpEmis=9`): a assinatura RSA-SHA-1 do payload QR reusa o mesmo
+ * material PEM do XMLDSig; as duas assinaturas permanecem distintas.
+ *
+ * Não transmite, não abre rede, não provisiona A1 real, não cria pipeline paralelo.
+ */
+
+import { createQrV3OfflinePemSigner } from "@/lib/fiscal/danfce/qr-v3"
+import {
+  signNfceXmlDetailed,
+  type FiscalCertificateMaterial,
+  type SignNfceOptions,
+} from "@/lib/fiscal/signing"
+import {
+  buildNfceXmlAssinavelResult,
+  NfceXmlError,
+  type NfceQrOfflineV3Config,
+  type NfceQrOnlineV3Config,
+} from "@/lib/fiscal/xml"
+import type { VendaFiscalSnapshot } from "@/lib/fiscal/venda-fiscal-snapshot"
+
+import type {
+  FinalizedDocumentPreparer,
+  FinalizedFiscalDocument,
+  FiscalDocumentLocator,
+} from "./uncertain-state.types"
+
+/** URLs injetadas do QR v3. Nenhum host SEFAZ é literal aqui (P-URL-SP aberto). */
+export type NfceQrUrlConfig = {
+  qrCodeBaseUrl: string
+  urlChave: string
+}
+
+export type NfceFinalizationSource = {
+  storeId: string
+  vendaId: string
+  notaFiscalId: string
+  modelo: "NFCE"
+  ambiente: "HOMOLOGACAO"
+  serie: number
+  numero: number
+  snapshot: VendaFiscalSnapshot
+  tpEmis?: number
+  dataEmissao?: string | Date
+  uf?: string
+  correlationId?: string
+}
+
+export type FinalizedNfcePreparerDependencies = {
+  resolveSource: (locator: FiscalDocumentLocator) => Promise<NfceFinalizationSource>
+  certificado: FiscalCertificateMaterial
+  senha?: string
+  /**
+   * Obrigatório no caminho SEFAZ-ready. Ausência falha fechado **antes** de
+   * produzir XML, persistir ou transmitir.
+   */
+  qrUrls?: NfceQrUrlConfig | null
+  signOptions?: SignNfceOptions
+}
+
+export type NfceQrConfigMissingCode = "qr_config_ausente"
+
+export class NfceQrConfigMissingError extends Error {
+  readonly code: NfceQrConfigMissingCode = "qr_config_ausente"
+  constructor(message: string) {
+    super(message)
+    this.name = "NfceQrConfigMissingError"
+  }
+}
+
+function requireInjectedQrUrls(urls: NfceQrUrlConfig | null | undefined): NfceQrUrlConfig {
+  if (!urls || typeof urls !== "object") {
+    throw new NfceQrConfigMissingError(
+      "QR NFC-e v3 ausente no caminho SEFAZ-ready; finalização recusada antes da persistência.",
+    )
+  }
+  const qrCodeBaseUrl = typeof urls.qrCodeBaseUrl === "string" ? urls.qrCodeBaseUrl.trim() : ""
+  const urlChave = typeof urls.urlChave === "string" ? urls.urlChave.trim() : ""
+  if (!qrCodeBaseUrl || !urlChave) {
+    throw new NfceQrConfigMissingError(
+      "QR NFC-e v3 exige qrCodeBaseUrl e urlChave injetadas; finalização recusada antes da persistência.",
+    )
+  }
+  return { qrCodeBaseUrl, urlChave }
+}
+
+function sameLocator(locator: FiscalDocumentLocator, source: NfceFinalizationSource): boolean {
+  return (
+    source.storeId === locator.storeId &&
+    source.vendaId === locator.vendaId &&
+    source.notaFiscalId === locator.notaFiscalId
+  )
+}
+
+/**
+ * Fábrica do preparer canônico da NFC-e. Um único pipeline: o coordenador
+ * `transmitWithUncertainStateSafety` já chama `prepare` → `persistBeforeTransmission`
+ * → `provider.transmit`. Esta factory não cria uma segunda fronteira.
+ */
+export function createFinalizedNfcePreparer(
+  deps: FinalizedNfcePreparerDependencies,
+): FinalizedDocumentPreparer {
+  return {
+    async prepare(locator: FiscalDocumentLocator): Promise<FinalizedFiscalDocument> {
+      const urls = requireInjectedQrUrls(deps.qrUrls)
+      const source = await deps.resolveSource(locator)
+      if (!sameLocator(locator, source)) {
+        throw new NfceXmlError(
+          "snapshot_invalido",
+          "Fonte de finalização não pertence ao escopo fiscal solicitado.",
+        )
+      }
+
+      const tpEmis = source.tpEmis ?? 1
+      const qrOnlineV3: NfceQrOnlineV3Config | undefined =
+        tpEmis === 9 ? undefined : { qrCodeBaseUrl: urls.qrCodeBaseUrl, urlChave: urls.urlChave }
+      const qrOfflineV3: NfceQrOfflineV3Config | undefined =
+        tpEmis === 9
+          ? {
+              qrCodeBaseUrl: urls.qrCodeBaseUrl,
+              urlChave: urls.urlChave,
+              sign: createQrV3OfflinePemSigner(deps.certificado.privateKeyPem),
+            }
+          : undefined
+
+      const built = buildNfceXmlAssinavelResult(source.snapshot, {
+        serie: source.serie,
+        numero: source.numero,
+        tpEmis,
+        dataEmissao: source.dataEmissao,
+        qrOnlineV3,
+        qrOfflineV3,
+      })
+      if (!built.infNFeSupl) {
+        throw new NfceQrConfigMissingError(
+          "QR NFC-e v3 não materializou infNFeSupl; XML externo sem QR recusado.",
+        )
+      }
+
+      const signed = signNfceXmlDetailed(
+        built.xml,
+        deps.certificado,
+        deps.senha ?? "",
+        deps.signOptions,
+      )
+
+      return {
+        storeId: locator.storeId,
+        vendaId: locator.vendaId,
+        notaFiscalId: locator.notaFiscalId,
+        modelo: source.modelo,
+        ambiente: source.ambiente,
+        serie: built.serie,
+        numero: built.numero,
+        chaveAcesso: built.chaveAcesso,
+        uf: source.uf,
+        correlationId: source.correlationId,
+        xmlAssinado: signed.xml,
+        digestValue: signed.digestValue,
+        qrCodeData: built.infNFeSupl.qrCode,
+        urlConsulta: built.infNFeSupl.urlChave,
+      }
+    },
+  }
+}
