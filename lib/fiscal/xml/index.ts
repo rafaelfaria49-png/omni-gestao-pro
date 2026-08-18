@@ -46,6 +46,7 @@ export {
 export type {
   NfceXmlContext,
   NfceXmlErrorCode,
+  NfceQrOnlineV3Config,
   NfceValidationIssue,
   NfceValidationResult,
   BuildNfceXmlResult,

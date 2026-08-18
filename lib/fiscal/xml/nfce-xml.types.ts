@@ -38,6 +38,25 @@ export type NfceXmlContext = {
    * contrato é provado — não existe caminho que gere NFC-e sem declaração sem essa prova.
    */
   omitDeclaration?: boolean
+  /**
+   * Opt-in do QR NFC-e v3 **online** (`infNFeSupl`). Ausente → XML idêntico ao caminho legado.
+   *
+   * `chave` e `tpAmb` NÃO entram aqui: derivam do mesmo build que produz `infNFe`.
+   * URLs são injetadas pelo caller (P-URL-SP aberto — nenhum host SEFAZ-SP é literal).
+   * `tpEmis=9` / QR offline recusados neste slice.
+   */
+  qrOnlineV3?: NfceQrOnlineV3Config
+}
+
+/**
+ * Configuração injetada do QR v3 online. Sem env, sem URL de SP hardcoded.
+ * `urlChave` é a consulta por chave (ZX03), distinta da base do QR (`qrCodeBaseUrl`).
+ */
+export type NfceQrOnlineV3Config = {
+  /** URL base do QR (`https://host/…` sem `?p=`). */
+  qrCodeBaseUrl: string
+  /** URL da consulta por chave de acesso (XSD: TString, 21–85). */
+  urlChave: string
 }
 
 export type NfceXmlErrorCode =
@@ -51,6 +70,7 @@ export type NfceXmlErrorCode =
   | "item_sem_ncm"
   | "item_sem_cfop"
   | "destinatario_invalido"
+  | "qr_online_invalido"
 
 /** Erro estrutural do builder — lançado quando falta informação OBRIGATÓRIA. */
 export class NfceXmlError extends Error {
@@ -93,4 +113,6 @@ export type BuildNfceXmlResult = {
   numero: number
   numeracaoPlaceholder: boolean
   validacao: NfceValidationResult
+  /** Presente somente quando `qrOnlineV3` válido foi injetado. Não persiste em `NotaFiscal`. */
+  infNFeSupl?: { qrCode: string; urlChave: string }
 }

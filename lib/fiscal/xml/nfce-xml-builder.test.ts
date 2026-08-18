@@ -6,7 +6,13 @@
  * snapshot atual (`buildVendaFiscalSnapshot`). Os impostos vêm de `snapshot.tributacao`
  * (Simples Nacional CSOSN 102 → ICMSSN102 + PIS/COFINS CST 49). Nunca recalcula tributo.
  */
+import { execFileSync } from "node:child_process"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join, resolve } from "node:path"
 import { describe, it, expect } from "vitest"
+import { encodeNfceQrV3OnlineUrl } from "@/lib/fiscal/danfce/qr-v3"
+import { sanitizeProdutoFiscal, PRODUTO_FISCAL_VAZIO } from "@/lib/produto-fiscal"
 import {
   buildVendaFiscalSnapshot,
   type BuildSnapshotInput,
@@ -15,10 +21,9 @@ import {
   type SnapshotLojaInput,
   type VendaFiscalSnapshot,
 } from "../venda-fiscal-snapshot"
-import { sanitizeProdutoFiscal, PRODUTO_FISCAL_VAZIO } from "@/lib/produto-fiscal"
 import { buildNfceXml, buildNfceXmlResult } from "./nfce-xml-builder"
-import { validateNfceSnapshot } from "./nfce-xml-validation"
 import { NFCE_VER_PROC, NfceXmlError } from "./nfce-xml.types"
+import { validateNfceSnapshot } from "./nfce-xml-validation"
 
 const LOJA_OK: SnapshotLojaInput = {
   cnpj: "11.222.333/0001-81",
@@ -237,5 +242,198 @@ describe("buildNfceXml · CSOSN 500 (ST substituído) → grupo ICMSSN500 (GOAL-
     expect(xml).not.toContain("<ICMSSN102>")
     // ICMS próprio segue não destacado no substituído
     expect(xml).toContain("<vICMS>0.00</vICMS>")
+  })
+})
+
+const QR_ONLINE_V3 = {
+  qrCodeBaseUrl: "https://qr.example.test/nfce",
+  urlChave: "https://qr.example.test/consulta",
+} as const
+
+const LEIAUTE_XSD = resolve(
+  process.cwd(),
+  "lib/fiscal/xsd/schemas/PL_010e_v1.02/NFe/leiauteNFe_v4.00.xsd",
+)
+const TIPOS_XSD = resolve(
+  process.cwd(),
+  "lib/fiscal/xsd/schemas/PL_010e_v1.02/NFe/tiposBasico_v4.00.xsd",
+)
+
+function nfeChildOpenings(xml: string): string[] {
+  return [...xml.matchAll(/<(infNFeSupl|infNFe|Signature)(?:\s|>)/g)].map((m) => m[1] ?? "")
+}
+
+function extractXsdPattern(source: string, marker: string): string {
+  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = source.match(new RegExp(`<!--${escaped}-->\\s*<xs:pattern value="([^"]+)"`))
+  if (!match?.[1]) throw new Error(`pattern XSD ausente: ${marker}`)
+  return match[1]
+}
+
+describe("buildNfceXml · QR v3 online opt-in (infNFeSupl)", () => {
+  const leiaute = readFileSync(LEIAUTE_XSD, "utf8")
+  const tipos = readFileSync(TIPOS_XSD, "utf8")
+  const xsdV3Online = new RegExp(`^${extractXsdPattern(leiaute, "QRCODE V3 ONLINE")}$`)
+  const ctx = { serie: 1, numero: 42, qrOnlineV3: { ...QR_ONLINE_V3 } }
+
+  it("sem qrOnlineV3 o XML permanece byte a byte igual ao caminho legado", () => {
+    const s = snap()
+    expect(buildNfceXml(s)).toBe(buildNfceXml(s, {}))
+    expect(buildNfceXml(s, { serie: 1, numero: 42 })).toBe(
+      buildNfceXml(s, { serie: 1, numero: 42, qrOnlineV3: undefined }),
+    )
+    expect(buildNfceXml(s)).not.toContain("<infNFeSupl>")
+    expect(buildNfceXml(s)).not.toContain("<qrCode>")
+    expect(buildNfceXml(s)).not.toContain("<urlChave>")
+    expect(buildNfceXmlResult(s).infNFeSupl).toBeUndefined()
+  })
+
+  it("com configuração online válida emite infNFeSupl após infNFe e antes de qualquer Signature", () => {
+    const r = buildNfceXmlResult(snap(), ctx)
+    const inf = r.xml.match(/<infNFe[\s\S]*?<\/infNFe>/)?.[0] ?? ""
+    expect(inf).toContain("<infNFe")
+    expect(inf).not.toContain("infNFeSupl")
+    expect(r.xml).not.toContain("<Signature")
+    expect(nfeChildOpenings(r.xml)).toEqual(["infNFe", "infNFeSupl"])
+    expect(r.xml).toMatch(
+      /<infNFeSupl>\s*<qrCode>[^<]+<\/qrCode>\s*<urlChave>[^<]+<\/urlChave>\s*<\/infNFeSupl>/,
+    )
+    expect(r.infNFeSupl?.urlChave).toBe(QR_ONLINE_V3.urlChave)
+  })
+
+  it("deriva chave/tpAmb do XML canônico (homologação) e casa o pattern XSD v3 online", () => {
+    const r = buildNfceXmlResult(snap(), ctx)
+    expect(r.xml).toContain("<tpAmb>2</tpAmb>")
+    const encoded = encodeNfceQrV3OnlineUrl({
+      chave: r.chaveAcesso,
+      tpAmb: 2,
+      baseUrl: QR_ONLINE_V3.qrCodeBaseUrl,
+    })
+    expect(encoded.ok).toBe(true)
+    if (!encoded.ok) return
+    expect(r.infNFeSupl?.qrCode).toBe(encoded.url)
+    expect(r.infNFeSupl?.qrCode).toBe(`${QR_ONLINE_V3.qrCodeBaseUrl}?p=${r.chaveAcesso}|3|2`)
+    expect(r.infNFeSupl?.qrCode).toMatch(xsdV3Online)
+    expect(r.xml).toContain(`<qrCode>${encoded.url}</qrCode>`)
+    expect(r.xml).toContain(`<urlChave>${QR_ONLINE_V3.urlChave}</urlChave>`)
+  })
+
+  it("deriva tpAmb=1 em produção sem aceitar tpAmb paralelo", () => {
+    const r = buildNfceXmlResult(snap({ loja: { ...LOJA_OK, ambiente: "PRODUCAO" } }), ctx)
+    expect(r.xml).toContain("<tpAmb>1</tpAmb>")
+    expect(r.infNFeSupl?.qrCode).toBe(`${QR_ONLINE_V3.qrCodeBaseUrl}?p=${r.chaveAcesso}|3|1`)
+    expect(r.infNFeSupl?.qrCode).toMatch(xsdV3Online)
+    expect(() =>
+      buildNfceXml(snap(), {
+        ...ctx,
+        qrOnlineV3: { ...QR_ONLINE_V3, chave: r.chaveAcesso, tpAmb: 1 } as typeof QR_ONLINE_V3 & {
+          chave: string
+          tpAmb: number
+        },
+      }),
+    ).toThrow(NfceXmlError)
+  })
+
+  it("urlChave obedece TString 21–85 do XSD versionado; URL ausente/curta falha fechado", () => {
+    expect(tipos).toContain('pattern value="[!-ÿ]{1}[ -ÿ]{0,}[!-ÿ]{1}|[!-ÿ]{1}"')
+    expect(leiaute).toMatch(/<xs:element name="urlChave">[\s\S]*?<xs:minLength value="21"\/>[\s\S]*?<xs:maxLength value="85"\/>/)
+    expect(QR_ONLINE_V3.urlChave.length).toBeGreaterThanOrEqual(21)
+    expect(QR_ONLINE_V3.urlChave.length).toBeLessThanOrEqual(85)
+
+    const missingUrl = () =>
+      buildNfceXml(snap(), { serie: 1, numero: 42, qrOnlineV3: { qrCodeBaseUrl: QR_ONLINE_V3.qrCodeBaseUrl, urlChave: "" } })
+    const missingBase = () =>
+      buildNfceXml(snap(), { serie: 1, numero: 42, qrOnlineV3: { qrCodeBaseUrl: "", urlChave: QR_ONLINE_V3.urlChave } })
+    const shortChave = () =>
+      buildNfceXml(snap(), {
+        serie: 1,
+        numero: 42,
+        qrOnlineV3: { qrCodeBaseUrl: QR_ONLINE_V3.qrCodeBaseUrl, urlChave: "https://x.test" },
+      })
+    expect(missingUrl).toThrow(NfceXmlError)
+    expect(missingBase).toThrow(NfceXmlError)
+    expect(shortChave).toThrow(NfceXmlError)
+    try {
+      missingUrl()
+    } catch (e) {
+      expect(e).toMatchObject({ code: "qr_online_invalido", campo: "qrOnlineV3.urlChave" })
+    }
+  })
+
+  it("recusa tpEmis=9 neste caminho e não torna o QR obrigatório no legado", () => {
+    expect(() => buildNfceXml(snap(), { serie: 1, numero: 42, tpEmis: 9, qrOnlineV3: { ...QR_ONLINE_V3 } })).toThrow(
+      NfceXmlError,
+    )
+    const legado = buildNfceXmlResult(snap(), { serie: 1, numero: 42, tpEmis: 9 })
+    expect(legado.xml).not.toContain("<infNFeSupl>")
+    expect(legado.chaveAcesso[34]).toBe("9")
+  })
+
+  it("não emite CSC/idCSC/token e não inventa host SEFAZ-SP", () => {
+    const xml = buildNfceXml(snap(), ctx)
+    expect(xml).not.toMatch(/csc|idcsc|cidtoken|chashqrcode|cIdToken/i)
+    expect(xml).not.toMatch(/fazenda\.sp\.gov|nfce\.fazenda/i)
+    expect(xml).toContain("https://qr.example.test/nfce?p=")
+    expect(xml).toContain(`<urlChave>${QR_ONLINE_V3.urlChave}</urlChave>`)
+  })
+
+  it("o XSD oficial versionado declara infNFe → infNFeSupl (0–1) → Signature, sem CDATA obrigatório", () => {
+    const tnfe = leiaute.slice(leiaute.indexOf('<xs:complexType name="TNFe">'), leiaute.indexOf('<xs:complexType name="TProtNFe">'))
+    const inf = tnfe.indexOf('<xs:element name="infNFe">')
+    const supl = tnfe.indexOf('<xs:element name="infNFeSupl" minOccurs="0">')
+    const sig = tnfe.indexOf('<xs:element ref="ds:Signature"/>')
+    expect(inf).toBeGreaterThanOrEqual(0)
+    expect(supl).toBeGreaterThan(inf)
+    expect(sig).toBeGreaterThan(supl)
+    expect(leiaute).toContain("QRCODE V3 ONLINE")
+    expect(leiaute).toContain('whiteSpace value="preserve"')
+    const helper = readFileSync(resolve(process.cwd(), "lib/fiscal/xml/nfce-infnfesupl-online.ts"), "utf8")
+    const writer = readFileSync(resolve(process.cwd(), "lib/fiscal/xml/xml-writer.ts"), "utf8")
+    expect(helper).not.toMatch(/CDATA/)
+    expect(writer).not.toMatch(/CDATA/)
+  })
+
+  it("xmllint --nonet valida infNFeSupl extraído contra o recorte oficial do XSD", () => {
+    const r = buildNfceXmlResult(snap(), ctx)
+    const supl = r.xml.match(/<infNFeSupl>[\s\S]*?<\/infNFeSupl>/)?.[0]
+    expect(supl).toBeTruthy()
+    const start = leiaute.indexOf('<xs:element name="infNFeSupl" minOccurs="0">')
+    const end = leiaute.indexOf('<xs:element ref="ds:Signature"/>')
+    const elementDef = leiaute.slice(start, end).replace(' minOccurs="0"', "")
+    const schema = `<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns="http://www.portalfiscal.inf.br/nfe" xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.portalfiscal.inf.br/nfe" elementFormDefault="qualified" attributeFormDefault="unqualified">
+  <xs:include schemaLocation="${TIPOS_XSD}"/>
+  ${elementDef}
+</xs:schema>`
+    const dir = mkdtempSync(join(tmpdir(), "nfce-infnfesupl-"))
+    try {
+      const xsdPath = join(dir, "infnfesupl.xsd")
+      const xmlPath = join(dir, "infnfesupl.xml")
+      writeFileSync(xsdPath, schema)
+      writeFileSync(
+        xmlPath,
+        `<?xml version="1.0" encoding="UTF-8"?>\n${supl!.replace("<infNFeSupl>", '<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">')}\n`,
+      )
+      expect(() =>
+        execFileSync("xmllint", ["--noout", "--nonet", "--schema", xsdPath, xmlPath], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ).not.toThrow()
+
+      const invalidPath = join(dir, "infnfesupl-sem-url.xml")
+      writeFileSync(
+        invalidPath,
+        `<?xml version="1.0" encoding="UTF-8"?>\n<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">${r.infNFeSupl ? `<qrCode>${r.infNFeSupl.qrCode}</qrCode>` : ""}</infNFeSupl>\n`,
+      )
+      expect(() =>
+        execFileSync("xmllint", ["--noout", "--nonet", "--schema", xsdPath, invalidPath], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }),
+      ).toThrow()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

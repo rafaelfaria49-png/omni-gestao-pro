@@ -168,6 +168,22 @@ describe("buildNfceXmlAssinavel · produtor do caminho de assinatura/transmissã
     expect(childElements(raiz, "infNFe", "http://www.portalfiscal.inf.br/nfe").length).toBe(1)
   })
 
+  it("QR online v3 opt-in permanece embutível com infNFeSupl irmão de infNFe", () => {
+    const xml = buildNfceXmlAssinavel(dryRunSnapshot("simples"), {
+      ...CTX,
+      qrOnlineV3: {
+        qrCodeBaseUrl: "https://qr.example.test/nfce",
+        urlChave: "https://qr.example.test/consulta",
+      },
+    })
+    expect(xmlEmbeddableViolation(xml)).toBeNull()
+    expect(xml.includes("<?xml")).toBe(false)
+    const raiz = parseXml(xml)
+    const filhos = childElements(raiz).map((el) => el.name)
+    expect(filhos).toEqual(["infNFe", "infNFeSupl"])
+    expect(xml).not.toContain("<Signature")
+  })
+
   it("é determinístico e bytewise estável", () => {
     expect(assinavel()).toBe(assinavel())
     expect(sha256Hex(bytes(assinavel()))).toBe(sha256Hex(bytes(assinavel())))
