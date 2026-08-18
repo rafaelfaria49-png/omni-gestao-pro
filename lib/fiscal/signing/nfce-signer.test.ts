@@ -415,3 +415,61 @@ describe("nenhum segredo em logs", () => {
     expect(errMsg).not.toContain("PRIVATE KEY")
   })
 })
+
+const QR_ONLINE_V3 = {
+  qrCodeBaseUrl: "https://qr.example.test/nfce",
+  urlChave: "https://qr.example.test/consulta",
+} as const
+
+function nfceXmlQrOnline(): string {
+  const r = buildVendaFiscalSnapshot(snapshotInput())
+  if (!r.ok) throw new Error(`snapshot inválido: ${r.code}`)
+  return buildNfceXmlAssinavel(r.snapshot, { serie: 1, numero: 42, qrOnlineV3: { ...QR_ONLINE_V3 } })
+}
+
+function nfeChildOpenings(xml: string): string[] {
+  return [...xml.matchAll(/<(infNFeSupl|infNFe|Signature)(?:\s|>)/g)].map((m) => m[1] ?? "")
+}
+
+describe("signNfceXml · infNFeSupl QR v3 online não entra no digest", () => {
+  it("infNFe continua o único alvo; DigestValue ignora infNFeSupl; Signature vem depois", () => {
+    const xmlSemQr = nfceXml()
+    const xmlComQr = nfceXmlQrOnline()
+    expect(xmlComQr).toContain("<infNFeSupl>")
+    expect(xmlComQr).not.toContain("<Signature")
+    expect(nfeChildOpenings(xmlComQr)).toEqual(["infNFe", "infNFeSupl"])
+
+    const infSem = xmlSemQr.match(/<infNFe[\s\S]*?<\/infNFe>/)?.[0]
+    const infCom = xmlComQr.match(/<infNFe[\s\S]*?<\/infNFe>/)?.[0]
+    expect(infSem).toBe(infCom)
+
+    const signedSem = signNfceXmlDetailed(xmlSemQr, CERT_PLAIN, "", OPTS)
+    const signedCom = signNfceXmlDetailed(xmlComQr, CERT_PLAIN, "", OPTS)
+    expect(signedCom.digestValue).toBe(signedSem.digestValue)
+    expect(signedCom.referenciaId).toBe(signedSem.referenciaId)
+    expect(signedCom.xml).toContain(`<Reference URI="#${signedCom.referenciaId}">`)
+    expect(nfeChildOpenings(signedCom.xml)).toEqual(["infNFe", "infNFeSupl", "Signature"])
+    expect(signedCom.xml.indexOf("<infNFeSupl>")).toBeGreaterThan(signedCom.xml.indexOf("</infNFe>"))
+    expect(signedCom.xml.indexOf("<Signature")).toBeGreaterThan(signedCom.xml.indexOf("</infNFeSupl>"))
+
+    const v = verifyNfceSignature(signedCom.xml)
+    expect(v).toMatchObject({ valido: true, assinado: true, digestConfere: true, assinaturaConfere: true })
+    expect(v.referenciaId).toBe(signedCom.referenciaId)
+  })
+
+  it("adulterar infNFeSupl não invalida a assinatura; adulterar infNFe invalida o digest", () => {
+    const signed = signNfceXml(nfceXmlQrOnline(), CERT_PLAIN, "", OPTS)
+    const suplTocado = signed.replace(`<urlChave>${QR_ONLINE_V3.urlChave}</urlChave>`, "<urlChave>https://qr.example.test/outra-consulta</urlChave>")
+    expect(suplTocado).not.toBe(signed)
+    expect(verifyNfceSignature(suplTocado)).toMatchObject({
+      valido: true,
+      digestConfere: true,
+      assinaturaConfere: true,
+    })
+
+    const infTocado = signed.replace("<vNF>50.00</vNF>", "<vNF>5000.00</vNF>")
+    const v = verifyNfceSignature(infTocado)
+    expect(v.valido).toBe(false)
+    expect(v.digestConfere).toBe(false)
+  })
+})

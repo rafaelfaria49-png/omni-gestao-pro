@@ -40,6 +40,7 @@ import {
   type BuildNfceXmlResult,
   type NfceXmlContext,
 } from "./nfce-xml.types"
+import { infNFeSuplOnlineNode, resolveNfceInfNFeSuplOnline } from "./nfce-infnfesupl-online"
 import {
   group,
   leaf,
@@ -444,7 +445,18 @@ function buildInternal(
     [ide, emitNode, destNode, ...detNodes, totalNode, transpNode, pagNode, infAdicNode],
     { versao: NFCE_XML_VERSAO, Id: `NFe${chave}` },
   )
-  const nfe = group("NFe", [infNFe], { xmlns: NFCE_XMLNS })
+  const infNFeSupl =
+    contexto?.qrOnlineV3 !== undefined
+      ? resolveNfceInfNFeSuplOnline({
+          chave,
+          tpAmb: tpAmb === 1 ? 1 : 2,
+          config: contexto.qrOnlineV3,
+        })
+      : undefined
+  // Ordem XSD TNfe: infNFe → infNFeSupl (0–1) → ds:Signature (o signer acrescenta a Signature).
+  const nfe = group("NFe", [infNFe, infNFeSupl ? infNFeSuplOnlineNode(infNFeSupl) : null], {
+    xmlns: NFCE_XMLNS,
+  })
   // Sem declaração ⇒ contrato EMBUTÍVEL, provado byte a byte antes de sair daqui. Com declaração
   // ⇒ contrato de DOCUMENTO standalone. `omitDeclaration` cai no primeiro justamente para que não
   // exista nenhum caminho que produza NFC-e sem declaração sem passar pela prova de contrato.
@@ -453,7 +465,15 @@ function buildInternal(
     ? serializeXmlEmbeddable(nfe)
     : serializeXmlDocument(nfe, { declaration: true })
 
-  return { xml, chaveAcesso: chave, serie, numero, numeracaoPlaceholder, validacao }
+  return {
+    xml,
+    chaveAcesso: chave,
+    serie,
+    numero,
+    numeracaoPlaceholder,
+    validacao,
+    ...(infNFeSupl ? { infNFeSupl } : {}),
+  }
 }
 
 /**
