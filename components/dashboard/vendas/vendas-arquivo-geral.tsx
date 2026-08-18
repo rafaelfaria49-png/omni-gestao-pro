@@ -76,7 +76,8 @@ import { TrocasDevolucao } from "./trocas-devolucao"
 import { WorkspaceCorrecaoVenda } from "./workspace-correcao-venda"
 import { QuarentenaRecoveryDialog } from "./quarentena-recovery-dialog"
 import { useToast } from "@/hooks/use-toast"
-import type { SaleRecord } from "@/lib/operations-sale-types"
+import type { PaymentBreakdownFull, SaleRecord } from "@/lib/operations-sale-types"
+import { resolveSaleLineItemType } from "@/lib/sale-line-classification"
 import { useOperationsStore } from "@/lib/operations-store"
 import { subscribeEvent } from "@/lib/events/event-bus"
 import {
@@ -314,6 +315,94 @@ function saleRecordToVendaItem(s: SaleRecord): VendaItem {
   }
 }
 
+const ZERO_PAYMENT_BREAKDOWN: PaymentBreakdownFull = {
+  dinheiro: 0,
+  pix: 0,
+  cartaoDebito: 0,
+  cartaoCredito: 0,
+  carne: 0,
+  aPrazo: 0,
+  creditoVale: 0,
+}
+
+type VendaLookupPayload = {
+  id: string
+  dbId?: string
+  at: string
+  clienteNome?: string | null
+  clienteId?: string | null
+  clienteCpf?: string | null
+  total: number
+  desconto?: number
+  status?: string
+  operador?: string | null
+  sessaoId?: string | null
+  terminalId?: string | null
+  paymentBreakdown?: Partial<PaymentBreakdownFull> | null
+  itens?: Array<{
+    inventoryId?: string | null
+    nome: string
+    quantidade: number
+    precoUnitario: number
+    lineTotal: number
+  }>
+  devolucoes?: Array<{ itens: Array<{ nome: string; quantidade: number }> }>
+}
+
+function vendaLookupToSaleRecord(venda: VendaLookupPayload): SaleRecord {
+  const pb = venda.paymentBreakdown
+  const returnedByName = new Map<string, number>()
+  for (const d of venda.devolucoes ?? []) {
+    for (const it of d.itens) {
+      returnedByName.set(it.nome, (returnedByName.get(it.nome) ?? 0) + it.quantidade)
+    }
+  }
+  const status = venda.status
+  const saleStatus: SaleRecord["status"] =
+    status === "cancelada" ||
+    status === "parcialmente_devolvida" ||
+    status === "devolvida" ||
+    status === "concluida"
+      ? status
+      : "concluida"
+  return {
+    id: venda.id,
+    serverId: venda.dbId,
+    at: venda.at,
+    customerName: venda.clienteNome ?? undefined,
+    customerCpf: venda.clienteCpf ?? undefined,
+    clienteId: venda.clienteId ?? undefined,
+    total: venda.total,
+    discountTotal: venda.desconto,
+    status: saleStatus,
+    cashierId: venda.operador ?? undefined,
+    sessaoId: venda.sessaoId ?? undefined,
+    terminalId: venda.terminalId ?? undefined,
+    paymentBreakdown: {
+      ...ZERO_PAYMENT_BREAKDOWN,
+      dinheiro: Number(pb?.dinheiro) || 0,
+      pix: Number(pb?.pix) || 0,
+      cartaoDebito: Number(pb?.cartaoDebito) || 0,
+      cartaoCredito: Number(pb?.cartaoCredito) || 0,
+      carne: Number(pb?.carne) || 0,
+      aPrazo: Number(pb?.aPrazo) || 0,
+      creditoVale: Number(pb?.creditoVale) || 0,
+    },
+    lines: (venda.itens ?? []).map((it) => {
+      const inventoryId = it.inventoryId ?? ""
+      return {
+        inventoryId,
+        name: it.nome,
+        quantity: it.quantidade,
+        unitPrice: it.precoUnitario,
+        lineTotal: it.lineTotal,
+        qtyReturned: returnedByName.get(it.nome) ?? 0,
+        itemType: resolveSaleLineItemType({ inventoryId }),
+      }
+    }),
+  }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function VendasArquivoGeral() {
@@ -365,9 +454,6 @@ export function VendasArquivoGeral() {
     () => new Map(terminais.map((t) => [t.id, t] as const)),
     [terminais],
   )
-  const [remoteSales, setRemoteSales] = useState<SaleRecord[]>([])
-  const [remoteLoading, setRemoteLoading] = useState(false)
-
   // Detalhe drawer
   const [detalheOpen, setDetalheOpen] = useState(false)
   const [detalheLoading, setDetalheLoading] = useState(false)
@@ -475,30 +561,14 @@ export function VendasArquivoGeral() {
     }
   }, [storeId, page, busca, statusFiltro, pagamentoFiltro, operadorFiltro, terminalFiltro, fromDate, toDate])
 
-  const fetchRemoteSales = useCallback(async () => {
-    try {
-      const res = await fetch(
-        `/api/ops/vendas-list?lojaId=${encodeURIComponent(storeId)}`,
-        { credentials: "include", headers: { "x-assistec-loja-id": storeId } },
-      )
-      if (res.ok) {
-        const data = (await res.json()) as { sales?: SaleRecord[] }
-        setRemoteSales(data.sales ?? [])
-      }
-    } catch (err: unknown) {
-      console.warn("[vendas-arquivo] falha ao carregar do servidor:", err)
-    }
-  }, [storeId])
-
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
     return subscribeEvent("venda_finalizada", (payload) => {
       if (payload.storeId !== storeId) return
       void load()
-      void fetchRemoteSales()
     })
-  }, [storeId, load, fetchRemoteSales])
+  }, [storeId, load])
 
   useEffect(() => {
     const t = setTimeout(() => { setPage(0); setBusca(buscaInput) }, 400)
@@ -512,15 +582,6 @@ export function VendasArquivoGeral() {
 
   // Reset page on filter change
   useEffect(() => { setPage(0) }, [statusFiltro, pagamentoFiltro, terminalFiltro, fromDate, toDate])
-
-  useEffect(() => {
-    let cancelled = false
-    setRemoteLoading(true)
-    void fetchRemoteSales().finally(() => {
-      if (!cancelled) setRemoteLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [fetchRemoteSales])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
@@ -680,8 +741,7 @@ export function VendasArquivoGeral() {
           title: "Venda sincronizada",
           description: `${vendaId} foi confirmada no servidor.`,
         })
-        void fetchRemoteSales()
-        load()
+        void load()
       } else if (isSaleIdentityConflictCode(res.code)) {
         toast({
           title: SALE_IDENTITY_CONFLICT_TITLE,
@@ -696,7 +756,7 @@ export function VendasArquivoGeral() {
         })
       }
     },
-    [retrySyncSale, fetchRemoteSales, getPendingSaleRecord, load, toast, isVendaPendenteSync],
+    [retrySyncSale, getPendingSaleRecord, load, toast, isVendaPendenteSync],
   )
 
   /**
@@ -716,7 +776,6 @@ export function VendasArquivoGeral() {
         title: "Venda sincronizada retroativamente",
         description: `${vendaId} foi gravada na sessão de caixa original.`,
       })
-      void fetchRemoteSales()
       load()
     } else {
       toast({
@@ -725,7 +784,7 @@ export function VendasArquivoGeral() {
         variant: "destructive",
       })
     }
-  }, [retroativoConfirmId, retrySyncSaleRetroactive, fetchRemoteSales, load, toast])
+  }, [retroativoConfirmId, retrySyncSaleRetroactive, load, toast])
 
   const handleConfirmDescarteLocal = useCallback(async () => {
     if (!descartandoLocalId) return
@@ -763,10 +822,9 @@ export function VendasArquivoGeral() {
         title: "Venda existia no servidor",
         description: `${id} foi reconciliada como sincronizada. Nada descartado.`,
       })
-      void fetchRemoteSales()
       load()
     }
-  }, [conflitoIdentidadeIds, descartandoLocalId, discardLocalPendingSale, fetchRemoteSales, load, toast])
+  }, [conflitoIdentidadeIds, descartandoLocalId, discardLocalPendingSale, load, toast])
 
   const handleConfirmBulkLimpar = useCallback(async () => {
     setBulkLimparLoading(true)
@@ -791,10 +849,9 @@ export function VendasArquivoGeral() {
       description: `${partes.join(" · ")}. Apenas estado local foi alterado.`,
     })
     if (res.reconciled > 0) {
-      void fetchRemoteSales()
       load()
     }
-  }, [bulkDiscardLocalPendingSales, fetchRemoteSales, load, toast])
+  }, [bulkDiscardLocalPendingSales, load, toast])
 
   const recoveringSale = useMemo(
     () => (recoveringSaleId ? getPendingSaleRecord(recoveringSaleId) : null),
@@ -835,7 +892,6 @@ export function VendasArquivoGeral() {
         setRecoverMotivo("")
         setRecoverClosedSessionConfirm(false)
         setDetalheOpen(false)
-        void fetchRemoteSales()
         load()
         return
       }
@@ -849,7 +905,7 @@ export function VendasArquivoGeral() {
         variant: "destructive",
       })
     },
-    [recoveringSaleId, recoverMotivo, recoverQuarantinedSale, fetchRemoteSales, load, toast, writerEnabled],
+    [recoveringSaleId, recoverMotivo, recoverQuarantinedSale, load, toast, writerEnabled],
   )
 
   // ── Detalhe ──────────────────────────────────────────────────────────────────
@@ -1018,16 +1074,44 @@ export function VendasArquivoGeral() {
   }, [cancelandoId, cancelMotivo, storeId, detalhe, openDetalhe, load, toast, blocksConfirmedSaleAction, toastVendaPendenteBloqueada])
 
   const openTroca = useCallback(
-    (vendaId: string) => {
+    async (vendaId: string) => {
       if (blocksConfirmedSaleAction(vendaId)) {
         toastVendaPendenteBloqueada("troca")
         return
       }
-      setTrocaSaleId(vendaId)
-      setTrocaInitialSale(remoteSales.find((s) => s.id === vendaId))
-      setTrocaOpen(true)
+      const fromMemory = opsSales.find((s) => s.id === vendaId)
+      if (fromMemory) {
+        setTrocaSaleId(vendaId)
+        setTrocaInitialSale(fromMemory)
+        setTrocaOpen(true)
+        return
+      }
+      try {
+        const res = await fetch(`/api/vendas/${encodeURIComponent(vendaId)}`, {
+          credentials: "include",
+          headers: { "x-assistec-loja-id": storeId },
+        })
+        const data = (await res.json()) as { ok?: boolean; venda?: VendaLookupPayload }
+        if (!data.ok || !data.venda) {
+          toast({
+            title: "Erro",
+            description: "Não foi possível carregar a venda para troca/devolução.",
+            variant: "destructive",
+          })
+          return
+        }
+        setTrocaSaleId(vendaId)
+        setTrocaInitialSale(vendaLookupToSaleRecord(data.venda))
+        setTrocaOpen(true)
+      } catch {
+        toast({
+          title: "Erro",
+          description: "Não foi possível carregar a venda para troca/devolução.",
+          variant: "destructive",
+        })
+      }
     },
-    [remoteSales, blocksConfirmedSaleAction, toastVendaPendenteBloqueada],
+    [opsSales, storeId, blocksConfirmedSaleAction, toastVendaPendenteBloqueada, toast],
   )
 
   const closeTroca = useCallback(() => {
@@ -1204,12 +1288,6 @@ export function VendasArquivoGeral() {
             <p className="text-sm text-muted-foreground mt-0.5">
               Consulte, corrija, reimprima, cancele ou registre trocas e devoluções
               {unidadeLabel && <> · {unidadeLabel}</>}
-              {remoteLoading && (
-                <span className="inline-flex items-center gap-1 ml-2 text-xs">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  sincronizando…
-                </span>
-              )}
             </p>
           </div>
         </div>
@@ -2826,7 +2904,6 @@ export function VendasArquivoGeral() {
         onOpenChange={setQuarentenaRecoveryOpen}
         unidadeLabel={unidadeLabel || undefined}
         onFinished={() => {
-          void fetchRemoteSales()
           load()
         }}
       />
