@@ -633,7 +633,9 @@ describe("GOAL-013 · espelho privado opcional", () => {
 
     // A coluna vence: os bytes devolvidos são os da coluna, não os do espelho.
     expect(documento!.xmlAutorizado).toBe(XML_AUTORIZADO)
-    expect(fiscalLogs.some((log) => log.acao === "fiscal.storage.mirror_divergent")).toBe(true)
+    expect(
+      fiscalLogs.some((log) => log.acao === "fiscal.storage.mirror_divergent"),
+    ).toBe(true)
   })
 
   it("espelho no-op não grava, não lê e nunca reporta divergência", async () => {
@@ -648,5 +650,172 @@ describe("GOAL-013 · espelho privado opcional", () => {
     await expect(
       noopXmlStorageMirror.readMirror({ storeId: STORE_A, xmlStorageRef: REF }),
     ).resolves.toBeNull()
+  })
+})
+
+const QR_V3_DATA = `https://qr.example.test/nfce?p=${CHAVE}|3|2`
+const QR_V3_URL_CHAVE = "https://qr.example.test/consulta"
+const QR_V3_DIGEST = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/=="
+
+describe("GOAL-021 · metadados QR persistidos antes da transmissão", () => {
+  const finalizedWithQr: FinalizedFiscalDocument = {
+    ...finalizedDocument,
+    digestValue: QR_V3_DIGEST,
+    qrCodeData: QR_V3_DATA,
+    urlConsulta: QR_V3_URL_CHAVE,
+  }
+
+  it("persistBeforeTransmission grava identidade, xmlAssinado, hash e metadados QR na mesma fronteira", async () => {
+    const { client, notaFiscal } = createFakePrisma([notaAssinada()])
+    const persistence = createPrismaUncertainStatePersistence(asPersistenceClient(client))
+
+    const persisted = await persistence.persistBeforeTransmission({
+      document: finalizedWithQr,
+      bytesSha256: "a".repeat(64),
+      now: NOW,
+    })
+
+    expect(notaFiscal[0].xmlAssinado).toBe(XML_ASSINADO)
+    expect(notaFiscal[0].digestValue).toBe(QR_V3_DIGEST)
+    expect(notaFiscal[0].qrCodeData).toBe(QR_V3_DATA)
+    expect(notaFiscal[0].urlConsulta).toBe(QR_V3_URL_CHAVE)
+    expect(notaFiscal[0].status).toBe("TRANSMITINDO")
+    expect(persisted.digestValue).toBe(QR_V3_DIGEST)
+    expect(persisted.qrCodeData).toBe(QR_V3_DATA)
+    expect(persisted.urlConsulta).toBe(QR_V3_URL_CHAVE)
+    expect(persisted.xmlAssinado).toBe(XML_ASSINADO)
+  })
+
+  it("load() relê os metadados QR sem recalcular", async () => {
+    const { client } = createFakePrisma([notaAssinada()])
+    const persistence = createPrismaUncertainStatePersistence(asPersistenceClient(client))
+    await persistence.persistBeforeTransmission({
+      document: finalizedWithQr,
+      bytesSha256: "a".repeat(64),
+      now: NOW,
+    })
+
+    const reloaded = await persistence.load(locator)
+    expect(reloaded?.xmlAssinado).toBe(XML_ASSINADO)
+    expect(reloaded?.digestValue).toBe(QR_V3_DIGEST)
+    expect(reloaded?.qrCodeData).toBe(QR_V3_DATA)
+    expect(reloaded?.urlConsulta).toBe(QR_V3_URL_CHAVE)
+    expect(reloaded?.xmlBytesSha256).toBe("a".repeat(64))
+  })
+
+  it("AUTHORIZED que omite metadata QR não apaga os valores persistidos", async () => {
+    const { client, notaFiscal } = createFakePrisma([
+      notaAssinada({
+        status: "TRANSMITINDO",
+        xmlAssinado: XML_ASSINADO,
+        digestValue: QR_V3_DIGEST,
+        qrCodeData: QR_V3_DATA,
+        urlConsulta: QR_V3_URL_CHAVE,
+      }),
+    ])
+    const persistence = createPrismaUncertainStatePersistence(asPersistenceClient(client))
+    const { digestValue: _d, qrCodeData: _q, urlConsulta: _u, ...semQr } = authorizedResult
+
+    await persistence.markAuthorized({
+      document: transmittingDocument,
+      result: semQr,
+      now: NOW,
+      source: "TRANSMISSION",
+    })
+
+    expect(notaFiscal[0].xmlAutorizado).toBe(XML_AUTORIZADO)
+    expect(notaFiscal[0].protocolo).toBe(PROTOCOLO)
+    expect(notaFiscal[0].digestValue).toBe(QR_V3_DIGEST)
+    expect(notaFiscal[0].qrCodeData).toBe(QR_V3_DATA)
+    expect(notaFiscal[0].urlConsulta).toBe(QR_V3_URL_CHAVE)
+  })
+
+  it("AUTHORIZED com metadata QR igual converge", async () => {
+    const { client, notaFiscal } = createFakePrisma([
+      notaAssinada({
+        status: "TRANSMITINDO",
+        xmlAssinado: XML_ASSINADO,
+        digestValue: authorizedResult.digestValue,
+        qrCodeData: authorizedResult.qrCodeData,
+        urlConsulta: authorizedResult.urlConsulta,
+      }),
+    ])
+    const persistence = createPrismaUncertainStatePersistence(asPersistenceClient(client))
+
+    await persistence.markAuthorized({
+      document: transmittingDocument,
+      result: authorizedResult,
+      now: NOW,
+      source: "TRANSMISSION",
+    })
+
+    expect(notaFiscal[0].digestValue).toBe(authorizedResult.digestValue)
+    expect(notaFiscal[0].qrCodeData).toBe(authorizedResult.qrCodeData)
+    expect(notaFiscal[0].urlConsulta).toBe(authorizedResult.urlConsulta)
+  })
+
+  it("AUTHORIZED com metadata QR divergente falha fechado e não substitui", async () => {
+    const { client, notaFiscal } = createFakePrisma([
+      notaAssinada({
+        status: "TRANSMITINDO",
+        xmlAssinado: XML_ASSINADO,
+        digestValue: QR_V3_DIGEST,
+        qrCodeData: QR_V3_DATA,
+        urlConsulta: QR_V3_URL_CHAVE,
+      }),
+    ])
+    const persistence = createPrismaUncertainStatePersistence(asPersistenceClient(client))
+
+    await expect(
+      persistence.markAuthorized({
+        document: transmittingDocument,
+        result: authorizedResult,
+        now: NOW,
+        source: "TRANSMISSION",
+      }),
+    ).rejects.toMatchObject({ code: "metadados_qr_imutavel_diverge" })
+
+    expect(notaFiscal[0].digestValue).toBe(QR_V3_DIGEST)
+    expect(notaFiscal[0].qrCodeData).toBe(QR_V3_DATA)
+    expect(notaFiscal[0].urlConsulta).toBe(QR_V3_URL_CHAVE)
+    expect(notaFiscal[0].status).toBe("TRANSMITINDO")
+    expect(notaFiscal[0].xmlAutorizado).toBeNull()
+  })
+
+  it("replay idêntico de AUTHORIZED com metadata QR persistida é idempotente", async () => {
+    const { client, notaFiscal, fiscalLogs } = createFakePrisma([
+      notaAssinada({
+        status: "AUTORIZADA",
+        xmlAssinado: XML_ASSINADO,
+        xmlAutorizado: XML_AUTORIZADO,
+        protocolo: PROTOCOLO,
+        cStat: "100",
+        xMotivo: "Autorizado o uso da NF-e",
+        digestValue: QR_V3_DIGEST,
+        qrCodeData: QR_V3_DATA,
+        urlConsulta: QR_V3_URL_CHAVE,
+      }),
+    ])
+    const persistence = createPrismaUncertainStatePersistence(asPersistenceClient(client))
+    const { digestValue: _d, qrCodeData: _q, urlConsulta: _u, ...semQr } = authorizedResult
+
+    await persistence.markAuthorized({
+      document: transmittingDocument,
+      result: semQr,
+      now: NOW,
+      source: "CONSULTATION",
+    })
+    await persistence.markAuthorized({
+      document: transmittingDocument,
+      result: semQr,
+      now: NOW,
+      source: "CONSULTATION",
+    })
+
+    expect(notaFiscal[0].digestValue).toBe(QR_V3_DIGEST)
+    expect(notaFiscal[0].qrCodeData).toBe(QR_V3_DATA)
+    expect(notaFiscal[0].urlConsulta).toBe(QR_V3_URL_CHAVE)
+    expect(notaFiscal[0].xmlAutorizado).toBe(XML_AUTORIZADO)
+    expect(fiscalLogs.filter((log) => log.acao === "fiscal.emission.idempotent_mark").length).toBe(2)
   })
 })

@@ -42,10 +42,33 @@ export type PersistedFiscalDocument = FiscalDocumentIdentity & {
   xmlAutorizado?: string | null
   cStat?: string | null
   xMotivo?: string | null
+  /**
+   * Metadados QR/XMLDSig persistidos **antes** da transmissão (GOAL 021).
+   * Aditivos: construtores anteriores podem omiti-los. `load()` relê as colunas;
+   * nunca são recalculados depois da persistência.
+   */
+  digestValue?: string | null
+  qrCodeData?: string | null
+  urlConsulta?: string | null
 }
 
 export type FinalizedFiscalDocument = FiscalDocumentIdentity & {
   xmlAssinado: string
+  /**
+   * Digest SHA-1 Base64 do `infNFe` (XMLDSig). Aditivo: o preparer canônico
+   * preenche a partir de `signNfceXmlDetailed`, sem reparsear o XML.
+   */
+  digestValue?: string | null
+  /**
+   * Conteúdo textual de `<qrCode>` produzido com o XML. Aditivo. Origem
+   * estrutural (`infNFeSupl.qrCode`), não extração posterior.
+   */
+  qrCodeData?: string | null
+  /**
+   * Conteúdo textual de `<urlChave>` produzido com o XML. Aditivo. Origem
+   * estrutural (`infNFeSupl.urlChave`).
+   */
+  urlConsulta?: string | null
 }
 
 /**
@@ -140,8 +163,11 @@ export type FiscalConsultationResult =
  *
  * `digestValue`/`qrCodeData`/`urlConsulta` são **opcionais** para preservar
  * o contrato do `stubHomologacaoProvider` e do `UncertainStateTestStub` do
- * GOAL-012 — um provider real (F5/GOAL-021) passa a preenchê-los. O schema
- * já os suporta (`NotaFiscal.{digestValue,qrCodeData,urlConsulta}`).
+ * GOAL-012. O caminho canônico da NFC-e (GOAL 021) já os persiste em
+ * `persistBeforeTransmission` a partir do XML finalizado. `markAuthorized`
+ * não apaga valores já persistidos quando o resultado os omite; valor
+ * divergente falha fechado. O schema já os suporta
+ * (`NotaFiscal.{digestValue,qrCodeData,urlConsulta}`).
  */
 export type AuthorizedFiscalResult = {
   outcome: "AUTHORIZED"
@@ -163,6 +189,7 @@ export type AuthorizedDivergenceCode =
   | "xml_autorizado_imutavel_diverge"
   | "protocolo_imutavel_diverge"
   | "metadados_autorizacao_divergem"
+  | "metadados_qr_imutavel_diverge"
 
 export class AuthorizedDivergenceError extends Error {
   readonly code: AuthorizedDivergenceCode
@@ -276,6 +303,12 @@ export interface UncertainStateFiscalProvider {
   }): Promise<FiscalConsultationResult>
 }
 
+/**
+ * Produtor do documento fiscal finalizado **antes** da fronteira de transmissão.
+ *
+ * O produtor canônico da NFC-e é `createFinalizedNfcePreparer`: XML embutível
+ * + QR v3 + XMLDSig na mesma construção. Stubs de teste podem omitir QR.
+ */
 export interface FinalizedDocumentPreparer {
   prepare(locator: FiscalDocumentLocator): Promise<FinalizedFiscalDocument>
 }
@@ -283,8 +316,10 @@ export interface FinalizedDocumentPreparer {
 export interface UncertainStatePersistence {
   load(locator: FiscalDocumentLocator): Promise<PersistedFiscalDocument | null>
   /**
-   * Persiste identidade, numeração, chave, XML assinado e TRANSMITINDO em uma
-   * única fronteira local. Deve devolver o registro relido do armazenamento.
+   * Persiste identidade, numeração, chave, XML assinado, SHA-256 dos
+   * exactBytes e metadados QR (`digestValue`/`qrCodeData`/`urlConsulta`) e
+   * TRANSMITINDO em uma única fronteira local. Deve devolver o registro
+   * relido do armazenamento — sem recalcular QR nem reconstruir XML.
    */
   persistBeforeTransmission(input: {
     document: FinalizedFiscalDocument

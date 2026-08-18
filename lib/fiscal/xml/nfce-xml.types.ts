@@ -136,6 +136,10 @@ export type BuildNfceXmlResult = {
   numero: number
   numeracaoPlaceholder: boolean
   validacao: NfceValidationResult
-  /** Presente somente quando QR v3 válido foi injetado. Não persiste em `NotaFiscal`. */
+  /**
+   * Presente somente quando QR v3 válido foi injetado. Origem estrutural de
+   * `qrCodeData`/`urlConsulta` na finalização (`FinalizedFiscalDocument`) —
+   * não extrair depois por regex do XML.
+   */
   infNFeSupl?: { qrCode: string; urlChave: string }
 }

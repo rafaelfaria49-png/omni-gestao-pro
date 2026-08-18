@@ -14,3 +14,12 @@ export * from "./uncertain-state.types"
 export * from "./uncertain-state-coordinator"
 export * from "./uncertain-state-job-executor"
 export * from "./prisma-uncertain-state-persistence"
+export {
+  createFinalizedNfcePreparer,
+  NfceQrConfigMissingError,
+} from "./finalized-nfce-preparer"
+export type {
+  FinalizedNfcePreparerDependencies,
+  NfceFinalizationSource,
+  NfceQrUrlConfig,
+} from "./finalized-nfce-preparer"
