@@ -18,6 +18,7 @@
  */
 
 import { onlyDigits } from "../fiscal-validators"
+import type { QrV3Destinatario } from "../danfce/qr-v3/types"
 import type {
   SnapshotItem,
   SnapshotItemTributos,
@@ -30,6 +31,9 @@ import {
   formatDhEmi,
   montarChaveAcesso,
 } from "./nfce-chave-acesso"
+import { infNFeSuplNode, rejectNfceQr } from "./nfce-infnfesupl"
+import { resolveNfceInfNFeSuplOffline } from "./nfce-infnfesupl-offline"
+import { resolveNfceInfNFeSuplOnline } from "./nfce-infnfesupl-online"
 import { validateNfceSnapshot } from "./nfce-xml-validation"
 import {
   NFCE_MODELO,
@@ -40,7 +44,6 @@ import {
   type BuildNfceXmlResult,
   type NfceXmlContext,
 } from "./nfce-xml.types"
-import { infNFeSuplOnlineNode, resolveNfceInfNFeSuplOnline } from "./nfce-infnfesupl-online"
 import {
   group,
   leaf,
@@ -270,21 +273,37 @@ function buildEmitNode(snapshot: VendaFiscalSnapshot): XmlNode {
 }
 
 /** Destinatário NFC-e: só emitido quando há CPF/CNPJ válido (consumidor sem documento → sem grupo). */
-function buildDestNode(snapshot: VendaFiscalSnapshot): XmlNode | null {
+function documentoDestinatarioXml(
+  snapshot: VendaFiscalSnapshot,
+): { tipo: "CPF"; doc: string } | { tipo: "CNPJ"; doc: string } | null {
   const d = snapshot.destinatario
   if (!d) return null
   const doc = onlyDigits(d.documento ?? "")
-  const docNode =
-    d.documentoTipo === "CPF" && doc.length === 11
-      ? leaf("CPF", doc)
-      : d.documentoTipo === "CNPJ" && doc.length === 14
-        ? leaf("CNPJ", doc)
-        : null
-  if (!docNode) return null
+  if (d.documentoTipo === "CPF" && doc.length === 11) return { tipo: "CPF", doc }
+  if (d.documentoTipo === "CNPJ" && doc.length === 14) return { tipo: "CNPJ", doc }
+  return null
+}
+
+/**
+ * Destinatário do QR = o mesmo que entra no XML. O snapshot atual não serializa
+ * `idEstrangeiro`, então estrangeiro não aparece no `infNFe` — o QR também fica `ausente`.
+ */
+function destinatarioQrV3FromXml(snapshot: VendaFiscalSnapshot): QrV3Destinatario {
+  const ident = documentoDestinatarioXml(snapshot)
+  if (!ident) return { kind: "ausente" }
+  if (ident.tipo === "CPF") return { kind: "cpf", cpf: ident.doc }
+  return { kind: "cnpj", cnpj: ident.doc }
+}
+
+function buildDestNode(snapshot: VendaFiscalSnapshot): XmlNode | null {
+  const ident = documentoDestinatarioXml(snapshot)
+  if (!ident) return null
+  const d = snapshot.destinatario
+  const docNode = ident.tipo === "CPF" ? leaf("CPF", ident.doc) : leaf("CNPJ", ident.doc)
   const children: Array<XmlNode | null> = [docNode]
-  if (d.nome) children.push(leaf("xNome", d.nome))
+  if (d?.nome) children.push(leaf("xNome", d.nome))
   children.push(leafRequired("indIEDest", "9")) // 9 = não contribuinte
-  if (d.email) children.push(leaf("email", d.email))
+  if (d?.email) children.push(leaf("email", d.email))
   return group("dest", children)
 }
 
@@ -414,6 +433,7 @@ function buildInternal(
   })
 
   const vNF = round2(vProdTotal - vDescTotal)
+  const dhEmi = formatDhEmi(dataEmissao)
 
   const ide = buildIdeNode({
     cUF,
@@ -421,7 +441,7 @@ function buildInternal(
     natOp,
     serie,
     numero,
-    dhEmi: formatDhEmi(dataEmissao),
+    dhEmi,
     cMunFG: onlyDigits(emit.endereco.codigoMunicipioIbge),
     tpEmis,
     cDV,
@@ -445,16 +465,36 @@ function buildInternal(
     [ide, emitNode, destNode, ...detNodes, totalNode, transpNode, pagNode, infAdicNode],
     { versao: NFCE_XML_VERSAO, Id: `NFe${chave}` },
   )
-  const infNFeSupl =
-    contexto?.qrOnlineV3 !== undefined
-      ? resolveNfceInfNFeSuplOnline({
+  const hasOnline = contexto?.qrOnlineV3 !== undefined
+  const hasOffline = contexto?.qrOfflineV3 !== undefined
+  if (hasOnline && hasOffline) {
+    rejectNfceQr(
+      "qr_modo_incompativel",
+      "QR NFC-e v3 online e offline não podem ser configurados simultaneamente.",
+      "qrOnlineV3",
+    )
+  }
+  if (hasOnline && tpEmis === 9) {
+    rejectNfceQr("qr_modo_incompativel", "QR NFC-e v3 online é incompatível com tpEmis=9.", "qrOnlineV3")
+  }
+  if (hasOffline && tpEmis !== 9) {
+    rejectNfceQr("qr_modo_incompativel", "QR NFC-e v3 offline exige tpEmis=9.", "qrOfflineV3")
+  }
+  const tpAmbQr: 1 | 2 = tpAmb === 1 ? 1 : 2
+  const infNFeSupl = hasOnline
+    ? resolveNfceInfNFeSuplOnline({ chave, tpAmb: tpAmbQr, config: contexto.qrOnlineV3! })
+    : hasOffline
+      ? resolveNfceInfNFeSuplOffline({
           chave,
-          tpAmb: tpAmb === 1 ? 1 : 2,
-          config: contexto.qrOnlineV3,
+          tpAmb: tpAmbQr,
+          dhEmi,
+          vNF: dec2(vNF),
+          destinatario: destinatarioQrV3FromXml(snapshot),
+          config: contexto.qrOfflineV3!,
         })
       : undefined
   // Ordem XSD TNfe: infNFe → infNFeSupl (0–1) → ds:Signature (o signer acrescenta a Signature).
-  const nfe = group("NFe", [infNFe, infNFeSupl ? infNFeSuplOnlineNode(infNFeSupl) : null], {
+  const nfe = group("NFe", [infNFe, infNFeSupl ? infNFeSuplNode(infNFeSupl) : null], {
     xmlns: NFCE_XMLNS,
   })
   // Sem declaração ⇒ contrato EMBUTÍVEL, provado byte a byte antes de sair daqui. Com declaração

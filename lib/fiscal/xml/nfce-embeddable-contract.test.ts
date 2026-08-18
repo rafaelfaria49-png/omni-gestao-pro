@@ -11,6 +11,7 @@
  */
 import { createHash } from "node:crypto"
 import { describe, expect, it, vi } from "vitest"
+import { createQrV3OfflinePemSigner } from "@/lib/fiscal/danfce/qr-v3"
 import { childElements, parseXml } from "../signing/c14n"
 import { NfceSignError } from "../signing/signer.types"
 import { signNfceXmlDetailed, verifyNfceSignature } from "../signing/nfce-signer"
@@ -184,6 +185,24 @@ describe("buildNfceXmlAssinavel · produtor do caminho de assinatura/transmissã
     expect(xml).not.toContain("<Signature")
   })
 
+  it("QR offline v3 opt-in permanece embutível com infNFeSupl já presente antes da XMLDSig", () => {
+    const xml = buildNfceXmlAssinavel(dryRunSnapshot("simples"), {
+      ...CTX,
+      tpEmis: 9,
+      qrOfflineV3: {
+        qrCodeBaseUrl: "https://qr.example.test/nfce",
+        urlChave: "https://qr.example.test/consulta",
+        sign: createQrV3OfflinePemSigner(DRY_RUN_TEST_CERT.privateKeyPem),
+      },
+    })
+    expect(xmlEmbeddableViolation(xml)).toBeNull()
+    expect(xml.includes("<?xml")).toBe(false)
+    const filhos = childElements(parseXml(xml)).map((el) => el.name)
+    expect(filhos).toEqual(["infNFe", "infNFeSupl"])
+    expect(xml).toContain("<tpEmis>9</tpEmis>")
+    expect(xml).not.toContain("<Signature")
+  })
+
   it("é determinístico e bytewise estável", () => {
     expect(assinavel()).toBe(assinavel())
     expect(sha256Hex(bytes(assinavel()))).toBe(sha256Hex(bytes(assinavel())))
@@ -324,5 +343,43 @@ describe("e2e offline · produzir → assinar → hashear → envelopar sem alte
     expect(r.ok).toBe(false)
     if (r.ok) return
     expect(r.codigo).toBe("bytes_fiscais_com_declaracao_xml")
+  })
+})
+
+describe("e2e QR offline v3 · infNFeSupl presente → XMLDSig → bytes finais estáveis", () => {
+  const ctxOff = {
+    ...CTX,
+    tpEmis: 9,
+    qrOfflineV3: {
+      qrCodeBaseUrl: "https://qr.example.test/nfce",
+      urlChave: "https://qr.example.test/consulta",
+      sign: createQrV3OfflinePemSigner(DRY_RUN_TEST_CERT.privateKeyPem),
+    },
+  }
+  const built = buildNfceXmlAssinavelResult(dryRunSnapshot("simples"), ctxOff)
+  const assinado = signNfceXmlDetailed(built.xml, DRY_RUN_TEST_CERT, "", { ignorarValidade: true })
+  const bytesAssinados = bytes(assinado.xml)
+  const bytesSha256 = sha256Hex(bytesAssinados)
+
+  it("infNFeSupl já está no XML embutível antes de assinar", () => {
+    expect(built.xml).toContain("<infNFeSupl>")
+    expect(built.xml).not.toContain("<Signature")
+    expect(xmlEmbeddableViolation(built.xml)).toBeNull()
+  })
+
+  it("a assinatura XMLDSig só insere Signature; o prefixo com infNFeSupl não é reserializado", () => {
+    const corte = built.xml.lastIndexOf("</NFe>")
+    expect(assinado.xml.slice(0, corte)).toBe(built.xml.slice(0, corte))
+    expect(assinado.xml.replace(/<Signature[\s\S]*<\/Signature>/, "")).toBe(built.xml)
+    expect(childElements(parseXml(assinado.xml)).map((el) => el.name)).toEqual(["infNFe", "infNFeSupl", "Signature"])
+  })
+
+  it("os bytes assinados são o contrato final: hash estável e envelope devolve os mesmos bytes", () => {
+    expect(verifyNfceSignature(assinado.xml).valido).toBe(true)
+    expect(sha256Hex(bytes(assinado.xml))).toBe(bytesSha256)
+    const env = buildSefazSoap12Envelope({ servico: "NFeAutorizacao4", exactBytes: bytesAssinados })
+    expect(env.ok).toBe(true)
+    if (!env.ok) return
+    expect(Buffer.from(extractFiscalBytes(env.envelope)).equals(Buffer.from(bytesAssinados))).toBe(true)
   })
 })

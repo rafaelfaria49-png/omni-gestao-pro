@@ -43,9 +43,17 @@ export type NfceXmlContext = {
    *
    * `chave` e `tpAmb` NÃO entram aqui: derivam do mesmo build que produz `infNFe`.
    * URLs são injetadas pelo caller (P-URL-SP aberto — nenhum host SEFAZ-SP é literal).
-   * `tpEmis=9` / QR offline recusados neste slice.
+   * Incompatível com `qrOfflineV3` e com `tpEmis=9`.
    */
   qrOnlineV3?: NfceQrOnlineV3Config
+  /**
+   * Opt-in do QR NFC-e v3 **offline** (`tpEmis=9`). Ausente → sem `infNFeSupl` no legado.
+   *
+   * `chave`, `tpAmb`, `dhEmi`, `vNF` e destinatário NÃO entram aqui: derivam do `infNFe`.
+   * O caller injeta URLs e a assinatura RSA-SHA-1 do payload QR (não o XMLDSig).
+   * Incompatível com `qrOnlineV3` e com `tpEmis≠9`.
+   */
+  qrOfflineV3?: NfceQrOfflineV3Config
 }
 
 /**
@@ -57,6 +65,19 @@ export type NfceQrOnlineV3Config = {
   qrCodeBaseUrl: string
   /** URL da consulta por chave de acesso (XSD: TString, 21–85). */
   urlChave: string
+}
+
+/**
+ * Configuração injetada do QR v3 offline. Sem env, sem URL de SP hardcoded, sem cofre.
+ * `sign` e `assinaturaBase64` assinam a concatenação 1–7 — nunca o DigestValue XMLDSig.
+ */
+export type NfceQrOfflineV3Config = {
+  qrCodeBaseUrl: string
+  urlChave: string
+  /** Porta RSA-SHA-1 Base64 da concatenação canônica 1–7. */
+  sign?: (canonicalUtf8: string) => string
+  /** Assinatura já pronta (mesmo alfabeto Base64 do encoder). */
+  assinaturaBase64?: string
 }
 
 export type NfceXmlErrorCode =
@@ -71,6 +92,8 @@ export type NfceXmlErrorCode =
   | "item_sem_cfop"
   | "destinatario_invalido"
   | "qr_online_invalido"
+  | "qr_offline_invalido"
+  | "qr_modo_incompativel"
 
 /** Erro estrutural do builder — lançado quando falta informação OBRIGATÓRIA. */
 export class NfceXmlError extends Error {
@@ -113,6 +136,6 @@ export type BuildNfceXmlResult = {
   numero: number
   numeracaoPlaceholder: boolean
   validacao: NfceValidationResult
-  /** Presente somente quando `qrOnlineV3` válido foi injetado. Não persiste em `NotaFiscal`. */
+  /** Presente somente quando QR v3 válido foi injetado. Não persiste em `NotaFiscal`. */
   infNFeSupl?: { qrCode: string; urlChave: string }
 }
