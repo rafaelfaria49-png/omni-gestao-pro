@@ -18,6 +18,7 @@ import {
   InsufficientStockError,
   type SalePayload,
 } from "./ops-upsert-venda"
+import { historicalRecoveryPersistOptions } from "./vendas/quarantine-recovery-planner"
 
 type FakeProduct = {
   id: string
@@ -207,5 +208,31 @@ describe("upsertVendaInTransaction — anti-negativo (DT-B)", () => {
     expect(byId.get("prod-1")!.stock).toBe(-1)
     expect(ledger).toHaveLength(1)
     expect(ledger[0]!.estoqueDepois).toBe(-1)
+  })
+
+  it("historical-recovery: quantidade > saldo persiste com déficit, sem entrada fictícia", async () => {
+    const options = historicalRecoveryPersistOptions({
+      originalSessionStatus: "NO_SESSION_ID",
+      allowClosedOriginalSession: false,
+    })
+    const { tx, byId, ledger } = makeFakeTx([produto({ stock: 1 })])
+    await upsertVendaInTransaction(tx, STORE, baseSale(), undefined, options)
+    expect(byId.get("prod-1")!.stock).toBe(-2)
+    expect(ledger).toHaveLength(1)
+    expect(ledger[0]!.tipo).toBe("saida")
+    expect(ledger[0]!.quantidade).toBe(-3)
+    expect(ledger[0]!.estoqueDepois).toBe(-2)
+    expect(ledger.every((row) => row.tipo !== "entrada")).toBe(true)
+  })
+
+  it("historical-recovery replay: movimentação já aplicada não baixa de novo", async () => {
+    const options = historicalRecoveryPersistOptions({
+      originalSessionStatus: "NO_SESSION_ID",
+      allowClosedOriginalSession: false,
+    })
+    const { tx, byId, ledger } = makeFakeTx([produto({ stock: 1 })], { movimentacaoJaExiste: true })
+    await upsertVendaInTransaction(tx, STORE, baseSale(), undefined, options)
+    expect(byId.get("prod-1")!.stock).toBe(1)
+    expect(ledger).toHaveLength(0)
   })
 })

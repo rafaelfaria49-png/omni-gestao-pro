@@ -13,8 +13,13 @@
  * devolve uma classe explícita por candidata. A execução vive em
  * `lib/vendas/quarantine-recovery-service.ts`.
  *
- * Regra de ouro do fail-closed: qualquer dúvida vira `BLOCKED`, nunca `READY`.
- * O objetivo é "0 quarentenas legítimas recuperáveis pendentes", nunca "0 badges".
+ * Regra de ouro do fail-closed (modo `live-stock-rules`): qualquer dúvida vira
+ * `BLOCKED`, nunca `READY`. O objetivo é "0 quarentenas legítimas recuperáveis
+ * pendentes", nunca "0 badges".
+ *
+ * O modo `historical-recovery` é a exceção ADMIN-only: vendas históricas reais
+ * que já aconteceram não podem ser apagadas pelo estoque/catálogo/caixa de hoje.
+ * Só o recovery administrativo usa esse modo — o PDV normal continua fail-closed.
  */
 
 import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
@@ -55,7 +60,7 @@ export const QUARANTINE_RECOVERY_CLASS = Object.freeze({
   STORE_MISMATCH: "STORE_MISMATCH",
   /** Linha de produto físico que não casa com nenhum `Produto` da loja. */
   PRODUCT_UNRESOLVED: "PRODUCT_UNRESOLVED",
-  /** Estoque atual não cobre a baixa — `enforceStock` abortaria a transação. */
+  /** Estoque atual não cobre a baixa — `enforceStock` abortaria a transação (PDV ao vivo). */
   INSUFFICIENT_STOCK_RISK: "INSUFFICIENT_STOCK_RISK",
   /** Bloqueio sem causa mapeada. Nunca vira `READY`. */
   BLOCKED_UNKNOWN: "BLOCKED_UNKNOWN",
@@ -92,6 +97,57 @@ export function isExecutableClass(klass: QuarantineRecoveryClass): boolean {
     klass === QUARANTINE_RECOVERY_CLASS.READY ||
     klass === QUARANTINE_RECOVERY_CLASS.REQUIRES_CLOSED_SESSION_CONFIRM
   )
+}
+
+/** Como o planner interpreta estoque, catálogo e sessão. */
+export const QUARANTINE_CLASSIFY_MODE = Object.freeze({
+  /** Regras do PDV ao vivo: estoque/produto/sessão bloqueiam. */
+  LIVE_STOCK_RULES: "live-stock-rules",
+  /**
+   * Recovery administrativo de venda histórica real. Estoque atual insuficiente,
+   * produto sem cadastro atual e sessão original não identificável NÃO apagam a
+   * venda. Nunca usado pelo PDV normal.
+   */
+  HISTORICAL_RECOVERY: "historical-recovery",
+} as const)
+
+export type QuarantineClassifyMode =
+  (typeof QUARANTINE_CLASSIFY_MODE)[keyof typeof QUARANTINE_CLASSIFY_MODE]
+
+export const HISTORICAL_RECOVERY_STOCK_POLICY = "historical-ledger-allows-deficit" as const
+
+export type HistoricalRecoveryCaixaPolicy =
+  | "original-session"
+  | "unidentified-session-no-current-caixa"
+
+export function historicalRecoveryCaixaPolicy(
+  status: OriginalSessionStatus,
+): HistoricalRecoveryCaixaPolicy {
+  return status === "ABERTA" || status === "FECHADA"
+    ? "original-session"
+    : "unidentified-session-no-current-caixa"
+}
+
+/**
+ * Opções de persistência do recovery histórico. Isoladas do PDV ao vivo:
+ * `enforceStock` permanece `true` no writer V2 padrão.
+ */
+export function historicalRecoveryPersistOptions(input: {
+  originalSessionStatus: OriginalSessionStatus
+  allowClosedOriginalSession: boolean
+}): {
+  enforceStock: false
+  requireCaixaSession: boolean
+  allowClosedOriginalSession: boolean
+} {
+  const hasOriginalSession =
+    input.originalSessionStatus === "ABERTA" || input.originalSessionStatus === "FECHADA"
+  return {
+    enforceStock: false,
+    requireCaixaSession: hasOriginalSession,
+    allowClosedOriginalSession:
+      input.allowClosedOriginalSession === true && input.originalSessionStatus === "FECHADA",
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,6 +209,11 @@ export type QuarantineServerFacts = {
   /** Loja da ocupante — pode ser outra loja. */
   readonly occupantStoreId?: string | null
   readonly originalSessionStatus: OriginalSessionStatus
+  /**
+   * Sessão original identificada (payload ou lookup determinístico por
+   * storeId + terminalId + `sale.at` ∈ [abertaEm, fechadaEm]).
+   */
+  readonly resolvedSessaoId?: string | null
   /** `inventoryId` de linhas FÍSICAS sem `Produto` correspondente. */
   readonly unresolvedInventoryIds?: readonly string[]
   readonly stockShortfalls?: readonly QuarantineStockShortfall[]
@@ -221,7 +282,7 @@ function breakdown(value: unknown): Partial<PaymentBreakdownFull> | null {
  *  4. loja;
  *  5. integridade dos fatos;
  *  6. conflito realmente confirmado (ocupante);
- *  7. produto/estoque;
+ *  7. produto/estoque (omitidos no modo `historical-recovery`);
  *  8. caixa (última, porque é a única que pode virar "confirmável").
  *
  * A precedência de 6 sobre 8 espelha `upsertVendaInTransaction`, onde o guard de
@@ -232,8 +293,11 @@ export function classifyQuarantineCandidate(input: {
   storeId: string
   candidate: QuarantineCandidate
   facts: QuarantineServerFacts
+  /** Default: regras do PDV ao vivo. O recovery administrativo passa `historical-recovery`. */
+  mode?: QuarantineClassifyMode
 }): QuarantineRecoveryPlanItem {
   const { storeId, candidate, facts } = input
+  const historical = input.mode === QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY
 
   const conflictingPedidoId = text(candidate.id) ?? ""
   const parsedClientSaleId = parseClientSaleId(candidate.clientSaleId)
@@ -327,47 +391,76 @@ export function classifyQuarantineCandidate(input: {
     )
   }
 
-  // 7. Produto e estoque.
+  // 7. Produto e estoque — bloqueiam só no PDV ao vivo. Venda histórica real não
+  //    deixa de existir porque o catálogo/estoque de hoje mudou.
   const unresolved = (facts.unresolvedInventoryIds ?? []).filter(
     (id) => typeof id === "string" && id.trim() && !isVirtualSaleLine(id),
   )
-  if (unresolved.length > 0) {
-    return decide(
-      QUARANTINE_RECOVERY_CLASS.PRODUCT_UNRESOLVED,
-      `Produto não encontrado no catálogo da loja: ${unresolved.slice(0, 3).join(", ")}.`,
-    )
-  }
-
   const shortfalls = facts.stockShortfalls ?? []
-  if (shortfalls.length > 0) {
-    const first = shortfalls[0]
-    return decide(
-      QUARANTINE_RECOVERY_CLASS.INSUFFICIENT_STOCK_RISK,
-      `Estoque insuficiente para ${first.nome} (disponível ${first.disponivel}, necessário ${first.necessario}).`,
-    )
+  if (!historical) {
+    if (unresolved.length > 0) {
+      return decide(
+        QUARANTINE_RECOVERY_CLASS.PRODUCT_UNRESOLVED,
+        `Produto não encontrado no catálogo da loja: ${unresolved.slice(0, 3).join(", ")}.`,
+      )
+    }
+    if (shortfalls.length > 0) {
+      const first = shortfalls[0]
+      return decide(
+        QUARANTINE_RECOVERY_CLASS.INSUFFICIENT_STOCK_RISK,
+        `Estoque insuficiente para ${first.nome} (disponível ${first.disponivel}, necessário ${first.necessario}).`,
+      )
+    }
   }
 
   // 8. Caixa. Só importa quando a venda move a gaveta: 100% à prazo ou 100%
   //    crédito-vale não geram `MovimentacaoFinanceira` e não exigem sessão.
   if (valorAVista > 0) {
-    if (facts.originalSessionStatus === "NO_SESSION_ID") {
-      return decide(
-        QUARANTINE_RECOVERY_CLASS.MISSING_ORIGINAL_SESSION,
-        "Venda com receita à vista sem sessão de caixa original. Recuperar lançaria o valor no caixa de hoje.",
-      )
-    }
-    if (facts.originalSessionStatus === "NOT_FOUND") {
-      return decide(
-        QUARANTINE_RECOVERY_CLASS.MISSING_ORIGINAL_SESSION,
-        "Sessão de caixa original inexistente ou de outra loja.",
-      )
-    }
     if (facts.originalSessionStatus === "FECHADA") {
       return decide(
         QUARANTINE_RECOVERY_CLASS.REQUIRES_CLOSED_SESSION_CONFIRM,
         "Sessão de caixa original já fechada. O lançamento é retroativo na própria sessão original e exige confirmação.",
       )
     }
+    if (!historical) {
+      if (facts.originalSessionStatus === "NO_SESSION_ID") {
+        return decide(
+          QUARANTINE_RECOVERY_CLASS.MISSING_ORIGINAL_SESSION,
+          "Venda com receita à vista sem sessão de caixa original. Recuperar lançaria o valor no caixa de hoje.",
+        )
+      }
+      if (facts.originalSessionStatus === "NOT_FOUND") {
+        return decide(
+          QUARANTINE_RECOVERY_CLASS.MISSING_ORIGINAL_SESSION,
+          "Sessão de caixa original inexistente ou de outra loja.",
+        )
+      }
+    }
+  }
+
+  if (historical && unresolved.length > 0) {
+    return decide(
+      QUARANTINE_RECOVERY_CLASS.READY,
+      `Recuperável como venda histórica: produto sem cadastro atual preservado no snapshot (${unresolved.slice(0, 3).join(", ")}).`,
+    )
+  }
+  if (historical && shortfalls.length > 0) {
+    const first = shortfalls[0]
+    return decide(
+      QUARANTINE_RECOVERY_CLASS.READY,
+      `Recuperável como venda histórica: déficit de estoque será registrado no ledger (${first.nome}: disponível ${first.disponivel}, necessário ${first.necessario}).`,
+    )
+  }
+  if (
+    historical &&
+    valorAVista > 0 &&
+    (facts.originalSessionStatus === "NO_SESSION_ID" ||
+      facts.originalSessionStatus === "NOT_FOUND")
+  ) {
+    return decide(
+      QUARANTINE_RECOVERY_CLASS.READY,
+      "Recuperável como venda histórica: sessão original não identificável. A venda será persistida sem lançar no caixa atual.",
+    )
   }
 
   return decide(QUARANTINE_RECOVERY_CLASS.READY, "Recuperável: novo número server-side.")
@@ -446,7 +539,8 @@ export function planQuarantineRecovery(
     candidate: QuarantineCandidate
     facts: QuarantineServerFacts
   }[],
+  mode: QuarantineClassifyMode = QUARANTINE_CLASSIFY_MODE.LIVE_STOCK_RULES,
 ): QuarantineRecoveryPlan {
-  const items = entries.map((entry) => classifyQuarantineCandidate(entry))
+  const items = entries.map((entry) => classifyQuarantineCandidate({ ...entry, mode }))
   return { items, summary: summarizeQuarantinePlan(items) }
 }

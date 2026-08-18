@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   vendaUpsert: vi.fn(),
   vendaCreate: vi.fn(),
   sessaoFindFirst: vi.fn(),
+  sessaoFindMany: vi.fn(),
   produtoFindFirst: vi.fn(),
   ensureConnected: vi.fn(async () => undefined),
   requireAdmin: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("@/lib/prisma", () => ({
       upsert: h.vendaUpsert,
       create: h.vendaCreate,
     },
-    sessaoCaixa: { findFirst: h.sessaoFindFirst },
+    sessaoCaixa: { findFirst: h.sessaoFindFirst, findMany: h.sessaoFindMany },
     produto: { findFirst: h.produtoFindFirst },
   },
   prismaEnsureConnected: h.ensureConnected,
@@ -81,11 +82,8 @@ const occupant = {
 }
 
 /**
- * Venda local em quarentena. `sessaoId` é obrigatório para a recuperação de uma
- * venda com receita à vista: sem sessão original identificável o núcleo bloqueia,
- * porque lançar no caixa de hoje deixaria o dinheiro invisível em toda conferência
- * (a `MovimentacaoFinanceira` usa a data ORIGINAL da venda). Ver o teste
- * "bloqueia venda à vista sem sessão original".
+ * Venda local em quarentena. Recovery histórico persiste mesmo sem `sessaoId`
+ * identificável — sem fallback para o caixa atual.
  */
 const localSale = {
   id: "VDA-2026-0615",
@@ -121,7 +119,8 @@ beforeEach(() => {
   h.canAccessStore.mockReturnValue(true)
   h.findFirst.mockResolvedValue(null)
   h.findUnique.mockResolvedValue(occupant)
-  h.sessaoFindFirst.mockResolvedValue({ status: "ABERTA" })
+  h.sessaoFindFirst.mockResolvedValue({ id: "sess-original-1", status: "ABERTA" })
+  h.sessaoFindMany.mockResolvedValue([])
   h.produtoFindFirst.mockResolvedValue({
     id: "prod-tvbox",
     name: "CONTROLE TV BOX",
@@ -256,9 +255,22 @@ describe("POST /api/ops/vendas/recover-quarantined", () => {
     expectOccupantUntouched()
   })
 
-  it("bloqueia venda à vista sem sessão original — nunca lança no caixa de hoje", async () => {
+  it("venda à vista sem sessão original persiste a venda histórica sem usar o caixa de hoje", async () => {
     const { sessaoId, ...semSessao } = localSale
     void sessaoId
+    h.persist.mockResolvedValue({
+      replayed: false,
+      fingerprint: "fp",
+      venda: {
+        id: "venda-b",
+        storeId: STORE,
+        pedidoId: "VDA-RC02-2026-000100",
+        clientSaleId: CLIENT,
+        total: 18,
+        at: "2026-06-15T18:00:00.000Z",
+        status: "concluida",
+      },
+    })
     const res = await POST(
       req({
         sale: semSessao,
@@ -267,9 +279,15 @@ describe("POST /api/ops/vendas/recover-quarantined", () => {
         conflictCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
       }),
     )
-    expect(res.status).toBe(409)
-    await expect(res.json()).resolves.toMatchObject({ code: "MISSING_ORIGINAL_SESSION" })
-    expect(h.persist).not.toHaveBeenCalled()
+    expect(res.status).toBe(200)
+    const call = h.persist.mock.calls[0][0]
+    expect(call.options).toMatchObject({
+      enforceStock: false,
+      requireCaixaSession: false,
+      allowClosedOriginalSession: false,
+    })
+    expect(call.sale.sessaoId).toBeNull()
+    expect(call.sale.recovery.caixaPolicy).toBe("unidentified-session-no-current-caixa")
   })
 
   it("sessão original FECHADA exige confirmação explícita", async () => {
@@ -315,7 +333,7 @@ describe("POST /api/ops/vendas/recover-quarantined", () => {
     expect(h.persist).toHaveBeenCalledTimes(1)
     expect(h.persist.mock.calls[0][0].options).toMatchObject({
       allowClosedOriginalSession: true,
-      enforceStock: true,
+      enforceStock: false,
       requireCaixaSession: true,
     })
   })

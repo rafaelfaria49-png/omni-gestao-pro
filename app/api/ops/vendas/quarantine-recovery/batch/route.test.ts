@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   vendaUpsert: vi.fn(),
   vendaCreate: vi.fn(),
   sessaoFindFirst: vi.fn(),
+  sessaoFindMany: vi.fn(),
   produtoFindFirst: vi.fn(),
   ensureConnected: vi.fn(async () => undefined),
   requireAdmin: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock("@/lib/prisma", () => ({
       upsert: h.vendaUpsert,
       create: h.vendaCreate,
     },
-    sessaoCaixa: { findFirst: h.sessaoFindFirst },
+    sessaoCaixa: { findFirst: h.sessaoFindFirst, findMany: h.sessaoFindMany },
     produto: { findFirst: h.produtoFindFirst },
   },
   prismaEnsureConnected: h.ensureConnected,
@@ -139,7 +140,8 @@ beforeEach(() => {
   h.findUnique.mockImplementation(async ({ where }: { where: { pedidoId: string } }) =>
     occupantFor(where.pedidoId),
   )
-  h.sessaoFindFirst.mockResolvedValue({ status: "ABERTA" })
+  h.sessaoFindFirst.mockResolvedValue({ id: "sess-original-1", status: "ABERTA" })
+  h.sessaoFindMany.mockResolvedValue([])
   h.produtoFindFirst.mockResolvedValue({ id: "prod-tvbox", name: "CONTROLE TV BOX", stock: 50 })
   h.persist.mockImplementation(persistAllocating())
 })
@@ -185,7 +187,9 @@ describe("POST /api/ops/vendas/quarantine-recovery/batch", () => {
       motivo: "colisao de numero comercial",
       conflictCode: "PEDIDO_ID_CONFLITO_MESMA_LOJA",
       occupantStoreId: STORE,
+      mode: "historical-recovery",
     })
+    expect(call.options.enforceStock).toBe(false)
     // Nenhum `pedidoId` é imposto ao motor: quem aloca é o servidor.
     expect(call).not.toHaveProperty("pedidoId")
     expect(call.sale).not.toHaveProperty("pedidoId")
@@ -370,10 +374,14 @@ describe("POST /api/ops/vendas/quarantine-recovery/batch", () => {
     expect(call.options).toMatchObject({
       allowClosedOriginalSession: true,
       requireCaixaSession: true,
-      enforceStock: true,
+      enforceStock: false,
     })
     // A sessão original é preservada no payload — nunca trocada pela sessão de hoje.
     expect(call.sale.sessaoId).toBe("sess-original-1")
+    expect(call.sale.recovery).toMatchObject({
+      mode: "historical-recovery",
+      caixaPolicy: "original-session",
+    })
   })
 
   it("venda de outra loja é bloqueada por STORE_MISMATCH", async () => {
@@ -405,30 +413,104 @@ describe("POST /api/ops/vendas/quarantine-recovery/batch", () => {
     expectOccupantUntouched()
   })
 
-  it("estoque insuficiente bloqueia antes de qualquer escrita", async () => {
+  it("A: estoque atual insuficiente recupera a venda histórica (enforceStock desligado)", async () => {
     h.produtoFindFirst.mockResolvedValue({ id: "prod-tvbox", name: "CONTROLE TV BOX", stock: 0 })
     const res = await POST(
-      req({ motivo: "recuperacao administrada", candidates: [candidate()] }),
+      req({ motivo: "recuperacao administrada historica", candidates: [candidate()] }),
     )
     const json = await res.json()
-    expect(json.results[0]).toMatchObject({
-      status: "BLOCKED",
-      code: "INSUFFICIENT_STOCK_RISK",
+    expect(json.results[0].status).toBe("RECOVERED")
+    const call = h.persist.mock.calls[0][0]
+    expect(call.options.enforceStock).toBe(false)
+    expect(call.sale.recovery.stockPolicy).toBe("historical-ledger-allows-deficit")
+    expect(call.sale.recovery.stockShortfalls[0]).toMatchObject({
+      disponivel: 0,
+      necessario: 1,
     })
-    expect(h.persist).not.toHaveBeenCalled()
+    expectOccupantUntouched()
   })
 
-  it("produto inexistente na loja bloqueia com PRODUCT_UNRESOLVED", async () => {
-    h.produtoFindFirst.mockResolvedValue(null)
+  it("B: quantidade histórica maior que o saldo atual persiste com déficit no ledger", async () => {
+    h.produtoFindFirst.mockResolvedValue({ id: "prod-tvbox", name: "CONTROLE TV BOX", stock: 1 })
     const res = await POST(
-      req({ motivo: "recuperacao administrada", candidates: [candidate()] }),
+      req({
+        motivo: "recuperacao administrada historica",
+        candidates: [
+          candidate({
+            lines: [{ inventoryId: "p-tvbox", name: "CONTROLE TV BOX", quantity: 3, unitPrice: 6 }],
+            total: 18,
+          }),
+        ],
+      }),
     )
     const json = await res.json()
-    expect(json.results[0]).toMatchObject({
-      status: "BLOCKED",
-      code: "PRODUCT_UNRESOLVED",
+    expect(json.results[0].status).toBe("RECOVERED")
+    const call = h.persist.mock.calls[0][0]
+    expect(call.options.enforceStock).toBe(false)
+    expect(call.sale.recovery.stockShortfalls[0]).toMatchObject({
+      disponivel: 1,
+      necessario: 3,
     })
-    expect(h.persist).not.toHaveBeenCalled()
+    expect(call.sale.lines[0].quantity).toBe(3)
+  })
+
+  it("F: produto sem cadastro atual persiste via snapshot histórico", async () => {
+    h.produtoFindFirst.mockResolvedValue(null)
+    const res = await POST(
+      req({ motivo: "recuperacao administrada historica", candidates: [candidate()] }),
+    )
+    const json = await res.json()
+    expect(json.results[0].status).toBe("RECOVERED")
+    const call = h.persist.mock.calls[0][0]
+    expect(call.options.enforceStock).toBe(false)
+    expect(call.sale.recovery.unresolvedInventoryIds).toEqual(["p-tvbox"])
+    expect(call.sale.lines[0]).toMatchObject({
+      inventoryId: "p-tvbox",
+      name: "CONTROLE TV BOX",
+      quantity: 1,
+      unitPrice: 18,
+    })
+  })
+
+  it("H: sem sessão identificável persiste a venda e NÃO usa o caixa atual", async () => {
+    const { sessaoId, ...semSessao } = candidate()
+    void sessaoId
+    const res = await POST(
+      req({ motivo: "recuperacao administrada historica", candidates: [semSessao] }),
+    )
+    const json = await res.json()
+    expect(json.results[0].status).toBe("RECOVERED")
+    const call = h.persist.mock.calls[0][0]
+    expect(call.options).toMatchObject({
+      enforceStock: false,
+      requireCaixaSession: false,
+      allowClosedOriginalSession: false,
+    })
+    expect(call.sale.sessaoId).toBeNull()
+    expect(call.sale.recovery.caixaPolicy).toBe("unidentified-session-no-current-caixa")
+  })
+
+  it("usa a única sessão histórica correspondente quando o payload não traz sessaoId", async () => {
+    const { sessaoId, ...semSessao } = candidate({ terminalId: "PDV1" })
+    void sessaoId
+    h.sessaoFindMany.mockResolvedValue([{ id: "sess-hist-1", status: "FECHADA" }])
+    const res = await POST(
+      req({
+        motivo: "recuperacao administrada historica",
+        candidates: [semSessao],
+        allowClosedOriginalSession: true,
+      }),
+    )
+    const json = await res.json()
+    expect(json.results[0].status).toBe("RECOVERED")
+    const call = h.persist.mock.calls[0][0]
+    expect(call.sale.sessaoId).toBe("sess-hist-1")
+    expect(call.options).toMatchObject({
+      enforceStock: false,
+      requireCaixaSession: true,
+      allowClosedOriginalSession: true,
+    })
+    expect(call.sale.recovery.caixaPolicy).toBe("original-session")
   })
 
   // ── Gates de entrada ──────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   vendaCreate: vi.fn(),
   vendaDelete: vi.fn(),
   sessaoFindFirst: vi.fn(),
+  sessaoFindMany: vi.fn(),
   produtoFindFirst: vi.fn(),
   ensureConnected: vi.fn(async () => undefined),
   requireAdmin: vi.fn(),
@@ -26,7 +27,7 @@ vi.mock("@/lib/prisma", () => ({
       create: h.vendaCreate,
       delete: h.vendaDelete,
     },
-    sessaoCaixa: { findFirst: h.sessaoFindFirst },
+    sessaoCaixa: { findFirst: h.sessaoFindFirst, findMany: h.sessaoFindMany },
     produto: { findFirst: h.produtoFindFirst },
   },
   prismaEnsureConnected: h.ensureConnected,
@@ -71,7 +72,8 @@ beforeEach(() => {
   h.canAccessStore.mockReturnValue(true)
   h.findFirst.mockResolvedValue(null)
   h.findUnique.mockResolvedValue({ id: "venda-occ", storeId: STORE })
-  h.sessaoFindFirst.mockResolvedValue({ status: "ABERTA" })
+  h.sessaoFindFirst.mockResolvedValue({ id: "sess-original-1", status: "ABERTA" })
+  h.sessaoFindMany.mockResolvedValue([])
   h.produtoFindFirst.mockResolvedValue({ id: "prod-tvbox", name: "CONTROLE TV BOX", stock: 9 })
 })
 
@@ -126,6 +128,16 @@ describe("POST /api/ops/vendas/quarantine-recovery/preview", () => {
     const json = await res.json()
     expect(json.summary).toMatchObject({ requiresConfirmation: 1, ready: 0 })
     expect(json.items[0].klass).toBe("REQUIRES_CLOSED_SESSION_CONFIRM")
+  })
+
+  it("estoque insuficiente no recovery histórico é READY, sem escrita", async () => {
+    h.produtoFindFirst.mockResolvedValue({ id: "prod-tvbox", name: "CONTROLE TV BOX", stock: 0 })
+    const res = await POST(req({ candidates: [candidate()] }))
+    const json = await res.json()
+    expect(json.items[0].klass).toBe("READY")
+    expect(json.summary.ready).toBe(1)
+    expect(h.persist).not.toHaveBeenCalled()
+    expect(h.vendaUpdate).not.toHaveBeenCalled()
   })
 
   it("exige candidates e respeita o teto", async () => {

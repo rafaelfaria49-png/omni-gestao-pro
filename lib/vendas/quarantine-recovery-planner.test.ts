@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  QUARANTINE_CLASSIFY_MODE,
   QUARANTINE_RECOVERY_BUCKET,
   QUARANTINE_RECOVERY_CLASS,
   bucketForClass,
   classifyQuarantineCandidate,
+  historicalRecoveryPersistOptions,
   isExecutableClass,
   planQuarantineRecovery,
   summarizeQuarantinePlan,
@@ -246,6 +248,171 @@ describe("classifyQuarantineCandidate", () => {
     const snapshot = JSON.stringify(input)
     classifyQuarantineCandidate({ storeId: STORE, candidate: input, facts: facts() })
     expect(JSON.stringify(input)).toBe(snapshot)
+  })
+})
+
+describe("classifyQuarantineCandidate · historical-recovery", () => {
+  it("A: estoque atual insuficiente fica READY — a venda histórica aconteceu", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate(),
+      facts: facts({
+        stockShortfalls: [
+          { produtoId: "prod-1", nome: "CONTROLE TV BOX", disponivel: 0, necessario: 1 },
+        ],
+      }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.READY)
+    expect(item.reason).toContain("déficit")
+    expect(isExecutableClass(item.klass)).toBe(true)
+  })
+
+  it("B: quantidade histórica maior que saldo atual continua READY", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate({
+        lines: [{ inventoryId: "p-tvbox", name: "CONTROLE TV BOX", quantity: 3, unitPrice: 18 }],
+      }),
+      facts: facts({
+        stockShortfalls: [
+          { produtoId: "prod-1", nome: "CONTROLE TV BOX", disponivel: 1, necessario: 3 },
+        ],
+      }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.READY)
+    expect(item.reason).toContain("necessário 3")
+  })
+
+  it("F: produto sem cadastro atual fica READY via snapshot", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate(),
+      facts: facts({ unresolvedInventoryIds: ["p-tvbox"] }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.READY)
+    expect(item.reason).toContain("snapshot")
+  })
+
+  it("G: sessão original fechada continua exigindo confirmação", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate(),
+      facts: facts({ originalSessionStatus: "FECHADA" }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.REQUIRES_CLOSED_SESSION_CONFIRM)
+    expect(isExecutableClass(item.klass)).toBe(true)
+  })
+
+  it("H: sem sessão identificável fica READY — não usa o caixa atual", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate({ sessaoId: undefined }),
+      facts: facts({ originalSessionStatus: "NO_SESSION_ID" }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.READY)
+    expect(item.reason).toContain("caixa atual")
+  })
+
+  it("H: sessão informada inexistente também fica READY no modo histórico", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate(),
+      facts: facts({ originalSessionStatus: "NOT_FOUND" }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.READY)
+  })
+
+  it("I: ocupante ausente continua bloqueado — recovery não inventa conflito", () => {
+    const item = classifyQuarantineCandidate({
+      storeId: STORE,
+      candidate: candidate(),
+      facts: facts({ occupantExists: false }),
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    })
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.OCCUPANT_NOT_FOUND)
+  })
+
+  it("J: duas vendas com o mesmo VDA antigo mantêm clientSaleId distintos", () => {
+    const plan = planQuarantineRecovery(
+      [
+        {
+          storeId: STORE,
+          candidate: candidate({ clientSaleId: "cs_attempt_111111" }),
+          facts: facts(),
+        },
+        {
+          storeId: STORE,
+          candidate: candidate({ clientSaleId: "cs_attempt_222222" }),
+          facts: facts(),
+        },
+      ],
+      QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+    )
+    expect(plan.summary.ready).toBe(2)
+    expect(plan.items[0].clientSaleId).toBe("cs_attempt_111111")
+    expect(plan.items[1].clientSaleId).toBe("cs_attempt_222222")
+    expect(plan.items[0].conflictingPedidoId).toBe(plan.items[1].conflictingPedidoId)
+  })
+
+  it("modo live continua bloqueando estoque insuficiente", () => {
+    const item = classify(
+      {},
+      {
+        stockShortfalls: [
+          { produtoId: "prod-1", nome: "CONTROLE TV BOX", disponivel: 0, necessario: 1 },
+        ],
+      },
+    )
+    expect(item.klass).toBe(QUARANTINE_RECOVERY_CLASS.INSUFFICIENT_STOCK_RISK)
+  })
+})
+
+describe("historicalRecoveryPersistOptions", () => {
+  it("nunca liga enforceStock — o PDV ao vivo permanece fail-closed", () => {
+    expect(
+      historicalRecoveryPersistOptions({
+        originalSessionStatus: "ABERTA",
+        allowClosedOriginalSession: false,
+      }).enforceStock,
+    ).toBe(false)
+  })
+
+  it("G: sessão original fechada exige a própria sessão, nunca a atual", () => {
+    expect(
+      historicalRecoveryPersistOptions({
+        originalSessionStatus: "FECHADA",
+        allowClosedOriginalSession: true,
+      }),
+    ).toEqual({
+      enforceStock: false,
+      requireCaixaSession: true,
+      allowClosedOriginalSession: true,
+    })
+  })
+
+  it("H: sessão não identificável desliga o gate de caixa (sem fallback para hoje)", () => {
+    expect(
+      historicalRecoveryPersistOptions({
+        originalSessionStatus: "NO_SESSION_ID",
+        allowClosedOriginalSession: true,
+      }),
+    ).toEqual({
+      enforceStock: false,
+      requireCaixaSession: false,
+      allowClosedOriginalSession: false,
+    })
+    expect(
+      historicalRecoveryPersistOptions({
+        originalSessionStatus: "NOT_FOUND",
+        allowClosedOriginalSession: false,
+      }).requireCaixaSession,
+    ).toBe(false)
   })
 })
 

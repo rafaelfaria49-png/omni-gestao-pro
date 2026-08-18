@@ -42,8 +42,12 @@ import {
   isLegacySaleFactsComparable,
 } from "@/lib/vendas/legacy-sale-fingerprint"
 import {
+  HISTORICAL_RECOVERY_STOCK_POLICY,
+  QUARANTINE_CLASSIFY_MODE,
   QUARANTINE_RECOVERY_CLASS,
   classifyQuarantineCandidate,
+  historicalRecoveryCaixaPolicy,
+  historicalRecoveryPersistOptions,
   isExecutableClass,
   type OriginalSessionStatus,
   type QuarantineCandidate,
@@ -136,19 +140,49 @@ async function readProductFacts(
   return { unresolvedInventoryIds, stockShortfalls }
 }
 
-async function readOriginalSessionStatus(
+async function readOriginalSession(
   db: ReadClient,
   storeId: string,
   candidate: QuarantineCandidate,
-): Promise<OriginalSessionStatus> {
+): Promise<{ status: OriginalSessionStatus; resolvedSessaoId: string | null }> {
   const sessaoId = text(candidate.sessaoId)
-  if (!sessaoId) return "NO_SESSION_ID"
-  const sessao = await db.sessaoCaixa.findFirst({
-    where: { id: sessaoId, storeId },
-    select: { status: true },
+  if (sessaoId) {
+    const sessao = await db.sessaoCaixa.findFirst({
+      where: { id: sessaoId, storeId },
+      select: { id: true, status: true },
+    })
+    if (!sessao) return { status: "NOT_FOUND", resolvedSessaoId: null }
+    return {
+      status: sessao.status === "ABERTA" ? "ABERTA" : "FECHADA",
+      resolvedSessaoId: sessao.id,
+    }
+  }
+
+  const atRaw = text(candidate.at)
+  const at = atRaw ? new Date(atRaw) : null
+  if (!at || Number.isNaN(at.getTime())) {
+    return { status: "NO_SESSION_ID", resolvedSessaoId: null }
+  }
+
+  const terminalId = text(candidate.terminalId)
+  const matches = await db.sessaoCaixa.findMany({
+    where: {
+      storeId,
+      ...(terminalId ? { terminalId } : {}),
+      abertaEm: { lte: at },
+      OR: [{ fechadaEm: null }, { fechadaEm: { gte: at } }],
+    },
+    select: { id: true, status: true },
+    take: 2,
   })
-  if (!sessao) return "NOT_FOUND"
-  return sessao.status === "ABERTA" ? "ABERTA" : "FECHADA"
+  if (matches.length !== 1) {
+    return { status: "NO_SESSION_ID", resolvedSessaoId: null }
+  }
+  const sessao = matches[0]
+  return {
+    status: sessao.status === "ABERTA" ? "ABERTA" : "FECHADA",
+    resolvedSessaoId: sessao.id,
+  }
 }
 
 /**
@@ -188,13 +222,14 @@ export async function readQuarantineServerFacts(input: {
       occupantExists: Boolean(occupant),
       occupantStoreId: occupant?.storeId ?? null,
       originalSessionStatus: "NO_SESSION_ID",
+      resolvedSessaoId: null,
       unresolvedInventoryIds: [],
       stockShortfalls: [],
     }
   }
 
-  const [originalSessionStatus, productFacts] = await Promise.all([
-    readOriginalSessionStatus(db, storeId, candidate),
+  const [session, productFacts] = await Promise.all([
+    readOriginalSession(db, storeId, candidate),
     readProductFacts(db, storeId, candidate),
   ])
 
@@ -203,7 +238,8 @@ export async function readQuarantineServerFacts(input: {
     alreadyRecoveredVendaId: null,
     occupantExists: Boolean(occupant),
     occupantStoreId: occupant?.storeId ?? null,
-    originalSessionStatus,
+    originalSessionStatus: session.status,
+    resolvedSessaoId: session.resolvedSessaoId,
     unresolvedInventoryIds: productFacts.unresolvedInventoryIds,
     stockShortfalls: productFacts.stockShortfalls,
   }
@@ -220,6 +256,7 @@ export async function planQuarantineCandidate(input: {
     storeId: input.storeId,
     candidate: input.candidate,
     facts,
+    mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
   })
 }
 
@@ -373,7 +410,12 @@ export async function executeQuarantineRecovery(
   const allowClosedOriginalSession = input.allowClosedOriginalSession === true
 
   const facts = input.facts ?? (await readQuarantineServerFacts({ storeId, candidate, db }))
-  const item = classifyQuarantineCandidate({ storeId, candidate, facts })
+  const item = classifyQuarantineCandidate({
+    storeId,
+    candidate,
+    facts,
+    mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+  })
   const ref = { conflictingPedidoId: item.conflictingPedidoId, clientSaleId: item.clientSaleId }
 
   // Gate do writer — defesa em profundidade, sem bypass.
@@ -461,19 +503,40 @@ export async function executeQuarantineRecovery(
     )
   }
 
+  const identifiedSessaoId =
+    item.originalSessionStatus === "ABERTA" || item.originalSessionStatus === "FECHADA"
+      ? (text(candidate.sessaoId) ?? text(facts.resolvedSessaoId))
+      : null
+
+  const persistOptions = historicalRecoveryPersistOptions({
+    originalSessionStatus: item.originalSessionStatus,
+    allowClosedOriginalSession,
+  })
+
+  const unresolved = (facts.unresolvedInventoryIds ?? []).filter(
+    (id) => typeof id === "string" && id.trim() && !isVirtualSaleLine(id),
+  )
+  const shortfalls = facts.stockShortfalls ?? []
+
   const recoverySale = {
     ...(candidate as unknown as SalePayload),
     clientSaleId,
+    sessaoId: identifiedSessaoId,
     recovery: {
       recoveredFromPedidoId: item.conflictingPedidoId,
       recoveredAt: new Date().toISOString(),
       motivo,
+      mode: QUARANTINE_CLASSIFY_MODE.HISTORICAL_RECOVERY,
+      stockPolicy: HISTORICAL_RECOVERY_STOCK_POLICY,
+      caixaPolicy: historicalRecoveryCaixaPolicy(item.originalSessionStatus),
       conflictCode:
         item.conflictCode ??
         (confirmed.occupantOtherStore
           ? "PEDIDO_ID_DE_OUTRA_LOJA"
           : "PEDIDO_ID_CONFLITO_MESMA_LOJA"),
       occupantStoreId: confirmed.occupantStoreId,
+      ...(unresolved.length > 0 ? { unresolvedInventoryIds: unresolved } : {}),
+      ...(shortfalls.length > 0 ? { stockShortfalls: shortfalls } : {}),
     },
   } as SalePayload
 
@@ -483,11 +546,7 @@ export async function executeQuarantineRecovery(
       sale: recoverySale,
       clientSaleId,
       operadorLabel,
-      options: {
-        enforceStock: true,
-        requireCaixaSession: true,
-        allowClosedOriginalSession,
-      },
+      options: persistOptions,
     })
     return resultFrom(
       ref,
