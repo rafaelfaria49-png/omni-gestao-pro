@@ -1836,25 +1836,35 @@ export function OperationsProvider({
 
   // Rede de segurança em sessão: re-tenta pendências quando a conexão volta,
   // quando a aba reganha foco e periodicamente.
+  //
+  // O dump completo de `/api/ops/vendas-list` NÃO entra no intervalo de ~30s.
+  // Reconciliação do histórico fica no bootstrap (`loadDb`), em visibility→visible,
+  // em online e em refresh explícito (caixa/fechamento). Cross-terminal em aba
+  // continuamente focada só vê vendas novas nesses gatilhos — aceite da Opção A.
   useEffect(() => {
     if (!opsDbReady) return
-    const onWake = () => {
-      if (typeof navigator !== "undefined" && navigator.onLine === false) return
+    const isOffline = () => typeof navigator !== "undefined" && navigator.onLine === false
+    const flushPendingOnWake = () => {
+      if (isOffline()) return
       flushPendingSales()
       flushPendingDevolucoes()
       flushPendingCaixaOperations()
-      // Reconcilia status autoritativo das vendas (ex.: cancelamento feito na tela
-      // Vendas) ao voltar o foco/rede — caixa/fechamento atualizam sem reload manual.
+    }
+    const reconcileSalesOnResume = () => {
+      if (isOffline()) return
+      flushPendingOnWake()
       void refreshSalesFromServer()
     }
     const onVisible = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "visible") onWake()
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        reconcileSalesOnResume()
+      }
     }
-    window.addEventListener("online", onWake)
+    window.addEventListener("online", reconcileSalesOnResume)
     document.addEventListener("visibilitychange", onVisible)
-    const interval = window.setInterval(onWake, 30_000)
+    const interval = window.setInterval(flushPendingOnWake, 30_000)
     return () => {
-      window.removeEventListener("online", onWake)
+      window.removeEventListener("online", reconcileSalesOnResume)
       document.removeEventListener("visibilitychange", onVisible)
       window.clearInterval(interval)
     }
