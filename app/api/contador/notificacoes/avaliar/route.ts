@@ -44,6 +44,7 @@ export async function POST(req: Request) {
         competencia: resultado.competencia,
         avisos: resultado.avisos,
         emitidos: resultado.emitidos,
+        fontePacote: resultado.fontePacote,
       },
       { headers: CABECALHO_PRIVADO },
     )

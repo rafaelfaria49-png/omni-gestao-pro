@@ -18,7 +18,7 @@ O Omni Core (`lib/omni-agent/**`) permanece intocado. Integração futura consom
 | `fechamento_proximo` | `ContadorCompetencia` (GOAL 012) | status ≠ `FECHADA` e faltam ≤ 7 dias civis SP para o último dia da competência (ou o mês já passou) | competência `FECHADA`; folga > 7 dias |
 | `guia_vencendo` | Agenda (GOAL 016) | `estaVencendo` (janela canônica de **7 dias**) | paga (`pagaEm`); fora da janela |
 | `guia_vencida` | Agenda (GOAL 016) | `estaVencido` (dia UTC do vencimento < hoje SP) | paga |
-| `pacote_com_pendencias` | `manifesto.pendencias` da versão efetiva do `ContadorPacote` (GOAL 012). Não usa `snapshot.checklist`. | pacote existe e há pendência operacional após filtrar ids stale | sem pacote; só stale; manifesto sem pendência operacional |
+| `pacote_com_pendencias` | `manifest.json` (`pendencias`) da **versão efetiva** do ZIP oficial (`ContadorPacote.storageRef` + `manifestoHash`). Não usa `snapshot.checklist` nem reconstrói com `montarPendencias`. | pacote existe, manifesto verificado e há pendência operacional (checklist ≠ ok **ou** `Fonte parcial: …`) após filtrar ids stale | sem pacote; só stale; manifesto sem pendência operacional; manifesto/ZIP ilegível (`fontePacote=indisponivel`, sem alerta fabricado) |
 | `alteracao_pos_fechamento` | `ContadorEvento` persistido (POST 012) | existe evento `alteracao_pos_fechamento` | ausência de evento (GET vivo de divergência **não** inventa alerta) |
 
 Itens stale **nunca** usados como fonte: `documentos`, `fechamento_oficial`.
@@ -70,9 +70,9 @@ Tratado/suprimido silencia a **mesma** chave até nova janela válida (novo dia 
 
 Falha da transação: zero evento parcial / órfão.
 
-`GET /api/contador/notificacoes` é **somente leitura** (avalia + lista + consulta histórico; zero INSERT/UPDATE).
+`GET /api/contador/notificacoes` é **somente leitura** (avalia + lista + consulta histórico; zero INSERT/UPDATE). Leitura do ZIP oficial é GET de storage, não escrita.
 
-Fonte do pacote: `PacoteAlerta.pendencias` = `manifesto.pendencias` da maior versão. A regra não lê `snapshot.checklist`. O JSON do manifesto não vive na linha `ContadorPacote` (schema fora); o adapter Prisma reutiliza `montarPendencias` (GOAL 008) sobre o checklist congelado da versão efetiva, sem copiar a regra.
+Fonte do pacote: `PacoteAlerta.pendencias` = array `pendencias` do `manifest.json` da maior versão válida, lido com `abrirConteudoPrivado` + `JSZip.loadAsync` + `sha256Hex` (o mesmo hash gravado em `ContadorPacote.manifestoHash`). A regra não lê `snapshot.checklist` e não chama `montarPendencias`. Falha de leitura/integridade → `fonte: "indisponivel"` (nunca lista vazia com `fonte: "ok"`). `storageRef` e URL não saem no DTO.
 
 ---
 

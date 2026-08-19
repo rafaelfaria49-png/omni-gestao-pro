@@ -25,7 +25,7 @@ export interface NotificacoesRepoLeitura {
   acharCompetencia(storeId: string, comp: Competencia): Promise<CompetenciaAlerta | null>
   listarDocumentos(competenciaId: string, storeId: string): Promise<DocumentoAlerta[]>
   listarGuias(competenciaId: string, storeId: string): Promise<GuiaAlerta[]>
-  listarPacotes(competenciaId: string): Promise<PacoteAlerta[]>
+  listarPacotes(competenciaId: string, storeId: string): Promise<PacoteAlerta[]>
   listarEventos(
     competenciaId: string,
     storeId: string,

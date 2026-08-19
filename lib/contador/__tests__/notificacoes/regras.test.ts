@@ -102,6 +102,7 @@ describe("notificacoes · regras puras", () => {
         pacotes: [
           {
             versao: 1,
+            fonte: "ok",
             pendencias: CHECKLIST_IDS_STALE.map((id) => `[pendente] ${id} — sinal stale`),
           },
         ],
@@ -111,7 +112,7 @@ describe("notificacoes · regras puras", () => {
     const comPend = avaliarRegras(
       fontes({
         competencia: competenciaRow({ snapshot: { checklist: { itens: [] } } }),
-        pacotes: [{ versao: 1, pendencias: ["[atencao] caixa — conferência"] }],
+        pacotes: [{ versao: 1, fonte: "ok", pendencias: ["[atencao] caixa — conferência"] }],
       }),
       HOJE,
     )
@@ -124,7 +125,7 @@ describe("notificacoes · regras puras", () => {
     )
     const semPend = avaliarRegras(
       fontes({
-        pacotes: [{ versao: 2, pendencias: [] }],
+        pacotes: [{ versao: 2, fonte: "ok", pendencias: [] }],
       }),
       HOJE,
     )
@@ -151,14 +152,14 @@ describe("notificacoes · regras puras", () => {
     const seguePacoteVazio = avaliarRegras(
       fontes({
         competencia: competenciaRow({ snapshot: snapshotPendente }),
-        pacotes: [{ versao: 3, pendencias: [] }],
+        pacotes: [{ versao: 3, fonte: "ok", pendencias: [] }],
       }),
       HOJE,
     )
     const seguePacoteComPend = avaliarRegras(
       fontes({
         competencia: competenciaRow({ snapshot: snapshotLimpo }),
-        pacotes: [{ versao: 3, pendencias: ["[atencao] sessoes_caixa — diferença"] }],
+        pacotes: [{ versao: 3, fonte: "ok", pendencias: ["[atencao] sessoes_caixa — diferença"] }],
       }),
       HOJE,
     )
@@ -168,6 +169,7 @@ describe("notificacoes · regras puras", () => {
         pacotes: [
           {
             versao: 3,
+            fonte: "ok",
             pendencias: ["[pendente] documentos — domínio", "[pendente] fechamento_oficial — GOAL"],
           },
         ],
@@ -178,6 +180,59 @@ describe("notificacoes · regras puras", () => {
     expect(seguePacoteVazio.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
     expect(seguePacoteComPend.some((a) => a.regra === "pacote_com_pendencias" && a.alvo === "v3")).toBe(true)
     expect(staleNoPacoteNaoReaparece.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+  })
+
+  it("pendência só por fonte parcial dispara; manifesto indisponível não vira alerta", () => {
+    const soParcial = avaliarRegras(
+      fontes({
+        pacotes: [
+          {
+            versao: 1,
+            fonte: "ok",
+            pendencias: ["Fonte parcial: vendas — cobertura incompleta"],
+          },
+        ],
+      }),
+      HOJE,
+    )
+    const parcialComStaleNoTexto = avaliarRegras(
+      fontes({
+        pacotes: [
+          {
+            versao: 1,
+            fonte: "ok",
+            pendencias: ["Fonte parcial: documentos — cobertura incompleta"],
+          },
+        ],
+      }),
+      HOJE,
+    )
+    const indisponivel = avaliarRegras(
+      fontes({
+        pacotes: [
+          {
+            versao: 4,
+            fonte: "indisponivel",
+            pendencias: ["[atencao] caixa — não usar esta lista"],
+          },
+        ],
+      }),
+      HOJE,
+    )
+    const duasVersoes = avaliarRegras(
+      fontes({
+        pacotes: [
+          { versao: 1, fonte: "ok", pendencias: ["[atencao] caixa — v1"] },
+          { versao: 2, fonte: "ok", pendencias: [] },
+        ],
+      }),
+      HOJE,
+    )
+
+    expect(soParcial.some((a) => a.regra === "pacote_com_pendencias" && a.alvo === "v1")).toBe(true)
+    expect(parcialComStaleNoTexto.some((a) => a.regra === "pacote_com_pendencias")).toBe(true)
+    expect(indisponivel.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+    expect(duasVersoes.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
   })
 
   it("alteracao_pos_fechamento só nasce de evento persistido", () => {

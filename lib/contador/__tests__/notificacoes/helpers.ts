@@ -98,10 +98,14 @@ export function fakeRepoNotificacoes(inicial: Partial<EstadoFake> = {}): FakeNot
         .filter((g) => g.competenciaId === competenciaId && g.storeId === storeId)
         .map(({ id, titulo, vencimento, pagaEm }) => ({ id, titulo, vencimento, pagaEm }))
     },
-    async listarPacotes(competenciaId: string) {
+    async listarPacotes(competenciaId: string, _storeId: string) {
       return db.estado.pacotes
         .filter((p) => p.competenciaId === competenciaId)
-        .map(({ versao, pendencias }) => ({ versao, pendencias: [...pendencias] }))
+        .map(({ versao, pendencias, fonte }) => ({
+          versao,
+          pendencias: [...pendencias],
+          fonte: fonte ?? "ok",
+        }))
     },
     async listarEventos(competenciaId: string, storeId: string, tipos: readonly string[]) {
       return db.estado.eventos.filter(

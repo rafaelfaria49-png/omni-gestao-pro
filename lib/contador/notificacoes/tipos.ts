@@ -113,10 +113,12 @@ export type CompetenciaAlerta = Readonly<{
 /**
  * Versão persistida do pacote oficial + `manifesto.pendencias` daquela versão.
  * Alvo/janela da regra usam a versão efetiva (maior `versao`).
+ * `fonte: "indisponivel"` = ZIP/manifesto ilegível — NÃO é “sem pendências”.
  */
 export type PacoteAlerta = Readonly<{
   versao: number
   pendencias: readonly string[]
+  fonte: "ok" | "indisponivel"
 }>
 
 export type FontesAvaliacao = Readonly<{

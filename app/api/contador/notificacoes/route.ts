@@ -36,7 +36,7 @@ export async function GET(req: Request) {
       criarRepoNotificacoes(),
     )
     return NextResponse.json(
-      { ok: true, competencia: resultado.competencia, avisos: resultado.avisos },
+      { ok: true, competencia: resultado.competencia, avisos: resultado.avisos, fontePacote: resultado.fontePacote },
       { headers: CABECALHO_PRIVADO },
     )
   } catch (e) {

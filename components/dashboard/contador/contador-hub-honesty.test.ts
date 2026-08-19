@@ -582,6 +582,11 @@ describe("Contador HUB — central de avisos REAL (GOAL 017)", () => {
     expect(avisosSrc).toContain('method: "POST"')
   })
 
+  it("fonte de pacote indisponível é honesta e não afirma ausência de pendências", () => {
+    expect(avisosSrc).toContain("fontePacote")
+    expect(avisosSrc).toContain("Não foi possível ler o manifesto oficial do pacote desta competência.")
+  })
+
   it("agenda mantém microcopy informado pelo responsável", () => {
     expect(avisosSrc).toContain("informado pelo responsável")
     expect(avisosSrc).not.toContain("janela de 7 dias informada pelo responsável")

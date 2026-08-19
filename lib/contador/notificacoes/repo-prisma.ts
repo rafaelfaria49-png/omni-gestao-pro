@@ -6,8 +6,9 @@
  */
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import type { Competencia } from "@/lib/contador/competencia"
+import { resolverStorageDocumentos } from "@/lib/contador/documentos/storage"
 import type { DedupeAlerta, DedupeChaveAlerta, NotificacoesRepo, NotificacoesRepoLeitura } from "./repo"
-import { reconstruirPendenciasViaMontarPendencias } from "./pacote-fonte"
+import { lerPendenciasDoManifestoOficial } from "./manifesto-zip"
 import type {
   CompetenciaAlerta,
   DocumentoAlerta,
@@ -29,7 +30,10 @@ type TxClient = {
     findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<GuiaAlerta[]>
   }
   contadorPacote: {
-    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<Array<{ versao: number }>>
+    findMany(args: {
+      where: Record<string, unknown>
+      select: Record<string, unknown>
+    }): Promise<Array<{ versao: number; storageRef: string; manifestoHash: string }>>
   }
   contadorEvento: {
     findMany(args: { where: Record<string, unknown>; select: Record<string, unknown>; orderBy: Record<string, unknown> }): Promise<EventoAlertaRow[]>
@@ -84,12 +88,21 @@ function whereChave(
   }
 }
 
-export function criarRepoNotificacoes(client?: DbClient): NotificacoesRepo {
+type AbrirZipOficial = (storageRef: string) => Promise<Uint8Array>
+
+export function criarRepoNotificacoes(
+  client?: DbClient,
+  abrirZip?: AbrirZipOficial,
+): NotificacoesRepo {
   const obter = async (): Promise<DbClient> => {
     if (client) return client
     await prismaEnsureConnected()
     return prisma as unknown as DbClient
   }
+
+  const baixarZip: AbrirZipOficial =
+    abrirZip ??
+    (async (storageRef) => resolverStorageDocumentos().abrirConteudoPrivado(storageRef))
 
   const leitura: NotificacoesRepoLeitura = {
     async acharCompetencia(storeId, comp: Competencia): Promise<CompetenciaAlerta | null> {
@@ -116,31 +129,39 @@ export function criarRepoNotificacoes(client?: DbClient): NotificacoesRepo {
       })
     },
 
-    async listarPacotes(competenciaId): Promise<PacoteAlerta[]> {
+    async listarPacotes(competenciaId, storeId): Promise<PacoteAlerta[]> {
       const db = await obter()
       const [rows, comp] = await Promise.all([
         db.contadorPacote.findMany({
           where: { competenciaId },
-          select: { versao: true },
+          select: { versao: true, storageRef: true, manifestoHash: true },
         }),
         db.contadorCompetencia.findUnique({
           where: { id: competenciaId },
-          select: { ano: true, mes: true, snapshot: true },
+          select: { storeId: true },
         }),
       ])
       if (rows.length === 0) return []
       const max = Math.max(...rows.map((r) => r.versao))
-      const pendencias =
-        comp && typeof (comp as { ano?: unknown }).ano === "number"
-          ? reconstruirPendenciasViaMontarPendencias((comp as { snapshot: unknown }).snapshot, {
-              ano: (comp as { ano: number }).ano,
-              mes: (comp as { mes: number }).mes,
-            })
-          : Object.freeze([])
-      return rows.map((r) => ({
-        versao: r.versao,
-        pendencias: r.versao === max ? pendencias : Object.freeze([]),
-      }))
+      const efetivo = rows.find((r) => r.versao === max)
+      const storeDaComp = (comp as { storeId?: unknown } | null)?.storeId
+      if (!efetivo || typeof storeDaComp !== "string" || storeDaComp !== storeId) {
+        return [{ versao: max, pendencias: Object.freeze([]), fonte: "indisponivel" }]
+      }
+
+      try {
+        const bytes = await baixarZip(efetivo.storageRef)
+        const lido = await lerPendenciasDoManifestoOficial(bytes, {
+          manifestoHash: efetivo.manifestoHash,
+          storeId,
+        })
+        if (!lido.ok) {
+          return [{ versao: max, pendencias: Object.freeze([]), fonte: "indisponivel" }]
+        }
+        return [{ versao: max, pendencias: lido.pendencias, fonte: "ok" }]
+      } catch {
+        return [{ versao: max, pendencias: Object.freeze([]), fonte: "indisponivel" }]
+      }
     },
 
     async listarEventos(competenciaId, storeId, tipos): Promise<EventoAlertaRow[]> {

@@ -109,7 +109,11 @@ export function avaliarRegras(fontes: FontesAvaliacao, agora: Date = new Date())
   }
 
   const pacote = pacoteEfetivo(fontes.pacotes)
-  if (pacote && pendenciasOperacionaisDoManifesto(pacote.pendencias).length > 0) {
+  if (
+    pacote &&
+    pacote.fonte === "ok" &&
+    pendenciasOperacionaisDoManifesto(pacote.pendencias).length > 0
+  ) {
     out.push({
       regra: "pacote_com_pendencias",
       alvo: `v${pacote.versao}`,

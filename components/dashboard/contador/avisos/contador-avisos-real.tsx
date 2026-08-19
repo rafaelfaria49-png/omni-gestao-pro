@@ -55,6 +55,13 @@ function rotuloRegra(regra: string): string {
   return ROTULO_REGRA[regra] ?? regra
 }
 
+function avisosDaResposta(raw: unknown): Aviso[] {
+  return Array.isArray(raw) ? (raw as Aviso[]) : []
+}
+
+const ERRO_MANIFESTO_INDISPONIVEL =
+  "Não foi possível ler o manifesto oficial do pacote desta competência."
+
 export function ContadorAvisosReal({ competencia }: { competencia: Competencia }) {
   const codigo = formatCompetencia(competencia)
   const [avisos, setAvisos] = useState<Aviso[]>([])
@@ -64,8 +71,11 @@ export function ContadorAvisosReal({ competencia }: { competencia: Competencia }
   const [rascunhoPorId, setRascunhoPorId] = useState<Record<string, Rascunho>>({})
   const [copiado, setCopiado] = useState<string | null>(null)
 
-  const aplicarLista = (lista: unknown) => {
-    setAvisos(Array.isArray(lista) ? (lista as Aviso[]) : [])
+  const aplicarResposta = (j: { avisos?: unknown; fontePacote?: unknown }) => {
+    setAvisos(avisosDaResposta(j.avisos))
+    if (j.fontePacote === "indisponivel") {
+      setErro(ERRO_MANIFESTO_INDISPONIVEL)
+    }
   }
 
   const carregar = useCallback(async () => {
@@ -80,8 +90,8 @@ export function ContadorAvisosReal({ competencia }: { competencia: Competencia }
         setAvisos([])
         return
       }
-      const j = (await res.json()) as { avisos?: Aviso[] }
-      aplicarLista(j.avisos)
+      const j = (await res.json()) as { avisos?: Aviso[]; fontePacote?: string }
+      aplicarResposta(j)
     } catch {
       setErro("Não foi possível carregar os avisos desta competência agora.")
       setAvisos([])
@@ -107,8 +117,8 @@ export function ContadorAvisosReal({ competencia }: { competencia: Competencia }
         setErro(await lerErroResposta(res))
         return
       }
-      const j = (await res.json()) as { avisos?: Aviso[] }
-      aplicarLista(j.avisos)
+      const j = (await res.json()) as { avisos?: Aviso[]; fontePacote?: string }
+      aplicarResposta(j)
     } catch {
       setErro("Não foi possível atualizar os avisos agora.")
     } finally {
@@ -211,11 +221,11 @@ export function ContadorAvisosReal({ competencia }: { competencia: Competencia }
           <Loader2 className="h-4 w-4 animate-spin" />
           Carregando avisos…
         </div>
-      ) : avisos.length === 0 ? (
+      ) : avisos.length === 0 && !erro ? (
         <div className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">
           Nenhum aviso ativo nesta competência.
         </div>
-      ) : (
+      ) : avisos.length === 0 ? null : (
         <div className="grid min-w-0 gap-2.5">
           {avisos.map((a) => {
             const rascunho = rascunhoPorId[a.id]

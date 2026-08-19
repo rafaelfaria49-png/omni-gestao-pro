@@ -12,6 +12,7 @@ import { alertIdDe } from "./chave"
 import { avaliarRegras } from "./regras"
 import { gerarRascunho } from "./rascunhos"
 import { chaveDoCandidato, toAlertaDto } from "./sanear"
+import { fontePacoteDasFontes } from "./pacote-fonte"
 import type { NotificacoesRepo, NotificacoesRepoLeitura } from "./repo"
 import {
   ATOR_TIPO_INTERNO,
@@ -83,7 +84,7 @@ async function carregarFontes(
   const [documentos, guias, pacotes, eventosAlerta, eventosPos] = await Promise.all([
     repo.listarDocumentos(competencia.id, escopo.storeId),
     repo.listarGuias(competencia.id, escopo.storeId),
-    repo.listarPacotes(competencia.id),
+    repo.listarPacotes(competencia.id, escopo.storeId),
     repo.listarEventos(competencia.id, escopo.storeId, TIPOS_ALERTA),
     repo.listarEventos(competencia.id, escopo.storeId, [EVENTO_ALTERACAO_POS_FECHAMENTO]),
   ])
@@ -161,11 +162,12 @@ export async function listarAlertas(
   comp: Competencia,
   repo: NotificacoesRepoLeitura,
   agora: Date = new Date(),
-): Promise<{ competencia: string; avisos: AlertaDto[] }> {
+): Promise<{ competencia: string; avisos: AlertaDto[]; fontePacote: "ok" | "indisponivel" | "ausente" }> {
   const fontes = await carregarFontes(escopo, comp, repo)
   return {
     competencia: formatCompetencia(comp),
     avisos: dtosAtivos(fontes, agora),
+    fontePacote: fontePacoteDasFontes(fontes.pacotes),
   }
 }
 
@@ -174,11 +176,16 @@ export async function avaliarEPersistir(
   comp: Competencia,
   repo: NotificacoesRepo,
   agora: Date = new Date(),
-): Promise<{ competencia: string; avisos: AlertaDto[]; emitidos: number }> {
+): Promise<{
+  competencia: string
+  avisos: AlertaDto[]
+  emitidos: number
+  fontePacote: "ok" | "indisponivel" | "ausente"
+}> {
   const fontes = await carregarFontes(escopo, comp, repo)
   const competencia = fontes.competencia
   if (!competencia) {
-    return { competencia: formatCompetencia(comp), avisos: [], emitidos: 0 }
+    return { competencia: formatCompetencia(comp), avisos: [], emitidos: 0, fontePacote: "ausente" }
   }
 
   const candidatos = avaliarRegras(fontes, agora)
@@ -218,6 +225,7 @@ export async function avaliarEPersistir(
     competencia: formatCompetencia(comp),
     avisos: dtosAtivos(depois, agora),
     emitidos,
+    fontePacote: fontePacoteDasFontes(depois.pacotes),
   }
 }
 
