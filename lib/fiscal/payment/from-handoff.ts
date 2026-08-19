@@ -259,7 +259,7 @@ export function isFiscalPaymentHandoffPresent(value: unknown): boolean {
 
 /**
  * Entrada única do Fiscal: handoff presente → só o handoff (sem fallback).
- * Venda histórica sem handoff → comportamento legado fail-closed do breakdown.
+ * Venda histórica sem handoff → breakdown fail-closed (PIX sem evidência de subtipo).
  */
 export function derivePagamentoFiscal(
   breakdown: unknown,

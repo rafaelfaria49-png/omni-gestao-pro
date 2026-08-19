@@ -249,14 +249,14 @@ describe("venda com múltiplos itens, desconto e paymentBreakdown", () => {
     expect(r.snapshot.totais.valorDesconto).toBe(7.5)
   })
 
-  it("congela paymentBreakdown como veio", () => {
+  it("congela paymentBreakdown como veio; PIX legado não vira tPag 17", () => {
     const pb = { dinheiro: 30, pix: 20, cartaoCredito: 0 }
     const r = buildVendaFiscalSnapshot(baseInput({ venda: { ...baseInput().venda, paymentBreakdown: pb } }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.snapshot.venda.paymentBreakdown).toEqual(pb)
-    expect(r.snapshot.venda.pagamentoFiscal?.det.map((d) => d.tPag).sort()).toEqual(["01", "17"])
-    expect(r.snapshot.venda.pagamentoFiscalErro).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
   })
 
   it("breakdown nulo congela erro canônico e não inventa forma", () => {
@@ -307,12 +307,12 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_HANDOFF_VERSAO_DESCONHECIDA")
   })
 
-  it("venda histórica sem handoff preserva PIX→17 do legado", () => {
+  it("venda histórica sem handoff + PIX bloqueia (não infere 17)", () => {
     const r = buildVendaFiscalSnapshot(baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 } } }))
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.paymentBreakdown")
-    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
   })
 
   it("handoff de PIX com pixQrKind estático emite tPag 20", () => {
@@ -324,6 +324,28 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     if (!r.ok) return
     expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
     expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "20", vPag: 50 }])
+  })
+
+  it("handoff de PIX dinâmico emite tPag 17", () => {
+    const handoff = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "dinamico" })
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
+  })
+
+  it("handoff de PIX automático por payload válido emite tPag 23", () => {
+    const handoff = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "automatico" })
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "23", vPag: 50 }])
   })
 
   it("handoff de PIX sem pixQrKind permanece bloqueado", () => {

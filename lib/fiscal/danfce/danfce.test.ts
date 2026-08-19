@@ -185,6 +185,21 @@ describe("DANFC-e · reimpressão determinística", () => {
     expect(reader.calls).toBe(2)
   })
 
+  it("documento AUTORIZADO antigo com tPag 17 continua reimprimível (XML persistido, sem reconstruir pagamento)", async () => {
+    const { document } = buildPersistedDanfceFixture("multiplos_pagamentos")
+    expect(document.status).toBe("AUTORIZADA")
+    expect(document.protocolo).toBeTruthy()
+    expect(document.xmlAutorizado).toMatch(/<tPag>17<\/tPag>/)
+    const reader = fakeReader(document)
+    const model = await loadDanfceForReprint(
+      { storeId: document.storeId, notaFiscalId: document.notaFiscalId },
+      reader,
+    )
+    expect(model.variante).toBe("autorizado")
+    expect(model.pagamentos.map((p) => p.tPag).sort()).toEqual(["01", "17"])
+    expect(reader.calls).toBe(1)
+  })
+
   it("QR de reimpressão é o persistido, não recalculado, e aparece no HTML/ESC/POS", () => {
     const { document } = buildPersistedDanfceFixture("autorizado_simples")
     const encodeOnline = vi.spyOn(qrOnline, "encodeNfceQrV3Online")
@@ -263,6 +278,7 @@ describe("DANFC-e · zero leitura viva, zero rede, distinção não fiscal", () 
     expect(src).not.toMatch(/prisma\.(venda|produto|cliente|Venda|Produto|Cliente)/)
     expect(src).not.toMatch(/encodeNfceQrV3(Online|Offline)/)
     expect(src).not.toMatch(/statusServico|NFeAutorizacao|fetch\(/)
+    expect(src).not.toMatch(/derivePagamentoFiscal|assertPagamentoFiscalCanonico|from-venda-breakdown/)
     expect(src).toMatch(/qrCodeData/)
   })
 

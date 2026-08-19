@@ -41,11 +41,13 @@ describe("derivePagamentoFiscalFromBreakdown · formas válidas", () => {
     expect(r.pagamento.fonte).toBe("venda.payload.paymentBreakdown")
   })
 
-  it("Pix válido → tPag 17", () => {
+  it("PIX no breakdown legado não infere tPag 17", () => {
     const r = derivePagamentoFiscalFromBreakdown({ pix: 80 }, 80)
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    expect(r.pagamento.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 80 }])
+    expect(r.ok).toBe(false)
+    if (r.ok) return
+    expect(r.erro.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
+    expect(r.erro.mensagem).toMatch(/sem evidência de subtipo/i)
+    expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
   })
 
   it("débito válido (tPag 04, sem grupo card)", () => {
@@ -63,23 +65,32 @@ describe("derivePagamentoFiscalFromBreakdown · formas válidas", () => {
     expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoCredito", tPag: "03", vPag: 100 })
   })
 
-  it("split/misto válido (dinheiro + pix + débito + crédito)", () => {
+  it("split/misto válido (dinheiro + débito + crédito, sem PIX)", () => {
     const r = derivePagamentoFiscalFromBreakdown(
-      { dinheiro: 10, pix: 20, cartaoDebito: 30, cartaoCredito: 40 },
+      { dinheiro: 10, pix: 0, cartaoDebito: 30, cartaoCredito: 60 },
       100,
     )
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "03", "04", "17"])
+    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "03", "04"])
     expect(r.pagamento.soma).toBe(100)
   })
 
   it("ordem de chaves do breakdown não altera det canônico", () => {
-    const a = derivePagamentoFiscalFromBreakdown({ pix: 50, dinheiro: 50 }, 100)
-    const b = derivePagamentoFiscalFromBreakdown({ dinheiro: 50, pix: 50 }, 100)
+    const a = derivePagamentoFiscalFromBreakdown({ cartaoDebito: 50, dinheiro: 50 }, 100)
+    const b = derivePagamentoFiscalFromBreakdown({ dinheiro: 50, cartaoDebito: 50 }, 100)
     expect(a.ok && b.ok).toBe(true)
     if (!a.ok || !b.ok) return
     expect(a.pagamento.det).toEqual(b.pagamento.det)
+  })
+
+  it("split legado com PIX bloqueia o conjunto (não emite só o dinheiro)", () => {
+    const r = derivePagamentoFiscalFromBreakdown({ dinheiro: 20, pix: 80 }, 100)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
+      expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
+    }
   })
 })
 
@@ -176,11 +187,40 @@ describe("derivePagamentoFiscalFromBreakdown · fail-closed", () => {
 
 describe("assertPagamentoFiscalCanonico", () => {
   it("revalida contrato ok contra o total", () => {
-    const d = derivePagamentoFiscalFromBreakdown({ dinheiro: 10, pix: 10 }, 20)
+    const d = derivePagamentoFiscalFromBreakdown({ dinheiro: 10, cartaoDebito: 10 }, 20)
     expect(d.ok).toBe(true)
     if (!d.ok) return
     const a = assertPagamentoFiscalCanonico(d.pagamento, 20)
     expect(a.ok).toBe(true)
+  })
+
+  it("fonte paymentBreakdown + PIX tPag 17 bloqueia emissão futura", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.paymentBreakdown" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+      soma: 50,
+      vTroco: null,
+    }
+    const a = assertPagamentoFiscalCanonico(frozen, 50)
+    expect(a.ok).toBe(false)
+    if (!a.ok) {
+      expect(a.erro.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
+      expect(a.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
+    }
+  })
+
+  it("fonte fiscalPaymentHandoff + PIX tPag 17 permanece válido", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+      soma: 50,
+      vTroco: null,
+    }
+    expect(assertPagamentoFiscalCanonico(frozen, 50).ok).toBe(true)
   })
 
   it("contrato vs total XML divergente → soma divergente", () => {
@@ -220,5 +260,7 @@ describe("fronteira — zero Caixa/Financeiro/PDV vivo no módulo", () => {
       expect(src).not.toMatch(/finalizeSaleTransaction/)
       expect(src).not.toMatch(/PaymentModal/)
     }
+    const breakdown = readFileSync(resolve(dir, "from-venda-breakdown.ts"), "utf8")
+    expect(breakdown).not.toMatch(/pix:\s*"17"/)
   })
 })

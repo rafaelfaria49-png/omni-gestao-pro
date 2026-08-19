@@ -7,7 +7,9 @@
  * com números. Não há array `{forma, valor}`, não há tPag na origem, não há
  * metadata de cartão/TEF, não há valor entregue/troco persistidos.
  *
- * Não inventa forma, não converte desconhecido em 99, não corrige soma.
+ * PIX no breakdown legado (sem handoff) NÃO vira tPag 17 — exige evidência
+ * explícita de subtipo. Não inventa forma, não converte desconhecido em 99,
+ * não corrige soma.
  */
 
 import {
@@ -27,18 +29,18 @@ import { TPAG_PIX_QR_KIND } from "./pix-qr-kind"
 const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 const FORMAS_PERSISTIDAS: ReadonlySet<string> = new Set(FORMAS_INTERNAS_PERSISTIDAS)
 
-const FORMA_PARA_TPAG: Record<FormaInternaComTPag, string> = {
+/**
+ * Mapeamento unívoco do breakdown legado (sem handoff). PIX NÃO entra:
+ * `pix` numérico não prova subtipo 17/20/23 (GOAL 079).
+ */
+const FORMA_PARA_TPAG: Record<Exclude<FormaInternaComTPag, "pix">, string> = {
   dinheiro: "01",
   cartaoCredito: "03",
   cartaoDebito: "04",
-  /**
-   * LEGADO (vendas históricas sem `fiscalPaymentHandoff`): o PDV persistia apenas
-   * `pix` (número). IT 2024.002 cinde PIX em 17/20/23. Este mapeamento para 17
-   * permanece só no caminho legado; o handoff (GOAL 075/077) NÃO infere
-   * o subtipo — tPag 17/20/23 só com pixQrKind.
-   */
-  pix: "17",
 }
+
+const MSG_PIX_LEGADO =
+  "PIX legado sem evidência de subtipo (17/20/23). Emissão futura exige fiscalPaymentHandoff com pixQrKind. Sem inferência para tPag 17."
 
 function tPagCompativelComFormaInterna(forma: FormaInternaComTPag, tPag: string): boolean {
   if (forma === "pix") return tPag in TPAG_PIX_QR_KIND
@@ -106,6 +108,9 @@ export function derivePagamentoFiscalFromBreakdown(
       }
       if (n === 0) continue
       const formaInterna = key as FormaInternaComTPag
+      if (formaInterna === "pix") {
+        return erro("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA", MSG_PIX_LEGADO, `venda.paymentBreakdown.${key}`)
+      }
       const tPag = FORMA_PARA_TPAG[formaInterna]
       if (!isTPagOficial(tPag)) {
         return erro("PAGAMENTO_FORMA_DESCONHECIDA", `tPag ${tPag} não pertence ao catálogo oficial ${"IT-2024.002-v1.11"}.`, `venda.paymentBreakdown.${key}`)
@@ -186,6 +191,17 @@ export function assertPagamentoFiscalCanonico(
     }
     if (!tPagCompativelComFormaInterna(d.formaInterna as FormaInternaComTPag, d.tPag)) {
       return erro("PAGAMENTO_FORMA_DESCONHECIDA", `tPag ${d.tPag} não corresponde à forma interna ${d.formaInterna}.`, "venda.pagamentoFiscal.det")
+    }
+    if (
+      pagamento.fonte === "venda.payload.paymentBreakdown" &&
+      d.formaInterna === "pix" &&
+      d.tPag === "17"
+    ) {
+      return erro(
+        "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA",
+        "Contrato canônico com PIX tPag 17 derivado de paymentBreakdown (inferência histórica). Não autoriza nova preparação/assinatura/transmissão.",
+        "venda.pagamentoFiscal.det",
+      )
     }
     if (!Number.isFinite(d.vPag) || d.vPag <= 0) {
       return erro("PAGAMENTO_VALOR_INVALIDO", `vPag inválido no detPag ${d.tPag}.`, "venda.pagamentoFiscal.det")

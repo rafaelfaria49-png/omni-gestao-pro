@@ -227,12 +227,13 @@ describe("derivePagamentoFiscalFromHandoff · inconsistente sem fallback", () =>
 })
 
 describe("derivePagamentoFiscal · venda histórica sem handoff", () => {
-  it("preserva o legado fail-closed (PIX → 17)", () => {
+  it("PIX legado sem evidência de subtipo é bloqueado (não infere 17)", () => {
     const r = derivePagamentoFiscal({ pix: 80 }, 80)
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    expect(r.pagamento.fonte).toBe("venda.payload.paymentBreakdown")
-    expect(r.pagamento.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 80 }])
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
+      expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
+    }
   })
 
   it("handoff undefined (não null object) usa o breakdown", () => {

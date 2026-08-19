@@ -21,6 +21,8 @@ import { DRY_RUN_TEST_CERT, dryRunSnapshot } from "@/lib/fiscal/dry-run"
 import { UncertainStateTestStub } from "@/lib/fiscal/provider/uncertain-state-test-stub"
 import { TEST_CERT_PEM } from "@/lib/fiscal/signing/__fixtures__/test-cert"
 import { verifyNfceSignature } from "@/lib/fiscal/signing"
+import { NfceXmlError } from "@/lib/fiscal/xml"
+import type { VendaFiscalSnapshot } from "@/lib/fiscal/venda-fiscal-snapshot"
 import {
   createFinalizedNfcePreparer,
   NfceQrConfigMissingError,
@@ -209,6 +211,54 @@ function notaAssinada(over: Row = {}): Row {
     ...over,
   }
 }
+
+function snapPixCanonico(
+  fonte: "venda.payload.paymentBreakdown" | "venda.payload.fiscalPaymentHandoff",
+  tPag: "17" | "20" | "23",
+): VendaFiscalSnapshot {
+  const base = dryRunSnapshot("simples")
+  return {
+    ...base,
+    venda: {
+      ...base.venda,
+      pagamentoFiscal: {
+        versao: 1,
+        fonte,
+        catalogoTPag: "IT-2024.002-v1.11",
+        det: [{ formaInterna: "pix", tPag, vPag: base.venda.total }],
+        soma: base.venda.total,
+        vTroco: null,
+      },
+      pagamentoFiscalErro: null,
+    },
+  }
+}
+
+describe("createFinalizedNfcePreparer · PIX legado fail-closed (GOAL 079)", () => {
+  it("canonical fonte paymentBreakdown + PIX17 bloqueia antes do provider", async () => {
+    const preparer = createFinalizedNfcePreparer({
+      resolveSource: async () => source({ snapshot: snapPixCanonico("venda.payload.paymentBreakdown", "17") }),
+      certificado: DRY_RUN_TEST_CERT,
+      qrUrls: QR_URLS,
+    })
+    await expect(preparer.prepare(LOCATOR)).rejects.toBeInstanceOf(NfceXmlError)
+    await expect(preparer.prepare(LOCATOR)).rejects.toMatchObject({
+      code: "pagamento_pix_legado_sem_evidencia",
+    })
+  })
+
+  it("canonical fonte fiscalPaymentHandoff + PIX17 permanece válido", async () => {
+    const doc = await createFinalizedNfcePreparer({
+      resolveSource: async () => source({ snapshot: snapPixCanonico("venda.payload.fiscalPaymentHandoff", "17") }),
+      certificado: DRY_RUN_TEST_CERT,
+      qrUrls: QR_URLS,
+    }).prepare(LOCATOR)
+    expect(doc.xmlAssinado).toMatch(/<tPag>17<\/tPag>/)
+    expect(doc.xmlAssinado).not.toMatch(/<tPag>01<\/tPag>/)
+    expect(doc.xmlAssinado).not.toMatch(/<tPag>99<\/tPag>/)
+    expect(doc.xmlAssinado).not.toContain("<card>")
+  })
+})
 
 describe("createFinalizedNfcePreparer · QR v3 online", () => {
   it("produz FinalizedFiscalDocument com identidade, xmlAssinado e metadados estruturais", async () => {
