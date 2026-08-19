@@ -94,6 +94,13 @@ export type NfceXmlErrorCode =
   | "qr_online_invalido"
   | "qr_offline_invalido"
   | "qr_modo_incompativel"
+  | "pagamento_ausente"
+  | "pagamento_formato_invalido"
+  | "pagamento_valor_invalido"
+  | "pagamento_forma_desconhecida"
+  | "pagamento_forma_sem_capacidade"
+  | "pagamento_soma_divergente"
+  | "pagamento_canonico_ausente"
 
 /** Erro estrutural do builder — lançado quando falta informação OBRIGATÓRIA. */
 export class NfceXmlError extends Error {

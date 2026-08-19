@@ -254,12 +254,64 @@ describe("venda com múltiplos itens, desconto e paymentBreakdown", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.snapshot.venda.paymentBreakdown).toEqual(pb)
+    expect(r.snapshot.venda.pagamentoFiscal?.det.map((d) => d.tPag).sort()).toEqual(["01", "17"])
+    expect(r.snapshot.venda.pagamentoFiscalErro).toBeNull()
+  })
+
+  it("breakdown nulo congela erro canônico e não inventa forma", () => {
+    const r = buildVendaFiscalSnapshot(baseInput({ venda: { ...baseInput().venda, paymentBreakdown: null } }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_AUSENTE")
   })
 
   it("venda sem itens → erro controlado", () => {
     const r = buildVendaFiscalSnapshot(baseInput({ itens: [] }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.code).toBe("venda_sem_itens")
+  })
+})
+
+describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
+  it("handoff de dinheiro gera pagamentoFiscal a partir do handoff", () => {
+    const handoff = {
+      version: 1 as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      linhas: [{ formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported" as const, status: "ok" as const }],
+    }
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "dinheiro", tPag: "01", vPag: 50 }])
+    expect(r.snapshot.venda.pagamentoFiscalErro).toBeNull()
+  })
+
+  it("handoff inconsistente não cai para o breakdown", () => {
+    const r = buildVendaFiscalSnapshot(
+      baseInput({
+        venda: {
+          ...baseInput().venda,
+          paymentBreakdown: { dinheiro: 50 },
+          fiscalPaymentHandoff: { version: 99, linhas: [] },
+        },
+      }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_HANDOFF_VERSAO_DESCONHECIDA")
+  })
+
+  it("venda histórica sem handoff preserva PIX→17 do legado", () => {
+    const r = buildVendaFiscalSnapshot(baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 } } }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.paymentBreakdown")
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
   })
 })
 

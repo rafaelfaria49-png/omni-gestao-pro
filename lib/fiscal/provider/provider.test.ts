@@ -77,7 +77,7 @@ function snapshotComFiscal(fiscal: ProdutoFiscal): VendaFiscalSnapshot {
       desconto: 0,
       operador: "Maria",
       terminal: "PDV1",
-      paymentBreakdown: null,
+      paymentBreakdown: { dinheiro: 10 },
     },
     itens: [
       {

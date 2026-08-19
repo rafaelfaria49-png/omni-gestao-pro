@@ -10,7 +10,7 @@ const ATUAL = { ano: 2026, mes: 7 }
 const FUTURA = { ano: 2026, mes: 8 }
 const AGORA = new Date("2026-07-16T12:00:00.000Z") // 09:00 America/Sao_Paulo → Julho/2026
 
-const TOTAL_ITENS = 13
+const TOTAL_ITENS = 14
 
 const vazio: FontesContador = {
   vendas: [],
@@ -245,14 +245,14 @@ describe("montarChecklistFechamento — Fiscal, Documentos, Conferência, Fecham
     expect(it.evidencia).toBe("sem confirmação persistida")
   })
 
-  it("fechamento_oficial permanece pendente e separado de documentos/conferência", () => {
+  it("fechamento_oficial permanece pendente e separado de documentos/conferência/guias", () => {
     const c = montar({})
     expect(estadoDe(c, "fechamento_oficial")).toBe("pendente")
     expect(itemDe(c, "fechamento_oficial").explicacao).toMatch(/GOAL 012/)
-    // Os três sinais existem separadamente.
     const ids = c.itens.map((i) => i.id)
     expect(ids).toContain("documentos")
     expect(ids).toContain("conferencia_contador")
+    expect(ids).toContain("guias_informadas_vencendo_vencidas")
     expect(ids).toContain("fechamento_oficial")
   })
 })
@@ -281,7 +281,7 @@ describe("montarChecklistFechamento — resumo (CORREÇÃO 8)", () => {
 /* ─────────────────────────── Sem DTO ─────────────────────────── */
 
 describe("montarChecklistFechamento — sem DTO", () => {
-  it("dados null: todos os 13 itens existem; derivados nao_disponivel; fechamento pendente", () => {
+  it("dados null: todos os 14 itens existem; derivados nao_disponivel; fechamento pendente", () => {
     const c = montarChecklistFechamento({
       dados: null,
       competencia: ATUAL,
@@ -293,7 +293,7 @@ describe("montarChecklistFechamento — sem DTO", () => {
     expect(c.contagem.total).toBe(TOTAL_ITENS)
     expect(c.itens).toHaveLength(TOTAL_ITENS)
 
-    // Derivados viram nao_disponivel; documentos/conferência também; fechamento pendente.
+    // Derivados viram nao_disponivel; documentos/conferência/guias também; fechamento pendente.
     for (const id of [
       "vendas",
       "devolucoes",
@@ -307,17 +307,37 @@ describe("montarChecklistFechamento — sem DTO", () => {
       "fiscal",
       "documentos",
       "conferencia_contador",
+      "guias_informadas_vencendo_vencidas",
     ]) {
       expect(estadoDe(c, id)).toBe("nao_disponivel")
     }
     expect(estadoDe(c, "fechamento_oficial")).toBe("pendente")
     expect(itemDe(c, "vendas").explicacao).toContain("Nenhuma loja ativa")
-    // Documentos/Conferência mantêm sua copy honesta mesmo sem DTO.
     expect(itemDe(c, "documentos").origem).toBe("Domínio de documentos — ainda não implementado")
     expect(itemDe(c, "conferencia_contador").evidencia).toBe("sem confirmação persistida")
+    expect(itemDe(c, "guias_informadas_vencendo_vencidas").evidencia).toBe("agenda indisponível")
 
     expect(c.contagem.pendente).toBe(1)
-    expect(c.contagem.nao_disponivel).toBe(12)
+    expect(c.contagem.nao_disponivel).toBe(13)
+  })
+
+  it("falha da agenda não derruba os demais sinais (vendas ok + guias nao_disponivel)", () => {
+    const dados = montarDados(
+      {
+        ...vazio,
+        vendas: [{ total: 100, status: "concluida", payload: { paymentBreakdown: { pix: 100 } } }],
+      },
+      PASSADA,
+    )
+    const c = montarChecklistFechamento({
+      dados,
+      competencia: PASSADA,
+      agora: AGORA,
+      evidenciaAgenda: { leituraOk: false, total: 0, vencidas: 0, vencendo: 0, pagas: 0 },
+    })
+    expect(estadoDe(c, "vendas")).toBe("ok")
+    expect(estadoDe(c, "guias_informadas_vencendo_vencidas")).toBe("nao_disponivel")
+    expect(itemDe(c, "guias_informadas_vencendo_vencidas").explicacao).toContain("demais sinais")
   })
 })
 
@@ -340,5 +360,71 @@ describe("montarChecklistFechamento — serialização", () => {
       expect(it.origem.trim().length).toBeGreaterThan(0)
       expect(it.explicacao.trim().length).toBeGreaterThan(0)
     }
+  })
+})
+
+/* ─────────────────────────── Guias (GOAL 016) ─────────────────────────── */
+
+describe("montarChecklistFechamento — guias informadas (GOAL 016)", () => {
+  const baseDados = () =>
+    montarDados(
+      {
+        ...vazio,
+        vendas: [{ total: 100, status: "concluida", payload: { paymentBreakdown: { pix: 100 } } }],
+      },
+      PASSADA,
+    )
+
+  it("sem evidência → nao_disponivel (nunca ok)", () => {
+    const c = montar({})
+    const it = itemDe(c, "guias_informadas_vencendo_vencidas")
+    expect(it.estado).toBe("nao_disponivel")
+    expect(it.evidencia).toBe("agenda indisponível")
+  })
+
+  it("0 guias informadas → nao_disponivel, evidência explícita, não prova ausência de obrigação", () => {
+    const c = montarChecklistFechamento({
+      dados: baseDados(),
+      competencia: PASSADA,
+      agora: AGORA,
+      evidenciaAgenda: { leituraOk: true, total: 0, vencidas: 0, vencendo: 0, pagas: 0 },
+    })
+    const it = itemDe(c, "guias_informadas_vencendo_vencidas")
+    expect(it.estado).toBe("nao_disponivel")
+    expect(it.evidencia).toBe("0 guias informadas")
+    expect(it.explicacao).toContain("não prova ausência de obrigação")
+    expect(estadoDe(c, "vendas")).toBe("ok")
+  })
+
+  it("alguma vencida → atencao", () => {
+    const c = montarChecklistFechamento({
+      dados: baseDados(),
+      competencia: PASSADA,
+      agora: AGORA,
+      evidenciaAgenda: { leituraOk: true, total: 2, vencidas: 1, vencendo: 0, pagas: 1 },
+    })
+    expect(estadoDe(c, "guias_informadas_vencendo_vencidas")).toBe("atencao")
+    expect(estadoDe(c, "vendas")).toBe("ok")
+  })
+
+  it("nenhuma vencida + alguma vencendo → pendente", () => {
+    const c = montarChecklistFechamento({
+      dados: baseDados(),
+      competencia: PASSADA,
+      agora: AGORA,
+      evidenciaAgenda: { leituraOk: true, total: 1, vencidas: 0, vencendo: 1, pagas: 0 },
+    })
+    expect(estadoDe(c, "guias_informadas_vencendo_vencidas")).toBe("pendente")
+  })
+
+  it("guias reais sem vencida/vencendo (ex.: pagas) → ok", () => {
+    const c = montarChecklistFechamento({
+      dados: baseDados(),
+      competencia: PASSADA,
+      agora: AGORA,
+      evidenciaAgenda: { leituraOk: true, total: 2, vencidas: 0, vencendo: 0, pagas: 2 },
+    })
+    expect(estadoDe(c, "guias_informadas_vencendo_vencidas")).toBe("ok")
+    expect(itemDe(c, "guias_informadas_vencendo_vencidas").evidencia).toContain("2 guia")
   })
 })

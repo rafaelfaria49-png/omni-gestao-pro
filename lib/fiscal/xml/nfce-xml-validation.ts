@@ -12,10 +12,38 @@
 import { isValidCnpj, onlyDigits } from "../fiscal-validators"
 import type { VendaFiscalSnapshot } from "../venda-fiscal-snapshot"
 import { codigoUf } from "./nfce-chave-acesso"
-import type { NfceValidationIssue, NfceValidationResult, NfceXmlContext } from "./nfce-xml.types"
+import type { NfceValidationIssue, NfceValidationResult, NfceXmlContext, NfceXmlErrorCode } from "./nfce-xml.types"
+import { assertPagamentoFiscalCanonico, type PagamentoFiscalErroCode } from "../payment"
 
 function isNcmValido(ncm: string): boolean {
   return /^\d{8}$/.test(onlyDigits(ncm))
+}
+
+function round2(n: number): number {
+  return Math.round((Number.isFinite(n) ? n : 0) * 100) / 100
+}
+
+function pagamentoErroToXml(code: PagamentoFiscalErroCode): NfceXmlErrorCode {
+  switch (code) {
+    case "PAGAMENTO_AUSENTE":
+      return "pagamento_ausente"
+    case "PAGAMENTO_FORMATO_INVALIDO":
+      return "pagamento_formato_invalido"
+    case "PAGAMENTO_VALOR_INVALIDO":
+      return "pagamento_valor_invalido"
+    case "PAGAMENTO_FORMA_DESCONHECIDA":
+      return "pagamento_forma_desconhecida"
+    case "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL":
+      return "pagamento_forma_sem_capacidade"
+    case "PAGAMENTO_SOMA_DIVERGENTE":
+      return "pagamento_soma_divergente"
+    case "PAGAMENTO_CANONICO_AUSENTE":
+      return "pagamento_canonico_ausente"
+    case "PAGAMENTO_HANDOFF_INVALIDO":
+      return "pagamento_formato_invalido"
+    case "PAGAMENTO_HANDOFF_VERSAO_DESCONHECIDA":
+      return "pagamento_canonico_ausente"
+  }
 }
 
 export function validateNfceSnapshot(
@@ -107,7 +135,33 @@ export function validateNfceSnapshot(
     }
   }
 
-  // 7) Numeração (não vem do snapshot — placeholder quando ausente no contexto).
+  // 8) Pagamento fiscal canônico (GOAL 030). Nunca relê paymentBreakdown, Caixa ou PDV.
+  const venda = snapshot.venda
+  const totalVenda = round2(Number(venda?.total) || 0)
+  if (!venda || venda.pagamentoFiscal == null) {
+    if (venda?.pagamentoFiscalErro) {
+      erro(
+        pagamentoErroToXml(venda.pagamentoFiscalErro.code),
+        venda.pagamentoFiscalErro.mensagem,
+        null,
+        venda.pagamentoFiscalErro.campo,
+      )
+    } else {
+      erro(
+        "pagamento_canonico_ausente",
+        "Snapshot sem contrato de pagamento fiscal canônico. Emissão bloqueada — sem reconstrução a partir de dado vivo.",
+        null,
+        "venda.pagamentoFiscal",
+      )
+    }
+  } else {
+    const checked = assertPagamentoFiscalCanonico(venda.pagamentoFiscal, totalVenda)
+    if (!checked.ok) {
+      erro(pagamentoErroToXml(checked.erro.code), checked.erro.mensagem, null, checked.erro.campo)
+    }
+  }
+
+  // 9) Numeração (não vem do snapshot — placeholder quando ausente no contexto).
   const numero = contexto?.numero ?? 0
   const serie = contexto?.serie ?? 0
   if (!Number.isFinite(numero) || Number(numero) <= 0) {

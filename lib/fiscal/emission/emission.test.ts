@@ -94,7 +94,7 @@ function snapshotComFiscal(fiscal: ProdutoFiscal): VendaFiscalSnapshot {
     vendaId: "venda-1",
     loja: LOJA_OK,
     cliente: null,
-    venda: { pedidoId: "PED-1", data: new Date("2026-06-19T12:00:00Z"), total: 10, desconto: 0, operador: "Maria", terminal: "PDV1", paymentBreakdown: null },
+    venda: { pedidoId: "PED-1", data: new Date("2026-06-19T12:00:00Z"), total: 10, desconto: 0, operador: "Maria", terminal: "PDV1", paymentBreakdown: { dinheiro: 10 } },
     itens: [
       {
         itemVendaId: "iv-1",

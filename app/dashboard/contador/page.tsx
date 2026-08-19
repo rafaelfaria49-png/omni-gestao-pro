@@ -2,12 +2,14 @@ import type { Metadata } from "next"
 import { Suspense } from "react"
 import { ContadorHubPreview } from "@/components/dashboard/contador/contador-hub-preview"
 import { APP_DISPLAY_NAME } from "@/lib/app-brand"
-import { resolveCompetenciaFromSearchParam } from "@/lib/contador/competencia"
+import { formatCompetencia, resolveCompetenciaFromSearchParam } from "@/lib/contador/competencia"
 import { montarChecklistFechamento } from "@/lib/contador/fechamento"
 import type { ChecklistFechamento } from "@/lib/contador/fechamento"
+import type { EvidenciaAgendaGuias } from "@/lib/contador/fechamento/montar-checklist"
 import { requireContadorScope } from "@/lib/contador/scope"
 import { construirDadosContador } from "@/lib/contador/readers"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
+import { carregarResumoGuiasChecklist, criarRepoAgenda } from "@/lib/contador/agenda"
 
 export const metadata: Metadata = {
   title: `Contador HUB · ${APP_DISPLAY_NAME}`,
@@ -51,6 +53,7 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
 
   let realData: ContadorDadosReais | null = null
   let realErro: string | null = null
+  let evidenciaAgenda: EvidenciaAgendaGuias | null = null
 
   const escopo = await requireContadorScope()
   if (!escopo.ok) {
@@ -63,14 +66,26 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
       console.error("[contador/dados-reais]", e instanceof Error ? e.message : String(e))
       realErro = "Não foi possível carregar os dados reais desta competência agora. Tente novamente em instantes."
     }
+    // Agenda (GOAL 016): leitura independente — falha NÃO derruba os demais sinais.
+    try {
+      evidenciaAgenda = await carregarResumoGuiasChecklist(
+        { storeId: escopo.storeId, userId: escopo.userId },
+        formatCompetencia(competencia),
+        { repo: criarRepoAgenda() },
+      )
+    } catch (e) {
+      console.error("[contador/agenda-resumo]", e instanceof Error ? e.message : String(e))
+      evidenciaAgenda = { leituraOk: false, total: 0, vencidas: 0, vencendo: 0, pagas: 0 }
+    }
   }
 
-  // Derivação pura em memória — zero IO adicional.
+  // Derivação pura em memória — zero Prisma no checklist.
   const checklistFechamento: ChecklistFechamento = montarChecklistFechamento({
     dados: realData,
     competencia,
     agora: new Date(),
     motivoIndisponivel: realErro,
+    evidenciaAgenda,
   })
 
   return (
