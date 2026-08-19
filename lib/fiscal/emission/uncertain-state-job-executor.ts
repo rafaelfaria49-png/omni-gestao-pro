@@ -13,6 +13,7 @@ import {
   PROVIDER_NOT_INVOKED_PROVENANCE,
   type FinalizedDocumentPreparer,
   type FiscalExecutionProvenance,
+  type FiscalExternalExecutionCapability,
   type UncertainStateFiscalProvider,
   type UncertainStatePersistence,
 } from "./uncertain-state.types"
@@ -22,6 +23,13 @@ export type UncertainStateJobExecutorDependencies = {
   preparer: FinalizedDocumentPreparer
   provider: UncertainStateFiscalProvider
   now?: () => Date
+  /**
+   * Capability de execução de provider EXTERNO. Aditiva.
+   * Ausência ⇒ o coordenador aplica `EXTERNAL_EXECUTION_DENIED`.
+   * Produção do piloto dormente nunca injeta `allow=true`.
+   * Nenhum env, banco ou provider pode concedê-la.
+   */
+  capability?: FiscalExternalExecutionCapability
 }
 
 /**
@@ -172,6 +180,7 @@ export function createUncertainStateJobExecutor(
           persistence: dependencies.persistence,
           provider: dependencies.provider,
           now: dependencies.now?.(),
+          capability: dependencies.capability,
         })
       } catch (error) {
         const comProveniencia = desfechoDeExcecaoComProveniencia(error, job.tipo)
@@ -276,6 +285,7 @@ export function createUncertainStateJobExecutor(
         preparer: dependencies.preparer,
         provider: dependencies.provider,
         now: dependencies.now?.(),
+        capability: dependencies.capability,
         retryAuthorizedByConsultation:
           transmission.consultationOutcome === "NOT_FOUND" &&
           Boolean(transmission.retryAuthorizedAt) &&

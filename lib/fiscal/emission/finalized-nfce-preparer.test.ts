@@ -478,6 +478,66 @@ describe("zero rede / zero SEFAZ / fontes do GOAL", () => {
   })
 })
 
+describe("createFinalizedNfcePreparer · certificado lazy", () => {
+  it("contrato atual com material estático não chama o resolver", async () => {
+    const resolveCertificate = vi.fn(async () => {
+      throw new Error("resolver lazy não deveria ser chamado")
+    })
+    const doc = await createFinalizedNfcePreparer({
+      resolveSource: async () => source(),
+      certificado: DRY_RUN_TEST_CERT,
+      resolveCertificate,
+      qrUrls: QR_URLS,
+    }).prepare(LOCATOR)
+    expect(doc.xmlAssinado).toContain("<Signature")
+    expect(resolveCertificate).not.toHaveBeenCalled()
+  })
+
+  it("resolver lazy só corre dentro de prepare e aceita fixture", async () => {
+    const resolveCertificate = vi.fn(async () => DRY_RUN_TEST_CERT)
+    const preparer = createFinalizedNfcePreparer({
+      resolveSource: async () => source(),
+      resolveCertificate,
+      qrUrls: QR_URLS,
+    })
+    expect(resolveCertificate).not.toHaveBeenCalled()
+    const doc = await preparer.prepare(LOCATOR)
+    expect(resolveCertificate).toHaveBeenCalledTimes(1)
+    expect(doc.xmlAssinado).toContain("<Signature")
+  })
+
+  it("gate de capability negada não resolve certificado lazy", async () => {
+    const resolveCertificate = vi.fn(async () => DRY_RUN_TEST_CERT)
+    const persistBeforeTransmission = vi.fn()
+    const transmit = vi.fn()
+    const outcome = await transmitWithUncertainStateSafety({
+      locator: LOCATOR,
+      preparer: createFinalizedNfcePreparer({
+        resolveSource: async () => source(),
+        resolveCertificate,
+        qrUrls: QR_URLS,
+      }),
+      persistence: {
+        load: vi.fn(),
+        persistBeforeTransmission,
+        recordUncertainAndEnsureConsultation: vi.fn(),
+        markAuthorized: vi.fn(),
+        markRejected: vi.fn(),
+        authorizeExactRetransmission: vi.fn(),
+      } as unknown as UncertainStatePersistence,
+      provider: {
+        simulado: false,
+        transmit,
+        consult: vi.fn(),
+      },
+    })
+    expect(outcome).toMatchObject({ kind: "blocked", code: "EXTERNAL_EXECUTION_NOT_AUTHORIZED" })
+    expect(resolveCertificate).not.toHaveBeenCalled()
+    expect(persistBeforeTransmission).not.toHaveBeenCalled()
+    expect(transmit).not.toHaveBeenCalled()
+  })
+})
+
 describe("tipos aditivos não quebram persistência legado", () => {
   it("documento sem QR ainda persiste xmlAssinado (colunas QR nulas)", async () => {
     const { client, notaFiscal } = createFakePrisma(notaAssinada())
