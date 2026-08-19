@@ -11,7 +11,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Printer } from "lucide-react";
+import { ArrowLeft, Printer, MessageCircle } from "lucide-react";
+import type { LinkWaV4 } from "@/lib/operacoes-v4/orcamento-mensagem";
 import type { OrdemServico } from "@/types/os";
 import {
   montarDocumentoOSV3,
@@ -49,6 +50,7 @@ export function PrintPreviewV3({
   empresa,
   onClose,
   onPrinted,
+  whatsapp,
 }: {
   /** Documento a imprimir; null = fechado. */
   tipo: DocumentoTipoV3 | null;
@@ -56,6 +58,8 @@ export function PrintPreviewV3({
   empresa?: EmpresaPrintInputV3;
   onClose: () => void;
   onPrinted?: (tipo: DocumentoTipoV3) => void;
+  /** Link wa.me já montado (mesmo contrato do orçamento). Só documentos visíveis ao cliente. */
+  whatsapp?: LinkWaV4 | null;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -120,6 +124,19 @@ export function PrintPreviewV3({
           <ButtonV3 variant="ghost" onClick={onClose}>
             <ArrowLeft className="h-4 w-4" aria-hidden /> Voltar
           </ButtonV3>
+          {meta.cliente && whatsapp && whatsapp.valido ? (
+            <ButtonV3
+              variant="outline"
+              onClick={() => window.open(whatsapp.url, "_blank", "noopener,noreferrer")}
+            >
+              <MessageCircle className="h-4 w-4" aria-hidden /> WhatsApp
+            </ButtonV3>
+          ) : null}
+          {meta.cliente && whatsapp && !whatsapp.valido ? (
+            <span className="hidden max-w-[180px] truncate text-xs text-muted-foreground sm:inline" title={whatsapp.motivo}>
+              {whatsapp.motivo}
+            </span>
+          ) : null}
           <ButtonV3 variant="primary" onClick={imprimir}>
             <Printer className="h-4 w-4" aria-hidden /> Imprimir
           </ButtonV3>

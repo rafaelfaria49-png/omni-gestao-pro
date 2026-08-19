@@ -194,7 +194,7 @@ describe("assertPagamentoFiscalCanonico", () => {
 describe("fronteira — zero Caixa/Financeiro/PDV vivo no módulo", () => {
   it("sources de payment/** não importam Prisma, Caixa, Financeiro nem PDV", () => {
     const dir = resolve(process.cwd(), "lib/fiscal/payment")
-    for (const file of ["index.ts", "types.ts", "tpag-catalog.ts", "from-venda-breakdown.ts"]) {
+    for (const file of ["index.ts", "types.ts", "tpag-catalog.ts", "from-venda-breakdown.ts", "from-handoff.ts"]) {
       const src = readFileSync(resolve(dir, file), "utf8")
       expect(src).not.toMatch(/from ["']@\/lib\/prisma/)
       expect(src).not.toMatch(/from ["']@\/lib\/caixa/)

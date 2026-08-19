@@ -31,9 +31,10 @@ const FORMA_PARA_TPAG: Record<FormaInternaComTPag, string> = {
   cartaoCredito: "03",
   cartaoDebito: "04",
   /**
-   * PDV persiste apenas `pix` (número). IT 2024.002 cinde PIX em 17/20/23;
-   * 17 permanece código oficial e é o único que existia quando o PDV foi
-   * desenhado. 20/23 exigem tipo de QR/automático NÃO persistido (gap B).
+   * LEGADO (vendas históricas sem `fiscalPaymentHandoff`): o PDV persistia apenas
+   * `pix` (número). IT 2024.002 cinde PIX em 17/20/23. Este mapeamento para 17
+   * permanece só no caminho legado; o handoff de origem (GOAL 075) NÃO infere
+   * o subtipo.
    */
   pix: "17",
 }

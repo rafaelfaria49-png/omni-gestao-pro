@@ -1,15 +1,13 @@
 import type { Prisma } from "@/generated/prisma"
 import { isVirtualSaleLine } from "@/lib/os-pdv-virtual-lines"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
+import { buildFiscalPaymentHandoff, type FiscalPaymentHandoff } from "@/lib/vendas/fiscal-payment-handoff"
 import type { SaleLineItemType } from "@/lib/sale-line-classification"
 import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 import { sanitizeSaleLinesPayload } from "@/lib/vendas/sanitize-sale-line-payload"
 import { stripClientSyncFlags } from "@/lib/vendas/sale-sync-flags"
-import {
-  buildLegacySaleFingerprint,
-  isLegacySaleFactsComparable,
-} from "@/lib/vendas/legacy-sale-fingerprint"
+import { buildLegacySaleFingerprint, isLegacySaleFactsComparable } from "@/lib/vendas/legacy-sale-fingerprint"
 import {
   parseClientSaleId,
   type ClientSaleIdRejectionReason,
@@ -285,6 +283,11 @@ export type SalePayload = {
   linkedOsId?: string | null
   /** Formas de pagamento — usado para gerar MovimentacaoFinanceira por forma. */
   paymentBreakdown?: Partial<PaymentBreakdownFull>
+  /**
+   * Handoff fiscal versionado (GOAL 075). Gravado pelo SERVIDOR no create.
+   * Cliente que enviar este campo é ignorado — o motor reconstrói a partir do breakdown.
+   */
+  fiscalPaymentHandoff?: FiscalPaymentHandoff
   /**
    * Metadados de auditoria gravados pelo SERVIDOR (nunca enviados pelo cliente) quando
    * `allowClosedOriginalSession` é usado para sincronizar uma venda pendente cuja sessão
@@ -674,6 +677,11 @@ export async function upsertVendaInTransaction(
           reason: "pending_sale_closed_original_session",
         }
       : {}),
+    // Sempre por último: o cliente nunca é autoridade deste contrato.
+    fiscalPaymentHandoff: buildFiscalPaymentHandoff(
+      (salePersistivel as SalePayload).paymentBreakdown,
+      total,
+    ),
   }
 
   const fingerprint = buildLegacySaleFingerprint(sale)

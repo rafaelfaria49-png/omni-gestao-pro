@@ -39,6 +39,10 @@ function pagamentoErroToXml(code: PagamentoFiscalErroCode): NfceXmlErrorCode {
       return "pagamento_soma_divergente"
     case "PAGAMENTO_CANONICO_AUSENTE":
       return "pagamento_canonico_ausente"
+    case "PAGAMENTO_HANDOFF_INVALIDO":
+      return "pagamento_formato_invalido"
+    case "PAGAMENTO_HANDOFF_VERSAO_DESCONHECIDA":
+      return "pagamento_canonico_ausente"
   }
 }
 

@@ -27,7 +27,7 @@ vi.mock("./event-publisher", () => ({ emitirEventoOperacaoV3: mocks.emitirEvento
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("./retorno-auto-close-actions", () => ({ finalizarRetornoPorEntregaVinculadaV3: mocks.autoClose }));
 
-import { registrarEntregaV3 } from "./entrega-actions";
+import { adicionarFotoSaidaV3, registrarEntregaV3, removerFotoSaidaV3 } from "./entrega-actions";
 
 const storeId = "store-a";
 const osId = "os-1";
@@ -245,5 +245,54 @@ describe("registrarEntregaV3 — guard financeiro server-side", () => {
     expect(mocks.osUpdate).toHaveBeenCalledTimes(1);
     expect(mocks.autoClose).toHaveBeenCalledTimes(1);
     expect(mocks.osUpdate.mock.invocationCallOrder[0]).toBeLessThan(mocks.autoClose.mock.invocationCallOrder[0]);
+  });
+
+  it("preserva fotos de saída já gravadas em entregaV3 ao confirmar a entrega", async () => {
+    const foto = {
+      id: "f-saida-1",
+      categoria: "reparado",
+      dataUrl: "data:image/jpeg;base64,AAAA",
+      tamanho: 12,
+      criadoEm: "2026-07-14T10:00:00.000Z",
+    };
+    mocks.osFindFirst.mockResolvedValue(row(100, { entregaV3: { fotosSaida: [foto] } }));
+    await registrarEntregaV3(storeId, osId);
+    const write = mocks.osUpdate.mock.calls[0]![0] as { data: { payload: { entregaV3: { fotosSaida: unknown[] } } } };
+    expect(write.data.payload.entregaV3.fotosSaida).toEqual([foto]);
+  });
+});
+
+describe("fotos de saída", () => {
+  it("grava foto de saída no payload sem alterar status", async () => {
+    const dataUrl = `data:image/jpeg;base64,${"A".repeat(40)}`;
+    await adicionarFotoSaidaV3(storeId, osId, { categoria: "reparado", nome: "depois.jpg", dataUrl });
+    const write = mocks.osUpdate.mock.calls[0]![0] as { data: { payload: Record<string, unknown> } };
+    const fotos = (write.data.payload.entregaV3 as { fotosSaida: Array<{ categoria: string; nome?: string }> }).fotosSaida;
+    expect(fotos).toHaveLength(1);
+    expect(fotos[0]).toMatchObject({ categoria: "reparado", nome: "depois.jpg" });
+    expect(write.data.payload.operacaoStatusV3).toBe("pronta");
+  });
+
+  it("remove foto de saída existente", async () => {
+    mocks.osFindFirst.mockResolvedValue(
+      row(100, {
+        entregaV3: {
+          fotosSaida: [
+            { id: "f1", categoria: "reparado", dataUrl: "data:image/jpeg;base64,AAAA", tamanho: 4, criadoEm: "2026-07-14T10:00:00.000Z" },
+          ],
+        },
+      }),
+    );
+    await removerFotoSaidaV3(storeId, osId, "f1");
+    const write = mocks.osUpdate.mock.calls[0]![0] as { data: { payload: { entregaV3: { fotosSaida: unknown[] } } } };
+    expect(write.data.payload.entregaV3.fotosSaida).toEqual([]);
+  });
+
+  it("bloqueia foto de saída em OS cancelada", async () => {
+    mocks.osFindFirst.mockResolvedValue(row(100, { operacaoStatusV3: "cancelada", status: "cancelada" }));
+    await expect(
+      adicionarFotoSaidaV3(storeId, osId, { dataUrl: `data:image/jpeg;base64,${"A".repeat(40)}` }),
+    ).rejects.toThrow(/cancelada/);
+    expect(mocks.osUpdate).not.toHaveBeenCalled();
   });
 });

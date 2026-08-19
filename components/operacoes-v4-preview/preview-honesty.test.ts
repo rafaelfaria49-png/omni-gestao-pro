@@ -60,6 +60,8 @@ vi.mock("@/lib/operacoes-v3/producao-actions", () => ({
 vi.mock("@/lib/operacoes-v3/entrega-actions", () => ({
   salvarAssinaturaRetiradaV3: vi.fn(async () => ({})),
   registrarEntregaV3: vi.fn(async () => ({})),
+  adicionarFotoSaidaV3: vi.fn(async () => ({})),
+  removerFotoSaidaV3: vi.fn(async () => ({})),
 }))
 vi.mock("@/lib/operacoes-v3/garantia-actions", () => ({
   registrarImpressaoDocumentoV3: vi.fn(async () => ({})),
@@ -211,6 +213,8 @@ const ctx: V4DataCtx = {
   marcarPronta: async () => false,
   confirmarEntrega: async () => false,
   salvarAssinaturaRetirada: async () => false,
+  adicionarFotoSaida: async () => false,
+  removerFotoSaida: async () => false,
   registrarImpressaoDoc: () => {},
   salvarGarantia: async () => false,
   abrirRetorno: async () => false,
@@ -3481,5 +3485,66 @@ describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — contrato exposto pelo buildV
     expect(v.posVenda.retornoAberto?.id).toBe("ret-1")
     expect(v.posVenda.podeAbrirRetorno).toBe(false)
     expect(v.posVenda.headerLabel).toBe("Retorno aberto")
+  })
+})
+
+describe("GOAL OPS-V4-DOCUMENTOS-ASSINATURA-ANEXOS-015 — Docs reais + fotos de saída", () => {
+  it("menu Docs abre o motor V3 para OS cliente, via interna e etiqueta (não é toast de preview)", () => {
+    const patches: Array<Record<string, unknown>> = []
+    const msgs: string[] = []
+    const v = buildVals(makeState({ novaOS: false }), (p) => patches.push(p as Record<string, unknown>), (m) => msgs.push(m), ctx)
+    expect(v.printItems.find((d) => /Imprimir OS/.test(d.label))).toBeTruthy()
+    v.printItems.find((d) => /Imprimir OS/.test(d.label))!.onClick()
+    expect(patches.at(-1)).toMatchObject({ docPrint: "os_cliente", menu: null })
+    v.printItems.find((d) => /Via Interna/.test(d.label))!.onClick()
+    expect(patches.at(-1)).toMatchObject({ docPrint: "comprovante_interno", menu: null })
+    v.printItems.find((d) => /Etiqueta/.test(d.label))!.onClick()
+    expect(patches.at(-1)).toMatchObject({ docPrint: "etiqueta", menu: null })
+    expect(v.printItems.map((d) => d.label)).not.toContain("Portal do cliente")
+    expect(msgs.some((m) => /indisponível/i.test(m))).toBe(false)
+  })
+
+  it("DocPrintModal permite todos os tipos com motor V3 e monta WhatsApp wa.me", () => {
+    const src = readFileSync(join(DIR, "parts", "DocPrintModal.tsx"), "utf8")
+    expect(src).toContain("os_cliente")
+    expect(src).toContain("comprovante_interno")
+    expect(src).toContain("etiqueta")
+    expect(src).toContain("montarLinkWaV4")
+    expect(src).toContain("montarMensagemDocumentoV4")
+  })
+
+  it("fotos de saída reais entram no view-model de entrega e nos anexos", () => {
+    const os = mkOS({
+      id: "os-saida-1",
+      status: "pronta",
+      entregaV3: {
+        fotosSaida: [{ id: "fs1", categoria: "reparado", dataUrl: "data:image/jpeg;base64,CCCC", tamanho: 8, criadoEm: "2026-08-01T12:00:00.000Z" }],
+      },
+    })
+    const v = buildVals(makeState({ selectedOsId: "os-saida-1", novaOS: false }), () => {}, () => {}, { ...ctx, realOS: os })
+    expect(v.entrega.fotosSaida).toHaveLength(1)
+    expect(v.entrega.fotosSaida[0]).toMatchObject({ id: "fs1", dataUrl: "data:image/jpeg;base64,CCCC" })
+    expect(v.anexos.some((a) => a.id === "fs1" && a.dataUrl)).toBe(true)
+  })
+
+  it("EntregaStage captura foto de saída e imprime termos pelo mesmo modal", () => {
+    const src = readFileSync(join(DIR, "parts", "stages", "EntregaStage.tsx"), "utf8")
+    expect(src).toContain("v.adicionarFotoSaida")
+    expect(src).toContain("v.removerFotoSaida")
+    expect(src).toContain('v.openDocPrint("termo_garantia")')
+    expect(src).toContain('v.openDocPrint("termo_entrega")')
+    expect(src).not.toContain("PREVIEW_NOOP")
+  })
+
+  it("botão + de anexos navega para captura real (entrada ou entrega), WhatsApp usa wa.me", () => {
+    const patches: Array<Record<string, unknown>> = []
+    const os = mkOS({ id: "os-wa-1", status: "aberta", cliente: { nome: "Ana", telefone: "11988887777" } })
+    const v = buildVals(makeState({ selectedOsId: "os-wa-1", novaOS: false }), (p) => patches.push(p as Record<string, unknown>), () => {}, { ...ctx, realOS: os })
+    v.act.addFoto()
+    expect(patches.at(-1)).toMatchObject({ stage: "entrada" })
+    const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+    expect(orquestrador).toContain("montarLinkWaV4")
+    expect(orquestrador).toContain("montarMensagemAtualizacaoOSV4")
+    expect(orquestrador).toContain("adicionarFotoSaidaV3")
   })
 })

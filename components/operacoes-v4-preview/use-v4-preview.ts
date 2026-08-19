@@ -7,9 +7,8 @@
  * REAL via actions V3 reusadas (cancelar, diagnóstico, orçamento, execução,
  * entrega, assinatura, garantia, recebimento — ver blocos "REAL" abaixo). As
  * telas de rail e o modal Nova OS de fato criam/leem dados reais da loja. Só
- * os handlers marcados `PREVIEW_NOOP` continuam sem efeito (ex.: imprimir via
- * interna, etiqueta, portal do cliente) e disparam um toast honesto avisando
- * que aquela ação específica não foi salva — não é uma garantia geral da tela.
+ * os handlers marcados `PREVIEW_NOOP` continuam sem efeito (ex.: ligar/exportar
+ * histórico/portal do cliente — sem contrato) e disparam um toast honesto.
  */
 "use client";
 
@@ -105,7 +104,15 @@ import { salvarDadosBasicosOSV3 } from "@/lib/operacoes-v3/dados-basicos-actions
 import type { SalvarDadosBasicosInputV3 } from "@/lib/operacoes-v3/dados-basicos-model";
 // Assinatura de retirada real (SPRINT_3E.2) e auditoria de impressão (Fase 1E) —
 // reuso direto das actions V3 (GOAL OPS-V4-DOCS-ASSINATURA-TERMOS-ANEXOS-012).
-import { registrarEntregaV3, salvarAssinaturaRetiradaV3 } from "@/lib/operacoes-v3/entrega-actions";
+import {
+  registrarEntregaV3,
+  salvarAssinaturaRetiradaV3,
+  adicionarFotoSaidaV3,
+  removerFotoSaidaV3,
+  type AdicionarFotoSaidaInputV3,
+} from "@/lib/operacoes-v3/entrega-actions";
+import { montarMensagemAtualizacaoOSV4 } from "@/lib/operacoes-v4/documento-mensagem";
+import { montarLinkWaV4 } from "@/lib/operacoes-v4/orcamento-mensagem";
 import type { EntregaSemCobrancaSolicitacaoV3 } from "@/lib/operacoes-v3/delivery-financial-guard";
 import { registrarImpressaoDocumentoV3, salvarGarantiaOSV3 } from "@/lib/operacoes-v3/garantia-actions";
 import { abrirRetornoV3, finalizarRetornoV3 } from "@/lib/operacoes-v3/retorno-actions";
@@ -224,6 +231,9 @@ export interface V4DataCtx {
   // ASSINATURA-TERMOS-ANEXOS-012) ----
   /** Persiste a assinatura de retirada (reuso de `salvarAssinaturaRetiradaV3`). */
   salvarAssinaturaRetirada: (dataUrl: string) => Promise<boolean>;
+  /** Persiste foto de saída em `entregaV3.fotosSaida`. */
+  adicionarFotoSaida: (input: AdicionarFotoSaidaInputV3) => Promise<boolean>;
+  removerFotoSaida: (fotoId: string) => Promise<boolean>;
   /** Registra na timeline que um documento foi impresso (best-effort). */
   registrarImpressaoDoc: (tipo: DocumentoTipoV3) => void;
   // ---- Garantia da OS (GOAL OPS-V4-GARANTIA-EDITOR-IMPL-014) ----
@@ -669,26 +679,23 @@ export function buildVals(
     update({ selectedOsId: null, focus: false, left: true, module: "workspace", view: "cockpit", menu: null });
 
   // ---- menus ----
-  // GOAL OPS-V4-DOCS-ASSINATURA-TERMOS-ANEXOS-012: "Termo de Garantia" e "Termo de
-  // Entrega" deixam de ser no-op — abrem o MESMO modal de impressão real da V3
-  // (`PrintPreviewV3`, montado em `DocPrintModal`), preenchido com o termo/dados
-  // reais da OS. Os demais documentos (OS cliente / via interna / etiqueta /
-  // portal) seguem protótipo — sem contrato de leitura ligado nesta fase.
+  // GOAL OPS-V4-DOCUMENTOS-ASSINATURA-ANEXOS-015: o menu Docs abre o MESMO
+  // modal V3 (`PrintPreviewV3`) para todos os tipos com motor real. Portal do
+  // cliente continua fora — não há contrato de leitura/envio.
   const openDocPrint = (tipo: DocumentoTipoV3) => update({ docPrint: tipo, menu: null });
   // GOAL 023: "Orçamento (via cliente)" só aparece no menu com orçamento REAL
   // materializado (`estado === "persistido"`) — prévia/ausente não têm o que
   // mostrar; empty honesto = item nem aparece (mesmo padrão de gating do resto
   // da V4, nunca um item habilitado que abriria um documento vazio).
   const printItems = [
-    { icon: "📄", label: "Imprimir OS (cliente)", onClick: () => notify(PREVIEW_NOOP) },
+    { icon: "📄", label: "Imprimir OS (cliente)", onClick: () => openDocPrint("os_cliente") },
     { icon: "🛡", label: "Termo de Garantia", onClick: () => openDocPrint("termo_garantia") },
     { icon: "📦", label: "Termo de Entrega", onClick: () => openDocPrint("termo_entrega") },
     ...(orcamentoReal.estado === "persistido"
       ? [{ icon: "🧾", label: "Orçamento (via cliente)", onClick: () => openDocPrint("orcamento_cliente") }]
       : []),
-    { icon: "🔒", label: "Via Interna", onClick: () => notify(PREVIEW_NOOP) },
-    { icon: "🏷", label: "Etiqueta", onClick: () => notify(PREVIEW_NOOP) },
-    { icon: "🌐", label: "Portal do cliente", onClick: () => notify(PREVIEW_NOOP) },
+    { icon: "🔒", label: "Via Interna", onClick: () => openDocPrint("comprovante_interno") },
+    { icon: "🏷", label: "Etiqueta", onClick: () => openDocPrint("etiqueta") },
   ];
   const moreItems: Array<{ icon: string; label: string; color: string; onClick: () => void }> = [
     // "Editar OS" leva à aba Entrada real (edição dos grupos seguros) — não é mais no-op.
@@ -1011,8 +1018,25 @@ export function buildVals(
   // "pdv" (Receber no PDV) saiu daqui: o recebimento é real agora (ver
   // `v.pdvServico` + `ReceberPagamentoV4`, no stage Financeiro).
   const act = {
-    addFoto: () => notify(PREVIEW_NOOP),
-    whatsapp: () => notify(PREVIEW_NOOP),
+    addFoto: () => {
+      if (status === "pronta" || status === "entregue") go("entrega");
+      else go("entrada");
+    },
+    whatsapp: () => {
+      if (!realOS) {
+        notify("Selecione uma OS para enviar atualização.");
+        return;
+      }
+      const link = montarLinkWaV4(
+        realOS.cliente?.telefone || realOS.cliente?.whatsapp,
+        montarMensagemAtualizacaoOSV4(realOS),
+      );
+      if (!link.valido) {
+        notify(link.motivo);
+        return;
+      }
+      window.open(link.url, "_blank", "noopener,noreferrer");
+    },
     ligar: () => notify(PREVIEW_NOOP),
     novaObs: () => notify(PREVIEW_NOOP),
     exportHist: () => notify(PREVIEW_NOOP),
@@ -1291,6 +1315,8 @@ export function buildVals(
     // `SignaturePadV3` da V3); `docPrintTipo`/`closeDocPrint` controlam o modal de
     // impressão real (`DocPrintModal` → `PrintPreviewV3`, sem motor novo).
     salvarAssinaturaRetirada: ctx.salvarAssinaturaRetirada,
+    adicionarFotoSaida: ctx.adicionarFotoSaida,
+    removerFotoSaida: ctx.removerFotoSaida,
     docPrintTipo: st.docPrint as DocumentoTipoV3 | null,
     closeDocPrint: () => update({ docPrint: null }),
     registrarImpressaoDoc: ctx.registrarImpressaoDoc,
@@ -1727,6 +1753,16 @@ export function useV4Preview(): V4Vals {
       runWrite((sid, osId) => salvarAssinaturaRetiradaV3(sid, osId, dataUrl), "Assinatura de retirada salva."),
     [runWrite],
   );
+  const adicionarFotoSaida = useCallback(
+    (input: AdicionarFotoSaidaInputV3) =>
+      runWrite((sid, osId) => adicionarFotoSaidaV3(sid, osId, input), "Foto de saída adicionada."),
+    [runWrite],
+  );
+  const removerFotoSaida = useCallback(
+    (fotoId: string) =>
+      runWrite((sid, osId) => removerFotoSaidaV3(sid, osId, fotoId), "Foto de saída removida."),
+    [runWrite],
+  );
 
   // ---- Auditoria de impressão (Fase 1E, GOAL OPS-V4-DOCS-ASSINATURA-TERMOS-
   // ANEXOS-012): best-effort, mesma action usada pelo `onPrinted` da V3
@@ -2038,6 +2074,8 @@ export function useV4Preview(): V4Vals {
       marcarPronta,
       confirmarEntrega,
       salvarAssinaturaRetirada,
+      adicionarFotoSaida,
+      removerFotoSaida,
       registrarImpressaoDoc,
       salvarGarantia,
       abrirRetorno,
@@ -2093,6 +2131,8 @@ export function useV4Preview(): V4Vals {
       marcarPronta,
       confirmarEntrega,
       salvarAssinaturaRetirada,
+      adicionarFotoSaida,
+      removerFotoSaida,
       registrarImpressaoDoc,
       salvarGarantia,
       abrirRetorno,
