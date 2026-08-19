@@ -40,3 +40,13 @@ Isso não é edição manual de `state.json` / ledger / goal fechado. É o impor
 - Não há procedimento AEP permitido **dentro da allowlist do 016** para excluir essa mutação do conjunto publicável sem nova autorização humana (ampliar allowlist ou consertar o importador).
 
 A mutação permanece no commit de import `4892c09d`. Merge de `origin/main` não a reverte: a main não alterou esse arquivo nos 3 commits novos.
+
+## Reconciliação (CONTADOR-016-AEP-BASELINE-RECONCILIATION-003)
+
+Autorização humana: commit AEP/docs-only em `origin/main` + restaurar o fechado 015 **a partir de origin/main** (fonte exata), sem reescrever o texto.
+
+- Baseline: `4d030593` `aep(contador): baseline do GOAL 016 preservando histórico fechado`
+- SHA-256 do 015 (main e branch, após restore): `82fd2d61643ecdcc11ac0607af4050b26601ccd87f5e65f4f115c866e6c04bc6`
+- `GOAL_015_CLOSED_ARTIFACT_PRESERVED=true`
+- `AEP_IMPORT_CLOSED_GOAL_REWRITE_BUG=true` (follow-up; `track.mjs` não foi alterado)
+
