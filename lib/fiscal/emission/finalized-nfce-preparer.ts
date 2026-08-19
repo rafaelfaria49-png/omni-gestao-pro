@@ -7,7 +7,7 @@
  * com identidade, `xmlAssinado`, `digestValue`, `qrCodeData` e `urlConsulta`.
  *
  * `qrCodeData`/`urlConsulta` vêm de `infNFeSupl` estrutural — não de regex no XML.
- * URLs entram só por configuração injetada (P-URL-SP aberto). Sem QR no caminho
+ * URLs entram só por configuração injetada do catálogo `lib/fiscal/danfce/urls-sp`. Sem QR no caminho
  * SEFAZ-ready: fail closed, nada é persistido nem transmitido.
  * Offline (`tpEmis=9`): a assinatura RSA-SHA-1 do payload QR reusa o mesmo
  * material PEM do XMLDSig; as duas assinaturas permanecem distintas.
@@ -35,7 +35,7 @@ import type {
   FiscalDocumentLocator,
 } from "./uncertain-state.types"
 
-/** URLs injetadas do QR v3. Nenhum host SEFAZ é literal aqui (P-URL-SP aberto). */
+/** URLs injetadas do QR v3. Origem canônica: `selectNfceSpPublicUrls` (P-URL-SP). */
 export type NfceQrUrlConfig = {
   qrCodeBaseUrl: string
   urlChave: string

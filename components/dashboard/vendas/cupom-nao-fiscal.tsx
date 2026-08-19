@@ -85,6 +85,7 @@ function buildTexto(d: CupomData): string {
   if (d.lojaEndereco) lines.push(d.lojaEndereco)
   lines.push("================================")
   lines.push("    DOCUMENTO NÃO FISCAL")
+  lines.push("  Este comprovante não é DANFC-e / NFC-e.")
   lines.push("================================")
   lines.push(`Venda:    ${d.numeroPedido}`)
   lines.push(`Data:     ${fmtDate(d.at)}`)
@@ -149,6 +150,7 @@ function buildHtml(d: CupomData): string {
     <div style="text-align:center;font-size:11px;font-weight:600;letter-spacing:1px">
       ${isCancelada ? "⚠ VENDA CANCELADA ⚠" : "DOCUMENTO NÃO FISCAL"}
     </div>
+    ${isCancelada ? "" : `<div style="text-align:center;font-size:9px">Este comprovante não é DANFC-e / NFC-e.</div>`}
     <div style="border-top:1px dashed #000;margin:6px 0"></div>
     <div style="font-size:10px">
       <div style="display:flex;justify-content:space-between"><span>Venda:</span><span><b>${esc(d.numeroPedido)}</b></span></div>
@@ -236,6 +238,11 @@ export function CupomNaoFiscal({ isOpen, onClose, data }: CupomNaoFiscalProps) {
               <p className={`text-center font-bold text-[11px] tracking-widest mb-2 ${isCancelada ? "text-destructive" : "text-muted-foreground"}`}>
                 {isCancelada ? "⚠ VENDA CANCELADA ⚠" : "DOCUMENTO NÃO FISCAL"}
               </p>
+              {!isCancelada && (
+                <p className="text-center text-[10px] text-muted-foreground mb-2">
+                  Este comprovante não é DANFC-e / NFC-e.
+                </p>
+              )}
 
               <Separator className="border-dashed my-2" />
 

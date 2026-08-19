@@ -1,7 +1,8 @@
 /**
  * Peças compartilhadas de `infNFeSupl` (QR NFC-e v3).
  *
- * `urlChave` segue TString 21–85 do XSD versionado. URLs são injetadas (P-URL-SP aberto).
+ * `urlChave` segue TString 21–85 do XSD versionado. URLs são injetadas pelo caller
+ * a partir do catálogo oficial SP (`lib/fiscal/danfce/urls-sp`, P-URL-SP).
  * O grupo é filho de `NFe`, nunca de `infNFe`. Sem Signature. Sem CDATA.
  */
 
@@ -50,7 +51,7 @@ export function requireInjectedQrUrls(
   if (typeof qrCodeBaseUrl !== "string" || qrCodeBaseUrl.trim() === "") {
     rejectNfceQr(
       code,
-      "QR NFC-e v3 exige qrCodeBaseUrl injetada pelo caller (P-URL-SP aberto).",
+      "QR NFC-e v3 exige qrCodeBaseUrl injetada do catálogo oficial SP (lib/fiscal/danfce/urls-sp).",
       `${campoPrefix}.qrCodeBaseUrl`,
     )
   }
@@ -58,7 +59,7 @@ export function requireInjectedQrUrls(
   if (typeof urlChave !== "string" || urlChave === "") {
     rejectNfceQr(
       code,
-      "QR NFC-e v3 exige urlChave injetada pelo caller (P-URL-SP aberto).",
+      "QR NFC-e v3 exige urlChave injetada do catálogo oficial SP (lib/fiscal/danfce/urls-sp).",
       `${campoPrefix}.urlChave`,
     )
   }

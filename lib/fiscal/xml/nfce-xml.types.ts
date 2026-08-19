@@ -42,7 +42,7 @@ export type NfceXmlContext = {
    * Opt-in do QR NFC-e v3 **online** (`infNFeSupl`). Ausente → XML idêntico ao caminho legado.
    *
    * `chave` e `tpAmb` NÃO entram aqui: derivam do mesmo build que produz `infNFe`.
-   * URLs são injetadas pelo caller (P-URL-SP aberto — nenhum host SEFAZ-SP é literal).
+   * URLs são injetadas pelo caller a partir de `selectNfceSpPublicUrls` (P-URL-SP).
    * Incompatível com `qrOfflineV3` e com `tpEmis=9`.
    */
   qrOnlineV3?: NfceQrOnlineV3Config
