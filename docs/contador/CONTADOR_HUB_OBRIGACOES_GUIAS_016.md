@@ -3,7 +3,7 @@
 Implementação local da agenda **100% manual/informada**.
 
 - Schema aditivo: `ContadorObrigacaoTemplate`, `ContadorObrigacao`, `ContadorGuia` + 3 enums.
-- Migration: `prisma/migrations/0017_contador_agenda` (não aplicada em Production nesta entrega).
+- Migration: `prisma/migrations/0017_contador_agenda` (em `main` no merge do PR #80, commit `abf21166`; apply Production pelo `prisma migrate deploy` do build canônico `omni-gestao-pro`, evidência em `docs/ai-execution/_evidence/CONTADOR-016-PRODUCTION-MIGRATION.md`).
 - Recorrência: `mensal` ativo entra em «Gerar deste mês»; `nenhuma` só por seleção explícita.
 - Sem cálculo fiscal, sem cron, sem `vencido` persistido, sem backfill.
 - Status da obrigação reutiliza a matriz 011. Guia paga = `pagaEm`.
