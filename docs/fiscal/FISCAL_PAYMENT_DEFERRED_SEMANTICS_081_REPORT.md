@@ -173,7 +173,11 @@ Cobertos: creditoVale→21; carne vs boleto (colapso + bloqueio); aPrazo sem dis
 
 ## 16. Revisão independente
 
-Outra família deve revisar principalmente: tabela tPag oficial; carnê vs boleto; aPrazo; creditoVale→21; ausência de defaults; autoridade server-side; venda comercial preservada; legado fail-closed; zero schema; zero SEFAZ.
+Outra família (GPT) revisou o diff contra os 10 eixos do GOAL. **PASS em todos:**
+tabela tPag 05/15/19/21/91; carnê vs boleto (colapso + bloqueio); aPrazo = Conta a Receber
+(05 vs 91); creditoVale→21; zero default; autoridade do servidor; venda comercial
+preservada; legado fail-closed; zero schema; zero SEFAZ. **D-risk: não.**
+Classificação recomendada: **A**. Sem correção obrigatória.
 
 ## 17–21. Git / schema / #73 / SEFAZ
 
