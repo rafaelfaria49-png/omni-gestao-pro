@@ -27,6 +27,15 @@ Propostas não reservam números globais: cada criação futura deve recalcular 
 | ADR-P13 | ADR-0022 | observabilidade, auditoria e retenção de logs | proposta |
 | ADR-P14 | ADR-0023 | ativação controlada por loja e rollback | proposta; gate G-F7 |
 
+**Nota 2026-08-19 (FISCAL-029):** o GOAL SAT×NFC-e usou o rótulo provisório “ADR-P14” para a
+**decisão regulatória SAT × NFC-e em SP**. Esse tema **não** é a linha ADR-P14 desta tabela
+(ativação/G-F7). As linhas históricas **ADR-Pxx** desta tabela **não** reservam número
+canônico em `docs/decisions/`. A decisão SAT×NFC-e recebeu o próximo
+livre real: **ADR-0022**
+([`ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md`](../decisions/ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md),
+status **proposta**). A linha ADR-P14/ativação acima permanece proposta, ainda sem arquivo ADR.
+**Zero código.**
+
 ## Reconciliação do identificador ADR-P01
 
 O pacote reconstruído de 13/07/2026 usava ADR-P01 para autoridade tributária e ADR-P02 para XSD.

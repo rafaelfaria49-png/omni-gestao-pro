@@ -3,7 +3,7 @@ title: FISCAL_SCHEMA_DESIGN — Desenho das entidades fiscais
 hub: fiscal
 status: vivo
 owner: produto/arquitetura
-last_update: 2026-06-24
+last_update: 2026-08-19
 governa: prisma/schema.prisma (bloco fiscal ~L2072+)
 decidido_por: docs/decisions/ADR-0008-fiscal-architecture.md
 ---
@@ -213,7 +213,7 @@ erDiagram
 | `storeId` | String `@unique` | ✅ | Escopo multi-loja (ADR-0003); 1:1 com `Store` |
 | `fiscalEnabled` | Boolean `@default(false)` | ✅ | **Kill-switch / default-off** (ADR-0008 P7) |
 | `ambiente` | `AmbienteFiscal @default(HOMOLOGACAO)` | ✅ | Homologação até F12; vira `PRODUCAO` por loja |
-| `modeloFiscal` | `ModeloFiscal @default(NFCE)` | ✅ | NFC-e primeiro; SAT/NF-e depois |
+| `modeloFiscal` | `ModeloFiscal @default(NFCE)` | ✅ | NFC-e primeiro; NF-e depois se o mix exigir; SAT reservado/descartável (ADR-0022) |
 | `provider` | `FiscalProviderTipo @default(STUB_HOMOLOGACAO)` | ✅ | Seleciona a impl. do contrato (§7) |
 | `cnpj`, `razaoSocial`, `uf`, `crt`, `regimeTributario` | String/Int/enum `@default` | ✅ | Identidade fiscal mínima do emitente |
 | `logradouro`..`cep`, `codigoMunicipioIbge`, `municipio` | String `@default("")` | ✅ | Endereço **estruturado** (exigência do XML) |
@@ -298,7 +298,7 @@ Tabela existe; **produtor e worker são a F7** (gap P0-6).
 | `AmbienteFiscal` | HOMOLOGACAO · PRODUCAO | Ambiente SEFAZ |
 | `TipoEmissao` | NORMAL · CONTINGENCIA_OFFLINE | Modo de emissão |
 | `RegimeTributario` | SIMPLES_NACIONAL · SIMPLES_NACIONAL_EXCESSO · REGIME_NORMAL · MEI | Define CSOSN×CST (motor de tributos F2) |
-| `FiscalProviderTipo` | STUB_HOMOLOGACAO · SEFAZ_DIRETO · GATEWAY_FOCUS · GATEWAY_PLUGNOTAS · GATEWAY_ENOTAS · GATEWAY_NFEIO · SAT_LOCAL | Seleciona impl. do contrato |
+| `FiscalProviderTipo` | STUB_HOMOLOGACAO · SEFAZ_DIRETO · GATEWAY_FOCUS · GATEWAY_PLUGNOTAS · GATEWAY_ENOTAS · GATEWAY_NFEIO · SAT_LOCAL | Seleciona impl. do contrato. **`SAT_LOCAL` = reservado/descartável** (ADR-0022): sem implementação; emissão CF-e-SAT vedada em SP desde 01/01/2026 |
 | `CertificadoStatus` | PENDENTE_VALIDACAO · ATIVO · EXPIRADO · REVOGADO · INVALIDO | Ciclo de vida do A1 |
 | `TipoEventoFiscal` | CANCELAMENTO · CARTA_CORRECAO · INUTILIZACAO · CONTINGENCIA_ENVIO | Tipo de evento |
 | `StatusEventoFiscal` | PENDENTE · AUTORIZADO · REJEITADO | Estado do evento |
@@ -378,7 +378,7 @@ graph TD
   Resolver -->|STUB_HOMOLOGACAO| Stub[StubHomologacaoProvider ✅ existe]
   Resolver -->|SEFAZ_DIRETO| Sefaz[impl real ❌ F5]
   Resolver -->|GATEWAY_*| Gw[adapter gateway ❌ F5]
-  Resolver -->|SAT_LOCAL| Sat[impl SAT ❌ futuro]
+  Resolver -->|SAT_LOCAL| Sat[SAT_LOCAL reservado/descartavel ADR-0022]
 ```
 
 **8 métodos do contrato:** `validarConfiguracao`, `validarSnapshot`, `prepararEmissao`
@@ -431,7 +431,9 @@ graph TD
   de `lib/fiscal/tributos/*` (hoje `0`). Sem mudança de schema — colunas já existem.
 - **Destinatário estruturado (P1-4):** o snapshot lê hoje `cliente.municipio`; NFC-e nominal/NF-e
   exigem endereço completo. Pode exigir capturar mais campos do `Cliente` (avaliar no F-respectivo).
-- **Multi-modelo (SAT/NF-e):** enums já preveem; lógica por modelo é incremento (P2).
+- **Multi-modelo (NF-e 55):** enum `NFE` já previsto; lógica por modelo é incremento (P2).
+  **SAT/CF-e-SAT:** enum permanece no schema, **sem implementação** (ADR-0022 — reservado/descartável;
+  vedação de emissão em SP desde 01/01/2026).
 - **`xmlStorageRef`:** quando o volume de XML pesar, mover corpo para storage e manter só a ref.
 - **Particionamento de `FiscalLog`:** se a trilha crescer muito, particionar por `createdAt`/loja.
 
