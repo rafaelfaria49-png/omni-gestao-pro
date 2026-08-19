@@ -338,6 +338,13 @@ export function montarResumoGuias(guias: readonly GuiaRow[], agora: Date = new D
 
 /* ───────────────────────────── templates ───────────────────────────── */
 
+/** Escrita de template: financeiro/admin (`podeConferir`). Leitura segue o escopo do HUB. */
+function assertEscritaTemplate(capacidades: CapacidadesContador): void {
+  if (!capacidades.podeConferir) {
+    throw new PermissaoTransicaoError("resolver")
+  }
+}
+
 export async function listarTemplates(escopo: EscopoAgenda, deps: DepsAgenda): Promise<readonly TemplateDto[]> {
   const rows = await deps.repo.listarTemplates(escopo.storeId)
   return Object.freeze(rows.map(toTemplateDto))
@@ -346,8 +353,10 @@ export async function listarTemplates(escopo: EscopoAgenda, deps: DepsAgenda): P
 export async function criarTemplate(
   escopo: EscopoAgenda,
   entrada: { titulo: unknown; descricao?: unknown; tipo: unknown; diaVencimento?: unknown; recorrencia?: unknown },
+  capacidades: CapacidadesContador,
   deps: DepsAgenda,
 ): Promise<TemplateDto> {
+  assertEscritaTemplate(capacidades)
   const titulo = tituloOuErro(entrada.titulo)
   const tipo = tipoWire(String(entrada.tipo ?? ""))
   const recorrencia = entrada.recorrencia == null || entrada.recorrencia === ""
@@ -389,8 +398,10 @@ export async function atualizarTemplate(
     recorrencia?: unknown
     ativo?: unknown
   },
+  capacidades: CapacidadesContador,
   deps: DepsAgenda,
 ): Promise<TemplateDto> {
+  assertEscritaTemplate(capacidades)
   const atual = await deps.repo.acharTemplate(id, escopo.storeId)
   if (!atual) throw new TemplateNaoEncontradoError()
   const data: Partial<Pick<TemplateRow, "titulo" | "descricao" | "tipo" | "diaVencimento" | "recorrencia" | "ativo">> = {}
@@ -416,7 +427,13 @@ export async function atualizarTemplate(
 }
 
 /** Inativa se já houver instâncias; exclui só quando não há obrigação ligada. */
-export async function removerTemplate(escopo: EscopoAgenda, id: string, deps: DepsAgenda): Promise<{ inativado: boolean }> {
+export async function removerTemplate(
+  escopo: EscopoAgenda,
+  id: string,
+  capacidades: CapacidadesContador,
+  deps: DepsAgenda,
+): Promise<{ inativado: boolean }> {
+  assertEscritaTemplate(capacidades)
   const atual = await deps.repo.acharTemplate(id, escopo.storeId)
   if (!atual) throw new TemplateNaoEncontradoError()
   const n = await deps.repo.contarObrigacoesDoTemplate(id, escopo.storeId)

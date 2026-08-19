@@ -560,6 +560,7 @@ export function ContadorAgendaReal({ competencia }: Props) {
                   ))}
                 </ul>
               )}
+              {podeConferir ? (
               <form
                 className="space-y-2 border-t border-border pt-3"
                 onSubmit={(e) => {
@@ -606,6 +607,12 @@ export function ContadorAgendaReal({ competencia }: Props) {
                   Criar template
                 </Botao>
               </form>
+              ) : (
+                <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+                  Só financeiro ou administrador pode criar, alterar ou inativar templates. A lista e «Gerar nesta
+                  competência» continuam disponíveis.
+                </p>
+              )}
             </div>
           </aside>
         </Overlay>

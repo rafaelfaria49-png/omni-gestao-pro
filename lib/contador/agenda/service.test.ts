@@ -30,8 +30,11 @@ import {
   criarGuia,
   criarObrigacao,
   criarTemplate,
+  atualizarTemplate,
+  removerTemplate,
   instanciarLoteMensal,
   listarAgenda,
+  listarTemplates,
   pagarGuia,
   type AgendaRepo,
   type DepsAgenda,
@@ -240,8 +243,8 @@ function deps(repo = fakeRepo()): DepsAgenda & { repo: Fake } {
 describe("templates e lote", () => {
   it("lote mensal instancia só templates mensais ativos; nenhuma fica de fora", async () => {
     const d = deps()
-    const mensal = await criarTemplate(ESCOPO, { titulo: "DAS", tipo: "pagamento_guia", diaVencimento: 20, recorrencia: "mensal" }, d)
-    await criarTemplate(ESCOPO, { titulo: "Avulsa", tipo: "tarefa", recorrencia: "nenhuma" }, d)
+    const mensal = await criarTemplate(ESCOPO, { titulo: "DAS", tipo: "pagamento_guia", diaVencimento: 20, recorrencia: "mensal" }, CAP, d)
+    await criarTemplate(ESCOPO, { titulo: "Avulsa", tipo: "tarefa", recorrencia: "nenhuma" }, CAP, d)
     const lote = await instanciarLoteMensal(ESCOPO, COMP, CAP, d, AGORA)
     expect(lote.criadas).toBe(1)
     expect(lote.obrigacoes).toHaveLength(1)
@@ -251,7 +254,7 @@ describe("templates e lote", () => {
 
   it("nenhuma só gera obrigação por seleção explícita daquele template", async () => {
     const d = deps()
-    const t = await criarTemplate(ESCOPO, { titulo: "Balanço", tipo: "declaracao", recorrencia: "nenhuma" }, d)
+    const t = await criarTemplate(ESCOPO, { titulo: "Balanço", tipo: "declaracao", recorrencia: "nenhuma" }, CAP, d)
     const lote = await instanciarLoteMensal(ESCOPO, COMP, CAP, d, AGORA)
     expect(lote.criadas).toBe(0)
     const ob = await criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
@@ -261,7 +264,7 @@ describe("templates e lote", () => {
 
   it("idempotência template + competência (segunda chamada não duplica)", async () => {
     const d = deps()
-    const t = await criarTemplate(ESCOPO, { titulo: "FGTS", tipo: "pagamento_guia", diaVencimento: 20 }, d)
+    const t = await criarTemplate(ESCOPO, { titulo: "FGTS", tipo: "pagamento_guia", diaVencimento: 20 }, CAP, d)
     const a = await criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
     const b = await criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
     expect(b.id).toBe(a.id)
@@ -272,7 +275,7 @@ describe("templates e lote", () => {
 
   it("template inativo não entra no lote nem na seleção explícita", async () => {
     const d = deps()
-    const t = await criarTemplate(ESCOPO, { titulo: "ISS", tipo: "pagamento_guia", diaVencimento: 10 }, d)
+    const t = await criarTemplate(ESCOPO, { titulo: "ISS", tipo: "pagamento_guia", diaVencimento: 10 }, CAP, d)
     await d.repo.atualizarTemplate(t.id, ESCOPO.storeId, { ativo: false }, {
       storeId: ESCOPO.storeId,
       competenciaId: null,
@@ -293,21 +296,82 @@ describe("templates e lote", () => {
 
   it("dia 31 clamp 28/29/30/31 no mês da competência", async () => {
     const d = deps()
-    await criarTemplate(ESCOPO, { titulo: "Dia 31", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, d)
+    await criarTemplate(ESCOPO, { titulo: "Dia 31", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, CAP, d)
     const fev = await instanciarLoteMensal(ESCOPO, "2025-02", CAP, d, AGORA)
     expect(fev.obrigacoes[0].vencimento?.slice(0, 10)).toBe("2025-02-28")
     const d2 = deps()
-    await criarTemplate(ESCOPO, { titulo: "Dia 31b", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, d2)
+    await criarTemplate(ESCOPO, { titulo: "Dia 31b", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, CAP, d2)
     const leap = await instanciarLoteMensal(ESCOPO, "2024-02", CAP, d2, AGORA)
     expect(leap.obrigacoes[0].vencimento?.slice(0, 10)).toBe("2024-02-29")
     const d3 = deps()
-    await criarTemplate(ESCOPO, { titulo: "Dia 31c", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, d3)
+    await criarTemplate(ESCOPO, { titulo: "Dia 31c", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, CAP, d3)
     const abr = await instanciarLoteMensal(ESCOPO, "2026-04", CAP, d3, AGORA)
     expect(abr.obrigacoes[0].vencimento?.slice(0, 10)).toBe("2026-04-30")
     const d4 = deps()
-    await criarTemplate(ESCOPO, { titulo: "Dia 31d", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, d4)
+    await criarTemplate(ESCOPO, { titulo: "Dia 31d", tipo: "tarefa", diaVencimento: 31, recorrencia: "mensal" }, CAP, d4)
     const mai = await instanciarLoteMensal(ESCOPO, "2026-05", CAP, d4, AGORA)
     expect(mai.obrigacoes[0].vencimento?.slice(0, 10)).toBe("2026-05-31")
+  })
+})
+
+describe("templates — permissão elevada (podeConferir)", () => {
+  it("HUB sem capacidade elevada é bloqueado em POST/PATCH/DELETE", async () => {
+    const d = deps()
+    await expect(
+      criarTemplate(ESCOPO, { titulo: "Bloqueado", tipo: "tarefa", diaVencimento: 5 }, CAP_BAIXO, d),
+    ).rejects.toBeInstanceOf(PermissaoTransicaoError)
+    const t = await criarTemplate(ESCOPO, { titulo: "Ok", tipo: "tarefa", diaVencimento: 5 }, CAP, d)
+    await expect(atualizarTemplate(ESCOPO, t.id, { titulo: "hack" }, CAP_BAIXO, d)).rejects.toBeInstanceOf(
+      PermissaoTransicaoError,
+    )
+    await expect(removerTemplate(ESCOPO, t.id, CAP_BAIXO, d)).rejects.toBeInstanceOf(PermissaoTransicaoError)
+    const ainda = await listarTemplates(ESCOPO, d)
+    expect(ainda).toHaveLength(1)
+    expect(ainda[0].titulo).toBe("Ok")
+  })
+
+  it("financeiro/admin (podeConferir) pode criar, alterar e inativar", async () => {
+    const d = deps()
+    const t = await criarTemplate(ESCOPO, { titulo: "DAS", tipo: "pagamento_guia", diaVencimento: 20 }, CAP, d)
+    const up = await atualizarTemplate(ESCOPO, t.id, { titulo: "DAS-2" }, CAP, d)
+    expect(up.titulo).toBe("DAS-2")
+    const r = await removerTemplate(ESCOPO, t.id, CAP, d)
+    expect(r.inativado).toBe(false)
+    expect(await listarTemplates(ESCOPO, d)).toHaveLength(0)
+  })
+
+  it("GET/listar continua permitido sem capacidade elevada", async () => {
+    const d = deps()
+    await criarTemplate(ESCOPO, { titulo: "Visível", tipo: "tarefa", diaVencimento: 8 }, CAP, d)
+    const lista = await listarTemplates(ESCOPO, d)
+    expect(lista).toHaveLength(1)
+    expect(lista[0].titulo).toBe("Visível")
+  })
+
+  it("cross-store: escrita elevada na loja B não vê template da loja A (404/fail-closed)", async () => {
+    const d = deps()
+    const t = await criarTemplate(ESCOPO, { titulo: "Só A", tipo: "tarefa", diaVencimento: 5 }, CAP, d)
+    await expect(atualizarTemplate(ESCOPO_B, t.id, { titulo: "hack" }, CAP, d)).rejects.toBeInstanceOf(
+      TemplateNaoEncontradoError,
+    )
+    await expect(removerTemplate(ESCOPO_B, t.id, CAP, d)).rejects.toBeInstanceOf(TemplateNaoEncontradoError)
+    expect(await listarTemplates(ESCOPO_B, d)).toEqual([])
+    const daA = await listarTemplates(ESCOPO, d)
+    expect(daA).toHaveLength(1)
+    expect(daA[0].titulo).toBe("Só A")
+  })
+
+  it("403 de escrita não vaza storeId nem título", async () => {
+    const d = deps()
+    try {
+      await criarTemplate(ESCOPO, { titulo: "segredo-interno", tipo: "tarefa" }, CAP_BAIXO, d)
+      throw new Error("esperava PermissaoTransicaoError")
+    } catch (e) {
+      expect(e).toBeInstanceOf(PermissaoTransicaoError)
+      const msg = e instanceof Error ? e.message : ""
+      expect(msg).not.toContain("loja-1")
+      expect(msg).not.toContain("segredo-interno")
+    }
   })
 })
 
@@ -447,7 +511,7 @@ describe("guias", () => {
 describe("escopo e competência fechada", () => {
   it("cross-store: obrigação/guia/template da loja A não existem na loja B", async () => {
     const d = deps()
-    const t = await criarTemplate(ESCOPO, { titulo: "T", tipo: "tarefa", diaVencimento: 5 }, d)
+    const t = await criarTemplate(ESCOPO, { titulo: "T", tipo: "tarefa", diaVencimento: 5 }, CAP, d)
     const ob = await criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
     const g = await criarGuia(
       ESCOPO,
@@ -459,6 +523,10 @@ describe("escopo e competência fechada", () => {
       ObrigacaoNaoEncontradaError,
     )
     await expect(atualizarGuia(ESCOPO_B, g.id, { titulo: "hack" }, d, AGORA)).rejects.toBeInstanceOf(GuiaNaoEncontradaError)
+    await expect(atualizarTemplate(ESCOPO_B, t.id, { titulo: "hack" }, CAP, d)).rejects.toBeInstanceOf(
+      TemplateNaoEncontradoError,
+    )
+    expect(await listarTemplates(ESCOPO_B, d)).toEqual([])
     const listaB = await listarAgenda(ESCOPO_B, COMP, CAP, d, AGORA)
     expect(listaB.obrigacoes).toEqual([])
     expect(listaB.guias).toEqual([])

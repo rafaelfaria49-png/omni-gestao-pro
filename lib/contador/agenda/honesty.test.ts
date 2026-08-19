@@ -26,6 +26,8 @@ describe("GOAL 016 — zero cálculo fiscal / cron / vencido persistido", () => 
     "components/dashboard/contador/agenda/contador-agenda-real.tsx",
     "app/api/contador/agenda/route.ts",
     "app/api/contador/agenda/obrigacoes/instanciar/route.ts",
+    "app/api/contador/agenda/templates/route.ts",
+    "app/api/contador/agenda/templates/[id]/route.ts",
   ]
     .map((f) => read(f))
     .join("\n")
@@ -41,6 +43,17 @@ describe("GOAL 016 — zero cálculo fiscal / cron / vencido persistido", () => 
     expect(blob).not.toMatch(/setInterval\s*\(/)
     expect(blob).not.toMatch(/CronJob/)
     expect(blob).not.toMatch(/schedule\.(cron|job)/i)
+  })
+
+  it("POST/PATCH/DELETE de template exigem podeConferir; GET não", () => {
+    const post = read("app/api/contador/agenda/templates/route.ts")
+    const id = read("app/api/contador/agenda/templates/[id]/route.ts")
+    expect(post).toMatch(/resolverCapacidadesContador/)
+    expect(id).toMatch(/resolverCapacidadesContador/)
+    expect(read("lib/contador/agenda/service.ts")).toMatch(/assertEscritaTemplate/)
+    const getFn = post.slice(post.indexOf("export async function GET"), post.indexOf("export async function POST"))
+    expect(getFn).not.toMatch(/resolverCapacidadesContador/)
+    expect(getFn).not.toMatch(/podeConferir/)
   })
 
   it("checklist permanece puro (sem Prisma)", () => {

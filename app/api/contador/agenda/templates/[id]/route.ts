@@ -2,8 +2,10 @@
  * PATCH/DELETE /api/contador/agenda/templates/:id
  */
 import { NextResponse } from "next/server"
+import { auth } from "@/auth"
 import { requireContadorScope } from "@/lib/contador/scope"
 import { respostaFalhaEscopo, logEvento } from "@/lib/contador/documentos/http"
+import { resolverCapacidadesContador } from "@/lib/contador/status/permissoes"
 import { atualizarTemplate, criarRepoAgenda, removerTemplate } from "@/lib/contador/agenda"
 import {
   CACHE_PRIVADO,
@@ -31,11 +33,13 @@ export async function PATCH(req: Request, ctx: Ctx) {
   }
   if (temChaveProibida(body)) return RESPOSTA_CHAVE_PROIBIDA
   const { id } = await ctx.params
+  const capacidades = resolverCapacidadesContador(await auth())
   try {
     const template = await atualizarTemplate(
       { storeId: escopo.storeId, userId: escopo.userId },
       id,
       body,
+      capacidades,
       { repo: criarRepoAgenda() },
     )
     logEvento("contador_agenda_template_atualizado", { storeId: escopo.storeId, userId: escopo.userId, id })
@@ -51,10 +55,12 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const escopo = await requireContadorScope()
   if (!escopo.ok) return respostaFalhaEscopo(escopo)
   const { id } = await ctx.params
+  const capacidades = resolverCapacidadesContador(await auth())
   try {
     const r = await removerTemplate(
       { storeId: escopo.storeId, userId: escopo.userId },
       id,
+      capacidades,
       { repo: criarRepoAgenda() },
     )
     logEvento("contador_agenda_template_removido", { storeId: escopo.storeId, userId: escopo.userId, id, ...r })
