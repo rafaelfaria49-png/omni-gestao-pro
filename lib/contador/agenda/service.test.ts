@@ -62,8 +62,12 @@ const COMP = "2026-07"
 
 type Fake = AgendaRepo & {
   _eventos: NovoEventoAgenda[]
+  _obrigacoes: Map<string, ObrigacaoRow>
+  _guias: Map<string, GuiaRow>
   _fechar(storeId: string, codigo: string): void
   _semearDoc(doc: DocumentoAgendaRef): void
+  _antesDeMutar: (() => void | Promise<void>) | null
+  _ativarBarreiraLeituraGuia(): void
 }
 
 function fakeRepo(): Fake {
@@ -86,8 +90,21 @@ function fakeRepo(): Fake {
     return { competenciaAno: ref.ano, competenciaMes: ref.mes, competenciaStatus: ref.status }
   }
 
+  function assertCompNaoFechada(competenciaId: string) {
+    const ref = [...comps.values()].find((x) => x.id === competenciaId)
+    if (!ref || ref.status === "FECHADA") throw new CompetenciaFechadaError()
+  }
+
+  let barreiraLeituraGuia = false
+  let leiturasGuia = 0
+  let releaseBarreira: (() => void) | null = null
+  let waitBarreira: Promise<void> | null = null
+
   const repo: Fake = {
     _eventos: eventos,
+    _obrigacoes: obgs,
+    _guias: guias,
+    _antesDeMutar: null,
     _fechar(storeId, codigo) {
       const [ano, mes] = codigo.split("-").map(Number)
       const c = comps.get(ck(storeId, ano, mes))
@@ -95,6 +112,13 @@ function fakeRepo(): Fake {
     },
     _semearDoc(doc) {
       docs.set(`${doc.storeId}:${doc.id}`, doc)
+    },
+    _ativarBarreiraLeituraGuia() {
+      barreiraLeituraGuia = true
+      leiturasGuia = 0
+      waitBarreira = new Promise<void>((r) => {
+        releaseBarreira = r
+      })
     },
 
     async getOrCreateCompetencia(storeId, comp) {
@@ -159,6 +183,8 @@ function fakeRepo(): Fake {
       return o ? { ...o, ...attachComp(o) } : null
     },
     async criarObrigacao(row, evento) {
+      await repo._antesDeMutar?.()
+      assertCompNaoFechada(row.competenciaId)
       if (row.templateId) {
         const dup = [...obgs.values()].find(
           (x) => x.templateId === row.templateId && x.competenciaId === row.competenciaId,
@@ -179,16 +205,74 @@ function fakeRepo(): Fake {
       eventos.push(evento)
       return { ...full }
     },
+    async criarObrigacoesEmLote(itens) {
+      await repo._antesDeMutar?.()
+      if (itens.length === 0) return []
+      const snap = [...obgs.entries()]
+      const evLen = eventos.length
+      try {
+        assertCompNaoFechada(itens[0]!.row.competenciaId)
+        const out: ObrigacaoRow[] = []
+        for (const item of itens) {
+          try {
+            if (item.row.templateId) {
+              const dup = [...obgs.values()].find(
+                (x) => x.templateId === item.row.templateId && x.competenciaId === item.row.competenciaId,
+              )
+              if (dup) {
+                const err = new Error("unique") as Error & { code: string }
+                err.code = "P2002"
+                throw err
+              }
+            }
+            assertCompNaoFechada(item.row.competenciaId)
+            const full: ObrigacaoRow = {
+              ...item.row,
+              createdAt: agora(),
+              updatedAt: agora(),
+              ...attachComp(item.row),
+            }
+            obgs.set(item.row.id, full)
+            eventos.push(item.evento)
+            out.push({ ...full })
+          } catch (e) {
+            const code = typeof e === "object" && e && "code" in e ? String((e as { code: unknown }).code) : ""
+            if (code === "P2002" && item.row.templateId) {
+              const deNovo = [...obgs.values()].find(
+                (x) =>
+                  x.templateId === item.row.templateId &&
+                  x.competenciaId === item.row.competenciaId &&
+                  x.storeId === item.row.storeId,
+              )
+              if (!deNovo) throw e
+              out.push({ ...deNovo, ...attachComp(deNovo) })
+              continue
+            }
+            throw e
+          }
+        }
+        return out
+      } catch (e) {
+        obgs.clear()
+        for (const [k, v] of snap) obgs.set(k, v)
+        eventos.splice(evLen)
+        throw e
+      }
+    },
     async atualizarObrigacao(id, storeId, data, evento) {
+      await repo._antesDeMutar?.()
       const o = obgs.get(id)
       if (!o || o.storeId !== storeId) throw new ObrigacaoNaoEncontradaError()
+      assertCompNaoFechada(o.competenciaId)
       Object.assign(o, data, { updatedAt: agora() })
       eventos.push(evento)
       return { ...o, ...attachComp(o) }
     },
     async aplicarStatusObrigacao({ id, storeId, de, para, evento }) {
+      await repo._antesDeMutar?.()
       const o = obgs.get(id)
       if (!o || o.storeId !== storeId) throw new ObrigacaoNaoEncontradaError()
+      assertCompNaoFechada(o.competenciaId)
       if (o.status !== de) throw new TransicaoConcorrenteError()
       o.status = para
       o.updatedAt = agora()
@@ -203,25 +287,40 @@ function fakeRepo(): Fake {
     },
     async acharGuia(id, storeId) {
       const g = guias.get(id)
-      return g && g.storeId === storeId ? { ...g, ...attachComp(g) } : null
+      const row = g && g.storeId === storeId ? { ...g, ...attachComp(g) } : null
+      if (barreiraLeituraGuia && row) {
+        leiturasGuia += 1
+        if (leiturasGuia === 1) {
+          await waitBarreira
+        } else {
+          releaseBarreira?.()
+        }
+      }
+      return row
     },
     async criarGuia(row, evento) {
+      await repo._antesDeMutar?.()
+      assertCompNaoFechada(row.competenciaId)
       const full: GuiaRow = { ...row, createdAt: agora(), updatedAt: agora(), ...attachComp(row) }
       guias.set(row.id, full)
       eventos.push(evento)
       return { ...full }
     },
     async atualizarGuia(id, storeId, data, evento) {
+      await repo._antesDeMutar?.()
       const g = guias.get(id)
       if (!g || g.storeId !== storeId) throw new GuiaNaoEncontradaError()
+      assertCompNaoFechada(g.competenciaId)
       if (g.pagaEm) throw new GuiaPagaError()
       Object.assign(g, data, { updatedAt: agora() })
       eventos.push(evento)
       return { ...g, ...attachComp(g) }
     },
     async marcarGuiaPaga(id, storeId, pagaEm, comprovanteDocumentoId, evento) {
+      await repo._antesDeMutar?.()
       const g = guias.get(id)
       if (!g || g.storeId !== storeId) throw new GuiaNaoEncontradaError()
+      assertCompNaoFechada(g.competenciaId)
       if (g.pagaEm) throw new GuiaPagaError()
       g.pagaEm = pagaEm
       g.comprovanteDocumentoId = comprovanteDocumentoId
@@ -570,5 +669,121 @@ describe("resumo checklist e eventos", () => {
     expect(tipos).toContain("guia_informada")
     expect(tipos).toContain("guia_paga")
     expect(d.repo._eventos.every((e) => e.origem === "contador.agenda")).toBe(true)
+  })
+})
+
+describe("concorrência — freeze da competência e guia paga", () => {
+  it("A: competência fecha entre leitura inicial e criação de obrigação → zero linha, zero evento", async () => {
+    const d = deps()
+    await criarObrigacao(ESCOPO, { competencia: COMP, titulo: "antes", tipo: "tarefa" }, CAP, d, AGORA)
+    const eventosAntes = d.repo._eventos.length
+    d.repo._antesDeMutar = () => d.repo._fechar(ESCOPO.storeId, COMP)
+    await expect(
+      criarObrigacao(ESCOPO, { competencia: COMP, titulo: "corrida", tipo: "tarefa" }, CAP, d, AGORA),
+    ).rejects.toBeInstanceOf(CompetenciaFechadaError)
+    expect([...d.repo._obrigacoes.values()].filter((o) => o.titulo === "corrida")).toHaveLength(0)
+    expect(d.repo._eventos.length).toBe(eventosAntes)
+  })
+
+  it("B: competência fecha entre leitura inicial e criação de guia → zero linha, zero evento", async () => {
+    const d = deps()
+    await criarObrigacao(ESCOPO, { competencia: COMP, titulo: "seed", tipo: "tarefa" }, CAP, d, AGORA)
+    const eventosAntes = d.repo._eventos.length
+    d.repo._antesDeMutar = () => d.repo._fechar(ESCOPO.storeId, COMP)
+    await expect(
+      criarGuia(ESCOPO, { competencia: COMP, titulo: "guia-corrida", valorCentavos: 1, vencimento: "2026-07-20" }, d, AGORA),
+    ).rejects.toBeInstanceOf(CompetenciaFechadaError)
+    expect([...d.repo._guias.values()]).toHaveLength(0)
+    expect(d.repo._eventos.length).toBe(eventosAntes)
+  })
+
+  it("C: competência fecha entre leitura e mudança de status → status intacto, zero evento novo", async () => {
+    const d = deps()
+    const ob = await criarObrigacao(ESCOPO, { competencia: COMP, titulo: "st", tipo: "tarefa" }, CAP, d, AGORA)
+    const eventosAntes = d.repo._eventos.length
+    d.repo._antesDeMutar = () => d.repo._fechar(ESCOPO.storeId, COMP)
+    await expect(
+      alterarStatusObrigacao(ESCOPO, { obrigacaoId: ob.id, para: "ENVIADO" }, CAP, d, AGORA),
+    ).rejects.toBeInstanceOf(CompetenciaFechadaError)
+    expect(d.repo._obrigacoes.get(ob.id)?.status).toBe("PENDENTE")
+    expect(d.repo._eventos.length).toBe(eventosAntes)
+  })
+
+  it("D: competência fecha durante «Gerar deste mês» → lote aborta inteiro, zero parcial", async () => {
+    const d = deps()
+    await criarTemplate(ESCOPO, { titulo: "DAS", tipo: "pagamento_guia", diaVencimento: 20, recorrencia: "mensal" }, CAP, d)
+    await criarTemplate(ESCOPO, { titulo: "FGTS", tipo: "pagamento_guia", diaVencimento: 7, recorrencia: "mensal" }, CAP, d)
+    await criarObrigacao(ESCOPO, { competencia: COMP, titulo: "seed-comp", tipo: "tarefa" }, CAP, d, AGORA)
+    const obgsAntes = d.repo._obrigacoes.size
+    const eventosAntes = d.repo._eventos.length
+    d.repo._antesDeMutar = () => d.repo._fechar(ESCOPO.storeId, COMP)
+    await expect(instanciarLoteMensal(ESCOPO, COMP, CAP, d, AGORA)).rejects.toBeInstanceOf(CompetenciaFechadaError)
+    expect(d.repo._obrigacoes.size).toBe(obgsAntes)
+    expect(d.repo._eventos.length).toBe(eventosAntes)
+  })
+
+  it("E: guia vira paga entre leitura inicial e PATCH → GUIA_PAGA, título intacto, zero evento", async () => {
+    const d = deps()
+    const g = await criarGuia(
+      ESCOPO,
+      { competencia: COMP, titulo: "original", valorCentavos: 10, vencimento: "2026-07-20" },
+      d,
+      AGORA,
+    )
+    const eventosAntes = d.repo._eventos.length
+    d.repo._antesDeMutar = () => {
+      const row = d.repo._guias.get(g.id)
+      if (row) row.pagaEm = new Date("2026-07-16T12:00:00.000Z")
+    }
+    await expect(atualizarGuia(ESCOPO, g.id, { titulo: "hackeado" }, d, AGORA)).rejects.toBeInstanceOf(GuiaPagaError)
+    expect(d.repo._guias.get(g.id)?.titulo).toBe("original")
+    expect(d.repo._eventos.length).toBe(eventosAntes)
+  })
+
+  it("F: duas chamadas simultâneas para pagar a mesma guia → uma paga, a outra GUIA_PAGA, um evento", async () => {
+    const d = deps()
+    const g = await criarGuia(
+      ESCOPO,
+      { competencia: COMP, titulo: "duplo", valorCentavos: 10, vencimento: "2026-07-20" },
+      d,
+      AGORA,
+    )
+    d.repo._ativarBarreiraLeituraGuia()
+    const r1 = pagarGuia(ESCOPO, g.id, {}, CAP, d, AGORA)
+    const r2 = pagarGuia(ESCOPO, g.id, {}, CAP, d, AGORA)
+    const settled = await Promise.allSettled([r1, r2])
+    const ok = settled.filter((s) => s.status === "fulfilled")
+    const fail = settled.filter((s) => s.status === "rejected")
+    expect(ok).toHaveLength(1)
+    expect(fail).toHaveLength(1)
+    expect(fail[0]!.status === "rejected" && fail[0].reason).toBeInstanceOf(GuiaPagaError)
+    expect(d.repo._guias.get(g.id)?.pagaEm).toBeTruthy()
+    expect(d.repo._eventos.filter((e) => e.tipo === "guia_paga")).toHaveLength(1)
+  })
+
+  it("G: idempotência template+competência continua íntegra sob corrida de materialização", async () => {
+    const d = deps()
+    const t = await criarTemplate(ESCOPO, { titulo: "ISS", tipo: "pagamento_guia", diaVencimento: 10 }, CAP, d)
+    let release: (() => void) | undefined
+    const barreira = new Promise<void>((r) => {
+      release = r
+    })
+    let leituras = 0
+    const orig = d.repo.acharObrigacaoPorTemplate.bind(d.repo)
+    d.repo.acharObrigacaoPorTemplate = async (templateId, competenciaId, storeId) => {
+      const row = await orig(templateId, competenciaId, storeId)
+      leituras += 1
+      if (leituras === 1) await barreira
+      else release?.()
+      return row
+    }
+    const p1 = criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
+    const p2 = criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
+    const [a, b] = await Promise.all([p1, p2])
+    expect(a.id).toBe(b.id)
+    expect([...d.repo._obrigacoes.values()].filter((o) => o.templateId === t.id)).toHaveLength(1)
+    const lote = await instanciarLoteMensal(ESCOPO, COMP, CAP, d, AGORA)
+    expect(lote.criadas).toBe(0)
+    expect(lote.existentes).toBe(1)
   })
 })

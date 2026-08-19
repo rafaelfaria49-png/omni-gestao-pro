@@ -71,6 +71,15 @@ const DESC_MAX = 2000
 const MOTIVO_MAX = 2000
 const DIA_RE = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/
 
+export type ObrigacaoCreateInput = Omit<
+  ObrigacaoRow,
+  "createdAt" | "updatedAt" | "competenciaAno" | "competenciaMes" | "competenciaStatus"
+>
+export type GuiaCreateInput = Omit<
+  GuiaRow,
+  "createdAt" | "updatedAt" | "competenciaAno" | "competenciaMes" | "competenciaStatus"
+>
+
 export interface AgendaRepo {
   getOrCreateCompetencia(storeId: string, comp: Competencia): Promise<CompetenciaAgendaRef>
   acharCompetencia(storeId: string, comp: Competencia): Promise<CompetenciaAgendaRef | null>
@@ -91,7 +100,14 @@ export interface AgendaRepo {
   listarObrigacoes(competenciaId: string, storeId: string): Promise<ObrigacaoRow[]>
   acharObrigacao(id: string, storeId: string): Promise<ObrigacaoRow | null>
   acharObrigacaoPorTemplate(templateId: string, competenciaId: string, storeId: string): Promise<ObrigacaoRow | null>
-  criarObrigacao(row: Omit<ObrigacaoRow, "createdAt" | "updatedAt" | "competenciaAno" | "competenciaMes" | "competenciaStatus">, evento: NovoEventoAgenda): Promise<ObrigacaoRow>
+  criarObrigacao(row: ObrigacaoCreateInput, evento: NovoEventoAgenda): Promise<ObrigacaoRow>
+  /**
+   * Lote «Gerar deste mês»: uma transação. Fecha concorrente → zero linhas novas
+   * e zero eventos (não deixa lote parcial depois de FECHADA).
+   */
+  criarObrigacoesEmLote(
+    itens: ReadonlyArray<{ row: ObrigacaoCreateInput; evento: NovoEventoAgenda }>,
+  ): Promise<ObrigacaoRow[]>
   atualizarObrigacao(
     id: string,
     storeId: string,
@@ -108,7 +124,7 @@ export interface AgendaRepo {
 
   listarGuias(competenciaId: string, storeId: string): Promise<GuiaRow[]>
   acharGuia(id: string, storeId: string): Promise<GuiaRow | null>
-  criarGuia(row: Omit<GuiaRow, "createdAt" | "updatedAt" | "competenciaAno" | "competenciaMes" | "competenciaStatus">, evento: NovoEventoAgenda): Promise<GuiaRow>
+  criarGuia(row: GuiaCreateInput, evento: NovoEventoAgenda): Promise<GuiaRow>
   atualizarGuia(
     id: string,
     storeId: string,
@@ -507,6 +523,39 @@ export async function carregarResumoGuiasChecklist(
   return montarResumoGuias(guias, agora)
 }
 
+function montarObrigacaoDeTemplate(
+  escopo: EscopoAgenda,
+  template: TemplateRow,
+  ref: CompetenciaAgendaRef,
+): { row: ObrigacaoCreateInput; evento: NovoEventoAgenda } {
+  const tipo = tipoWire(String(template.tipo).toLowerCase())
+  const dia = template.diaVencimento
+  const vencimento =
+    dia != null ? dataUtcDeDia(resolverDiaVencimento(ref.ano, ref.mes, dia)) : null
+  const id = `obg-${randomUUID()}`
+  return {
+    row: {
+      id,
+      storeId: escopo.storeId,
+      competenciaId: ref.id,
+      templateId: template.id,
+      titulo: template.titulo,
+      descricao: template.descricao,
+      tipo: tipoPrisma(tipo),
+      vencimento,
+      status: "PENDENTE",
+      criadoPorTipo: ATOR_TIPO_INTERNO,
+      criadoPorId: escopo.userId,
+    },
+    evento: eventoBase(escopo, ref.id, EVENTO_OBRIGACAO_CRIADA, ENTIDADE_OBRIGACAO, id, {
+      titulo: template.titulo,
+      tipo,
+      templateId: template.id,
+      competencia: formatCompetencia({ ano: ref.ano, mes: ref.mes }),
+    }),
+  }
+}
+
 async function materializarDeTemplate(
   escopo: EscopoAgenda,
   template: TemplateRow,
@@ -516,33 +565,9 @@ async function materializarDeTemplate(
   if (!template.ativo) throw new TemplateInativoError()
   const existente = await deps.repo.acharObrigacaoPorTemplate(template.id, ref.id, escopo.storeId)
   if (existente) return { row: existente, jaExistia: true }
-  const tipo = tipoWire(String(template.tipo).toLowerCase())
-  const dia = template.diaVencimento
-  const vencimento =
-    dia != null ? dataUtcDeDia(resolverDiaVencimento(ref.ano, ref.mes, dia)) : null
-  const id = `obg-${randomUUID()}`
+  const item = montarObrigacaoDeTemplate(escopo, template, ref)
   try {
-    const row = await deps.repo.criarObrigacao(
-      {
-        id,
-        storeId: escopo.storeId,
-        competenciaId: ref.id,
-        templateId: template.id,
-        titulo: template.titulo,
-        descricao: template.descricao,
-        tipo: tipoPrisma(tipo),
-        vencimento,
-        status: "PENDENTE",
-        criadoPorTipo: ATOR_TIPO_INTERNO,
-        criadoPorId: escopo.userId,
-      },
-      eventoBase(escopo, ref.id, EVENTO_OBRIGACAO_CRIADA, ENTIDADE_OBRIGACAO, id, {
-        titulo: template.titulo,
-        tipo,
-        templateId: template.id,
-        competencia: formatCompetencia({ ano: ref.ano, mes: ref.mes }),
-      }),
-    )
+    const row = await deps.repo.criarObrigacao(item.row, item.evento)
     return { row, jaExistia: false }
   } catch (e) {
     const code = typeof e === "object" && e && "code" in e ? String((e as { code: unknown }).code) : ""
@@ -556,7 +581,8 @@ async function materializarDeTemplate(
 
 /**
  * Lote «Gerar deste mês»: somente templates `mensal` **ativos**.
- * `nenhuma` é excluída mesmo se ativa.
+ * `nenhuma` é excluída mesmo se ativa. Escritas novas vão numa única transação
+ * no repositório — fechamento concorrente não deixa lote parcial.
  */
 export async function instanciarLoteMensal(
   escopo: EscopoAgenda,
@@ -570,19 +596,25 @@ export async function instanciarLoteMensal(
   const mensais = templates.filter(
     (t) => t.ativo && recorrenciaWire(t.recorrencia) === "mensal",
   )
-  let criadas = 0
-  let existentes = 0
-  const rows: ObrigacaoRow[] = []
+  const jaHavia: ObrigacaoRow[] = []
+  const pendentes: Array<{ row: ObrigacaoCreateInput; evento: NovoEventoAgenda }> = []
   for (const t of mensais) {
-    const r = await materializarDeTemplate(escopo, t, ref, deps)
-    if (r.jaExistia) existentes += 1
-    else criadas += 1
-    rows.push(r.row)
+    const existente = await deps.repo.acharObrigacaoPorTemplate(t.id, ref.id, escopo.storeId)
+    if (existente) {
+      jaHavia.push(existente)
+      continue
+    }
+    pendentes.push(montarObrigacaoDeTemplate(escopo, t, ref))
   }
+  const novas =
+    pendentes.length === 0 ? [] : await deps.repo.criarObrigacoesEmLote(pendentes)
+  const criadas = novas.filter((n, i) => n.id === pendentes[i]?.row.id).length
   return {
     criadas,
-    existentes,
-    obrigacoes: Object.freeze(rows.map((o) => toObrigacaoDto(o, capacidades, agora))),
+    existentes: jaHavia.length + (novas.length - criadas),
+    obrigacoes: Object.freeze(
+      [...jaHavia, ...novas].map((o) => toObrigacaoDto(o, capacidades, agora)),
+    ),
   }
 }
 
