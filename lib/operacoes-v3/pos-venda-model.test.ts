@@ -113,6 +113,26 @@ describe("retorno — leitura + vínculo OS original", () => {
     expect(list.every((r) => r.osOriginalId === "os9")).toBe(true);
   });
 
+  it("lê observação de abertura e o atendimento vinculado", () => {
+    const list = lerRetornosV3(os({
+      retornosV3: [{
+        id: "r1",
+        osOriginalId: "os9",
+        motivo: "Touch",
+        observacao: "Cliente deixou o aparelho",
+        criadoEm: diasAtras(1),
+        status: "aberto",
+        osRetornoId: "os-nova",
+        osRetornoCodigo: "OS-2001",
+      }],
+    }));
+    expect(list[0]).toMatchObject({
+      observacao: "Cliente deixou o aparelho",
+      osRetornoId: "os-nova",
+      osRetornoCodigo: "OS-2001",
+    });
+  });
+
   it("resume contagem por status", () => {
     const r = resumoRetornosV3(comRetornos);
     expect(r).toMatchObject({ total: 2, abertos: 1, finalizados: 1 });

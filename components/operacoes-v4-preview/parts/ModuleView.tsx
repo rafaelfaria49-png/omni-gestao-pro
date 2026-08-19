@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Operações V4 Preview — telas de módulo do rail (Visão geral, SLA, PDV).
  * Fila e Bancada têm superfícies próprias (`FilaV4`, `BancadaV4`).
@@ -6,9 +8,14 @@
  * não há base real, exibe um estado vazio ESPECÍFICO e honesto — nunca cliente,
  * OS, técnico, SLA ou número fabricado. Clicar numa OS abre o Workspace real.
  */
+import { useMemo, useState } from "react";
 import { C, card } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
 import type { RailOsRow } from "../rails-adapter";
+import {
+  filtrarGarantiasPortfolioV4,
+  type GarantiaPortfolioFiltroV4,
+} from "@/lib/operacoes-v4/posvenda-v4";
 
 /** O módulo tem dado real para mostrar? (governa o selo do cabeçalho). */
 function moduleTemDados(v: V4Vals): boolean {
@@ -21,6 +28,8 @@ function moduleTemDados(v: V4Vals): boolean {
       return v.slaView.temDados;
     case "pdv":
       return v.pdvView.temDados;
+    case "garantias":
+      return v.garantiasPortfolio.itens.length > 0;
     default:
       return false;
   }
@@ -48,7 +57,7 @@ export function ModuleView({ v }: { v: V4Vals }) {
             fontWeight: 600,
           }}
         >
-          {temDados ? "Somente leitura" : "Protótipo"}
+          {v.moduleId === "garantias" ? (temDados ? "Operacional" : "Sem dados") : temDados ? "Somente leitura" : "Protótipo"}
         </span>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={v.railWorkspace} style={{ height: 30, padding: "0 12px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Abrir OS Workspace →</button>
@@ -80,9 +89,76 @@ function Body({ v }: { v: V4Vals }) {
       return <SlaBody v={v} />;
     case "pdv":
       return <PdvBody v={v} />;
+    case "garantias":
+      return <GarantiasBody v={v} />;
     default:
       return <EmptyBox titulo="Módulo indisponível" texto="Esta visão não está disponível nesta Preview." />;
   }
+}
+
+// ---- Garantias / retornos --------------------------------------------------
+
+const GARANTIA_FILTROS: Array<{ id: GarantiaPortfolioFiltroV4; label: string }> = [
+  { id: "todas", label: "Todas" },
+  { id: "vigentes", label: "Vigentes" },
+  { id: "vencendo", label: "Vencendo" },
+  { id: "vencidas", label: "Vencidas" },
+  { id: "com_retorno", label: "Com retorno" },
+];
+
+function dataCurta(iso?: string): string {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pt-BR").format(date);
+}
+
+function GarantiasBody({ v }: { v: V4Vals }) {
+  const portfolio = v.garantiasPortfolio;
+  const [filtro, setFiltro] = useState<GarantiaPortfolioFiltroV4>("todas");
+  const [busca, setBusca] = useState("");
+  const itens = useMemo(() => filtrarGarantiasPortfolioV4(portfolio, filtro, busca), [portfolio, filtro, busca]);
+
+  if (portfolio.itens.length === 0) {
+    return <EmptyBox titulo="Garantias" texto="Nenhuma garantia real foi encontrada nas OS da loja ativa." sub="A lista aparece quando uma OS possui garantia prevista ou efetiva no payload." />;
+  }
+
+  return (
+    <div style={{ maxWidth: 1080, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: 9 }}>
+        <Kpi label="Vigentes" valor={portfolio.vigentes} />
+        <Kpi label={`Vencendo (≤${portfolio.vencendoDias}d)`} valor={portfolio.vencendo} />
+        <Kpi label="Vencidas" valor={portfolio.vencidas} />
+        <Kpi label="Retornos abertos" valor={portfolio.retornosAbertos} tone={portfolio.retornosAbertos ? "danger" : "neutro"} />
+      </div>
+
+      <div style={{ ...card, padding: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <input value={busca} onChange={(event) => setBusca(event.target.value)} aria-label="Buscar garantias" placeholder="Buscar OS, cliente ou aparelho" style={{ flex: "1 1 230px", minWidth: 0, height: 34, border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, padding: "0 10px", fontSize: 12 }} />
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+          {GARANTIA_FILTROS.map((item) => {
+            const ativo = filtro === item.id;
+            return <button key={item.id} type="button" onClick={() => setFiltro(item.id)} aria-pressed={ativo} style={{ height: 32, padding: "0 10px", border: `1px solid ${ativo ? C.primaryBd : C.inputBd}`, borderRadius: 7, background: ativo ? C.primaryBg : C.surface, color: ativo ? C.primaryHover : C.muted, fontSize: 11.5, fontWeight: 650, cursor: "pointer" }}>{item.label}</button>;
+          })}
+        </div>
+      </div>
+
+      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "92px minmax(130px,1.2fr) minmax(150px,1fr) 100px 110px 108px", gap: 10, padding: "9px 12px", borderBottom: `1px solid ${C.line2}`, color: C.subtle, fontSize: 10, fontWeight: 750, textTransform: "uppercase", letterSpacing: ".04em" }}>
+          <span>OS</span><span>Cliente</span><span>Aparelho</span><span>Até</span><span>Situação</span><span>Ação</span>
+        </div>
+        {itens.length ? itens.map((item) => (
+          <div key={item.osId} style={{ display: "grid", gridTemplateColumns: "92px minmax(130px,1.2fr) minmax(150px,1fr) 100px 110px 108px", gap: 10, alignItems: "center", padding: "10px 12px", borderBottom: `1px solid ${C.line4}`, fontSize: 12 }}>
+            <strong style={{ color: C.ink }}>{item.codigo}</strong>
+            <span style={{ color: C.body, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.cliente}</span>
+            <span style={{ color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.aparelho}</span>
+            <span style={{ color: C.body, fontVariantNumeric: "tabular-nums" }}>{dataCurta(item.vencimento)}</span>
+            <span style={{ color: item.retornoAberto ? C.warnFg : item.tone === "success" ? C.successFg : item.tone === "warn" ? C.warnFg : C.muted, fontWeight: 650 }}>{item.retornoAberto ? "Retorno aberto" : item.situacaoLabel}</span>
+            <button type="button" onClick={() => v.openOSFromRail(item.osId, false, "posvenda")} style={{ height: 31, border: `1px solid ${C.inputBd}`, borderRadius: 7, background: C.surface, color: C.body, fontSize: 11.5, fontWeight: 650, cursor: "pointer" }}>Abrir OS</button>
+          </div>
+        )) : <div style={{ padding: 24, textAlign: "center", color: C.subtle, fontSize: 12.5 }}>Nenhuma garantia corresponde aos filtros.</div>}
+      </div>
+      <p style={{ margin: 0, color: C.subtle, fontSize: 11 }}>Classificação “Vencendo” é apenas visual (até {portfolio.vencendoDias} dias) e não persiste estado novo.</p>
+    </div>
+  );
 }
 
 // ---- Visão geral -----------------------------------------------------------

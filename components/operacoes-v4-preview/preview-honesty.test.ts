@@ -65,6 +65,10 @@ vi.mock("@/lib/operacoes-v3/garantia-actions", () => ({
   registrarImpressaoDocumentoV3: vi.fn(async () => ({})),
   salvarGarantiaOSV3: vi.fn(async () => ({})),
 }))
+vi.mock("@/lib/operacoes-v3/retorno-actions", () => ({
+  abrirRetornoV3: vi.fn(async () => ({})),
+  finalizarRetornoV3: vi.fn(async () => ({})),
+}))
 // PDV de Serviço (slice PDV-SERVICO-OS-RECEBIMENTO-REAL-001): mesma razão dos
 // mocks acima — `use-pdv-servico-v3` (hook real, importado por `use-v4-preview`)
 // importa esta action "use server" (→ @/auth) em tempo de carregamento do módulo.
@@ -209,6 +213,9 @@ const ctx: V4DataCtx = {
   salvarAssinaturaRetirada: async () => false,
   registrarImpressaoDoc: () => {},
   salvarGarantia: async () => false,
+  abrirRetorno: async () => false,
+  finalizarRetorno: async () => false,
+  abrirOsVinculada: () => {},
   lancarAPrazo: async () => false,
   cancelarOS: async () => false,
   pdvServico: {
@@ -3383,5 +3390,96 @@ describe("OPS-V4-BANCADA-COMMERCIAL-TRANSITION-GUARD-003B — Fila e Bancada com
     expect(orquestrador).toMatch(/avancarStatusBancada = useCallback\([\s\S]*aplicarTransicaoStatusV3/)
     expect(policy).not.toContain("aplicarTransicaoStatusV3(")
     expect(producao).not.toContain("aplicarTransicaoStatusV3(")
+  })
+})
+
+describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — actions/readers reais", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const stage = readFileSync(join(DIR, "parts", "stages", "PosVendaStage.tsx"), "utf8")
+  const adapter = readFileSync(join(DIR, "os-adapter.ts"), "utf8")
+  const helper = readFileSync(join(process.cwd(), "lib", "operacoes-v4", "posvenda-v4.ts"), "utf8")
+  const retornoAction = readFileSync(join(process.cwd(), "lib", "operacoes-v3", "retorno-actions.ts"), "utf8")
+  const sources = collectSourceFiles(DIR).map((file) => readFileSync(file, "utf8")).join("\n")
+
+  it("reusa abrirRetornoV3/finalizarRetornoV3 pelo wrapper de reload confirmado", () => {
+    expect(orquestrador).toContain('from "@/lib/operacoes-v3/retorno-actions"')
+    expect(orquestrador).toContain("abrirRetornoV3(sid, osId, { motivo, observacao })")
+    expect(orquestrador).toContain("finalizarRetornoV3(sid, osId, retornoId, { observacao })")
+    expect(orquestrador).toContain("result.atendimento?.id")
+    expect(orquestrador).toMatch(/const finalizarRetorno = useCallback\([\s\S]*runWrite\(/)
+    expect(orquestrador).toMatch(/catch \(e\) \{[\s\S]*reloadOrdens\(\);[\s\S]*reloadDetail\(\);[\s\S]*reloadFinancial\(\);[\s\S]*notify\(/)
+  })
+
+  it("view-model lê garantia e retornos V3; adapter não reconstrói retorno pela timeline", () => {
+    expect(helper).toContain("lerGarantiaV3")
+    expect(helper).toContain("lerRetornosV3")
+    expect(adapter).toContain("return buildPosVendaV4(os)")
+    expect(adapter).not.toMatch(/filter\(\(ev[^\n]+garantia_acionada/)
+  })
+
+  it("stage chama handlers reais, tem busy-lock e não simula persistência", () => {
+    expect(stage).toContain("v.abrirRetorno(motivo.trim(), obsAbertura.trim() || undefined)")
+    expect(stage).toContain("v.finalizarRetorno(finalizar.id")
+    expect(stage).toContain("v.abrirOsVinculada")
+    expect(stage).toContain("if (busy")
+    expect(stage).not.toContain("setTimeout")
+    expect(stage).not.toContain("retornosCount")
+  })
+
+  it("não cria action V4 paralela nem API/schema/migration", () => {
+    expect(sources).not.toContain("abrirRetornoV4Action")
+    expect(sources).not.toContain("finalizarRetornoV4Action")
+    expect(sources).not.toContain("RetornoV4Action")
+  })
+
+  it("motor V3 bloqueia segundo retorno quando o atendimento já foi vinculado", () => {
+    expect(retornoAction).toContain("aberto?.osRetornoId")
+    expect(retornoAction).toContain("Já existe um retorno em andamento para esta OS.")
+    expect(retornoAction).toContain("criarOSEnterpriseV3")
+    expect(retornoAction).toContain("vinculoRetornoV3")
+  })
+
+  it("header, stage e rail consomem a mesma projeção pós-venda", () => {
+    const header = readFileSync(join(DIR, "parts", "CommandHeader.tsx"), "utf8")
+    const modules = readFileSync(join(DIR, "parts", "ModuleView.tsx"), "utf8")
+    expect(header).toContain("v.posVenda")
+    expect(stage).toContain("v.posVenda")
+    expect(orquestrador).toContain("garantiasPortfolio")
+    expect(modules).toContain("v.garantiasPortfolio")
+  })
+})
+
+describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — contrato exposto pelo buildVals", () => {
+  it("repassa motivo/id/resolução sem inventar campos", async () => {
+    const chamadas: unknown[] = []
+    const os = mkOS({ id: "os-ret", status: "entregue", entregueEm: "2026-08-01T12:00:00.000Z" })
+    const local: V4DataCtx = {
+      ...ctx,
+      realOS: os,
+      abrirRetorno: async (motivo, observacao) => { chamadas.push(["abrir", motivo, observacao]); return true },
+      finalizarRetorno: async (id, observacao) => { chamadas.push(["finalizar", id, observacao]); return true },
+      abrirOsVinculada: () => {},
+    }
+    const v = buildVals(makeState({ selectedOsId: "os-ret", stage: "posvenda", novaOS: false }), () => {}, () => {}, local)
+    await expect(v.abrirRetorno("Touch voltou a falhar", "Deixou o aparelho")).resolves.toBe(true)
+    await expect(v.finalizarRetorno("ret-1", "Tela substituída")).resolves.toBe(true)
+    expect(chamadas).toEqual([
+      ["abrir", "Touch voltou a falhar", "Deixou o aparelho"],
+      ["finalizar", "ret-1", "Tela substituída"],
+    ])
+  })
+
+  it("retorno persistido aparece como autoridade e bloqueia nova abertura", () => {
+    const os = mkOS({
+      id: "os-ret-open",
+      codigo: "OS-1098",
+      status: "entregue",
+      entregueEm: "2026-08-01T12:00:00.000Z",
+      retornosV3: [{ id: "ret-1", osOriginalId: "os-ret-open", osOriginalCodigo: "OS-1098", motivo: "Falha recorrente", criadoEm: "2026-08-14T12:00:00.000Z", status: "aberto" }],
+    })
+    const v = buildVals(makeState({ selectedOsId: "os-ret-open", stage: "posvenda", novaOS: false }), () => {}, () => {}, { ...ctx, realOS: os })
+    expect(v.posVenda.retornoAberto?.id).toBe("ret-1")
+    expect(v.posVenda.podeAbrirRetorno).toBe(false)
+    expect(v.posVenda.headerLabel).toBe("Retorno aberto")
   })
 })
