@@ -63,6 +63,7 @@ import { ContadorAgendaReal } from "./agenda/contador-agenda-real"
 import { ContadorFechamentoReal } from "./fechamento/contador-fechamento-real"
 import { ContadorTimelineReal } from "./timeline/contador-timeline-real"
 import { ContadorPermissoesReal } from "./permissoes/contador-permissoes-real"
+import { ContadorAvisosReal } from "./avisos/contador-avisos-real"
 import {
   CONTADOR_SECTIONS,
   DOSSIES,
@@ -73,7 +74,6 @@ import {
   RADAR_CNPJ,
   RELATORIO_CARDS,
   RESUMO_FINANCEIRO,
-  VISAO_ALERTAS,
   VISAO_DOSSIE_PROGRESS,
   VISAO_KPIS,
   dossieFilterCount,
@@ -403,30 +403,9 @@ export function ContadorHubPreview({
         </div>
 
         <Card>
-          <CardHead title="Alertas" right={<span className="text-xs text-muted-foreground">preview</span>} />
-          <div className="grid gap-2.5 p-4">
-            {VISAO_ALERTAS.map((a) => {
-              const Icon = a.icon
-              const tone =
-                a.tone === "danger"
-                  ? { border: "border-rose-500/30", text: "text-rose-500" }
-                  : a.tone === "warn"
-                    ? { border: "border-amber-500/30", text: "text-amber-600 dark:text-amber-400" }
-                    : { border: "border-sky-500/30", text: "text-sky-500" }
-              return (
-                <div key={a.title} className={cn("flex items-start gap-3 rounded-lg border bg-card p-3", tone.border)}>
-                  <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", tone.text)} />
-                  <div className="min-w-0 flex-1">
-                    <span className={cn("block font-mono text-[9px] font-semibold uppercase tracking-wider", tone.text)}>
-                      {a.cat}
-                    </span>
-                    <div className="text-[13px] font-semibold text-foreground">{a.title}</div>
-                    <div className="text-xs text-muted-foreground">{a.desc}</div>
-                  </div>
-                  {a.when ? <span className="font-mono text-[11px] text-muted-foreground">{a.when}</span> : null}
-                </div>
-              )
-            })}
+          <CardHead title="Avisos" />
+          <div className="p-4">
+            <ContadorAvisosReal competencia={competencia} />
           </div>
         </Card>
       </div>
