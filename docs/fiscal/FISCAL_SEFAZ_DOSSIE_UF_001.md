@@ -273,6 +273,15 @@ confirmação regulatória**. A confirmação veio e é **negativa**. Fica decid
 
 ## 5. Q-10 · SAT/CF-e × NFC-e em São Paulo — **conclusão decisiva**
 
+> **Adendo 2026-08-19 (FISCAL-029):** esta Q-10 (pesquisa 2026-07-23) permanece como evidência
+> histórica do GOAL-015. A decisão arquitetural vigente está no dossiê
+> [`FISCAL_SAT_NFCE_SP_REGULATORY_DOSSIER_029.md`](./FISCAL_SAT_NFCE_SP_REGULATORY_DOSSIER_029.md)
+> e na [`ADR-0022`](../decisions/ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md) (**proposta**):
+> NFC-e principal; SAT fora do roadmap ativo; `SAT_LOCAL` reservado/descartável. A revalidação
+> confirma a vedação de 01/01/2026 e **corrige** a base da contingência: a Portaria CAT 12/2015
+> foi revogada pela Portaria SRE 40/2024 (Ajuste SINIEF 19/16, cláusula 11).
+> **Nenhum código neste adendo.**
+
 Esta era a questão potencialmente bloqueante. **Não há impedimento — há o oposto.**
 
 🟦 **Fonte 1:** SEFAZ-SP — Sobre a NFC-e · <https://portal.fazenda.sp.gov.br/servicos/nfce> ·
