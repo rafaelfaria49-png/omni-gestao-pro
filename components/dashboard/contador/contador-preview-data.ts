@@ -67,7 +67,7 @@ export const CONTADOR_SECTIONS: ContadorSection[] = [
   { id: "visao", label: "Visão geral", icon: LayoutGrid },
   { id: "fechamento", label: "Fechamento mensal", icon: ClipboardCheck },
   { id: "documentos", label: "Documentos", icon: FileText, count: 4 },
-  { id: "obrigacoes", label: "Obrigações", icon: CalendarClock, badge: "Preview" },
+  { id: "obrigacoes", label: "Obrigações", icon: CalendarClock },
   { id: "relatorios", label: "Relatórios", icon: BarChart3 },
   { id: "dossies", label: "Dossiês", icon: FolderClosed, badge: "Novo" },
   { id: "folha", label: "Folha & DP", icon: Users, badge: "Preview" },

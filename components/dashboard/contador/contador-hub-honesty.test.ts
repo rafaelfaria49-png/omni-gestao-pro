@@ -87,8 +87,8 @@ describe("Contador HUB — CTAs sem efeito real não podem parecer operacionais 
     const tags = hubSrc.match(JSX_TAG) ?? []
     const acaoTags = tags.filter((t) => /\bnoop\(|\bonNoop\(/.test(t))
     // Confirma que a varredura encontrou algo (evita passar "por vazio").
-    // GOAL 010: a seção Documentos deixou de ser preview (removeu CTAs noop dela).
-    expect(acaoTags.length).toBeGreaterThanOrEqual(12)
+    // GOAL 010 removeu CTAs noop de Documentos; GOAL 016 removeu os de Obrigações.
+    expect(acaoTags.length).toBeGreaterThanOrEqual(7)
     const semDisabled = acaoTags.filter((t) => !/\bdisabled\b/.test(t))
     expect(semDisabled, `CTA(s) sem "disabled": ${semDisabled.join(" | ")}`).toEqual([])
   })
@@ -112,10 +112,8 @@ describe("Contador HUB — CTAs sem efeito real não podem parecer operacionais 
     expect(semTitle, `CTA(s) sem title acessível: ${semTitle.join(" | ")}`).toEqual([])
   })
 
-  it("'Ver' que abre o drawer ilustrativo foi rotulado como demonstração ('Ver exemplo')", () => {
-    // GOAL 010: Documentos virou real; o 'Ver exemplo' remanescente está em Obrigações.
-    const occurrences = hubSrc.split("Ver exemplo").length - 1
-    expect(occurrences).toBeGreaterThanOrEqual(1)
+  it("'Ver exemplo' saiu da seção Obrigações (GOAL 016 realificou a aba)", () => {
+    expect(hubSrc).not.toContain("Ver exemplo")
   })
 })
 
@@ -129,20 +127,23 @@ describe("Contador HUB — valores sensíveis do preview seguem marcados como il
     expect(dataSrc).toMatch(/name: "Honorários do contador"[\s\S]*?preview: true/)
   })
 
-  it("Visão geral segue preview; Documentos (010) e Fechamento (012) são REAIS", () => {
+  it("Visão geral segue preview; Documentos (010), Fechamento (012) e Obrigações (016) são REAIS", () => {
     const renderVisaoIdx = hubSrc.indexOf("const renderVisao = ()")
     const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
     const renderDocumentosIdx = hubSrc.indexOf("const renderDocumentos = ()")
     const renderObrigacoesIdx = hubSrc.indexOf("const renderObrigacoes = ()")
+    const renderRelatoriosIdx = hubSrc.indexOf("const renderRelatorios = ()")
     expect(hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)).toContain("<PreviewBanner")
-    // GOAL 012: Fechamento deixou de ser preview — sem PreviewBanner, com componente real.
     const fechamento = hubSrc.slice(renderFechamentoIdx, renderDocumentosIdx)
     expect(fechamento).toContain("<ContadorFechamentoReal")
     expect(fechamento).not.toContain("<PreviewBanner")
-    // A seção Documentos deixou de ser preview: renderiza o componente real, sem PreviewBanner.
     const documentos = hubSrc.slice(renderDocumentosIdx, renderObrigacoesIdx)
     expect(documentos).toContain("<ContadorDocumentosReal")
     expect(documentos).not.toContain("<PreviewBanner")
+    const obrigacoes = hubSrc.slice(renderObrigacoesIdx, renderRelatoriosIdx)
+    expect(obrigacoes).toContain("<ContadorAgendaReal")
+    expect(obrigacoes).not.toContain("<PreviewBanner")
+    expect(obrigacoes).not.toContain("OBRIGACOES_ROWS")
   })
 })
 
@@ -518,5 +519,35 @@ describe("Contador HUB — Timeline REAL (GOAL 011)", () => {
     expect(uiSrc).toContain("Derivado do vencimento — não é um status gravado.")
     // O chip de status só conhece os 4 estados persistidos.
     expect(uiSrc).not.toMatch(/STATUS_CHIP[\s\S]{0,200}VENCIDO/)
+  })
+})
+
+/* ────────── GOAL 016 — Obrigações e Guias reais ────────── */
+
+describe("Contador HUB — Obrigações REAL (GOAL 016)", () => {
+  const agendaSrc = readFileSync(join(DIR, "agenda/contador-agenda-real.tsx"), "utf8")
+  const pageSrc = readFileSync(join(DIR, "../../../app/dashboard/contador/page.tsx"), "utf8")
+  const checklistSrc = readFileSync(join(DIR, "../../../lib/contador/fechamento/montar-checklist.ts"), "utf8")
+
+  it("a seção usa o componente real, sem mock de linhas e sem badge Preview na nav", () => {
+    expect(hubSrc).toContain("<ContadorAgendaReal")
+    expect(hubSrc).not.toContain("OBRIGACOES_ROWS")
+    expect(dataSrc).not.toMatch(/id: "obrigacoes"[\s\S]{0,80}badge: "Preview"/)
+  })
+
+  it("microcopy permanente: informado pelo responsável", () => {
+    expect(agendaSrc).toContain("informado pelo responsável")
+    expect(agendaSrc).toContain("Gerar deste mês")
+    expect(agendaSrc).toContain("Nenhuma guia informada")
+    expect(agendaSrc).not.toMatch(/estimativaImposto|lib\/contador-aggregates/)
+  })
+
+  it("page carrega resumo de guias fora do checklist e isola a falha", () => {
+    expect(pageSrc).toContain("carregarResumoGuiasChecklist")
+    expect(pageSrc).toContain("evidenciaAgenda")
+    expect(pageSrc).toContain("[contador/agenda-resumo]")
+    expect(pageSrc).toContain("leituraOk: false")
+    expect(checklistSrc).not.toMatch(/from ["']@\/lib\/prisma["']/)
+    expect(checklistSrc).not.toMatch(/prisma\./)
   })
 })

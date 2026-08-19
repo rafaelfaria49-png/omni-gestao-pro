@@ -40,6 +40,21 @@ const EXPLICACAO_TITULOS_VENCIDOS =
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
+/**
+ * Evidência opcional de guias da agenda (GOAL 016).
+ *
+ * Montada FORA desta função (page.tsx). Nunca consultar Prisma aqui.
+ * `leituraOk: false` = a leitura da agenda falhou — o sinal fica `nao_disponivel`
+ * sem derrubar os demais.
+ */
+export type EvidenciaAgendaGuias = Readonly<{
+  leituraOk: boolean
+  total: number
+  vencidas: number
+  vencendo: number
+  pagas: number
+}>
+
 export type MontarChecklistFechamentoInput = Readonly<{
   /** DTO do GOAL 006. `null` = escopo/leitura indisponível (todos os sinais sem evidência). */
   dados: ContadorDadosReais | null
@@ -48,6 +63,11 @@ export type MontarChecklistFechamentoInput = Readonly<{
   agora?: Date
   /** Motivo honesto quando `dados` é null (escopo, cookie, ACL, falha). */
   motivoIndisponivel?: string | null
+  /**
+   * Resumo mínimo de guias da competência (GOAL 016). Ausência ou falha →
+   * sinal `guias_informadas_vencendo_vencidas` = `nao_disponivel`.
+   */
+  evidenciaAgenda?: EvidenciaAgendaGuias | null
 }>
 
 type PosicaoCompetencia = "passada" | "atual" | "futura"
@@ -106,9 +126,14 @@ export function montarChecklistFechamento(
   const geradoEm = agora.toISOString()
   const posicao = posicaoCompetencia(competencia, agora)
 
-  // Sinais sem fonte de dados (Documentos, Conferência, Fechamento oficial) existem
-  // sempre — inclusive quando `dados` é null — com a mesma copy honesta.
-  const cauda = [derivarDocumentos(), derivarConferenciaContador(), derivarFechamentoOficial()]
+  // Sinais sem Prisma nesta função: Documentos/Conferência (ainda sem evidência
+  // agregada), guias (GOAL 016 — evidência opcional injetada) e Fechamento oficial.
+  const cauda = [
+    derivarDocumentos(),
+    derivarConferenciaContador(),
+    derivarGuiasInformadas(input.evidenciaAgenda),
+    derivarFechamentoOficial(),
+  ]
 
   if (!dados) {
     const motivo =
@@ -560,6 +585,77 @@ function derivarConferenciaContador(): ChecklistItemFechamento {
     explicacao:
       "Confirmação e conferência pelo contador ainda não possuem persistência real.",
     evidencia: "sem confirmação persistida",
+  })
+}
+
+/**
+ * Guias informadas (GOAL 016). Puro: só lê `evidenciaAgenda` já carregada.
+ * Zero guias NUNCA é `ok` — não prova ausência de obrigação.
+ */
+function derivarGuiasInformadas(evidencia: EvidenciaAgendaGuias | null | undefined): ChecklistItemFechamento {
+  const id = "guias_informadas_vencendo_vencidas"
+  const titulo = "Guias informadas (vencendo / vencidas)"
+  const origem = "ContadorGuia (agenda · informado pelo responsável)"
+
+  if (!evidencia || evidencia.leituraOk !== true) {
+    return item({
+      id,
+      titulo,
+      estado: "nao_disponivel",
+      origem,
+      explicacao:
+        "Não foi possível ler as guias informadas desta competência. " +
+        "Os demais sinais do checklist não dependem desta leitura.",
+      evidencia: "agenda indisponível",
+    })
+  }
+
+  if (evidencia.total === 0) {
+    return item({
+      id,
+      titulo,
+      estado: "nao_disponivel",
+      origem,
+      explicacao:
+        "Não há guias informadas nesta competência. Isso não prova ausência de obrigação: " +
+        "o responsável pode ainda informar uma guia. Valor e vencimento nunca são calculados pelo sistema.",
+      evidencia: "0 guias informadas",
+    })
+  }
+
+  const evidenciaTxt = `${evidencia.total} guia(s) · ${evidencia.vencidas} vencida(s) · ${evidencia.vencendo} vencendo · ${evidencia.pagas} paga(s)`
+
+  if (evidencia.vencidas > 0) {
+    return item({
+      id,
+      titulo,
+      estado: "atencao",
+      origem,
+      explicacao: `${evidencia.vencidas} guia(s) informada(s) já vencida(s) (flag derivada; informado pelo responsável).`,
+      evidencia: evidenciaTxt,
+    })
+  }
+
+  if (evidencia.vencendo > 0) {
+    return item({
+      id,
+      titulo,
+      estado: "pendente",
+      origem,
+      explicacao: `${evidencia.vencendo} guia(s) informada(s) vencendo em até 7 dias (flag derivada; informado pelo responsável).`,
+      evidencia: evidenciaTxt,
+    })
+  }
+
+  return item({
+    id,
+    titulo,
+    estado: "ok",
+    origem,
+    explicacao:
+      "Há guia(s) informada(s) pelo responsável, nenhuma vencida nem vencendo. " +
+      "Não constitui apuração fiscal.",
+    evidencia: evidenciaTxt,
   })
 }
 

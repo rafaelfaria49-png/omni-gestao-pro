@@ -28,10 +28,8 @@ import {
   FileText,
   Info,
   MessageSquare,
-  Plus,
   Sparkles,
   Upload,
-  X,
   type LucideIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -61,6 +59,7 @@ import {
   usePacoteDownload,
 } from "./contador-pacote-download"
 import { ContadorDocumentosReal } from "./documentos/contador-documentos-real"
+import { ContadorAgendaReal } from "./agenda/contador-agenda-real"
 import { ContadorFechamentoReal } from "./fechamento/contador-fechamento-real"
 import { ContadorTimelineReal } from "./timeline/contador-timeline-real"
 import { ContadorPermissoesReal } from "./permissoes/contador-permissoes-real"
@@ -69,7 +68,6 @@ import {
   DOSSIES,
   DOSSIE_FILTERS,
   FOLHA_FUNCIONARIOS,
-  OBRIGACOES_ROWS,
   PORTAL_NAO_PODE,
   PORTAL_PODE,
   RADAR_CNPJ,
@@ -266,7 +264,6 @@ export function ContadorHubPreview({
   const [modo, setModo] = useState(false)
   const [dossieFilter, setDossieFilter] = useState<DossieFilter>("all")
   const [toast, setToast] = useState<string | null>(null)
-  const [drawer, setDrawer] = useState<{ kind: "doc" | "guia"; title: string } | null>(null)
 
   const compName = labelCompetencia(competencia)
   const compCode = formatCompetenciaMmYyyy(competencia)
@@ -313,9 +310,6 @@ export function ContadorHubPreview({
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => setToast(null), 2800)
   }
-
-  const openDrawer = (kind: "doc" | "guia", title: string) => setDrawer({ kind, title })
-  const closeDrawer = () => setDrawer(null)
 
   const visibleSections = CONTADOR_SECTIONS.filter((s) => !(modo && s.ownerOnly))
 
@@ -509,60 +503,8 @@ export function ContadorHubPreview({
   /* ── seção: Documentos (GOAL 010 — REAL: upload/listagem/download/exclusão) ── */
   const renderDocumentos = () => <ContadorDocumentosReal competencia={competencia} />
 
-  /* ── seção: Obrigações ── */
-  const renderObrigacoes = () => (
-    <>
-      <SectionHeader title="Obrigações & vencimentos" desc="Acompanhamento de guias e prazos da competência." />
-      <PreviewBanner
-        title="Preview — validar com contador."
-        text="O Contador HUB não calcula nem emite guias. Valores, prazos e a apuração são definidos pelo seu contador. Aqui você apenas acompanha e anexa comprovantes."
-      />
-      <Card className="mt-4 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] border-collapse text-[13px]">
-            <thead>
-              <Thead cols={["Obrigação", "Competência", "Vencimento", "Valor", "Status", "Ações"]} rightCols={[4, 6]} />
-            </thead>
-            <tbody>
-              {OBRIGACOES_ROWS.map((o, i) => (
-                <tr key={i} className="border-b border-border/60 last:border-b-0 hover:bg-muted/40">
-                  <td className="px-4 py-3">
-                    <span className="flex flex-wrap items-center gap-1.5 font-semibold text-foreground">
-                      {o.name}
-                      {o.preview ? <PreviewPill /> : null}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs">{o.comp}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{o.venc}</td>
-                  <td className="px-4 py-3 text-right">
-                    {o.valor ? (
-                      <span className="font-mono font-medium text-foreground">{o.valor}</span>
-                    ) : (
-                      <span className="font-mono font-medium text-muted-foreground">— validar —</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Chip variant={o.status.variant}>{o.status.label}</Chip>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {o.kind === "guia" ? (
-                      <Btn size="sm" onClick={() => openDrawer("guia", o.name)}>
-                        Ver exemplo
-                      </Btn>
-                    ) : (
-                      <Btn size="sm" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Anexar comprovante")}>
-                        Anexar
-                      </Btn>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </>
-  )
+  /* ── seção: Obrigações (GOAL 016 — REAL: obrigações, guias, templates) ── */
+  const renderObrigacoes = () => <ContadorAgendaReal competencia={competencia} />
 
   /* ── seção: Relatórios ── */
   const renderRelatorios = () => (
@@ -1129,9 +1071,6 @@ export function ContadorHubPreview({
         </main>
       </div>
 
-      {/* drawer de detalhe (doc / guia) */}
-      {drawer ? <DetailDrawer drawer={drawer} compShort={compShort} onClose={closeDrawer} onNoop={noop} /> : null}
-
       {/* toast honesto auto-contido */}
       {toast ? (
         <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex justify-center px-4">
@@ -1290,133 +1229,4 @@ const ORIGEM_ACAO: Record<DossieOrigem, string> = {
   anexar: "Anexar documento",
   portal: "Abrir portal oficial",
   solicitar: "Solicitar ao contador",
-}
-
-function DetailDrawer({
-  drawer,
-  compShort,
-  onClose,
-  onNoop,
-}: {
-  drawer: { kind: "doc" | "guia"; title: string }
-  compShort: string
-  onClose: () => void
-  onNoop: (action: string) => void
-}) {
-  return (
-    <>
-      <div className="fixed inset-0 z-40 bg-foreground/40" onClick={onClose} aria-hidden />
-      <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-[430px] max-w-[92vw] flex-col bg-card shadow-2xl"
-        aria-label="Detalhe"
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
-          <h3 className="min-w-0 truncate text-base font-bold text-foreground">{drawer.title}</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar"
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border text-foreground/70 hover:bg-muted/60"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5">
-          {drawer.kind === "guia" ? (
-            <>
-              <PreviewBanner
-                title="Preview — validar com contador."
-                text="O sistema não calcula nem emite esta guia. Use para acompanhar o prazo e anexar o comprovante."
-              />
-              <div className="mt-3">
-                <Kv label="Competência" value={compShort} />
-                <Kv label="Vencimento" value="20/07/2026" />
-                <Kv label="Valor" value="— validar —" muted />
-                <Kv label="Status" value="pendente" muted last />
-              </div>
-              <div className="mb-2.5 mt-4 font-mono text-[10.5px] uppercase tracking-widest text-muted-foreground">
-                Comprovante
-              </div>
-              <div className="grid min-h-[110px] place-items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 p-3.5 text-center text-[12.5px] text-muted-foreground">
-                <Plus className="h-6 w-6 text-muted-foreground/50" />
-                Nenhum comprovante anexado
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2.5 border-t border-border pt-3.5">
-                <Btn variant="primary" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => onNoop("Anexar comprovante")}>
-                  Anexar comprovante
-                </Btn>
-                <Btn disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => onNoop("Marcar como pago")}>
-                  Marcar como pago
-                </Btn>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="grid min-h-[140px] place-items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 p-3.5 text-center text-[12.5px] text-muted-foreground">
-                <FileText className="h-6 w-6 text-muted-foreground/50" />
-                Pré-visualização do documento
-              </div>
-              <div className="mt-4">
-                <Kv label="Competência" value={compShort} />
-                <Kv label="Tipo" value="Documento para o contador" />
-                <Kv label="Status" value="pendente" muted last />
-              </div>
-              <div className="mb-2.5 mt-4 font-mono text-[10.5px] uppercase tracking-widest text-muted-foreground">Andamento</div>
-              <div className="flex flex-col gap-0">
-                <FlowStep state="done" title="Pendente" sub="criado no checklist do mês" />
-                <FlowStep state="curr" title="Enviado" sub="aguardando o contador" />
-                <FlowStep state="todo" title="Conferido" />
-                <FlowStep state="todo" title="Resolvido" last />
-              </div>
-              <div className="mb-2.5 mt-4 font-mono text-[10.5px] uppercase tracking-widest text-muted-foreground">Observações</div>
-              <div className="rounded-lg border border-border/60 bg-muted/40 p-3 text-[12.5px] text-foreground/90">
-                <div className="mb-1 text-xs font-semibold text-foreground">
-                  Contador <span className="font-mono text-[11px] font-normal text-muted-foreground">· 27/06</span>
-                </div>
-                Preciso deste documento para fechar a competência.
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2.5 border-t border-border pt-3.5">
-                <Btn variant="primary" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => onNoop("Enviar ao contador")}>
-                  Enviar ao contador
-                </Btn>
-                <Btn disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => onNoop("Baixar documento")}>
-                  Baixar
-                </Btn>
-              </div>
-            </>
-          )}
-        </div>
-      </aside>
-    </>
-  )
-}
-
-function FlowStep({
-  state,
-  title,
-  sub,
-  last,
-}: {
-  state: "done" | "curr" | "todo"
-  title: string
-  sub?: string
-  last?: boolean
-}) {
-  return (
-    <div className="relative flex gap-3 pb-3.5">
-      {!last ? <span className="absolute bottom-0 left-2 top-[18px] w-0.5 bg-border" /> : null}
-      <span
-        className={cn(
-          "mt-0.5 h-[18px] w-[18px] shrink-0 rounded-full border-2 bg-card",
-          state === "done" && "border-emerald-500 bg-emerald-500",
-          state === "curr" && "border-sky-500 bg-sky-500",
-          state === "todo" && "border-border",
-        )}
-      />
-      <div>
-        <b className={cn("text-[13px] font-semibold", state === "todo" ? "text-muted-foreground" : "text-foreground")}>{title}</b>
-        {sub ? <small className="block text-[11.5px] text-muted-foreground">{sub}</small> : null}
-      </div>
-    </div>
-  )
 }
