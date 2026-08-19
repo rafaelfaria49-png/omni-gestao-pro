@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "contador",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "MEDIO",
-  "current_goal": "CONTADOR-HUB-OMNI-AGENT-INTEGRATION-017",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 14,
+    "goals_done": 15,
     "goals_blocked": 0,
     "goals_imported": 15,
-    "ledger_lines": 19
+    "ledger_lines": 20
   },
-  "last_goal": "CONTADOR-HUB-OBRIGACOES-GUIAS-016",
+  "last_goal": "CONTADOR-HUB-OMNI-AGENT-INTEGRATION-017",
   "last_result": "DONE",
-  "last_ratified_at": "2026-08-19T16:00:28.165Z"
+  "last_ratified_at": "2026-08-19T19:06:45.065Z"
 }
