@@ -44,6 +44,8 @@ export const PAGAMENTO_FISCAL_ERRO_CODES = [
   "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL",
   "PAGAMENTO_SOMA_DIVERGENTE",
   "PAGAMENTO_CANONICO_AUSENTE",
+  "PAGAMENTO_HANDOFF_INVALIDO",
+  "PAGAMENTO_HANDOFF_VERSAO_DESCONHECIDA",
 ] as const
 
 export type PagamentoFiscalErroCode = (typeof PAGAMENTO_FISCAL_ERRO_CODES)[number]
@@ -68,9 +70,13 @@ export type PagamentoFiscalDetalhe = {
  * Pagamento fiscal congelado. `vTroco` é sempre `null` neste contrato: o PDV
  * normaliza o dinheiro ao total antes de persistir e não grava valor entregue/troco.
  */
+export type PagamentoFiscalFonte =
+  | "venda.payload.paymentBreakdown"
+  | "venda.payload.fiscalPaymentHandoff"
+
 export type PagamentoFiscalCanonico = {
   readonly versao: typeof PAGAMENTO_FISCAL_CONTRATO_VERSAO
-  readonly fonte: "venda.payload.paymentBreakdown"
+  readonly fonte: PagamentoFiscalFonte
   readonly catalogoTPag: "IT-2024.002-v1.11"
   readonly det: readonly PagamentoFiscalDetalhe[]
   readonly soma: number

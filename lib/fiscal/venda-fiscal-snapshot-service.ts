@@ -205,6 +205,8 @@ export async function createVendaFiscalSnapshot(params: {
     payload.paymentBreakdown && typeof payload.paymentBreakdown === "object"
       ? (payload.paymentBreakdown as Record<string, unknown>)
       : null
+  const fiscalPaymentHandoff =
+    payload.fiscalPaymentHandoff !== undefined ? payload.fiscalPaymentHandoff : undefined
 
   const cliente = venda.cliente
     ? {
@@ -230,6 +232,7 @@ export async function createVendaFiscalSnapshot(params: {
       operador,
       terminal,
       paymentBreakdown,
+      fiscalPaymentHandoff,
     },
     itens: itensInput,
   }

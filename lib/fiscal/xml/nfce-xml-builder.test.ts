@@ -358,6 +358,62 @@ describe("nfce-xml-builder · fronteira fail-closed (fonte)", () => {
   })
 })
 
+describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
+  it("snapshot com handoff de dinheiro emite tPag 01 e não consulta breakdown", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [{ formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported", status: "ok" }],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>01<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>17<\/tPag>/)
+    expect(s.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+  })
+
+  it("handoff de PIX bloqueia emissão e não cai para tPag=01", () => {
+    const act = () =>
+      snap({
+        venda: {
+          ...baseInput().venda,
+          paymentBreakdown: { pix: 50 },
+          fiscalPaymentHandoff: {
+            version: 1,
+            catalogoTPag: "IT-2024.002-v1.11",
+            linhas: [{ formaOrigem: "pix", valor: 50, capability: "blocked", status: "blocked", motivo: "pix_subtipo_nao_discriminado" }],
+          },
+        },
+      })
+    const s = act()
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_forma_sem_capacidade" })
+    }
+  })
+
+  it("handoff inconsistente não reconstrói do breakdown", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { dinheiro: 50 },
+        fiscalPaymentHandoff: { version: 99, linhas: [] },
+      },
+    })
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+  })
+})
+
 describe("buildNfceXmlResult · compatibilidade com o snapshot atual + numeração por contexto", () => {
   it("sem contexto → chave 44 dígitos e numeração placeholder", () => {
     const r = buildNfceXmlResult(snap())
