@@ -1,6 +1,6 @@
 ---
 title: ADR-0023 · Contrato canônico de pagamento fiscal da NFC-e (fail-closed)
-status: proposta
+status: aceita
 data: 2026-08-19
 autor: Grok (FISCAL-030-PAYMENT-BOUNDARY-CANONICAL-CONTRACT-073)
 revisores: [revisão independente de outra família — ver relatório 030]
@@ -12,7 +12,7 @@ substitui:
 
 # ADR-0023 · Contrato canônico de pagamento fiscal da NFC-e (fail-closed)
 
-> **Status:** proposta
+> **Status:** aceita
 > **Decisão em uma frase:** o XML NFC-e consome somente um contrato tipado/versionado de
 > pagamento congelado no snapshot da venda; inconsistência bloqueia a emissão; Fiscal não
 > executa, corrige, inventa nem reconstrói pagamento a partir de dado vivo.
@@ -120,6 +120,8 @@ Criar `lib/fiscal/payment/**` (contrato v1) e congelá-lo em
 ---
 
 ## 8. Notas / discussão
+
+Aceite formal humano em 2026-08-19 via GOAL `FISCAL-030-PAYMENT-BOUNDARY-ACCEPT-AND-INTEGRATE-074`. A decisão técnica permanece inalterada.
 
 Mapeamento comprovado neste GOAL:
 
