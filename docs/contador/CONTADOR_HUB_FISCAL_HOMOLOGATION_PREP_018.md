@@ -2,13 +2,14 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Preparação **documental** — GOAL 018 **não aberto** |
+| Status | Preparação **documental** — `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED` |
 | Data | 2026-08-19 |
-| ADR | ADR-CONTADOR-007 **Accepted** (mesmo dia) |
+| ADR | ADR-CONTADOR-007 **Accepted** (mesmo dia; PR #89, merge humano pendente) |
 | Auditoria Passo 0 | [`CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md`](./CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md) · PR #88 merge `fac38130` |
+| Ambiente do entregável | `ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT` |
 | `origin/main` na preparação | inclui PR #87 (PIX legado fail-closed) **depois** da base auditada `edbf724b`; **não** invalida o Passo 0 (status/XML/reader/flag) |
 
-Este documento **prepara** o ambiente de prova para um futuro GOAL 018. Não implementa reader, flag, pacote `05-XML`, UI nem AEP import/open.
+Este documento **prepara** o ambiente de prova para um futuro GOAL 018. Não implementa reader, flag, pacote `05-XML`, UI nem AEP import/open. Não criar loja nem fixture real nesta execução. `FISCAL_RUNTIME_VALIDATABLE=false`.
 
 ---
 
@@ -16,15 +17,18 @@ Este documento **prepara** o ambiente de prova para um futuro GOAL 018. Não imp
 
 | Proibido nesta preparação | Motivo |
 |---|---|
-| Production / `AmbienteFiscal.PRODUCAO` / `tpAmb=1` | DECISION_5; notas de teste não saem de homologação |
+| Production / `AmbienteFiscal.PRODUCAO` / `tpAmb=1` como entregável | DECISION_5; `PRODUCTION_XML_ELIGIBLE=false` nesta fase |
+| Chamada SEFAZ Production | DECISION_5; nenhuma nota de teste sai de homologação |
 | Ligar `ConfiguracaoFiscalLoja.fiscalEnabled` para “destravar o Contador” | Kill-switch de **emissão**; DECISION_4 |
-| Chamar `fiscalXmlReader.readAuthorizedDocument` no Contador | DECISION_6 — grava `FiscalLog` |
+| Chamar `fiscalXmlReader.readAuthorizedDocument` no Contador | DECISION_6 — grava `FiscalLog`; `FISCAL_READER_AS_IS_FORBIDDEN=true` |
 | Reconstruir XML com `nfce-xml-builder` / signer | ADR-0018; empacotar só `xmlAutorizado` persistido |
 | Fallback de data (`dataAutorizacao`, `createdAt`, snapshot) | DECISION_3 — só `dhEmi` |
-| Abrir/implementar GOAL 018 | Autorização humana ainda **negada** |
+| Abrir/implementar GOAL 018 | `GOAL_018_OPENED=false`; autorização humana ainda **negada** |
 | Usar loja de produção como fixture | Mesmo que `fiscalEnabled=false` |
 
 Isolado = provas em **teste/fixture** e, se no futuro existir loja-piloto, somente `HOMOLOGACAO`. Sem socket SEFAZ de produção.
+
+A allowlist responde **qual loja** pode usar o reader. O `ambiente` responde **qual documento** daquela loja é elegível. Ambos os gates são obrigatórios (`STORE_ALLOWLIST_REQUIRED=true` · `ENVIRONMENT_GATE_REQUIRED=true`).
 
 ---
 
@@ -34,7 +38,8 @@ Quando o 018 for autorizado, a bateria mínima (auditoria §8/§13 + DECISION_5)
 
 | Caso | Persistência mínima | Entra em `05-XML`? | Checklist |
 |---|---|---|---|
-| Autorizado entregável | `status=AUTORIZADA`, `vigente=true`, protocolo, `chaveAcesso`, `xmlAutorizado` com `ide/dhEmi` válido no período | **sim** (predicado A) | conta como entregável |
+| Autorizado entregável | `status=AUTORIZADA`, `ambiente=HOMOLOGACAO`, `vigente=true`, protocolo, `chaveAcesso`, `xmlAutorizado` com `ide/dhEmi` válido no período | **sim** (predicado A + HOMOLOGACAO) | conta como entregável |
+| Autorizado `PRODUCAO` | mesma forma, `ambiente=PRODUCAO` | **não** nesta fase (teste **negativo**, se necessário) | honesto: não entregável |
 | Autorizado sem `dhEmi` (ou `dhEmi` ilegível) | igual, XML sem `dhEmi` | **não** (fail-closed DECISION_3) | honesto: não entregável |
 | Autorizado fora da competência | `dhEmi` em outro mês SP | **não** na competência sob teste | não inflar zero |
 | Rejeitado (incl. cStat 110 persistido como `REJEITADA`) | `status=REJEITADA`, sem `xmlAutorizado` | **não** | `atencao` quando flag on |
@@ -42,7 +47,9 @@ Quando o 018 for autorizado, a bateria mínima (auditoria §8/§13 + DECISION_5)
 | Outra loja | mesma nota, `storeId` distinto | **não** | zero vazamento |
 | Flag off / reader down | — | placeholder `05-XML/LEIA-ME.md` | `nao_disponivel` |
 
-Cancelamento **ainda não tem writer de produção**. A homologação isolada **não** fabrica `EventoFiscal` em banco real. O caso “cancelado” no 018 será teste com linha sintético/`status=CANCELADA` — não emissão SEFAZ.
+Fixture `AUTORIZADA` **deve** ter `ambiente=HOMOLOGACAO`. Fixture `PRODUCAO` existe **apenas** como teste negativo, se necessário — `PRODUCAO` **não** é entregável nesta fase. Não criar loja nem fixture real agora.
+
+Cancelamento **ainda não tem writer de produção**. A homologação isolada **não** fabrica `EventoFiscal` em banco real. O caso “cancelado” no 018 será teste com linha sintético/`status=CANCELADA` — não emissão SEFAZ. Nenhuma chamada SEFAZ Production.
 
 ---
 
@@ -82,14 +89,15 @@ Não duplicar XML nesta preparação. Pontos de partida **quando** o 018 existir
 
 Massa mínima a montar no 018 (injeção, sem banco de produção):
 
-1. Loja A, competência `2026-07`, `xmlAutorizado` com `dhEmi` em julho/2026 SP → entra.
+1. Loja A, competência `2026-07`, `ambiente=HOMOLOGACAO`, `xmlAutorizado` com `dhEmi` em julho/2026 SP → entra.
 2. Mesma nota, `dhEmi` em junho/2026 → não entra na competência julho.
 3. XML sem `<dhEmi>` → não entra.
 4. Loja B com a mesma chave → reader da loja A não vê.
 5. `REJEITADA` → fora de `05-XML`.
 6. `CANCELADA` com `xmlAutorizado` preenchido → fora de `05-XML` (política A).
+7. `AUTORIZADA` + `ambiente=PRODUCAO` → fora de `05-XML` nesta fase (teste negativo).
 
-`FISCAL_RUNTIME_VALIDATABLE` permanece `false` até existir loja-piloto `HOMOLOGACAO` com pelo menos um `xmlAutorizado` persistido **sem** Production. Esta preparação **não** cria essa loja nem liga emissão.
+`FISCAL_RUNTIME_VALIDATABLE` permanece `false` até existir loja-piloto `HOMOLOGACAO` com pelo menos um `xmlAutorizado` persistido **sem** Production. Esta preparação **não** cria essa loja nem liga emissão. Não criar fixture real agora.
 
 ---
 
@@ -99,7 +107,8 @@ Contrato aprovado (DECISION_4/5), **não provisionado**:
 
 ```
 CONTADOR_FISCAL_READER=off          # default; só "on" liga
-# allowlist futura de storeId (sem schema) — só HOMOLOGACAO nesta fase
+# allowlist futura de storeId (sem schema)
+# allowlist = quais lojas usam o reader; NÃO substitui ambiente == HOMOLOGACAO
 ```
 
 Não editar `.env` / `.env.example` nesta preparação (isso é GOAL 018).
@@ -121,16 +130,25 @@ Homologação isolada de predicado/flag/cross-store **cabe** em poucas notas. Ho
 
 | Item | Estado |
 |---|---|
-| Decisões 1–6 registradas na ADR-007 | sim (Accepted 2026-08-19) |
-| Predicado e `dhEmi` sem fallback escritos | sim |
+| Decisões 1–6 registradas na ADR-007 | sim (Accepted 2026-08-19; DECISION_6 parcial) |
+| Predicado com `ambiente == HOMOLOGACAO` | sim (`ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`) |
+| Allowlist ≠ ambiente (dois gates) | sim |
+| `dhEmi` sem fallback escrito | sim |
 | Política de cancelado A escrita | sim |
-| Matriz de casos de prova listada | sim |
-| Fixtures de código apontadas | sim (reuso futuro) |
+| Fixture AUTORIZADA = HOMOLOGACAO; PRODUCAO só negativo | sim (contrato; fixture real **não** criada) |
+| Chamada SEFAZ Production | **proibida** |
 | Loja viva HOMOLOGACAO com XML persistido | **não** — bloqueio residual do 018 |
-| GOAL 018 aberto / implementado | **não** |
+| GOAL 018 importado / aberto / implementado | **não** (`GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`) |
 
 ```
 HOMOLOGATION_PREP_COMPLETE=true
 FISCAL_RUNTIME_VALIDATABLE=false
+ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT
+PRODUCTION_XML_ELIGIBLE=false
+STORE_ALLOWLIST_REQUIRED=true
+ENVIRONMENT_GATE_REQUIRED=true
+FISCAL_READER_AS_IS_FORBIDDEN=true
+FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true
 GOAL_018_OPENED=false
+GOAL_018_STATUS=DRAFT_NOT_IMPORTED
 ```

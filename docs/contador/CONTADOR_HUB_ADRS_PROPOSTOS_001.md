@@ -4,7 +4,7 @@
 |---|---|
 | GOAL de origem | CONTADOR-HUB-FABLE5-MASTERPLAN-001 |
 | Data | 2026-07-11 |
-| Status das ADRs | **001, 003, 004, 005, 006 — Accepted em 2026-07-19 (Gate G2)** · **002, 008 — Accepted em 2026-07-31 (Gate G3)** · **007 — Accepted em 2026-08-19 (Passo 0 fiscal; GOAL 018 ainda não aberto)** |
+| Status das ADRs | **001, 003, 004, 005, 006 — Accepted em 2026-07-19 (Gate G2)** · **002, 008 — Accepted em 2026-07-31 (Gate G3)** · **007 — Accepted em 2026-08-19 (Passo 0 fiscal; `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`)** |
 | Convenção | Ao aprovar, o GOAL correspondente muda o status para Accepted no mesmo branch e registra a data |
 | Gate G2 | Aprovado por Rafael em 2026-07-19. Ajuste G2-05 (PII) registrado em ADR-006 e referenciado em ADR-004. Próximo: GOAL 009 somente após publicação validada deste arquivo em `main`. |
 
@@ -158,19 +158,38 @@ C) **Contrato read-only `fiscalReader` atrás de `CONTADOR_FISCAL_READER` (por l
 
 **Riscos.** Definição de "status entregável" tem nuance jurídica — decisão conjunta com a trilha fiscal, registrada aqui.
 
-**Não decidido (histórico do Proposed).** Ambientes (homologação × produção) no mesmo pacote; inclusão de eventos de inutilização no relatório. Fechado em 2026-08-19 conforme o bloco Accepted abaixo; inutilização no relatório **permanece fora** deste aceite.
+**Não decidido (histórico do Proposed).** Ambientes (homologação × produção) no mesmo pacote — **resolvido nesta fase** como `ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT` (Production no entregável exige decisão humana posterior, sem apagar a possibilidade futura); inclusão de eventos de inutilização no relatório **permanece fora** deste aceite.
 
-> **✅ Accepted — 2026-08-19 (Passo 0 fiscal).** Decisão C aprovada por Rafael. Fonte: auditoria [`CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md`](./CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md) (PR #88, merge `fac38130`) + aceite humano das DECISION_1–6. **GOAL 018 não autorizado** (nem import/open nem implementação).
+> **✅ Accepted — 2026-08-19 (Passo 0 fiscal).** Decisão C aprovada por Rafael. Fonte: auditoria [`CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md`](./CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md) (PR #88, merge `fac38130`) + aceite humano das DECISION_1–6. AEP: `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED` · trilha `contador` **PAUSED** · `current_goal=null`. Nenhuma implementação do reader começa antes da escolha A/B (emenda 6).
 >
 > **Emendas do aceite:**
-> 1. **Predicado entregável (DECISION_1, Opção A):** `storeId` do escopo **e** `vigente=true` **e** `status=AUTORIZADA` **e** protocolo presente **e** `chaveAcesso` presente **e** `xmlAutorizado` presente **e** `dhEmi` do `xmlAutorizado` dentro da competência **e** nota da loja allowlisted. Rascunho/pendente/transmitindo/rejeitada/denegada-persistida-como-rejeitada/contingência/inutilizada/erro **não** são entregáveis.
+> 1. **Predicado entregável (DECISION_1, Opção A) nesta fase:**
+>    `ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`
+>    ```
+>    entregavel(nota) =
+>        nota.storeId == scope.storeId
+>    AND storeId ∈ allowlist
+>    AND vigente == true
+>    AND status == AUTORIZADA
+>    AND protocolo presente
+>    AND chaveAcesso presente
+>    AND xmlAutorizado presente
+>    AND dhEmi válido ∈ PeriodoUtc da competência
+>    AND ambiente == HOMOLOGACAO
+>    ```
+>    `PRODUCTION_XML_ELIGIBLE=false` nesta fase. Nenhuma `NotaFiscal` com `ambiente=PRODUCAO` entra em `05-XML` no rollout inicial. A possibilidade futura de Production **não** é apagada: habilitar PRODUCAO no entregável exige **decisão humana posterior de rollout** — não alterar o predicado em silêncio.
 > 2. **Cancelados (DECISION_2, política A):** XML de nota cancelada **fora** de `05-XML`; checklist/relatório podem listar canceladas. `xmlAutorizado` histórico permanece imutável (ADR-0018) e **não** entra no pacote enquanto a nota estiver `CANCELADA`.
 > 3. **Data da competência (DECISION_3):** somente `dhEmi` extraído de `NotaFiscal.xmlAutorizado` (`infNFe/ide/dhEmi`). **Sem fallback** para `dataAutorizacao`, `createdAt`, snapshot da venda ou `dataEmissao` (coluna **inexistente**). `dhEmi` ausente/ilegível ⇒ a nota **não** é entregável.
-> 4. **Flag (DECISION_4):** `CONTADOR_FISCAL_READER` env, default off (valor exato `"on"`); allowlist de `storeId`; **não** reutilizar `fiscalEnabled`. O pacote de uma loja allowlisted carrega o `ambiente` da própria nota; o default operacional da homologação é loja-piloto `HOMOLOGACAO` — não ligar Production nesta fase.
-> 5. **Homologação (DECISION_5):** preparar ambiente/fixture **isolado** (`HOMOLOGACAO`); **nunca** Production para notas de teste. Preparação: [`CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md). Runtime vivo ainda **não** validável.
-> 6. **Reader puro (DECISION_6):** `fiscalXmlReader.readAuthorizedDocument` **não** pode ser reutilizado as-is (`FiscalLog` em cada leitura). Alternativa A (SELECT no reader do Contador) vs B (primitive Fiscal no-log) fica para o GOAL 018, **quando autorizado**. Até lá, nenhuma das duas é implementada.
+> 4. **Flag e dois gates (DECISION_4 + DECISION_5):** `CONTADOR_FISCAL_READER` env, default off (valor exato `"on"`); allowlist de `storeId`; **não** reutilizar `fiscalEnabled`. `STORE_ALLOWLIST_REQUIRED=true`. `ENVIRONMENT_GATE_REQUIRED=true`. A allowlist **não** substitui o ambiente: allowlist responde **qual loja** pode usar o reader; `ambiente` responde **qual documento fiscal daquela loja** é elegível. Loja allowlisted pode ter histórico `HOMOLOGACAO` e `PRODUCAO` — **ambos os gates são obrigatórios**. Default operacional: loja-piloto `HOMOLOGACAO`.
+> 5. **Homologação (DECISION_5):** ambiente/fixture **isolado** (`HOMOLOGACAO`); **nunca** Production para notas de teste nem XML de `PRODUCAO` no pacote nesta fase. Preparação: [`CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md). Runtime vivo ainda **não** validável.
+> 6. **Reader puro (DECISION_6) — aceite parcial:**
+>    `CONTADOR_CAN_REUSE_FISCAL_XML_READER_AS_IS=false`
+>    `FISCAL_READER_AS_IS_FORBIDDEN=true`
+>    `FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true`
+>    `DECISION_6_ACCEPTED_SCOPE=proibido reutilizar readAuthorizedDocument as-is`
+>    Ainda **pendente antes de escrever código:** (A) SELECT side-effect-free em `lib/contador/readers/fiscal.ts` **ou** (B) primitive Fiscal explicitamente no-log. **Não escolhido** neste aceite. Importar o 018 no futuro exige essa escolha + prova de zero `FiscalLog` no reader do Contador.
 >
-> **Ainda fora deste aceite:** eventos de inutilização no relatório; ligar a flag em Production; abrir o GOAL 018.
+> **Ainda fora deste aceite:** eventos de inutilização no relatório; ligar a flag em Production; `GOAL_018_OPENED=true`; escolher A vs B do reader.
 
 ---
 
@@ -199,8 +218,8 @@ C) **Identidade externa dedicada:** `ContadorUsuario` (email único, senhaHash c
 
 **Gate G2 — aprovado em 2026-07-19 por Rafael.** ADRs 001, 003, 004, 005, 006 marcadas como Accepted acima, com data e emendas (ajuste G2-05 de PII em ADR-006, referenciado em ADR-004). Storage principal (Supabase Storage) e alternativa (Vercel Blob) aprovados com escolha física final no GOAL 010. Permissão dedicada `p.hubs.contador` aprovada para criação futura (antes do GOAL 010). Regras multi-loja/ACL, concorrência/idempotência, soft delete e estratégia de rollback da migration aprovadas.
 
-**Pendentes (não bloqueiam GOAL 009):** política de correção retroativa e prazo máximo de reabertura (→ GOAL 012, já entregue); tabela final de retenção por categoria (→ GOAL 019); inutilização no relatório fiscal (fora do aceite da ADR-007). Critério jurídico de status entregável fiscal **fechado** na ADR-007 em 2026-08-19; implementação permanece no GOAL 018 **não aberto**.
+**Pendentes (não bloqueiam GOAL 009):** política de correção retroativa e prazo máximo de reabertura (→ GOAL 012, já entregue); tabela final de retenção por categoria (→ GOAL 019); inutilização no relatório fiscal (fora do aceite da ADR-007); escolha A vs B do reader fiscal puro (gate do futuro 018). Critério jurídico de status entregável fiscal **ratificado** na ADR-007 em 2026-08-19. AEP: `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`.
 
-**Próximo gate:** **G4** antes do GOAL 019 (retirada do legado). **ADR-007 Accepted em 2026-08-19** — GOAL 018 continua **não autorizado**. **G3 realizado em 2026-07-31:** ADRs 002 e 008 Accepted com as emendas registradas acima (rota oficial `/contador-externo`; identidade externa separada opção C; convite por link copiável; sessão persistida revogável + cookie HMAC ≤12h, 4 models).
+**Próximo gate:** **G4** antes do GOAL 019 (retirada do legado). **ADR-007 Accepted em 2026-08-19** — `GOAL_018_OPENED=false`. **G3 realizado em 2026-07-31:** ADRs 002 e 008 Accepted com as emendas registradas acima (rota oficial `/contador-externo`; identidade externa separada opção C; convite por link copiável; sessão persistida revogável + cookie HMAC ≤12h, 4 models).
 
 **GOAL 009** (migration núcleo) só deve ser iniciado **após a publicação validada deste arquivo em `main`** e após o comando 9/19 ser preparado contra a base atual.

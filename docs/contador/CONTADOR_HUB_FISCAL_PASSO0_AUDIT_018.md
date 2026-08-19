@@ -8,11 +8,11 @@
 | Data | 2026-08-19 |
 | `CURRENT_MAIN` | `edbf724ba72b40262b87257d92ce77f46320143c` (`feat(operacoes-v4): fechar técnico, bancada, fila e SLA na V4`) |
 | `origin/main` após fetch | **igual** a `CURRENT_MAIN` — nenhum avanço; achados fiscais/contador não invalidados |
-| GOAL 018 importado/aberto | **false** |
+| GOAL 018 importado/aberto | **false** (`GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`) |
 | Código de aplicação alterado nesta execução | **nenhum** |
-| Schema / env / ADR alterados | **nenhum** |
+| Schema / env / ADR alterados | **nenhum** nesta auditoria (ADR-007 Accepted no PR #89 — ver §18) |
 
-Este documento é o **Passo 0 obrigatório** do roadmap `CONTADOR-HUB-FISCAL-INTEGRATION-018`. Não implementa o 018. Não importa nem abre o GOAL. O texto da ADR-007 foi **Proposed** na persistência do Passo 0 (PR #88) e **Accepted** em 2026-08-19 (ver §18). Prisma, flags de ambiente e pipeline fiscal permanecem intocados.
+Este documento é o **Passo 0 obrigatório** do roadmap `CONTADOR-HUB-FISCAL-INTEGRATION-018`. Não implementa o 018. Não importa nem abre o GOAL. Não afirmar “GOAL 018 fechado”: o estado AEP é **não importado / não aberto**. O texto da ADR-007 foi **Proposed** na persistência do Passo 0 (PR #88) e **Accepted** em 2026-08-19 (ver §18). Prisma, flags de ambiente e pipeline fiscal permanecem intocados.
 
 Revisões independentes incorporadas nesta persistência:
 
@@ -40,6 +40,10 @@ Revisões independentes incorporadas nesta persistência:
 Fontes lidas: roadmap [`CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md`](./CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md) §018, [`CONTADOR_HUB_COMMANDS_001.md`](./CONTADOR_HUB_COMMANDS_001.md) COMANDO 18/19, masterplan, ADRs do Contador, ADR-0018, schema Prisma fiscal, `lib/fiscal/**` (reader/storage/emissão/cStat), `lib/contador/readers`, `lib/contador/pacote`, `lib/contador/fechamento/montar-checklist.ts`.
 
 `GOAL_018_OPENED=false`
+
+`GOAL_018_STATUS=DRAFT_NOT_IMPORTED`
+
+Trilha AEP `contador` **PAUSED**. `current_goal=null`.
 
 ---
 
@@ -137,25 +141,28 @@ Não há status persistido chamado `pendente`/`processando` na nota: o mais pró
 
 ---
 
-## 3. Predicado “entregável” — proposta, não decisão
+## 3. Predicado “entregável”
 
-`DECISION_1_ENTREGAVEL_PREDICATE=REQUIRED`
+`DECISION_1_ENTREGAVEL_PREDICATE=ACCEPTED_OPTION_A` (ratificado em 2026-08-19 — §18). A Opção A abaixo era a recomendação da auditoria; o bloco **vigente** inclui `ambiente == HOMOLOGACAO` (DECISION_5).
 
-Nada abaixo está aprovado. A **Opção A** é a recomendação da auditoria.
+### 3.1 Opção A (recomendada na auditoria; vigente com gate de ambiente)
 
-### 3.1 Opção A (recomendada)
+**Vigente nesta fase** (`ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`):
 
 ```
 entregavel(nota) =
-    nota.storeId == scope.storeId          -- isolamento; evidência: ADR-0003 + reader fiscal where {id, storeId}
-AND nota.vigente == true                   -- 1 vigente por venda; evidência: snapshot-service
-AND nota.status == AUTORIZADA              -- único status com XML+protocolo persistidos de fato
-AND protocolo presente / não-vazio         -- markAuthorized + matriz cStat 100 exige protocolo
-AND chaveAcesso presente / não-vazio       -- persistida pré-transmissão; @unique
-AND xmlAutorizado presente / não-vazio     -- coluna canônica (ADR-0018); empacotar esses bytes, sem builder
-AND dataCompetencia ∈ PeriodoUtc           -- CAMPO AINDA HUMANO (DECISION_3)
-AND ambiente ∈ conjunto permitido          -- homologação × produção: ADR-007 “não decidido”
+    storeId == scope.storeId
+AND storeId está na allowlist
+AND vigente == true
+AND status == AUTORIZADA
+AND protocolo presente
+AND chaveAcesso presente
+AND xmlAutorizado presente
+AND dhEmi válido dentro da competência
+AND ambiente == HOMOLOGACAO
 ```
+
+`PRODUCTION_XML_ELIGIBLE=false`. Nenhuma `NotaFiscal` `ambiente=PRODUCAO` entra em `05-XML` no rollout inicial do GOAL 018. Habilitar Production exige decisão humana posterior de rollout — não alterar o predicado silenciosamente.
 
 **Não entra (Opção A):** `RASCUNHO`, `VALIDANDO`, `ASSINADA`, `TRANSMITINDO`, `REJEITADA` (inclui denegação persistida), `DENEGADA` se algum dia for gravada, `CONTINGENCIA`, `CANCELADA`, `INUTILIZADA`, `ERRO`.
 
@@ -163,13 +170,15 @@ AND ambiente ∈ conjunto permitido          -- homologação × produção: ADR
 
 Opção A **mais** notas `CANCELADA` que ainda tenham `xmlAutorizado` (histórico imutável), com política de pacote da §4.
 
-Consequência: o escritório vê a NFC-e que existiu e o cancelamento; o ZIP deixa de ser “somente autorizadas vigentes”.
+Consequência: o escritório vê a NFC-e que existiu e o cancelamento; o ZIP deixa de ser “somente autorizadas vigentes”. **Não vigente:** DECISION_2 escolheu política A.
 
-### 3.3 Ambiente (não pode desaparecer)
+### 3.3 Ambiente (não substitui a allowlist)
 
-ADR-007: *“Não decidido. Ambientes (homologação × produção) no mesmo pacote”*.
+`ENVIRONMENT_GATE_REQUIRED=true`. `STORE_ALLOWLIST_REQUIRED=true`.
 
-Pode ser resolvido **dentro** do predicado (cláusula `ambiente`) **ou** no rollout da flag (só ligar em loja `HOMOLOGACAO`). Continua decisão humana.
+A allowlist responde **qual loja** pode usar o reader. O `ambiente` da nota responde **qual documento fiscal daquela loja** é elegível. Uma loja allowlisted pode possuir histórico `HOMOLOGACAO` e `PRODUCAO` — **ambos os gates são necessários**.
+
+**Nesta fase:** `ambiente == HOMOLOGACAO` é cláusula do predicado entregável. `PRODUCAO` permanece possível no domínio Fiscal; **não** entra em `05-XML` até decisão humana posterior de rollout.
 
 `readAuthorizedDocument` **não** aplica este predicado (não filtra `AUTORIZADA`; código `nota_nao_autorizada` existe no tipo e **não é usado**). O 018 **não** pode tratar o reader fiscal atual como predicado.
 
@@ -241,9 +250,13 @@ Risco de XML reconstruído: o builder existe (`lib/fiscal/xml/nfce-xml-builder.t
 
 `CONTADOR_CAN_REUSE_FISCAL_XML_READER_AS_IS=false`
 
-`FISCAL_PURE_READER_DECISION_REQUIRED=true`
+`FISCAL_READER_AS_IS_FORBIDDEN=true`
 
-`DECISION_6_PURE_FISCAL_READER=REQUIRED`
+`FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true`
+
+`DECISION_6_ACCEPTED_SCOPE=proibido reutilizar readAuthorizedDocument as-is`
+
+A vs B **não** escolhido nesta auditoria nem no aceite da ADR-007. **Não** usar `FISCAL_PURE_READER_DECISION_REQUIRED=false`: isso era impreciso (A versus B foi adiado, não encerrado).
 
 `createFiscalXmlReader` / `readAuthorizedDocument` (`lib/fiscal/storage/xml-storage-reader.ts`):
 
@@ -421,14 +434,16 @@ Relatório **somente leitura** na competência:
 
 ---
 
-## 14. Decisões humanas (não executar)
+## 14. Decisões humanas
 
-Ambiente homologação/produção permanece visível (cláusula do predicado e/ou rollout). Não foi absorvido em silêncio.
+Menu original do Passo 0. **Contrato vigente: §18.** DECISION_1, 2, 3, 4 e 5 **Accepted**. DECISION_6 **Accepted parcial** (as-is proibido; A vs B pendente).
 
-### DECISION_1_ENTREGAVEL_PREDICATE=REQUIRED
+Ambiente homologação/produção permanece visível como cláusula do predicado **e** gate distinto da allowlist. Não foi absorvido em silêncio. `ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`.
 
-- **Recomendação:** Opção A (`AUTORIZADA` + protocolo + chave + `xmlAutorizado` + vigente + store + período + ambiente permitido).
-- **Alternativa:** Opção B (incluir canceladas com XML histórico).
+### DECISION_1_ENTREGAVEL_PREDICATE — Accepted (Opção A, §18)
+
+- **Vigente:** Opção A + `ambiente == HOMOLOGACAO`.
+- **Alternativa B (canceladas no ZIP):** **não** vigente (DECISION_2 política A).
 - **Impacto:** conteúdo jurídico de `05-XML` e do aceite manual.
 
 ### DECISION_2_CANCELLED_XML_POLICY=REQUIRED
@@ -445,35 +460,36 @@ Ambiente homologação/produção permanece visível (cláusula do predicado e/o
 - **Recomendação da auditoria (não decisão):** `dataAutorizacao` para entregáveis Opção A — é o instante que o Fiscal realmente persiste na autorização.
 - **Impacto:** nota autorizada no mês seguinte à venda pode cair em outra competência.
 
-### DECISION_4_FLAG_ROLLOUT=REQUIRED
+### DECISION_4_FLAG_ROLLOUT — Accepted (§18)
 
-- **Recomendação:** env `CONTADOR_FISCAL_READER` default off (`"on"` para ligar) **e** allowlist de `storeId` (sem schema), independente de `fiscalEnabled`.
-- **Alternativa:** só env global (todas as lojas ao ligar) — mais arriscado.
-- **Ambiente:** decidir se homologação e produção podem coexistir no mesmo pacote (herança ADR-007).
+- **Vigente:** env `CONTADOR_FISCAL_READER` default off (`"on"` para ligar) **e** allowlist de `storeId` (sem schema), independente de `fiscalEnabled`.
+- **Alternativa recusada:** só env global (todas as lojas ao ligar).
+- **Ambiente:** allowlist **não** substitui `ambiente`. `ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`.
 - **Impacto:** loja sem runtime não pode parecer “zero XML = ok”.
 
-### DECISION_5_HOMOLOGATION_STORE=REQUIRED
+### DECISION_5_HOMOLOGATION_STORE — Accepted (§18)
 
-- **Recomendação:** designar loja-piloto `HOMOLOGACAO` (ou fixture persistida) com pelo menos `AUTORIZADA` + `xmlAutorizado`; rejeitada via teste; cancelada só quando o domínio existir. Nunca Production.
-- **Alternativa:** aceitar o 018 só com fixtures injetadas — enfraquece o aceite “pacote de loja homologada”.
-- **Impacto:** `FISCAL_RUNTIME_VALIDATABLE` continua `false` até essa loja/fixture existir.
+- **Vigente:** homologação isolada; nunca Production nesta fase; fixture AUTORIZADA = `HOMOLOGACAO`; PRODUCAO só teste negativo se necessário.
+- **Impacto:** `FISCAL_RUNTIME_VALIDATABLE` continua `false` até existir loja/fixture HOMOLOGACAO (não criada nesta execução).
 
-### DECISION_6_PURE_FISCAL_READER=REQUIRED
+### DECISION_6_PURE_FISCAL_READER — aceite parcial (§18)
 
-- **Recomendação:** não reutilizar `readAuthorizedDocument` as-is.
-- **Alternativa A:** SELECT no reader do Contador.
-- **Alternativa B:** primitive Fiscal no-log.
+- **Aceito:** não reutilizar `readAuthorizedDocument` as-is (`FISCAL_READER_AS_IS_FORBIDDEN=true`).
+- **Ainda pendente (não escolher aqui):**
+  - **A)** SELECT side-effect-free em `lib/contador/readers/fiscal.ts`
+  - **B)** primitive Fiscal explicitamente no-log
 - **Impacto:** gerar o pacote mensal **não** deve appendar um `FiscalLog` por nota.
+- `FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true`
 
 ---
 
 ## 15. Charter proposto — `CONTADOR-HUB-FISCAL-INTEGRATION-018`
 
-**Não importar / não abrir.** Rascunho para decisão humana após as DECISION_*.
+**Não importar / não abrir.** `GOAL_018_OPENED=false`. `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`. Rascunho documental: o GOAL 018 **pode** ser importado no futuro **com os gates abaixo explícitos**. Não afirmar “GOAL 018 fechado”.
 
 ### Objetivo
 
-Reader fiscal **side-effect-free** do Contador, atrás de `CONTADOR_FISCAL_READER` (default off): notas da competência segundo predicado **aprovado**; sinais de rejeição/cancelamento no checklist; XML **persistido** (`xmlAutorizado`) em `05-XML` com sha256 no manifesto; UI só de contagem.
+Reader fiscal **side-effect-free** do Contador, atrás de `CONTADOR_FISCAL_READER` (default off): notas da competência segundo predicado **aprovado** (`ambiente == HOMOLOGACAO` nesta fase); sinais de rejeição/cancelamento no checklist; XML **persistido** (`xmlAutorizado`) em `05-XML` com sha256 no manifesto; UI só de contagem.
 
 ### Allowlist provável
 
@@ -484,46 +500,54 @@ Reader fiscal **side-effect-free** do Contador, atrás de `CONTADOR_FISCAL_READE
 - `components/dashboard/contador/**` (relatório mínimo)
 - `.env.example` (`CONTADOR_FISCAL_READER`)
 - `docs/status/MOCKS_TRACKING.md`
-- ADR-007 **somente depois** de Accepted por humano (texto da ADR **não** nesta auditoria)
+- ADR-007 **Accepted** no PR #89 (merge humano pendente)
 
-**Proibido:** `prisma/**`; `lib/fiscal/emission/**`; providers; certificados; auth/proxy; ligar `fiscalEnabled`.
+**Proibido:** `prisma/**`; `lib/fiscal/emission/**`; providers; certificados; auth/proxy; ligar `fiscalEnabled`; XML `PRODUCAO` em `05-XML` nesta fase; reutilizar `readAuthorizedDocument` as-is.
 
 **Não pressupor** `fiscalXmlReader.readAuthorizedDocument` como porta do Contador. Reuso permitido: tipos/contratos **puros**, hash UTF-8, isolamento `storeId` como *padrão a copiar*, **não** a função que grava `FiscalLog`.
 
 ### Comportamento
 
-Flag off → `nao_disponivel` + placeholder `05-XML`. Flag on + predicado → XML só entregáveis; falha → erro/`nao_disponivel`. Zero reconstrução via builder.
+Flag off → `nao_disponivel` + placeholder `05-XML`. Flag on + predicado (inclui allowlist **e** `ambiente == HOMOLOGACAO`) → XML só entregáveis; falha → erro/`nao_disponivel`. Zero reconstrução via builder. Zero chamada SEFAZ Production.
 
 ### Testes
 
 §13.
 
-### Gates (todos obrigatórios **antes** de implementar)
+### Gates (todos obrigatórios **antes do primeiro código do reader**)
 
-- ADR-007 **Accepted**
-- Predicado entregável **aprovado por escrito**
-- Política de cancelado **aprovada**
-- Fonte temporal da competência **aprovada**
-- Reader **realmente** side-effect-free (DECISION_6)
-- Ambiente/fixture fiscal **validável** (não Production)
+1. Escolher **A** ou **B** (humano; **não** escolhido neste PR):
+   - A) SELECT side-effect-free em `lib/contador/readers/fiscal.ts`
+   - B) primitive Fiscal explicitamente no-log
+2. Provar **zero `FiscalLog`** no reader usado pelo Contador.
+3. ADR-007 **Accepted**
+4. Predicado entregável **aprovado** (`ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`)
+5. Política de cancelado **aprovada** (A)
+6. Fonte temporal da competência **aprovada** (`dhEmi` sem fallback)
+7. Ambiente/fixture fiscal **HOMOLOGACAO** (não Production)
+
+Nenhuma implementação do reader começa antes da escolha A/B.
 
 ### Dependências
 
 GOAL 012 **DONE**. Runtime fiscal “ativo” **não** está validável hoje (`FISCAL_RUNTIME_VALIDATABLE=false`). Schema: **não**.
 
-### Decisões humanas ainda necessárias
+### Decisões humanas ainda necessárias antes de código do reader
 
-DECISION_1 … DECISION_6.
+Escolha A vs B (`FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true`). DECISION_1–5 aceitas. DECISION_6 aceite **parcial** (as-is proibido).
 
 ---
 
-## 16. Relatório final
+## 16. Relatório final do Passo 0 (snapshot PR #88)
+
+Bloco histórico da auditoria **antes** da ratificação. Contrato vigente: **§18**. `GOAL_018_OPENED=false`. `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`.
 
 ```
 CURRENT_MAIN=edbf724ba72b40262b87257d92ce77f46320143c
 AEP_STATUS=PAUSED current_goal=null .aep-active=absent GOAL_018_OPENED=false
 GOAL_017_DONE=true
 GOAL_018_OPENED=false
+GOAL_018_STATUS=DRAFT_NOT_IMPORTED
 FISCAL_MODELS=ConfiguracaoFiscalLoja,CertificadoDigital,SerieFiscal,NotaFiscal,NotaFiscalItem,EventoFiscal,FiscalEmissaoJob,FiscalLog
 FISCAL_STATUS_MATRIX=RASCUNHO,VALIDANDO,ASSINADA,TRANSMITINDO,AUTORIZADA,REJEITADA,DENEGADA,CONTINGENCIA,CANCELADA,INUTILIZADA,ERRO
 AUTHORIZED_STATUS=AUTORIZADA
@@ -539,7 +563,8 @@ CANCELLED_XML_POLICY_DECISION_REQUIRED=true
 CONTADOR_FISCAL_READER_EXISTS=false
 FISCAL_XML_READER_SIDE_EFFECT=true
 CONTADOR_CAN_REUSE_FISCAL_XML_READER_AS_IS=false
-FISCAL_PURE_READER_DECISION_REQUIRED=true
+FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true
+# snapshot PR #88 usava FISCAL_PURE_READER_DECISION_REQUIRED; não reler como =false — ver §18
 FISCAL_RUNTIME_VALIDATABLE=false
 HOMOLOGATION_EVIDENCE=piloto 022 dormente; stub/mock; fixtures de teste; nenhuma loja viva comprovada
 ADR_007_STATUS=Proposed
@@ -557,6 +582,7 @@ BLOCKERS=ADR-007 Proposed; predicado nao aprovado; cancelados; data competencia 
 CONTADOR_018_PASSO0_AUDIT_COMPLETE=true
 READY_FOR_HUMAN_FISCAL_PREDICATE_DECISION=true
 GOAL_018_OPENED=false
+GOAL_018_STATUS=DRAFT_NOT_IMPORTED
 ```
 
 ---
@@ -576,32 +602,43 @@ Pendências naquele instante: as seis DECISION_* — nenhuma executada até o ac
 
 ## 18. Ratificação humana — 2026-08-19
 
-Aprovação de Rafael. PR #88 mergeado (`fac38130`). ADR-007 → **Accepted**. Homologação isolada: [`CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md). GOAL 018 **não** aberto.
+Aprovação de Rafael. PR #88 mergeado (`fac38130`). ADR-007 → **Accepted** (PR #89, merge humano pendente). Homologação isolada: [`CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_PREP_018.md). `GOAL_018_OPENED=false`. `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`. Trilha `contador` **PAUSED**. `current_goal=null`. Não afirmar “GOAL 018 fechado”.
 
 `origin/main` avançou com PR #87 (PIX legado fail-closed) **antes** deste aceite. Não altera predicado, XML coluna, `FiscalLog` do reader nem a flag do Contador.
 
 | Decisão | Status | Conteúdo aprovado |
 |---|---|---|
-| DECISION_1_ENTREGAVEL_PREDICATE | **ACCEPTED** (Opção A) | `storeId` + `vigente` + `AUTORIZADA` + protocolo + chave + `xmlAutorizado` + `dhEmi` na competência + loja allowlisted |
+| DECISION_1_ENTREGAVEL_PREDICATE | **ACCEPTED** (Opção A) | predicado §3.1 vigente **incluindo** `ambiente == HOMOLOGACAO` |
 | DECISION_2_CANCELLED_XML_POLICY | **ACCEPTED** (política A) | XML cancelado **fora** de `05-XML`; checklist pode listar |
 | DECISION_3_COMPETENCE_DATE_SOURCE | **ACCEPTED** (emenda) | só `dhEmi` de `xmlAutorizado`; **sem fallback** |
-| DECISION_4_FLAG_ROLLOUT | **ACCEPTED** | `CONTADOR_FISCAL_READER` default off + allowlist; não `fiscalEnabled`; piloto `HOMOLOGACAO` |
-| DECISION_5_HOMOLOGATION_STORE | **ACCEPTED** | homologação isolada; nunca Production; runtime vivo ainda não validável |
-| DECISION_6_PURE_FISCAL_READER | **ACCEPTED** (restrição) | não reutilizar `readAuthorizedDocument` as-is; A vs B adiado ao 018 |
+| DECISION_4_FLAG_ROLLOUT | **ACCEPTED** | `CONTADOR_FISCAL_READER` default off + allowlist de loja; **não** `fiscalEnabled`; allowlist **não** substitui o gate de ambiente |
+| DECISION_5_HOMOLOGATION_STORE | **ACCEPTED** | `ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT`; nunca Production nesta fase; `PRODUCAO` no entregável exige decisão humana posterior de rollout; runtime vivo ainda não validável |
+| DECISION_6_PURE_FISCAL_READER | **ACCEPTED** (parcial) | as-is **proibido**; A vs B **não** escolhido; nenhum código do reader antes da escolha + prova de zero `FiscalLog` |
 
 `CANCELLED_XML_POLICY_DECISION_REQUIRED=false` (política A vigente).
 
-`FISCAL_PURE_READER_DECISION_REQUIRED=false` quanto a *não* reusar o reader com log; escolha A/B **adiada** (não autoriza implementar nenhuma).
+Não usar `FISCAL_PURE_READER_DECISION_REQUIRED=false`: A versus B foi **adiado**, não encerrado.
 
 ```
-ADR_007_STATUS=Accepted
+ADR_007_STATUS=Accepted_pending_PR89_merge
 DECISION_1_ENTREGAVEL_PREDICATE=ACCEPTED_OPTION_A
 DECISION_2_CANCELLED_XML_POLICY=ACCEPTED_EXCLUDE_FROM_05_XML
 DECISION_3_COMPETENCE_DATE_SOURCE=ACCEPTED_DHEMI_XML_AUTORIZADO_NO_FALLBACK
 DECISION_4_FLAG_ROLLOUT=ACCEPTED_ENV_OFF_PLUS_STORE_ALLOWLIST
 DECISION_5_HOMOLOGATION_STORE=ACCEPTED_ISOLATED_HOMOLOG_NEVER_PRODUCTION
 DECISION_6_PURE_FISCAL_READER=ACCEPTED_NO_REUSE_FISCAL_XML_READER_AS_IS
+DECISION_6_ACCEPTED_SCOPE=proibido reutilizar readAuthorizedDocument as-is
+ENTREGAVEL_AMBIENTE=HOMOLOGACAO_ONLY_INITIAL_ROLLOUT
+PRODUCTION_XML_ELIGIBLE=false
+STORE_ALLOWLIST_REQUIRED=true
+ENVIRONMENT_GATE_REQUIRED=true
+CONTADOR_CAN_REUSE_FISCAL_XML_READER_AS_IS=false
+FISCAL_READER_AS_IS_FORBIDDEN=true
+FISCAL_PURE_READER_IMPLEMENTATION_CHOICE_REQUIRED=true
 READY_FOR_HUMAN_FISCAL_PREDICATE_DECISION=false
 GOAL_018_OPENED=false
+GOAL_018_STATUS=DRAFT_NOT_IMPORTED
 FISCAL_RUNTIME_VALIDATABLE=false
 ```
+
+**Fim da auditoria Passo 0. GOAL 018 permanece não importado / não aberto.**
