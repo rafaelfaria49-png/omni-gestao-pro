@@ -21,6 +21,7 @@ import { opsLojaIdFromRequest } from "@/lib/ops-api-gate"
 import { requireCorrecaoVendaAuth } from "@/lib/vendas/guard-correcao-venda"
 import { assertVendaFiscalEditavel } from "@/lib/fiscal/venda-fiscal-state-machine"
 import { getOperatorLabelFromSession } from "@/lib/auth/session-operator"
+import { authenticateSupervisorPin } from "@/lib/auth/verify-supervisor-pin"
 import { mergeFinanceiroPayload, appendFinanceiroHistorico } from "@/lib/financeiro/contracts/payload"
 import { tituloEditavel, parseVencimentoBr } from "@/lib/vendas/correcao-cliente-titulo-plan"
 import type { Prisma } from "@/generated/prisma"
@@ -101,10 +102,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!supervisorPin) {
       return NextResponse.json({ ok: false, error: "PIN de supervisor obrigatório", code: "pin_required" }, { status: 403 })
     }
-    const admin = await prisma.user.findFirst({
-      where: { pin: supervisorPin, OR: [{ role: "ADMIN" }, { role: "admin" }] },
-      select: { id: true, name: true },
-    })
+    const admin = await authenticateSupervisorPin(supervisorPin)
     if (!admin) {
       return NextResponse.json({ ok: false, error: "PIN de supervisor inválido", code: "pin_invalid" }, { status: 401 })
     }

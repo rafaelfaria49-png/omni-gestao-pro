@@ -16,9 +16,8 @@
  *   5. recusa sempre os PINs legados bloqueados, sem sequer consultar o banco;
  *   6. emite autorização assinada de 15 min, vinculada ao userId e ao storeId canónico.
  *
- * O que este GOAL NÃO fez (deliberadamente, sem migration): `User.pin` continua em
- * texto puro. A migration `pinHash` é a fase seguinte — o contrato aqui já está
- * preparado para ela, porque a comparação do PIN está isolada em `matchSupervisor`.
+ * Hash: a comparação do PIN vive em `authenticateSupervisorPin` (HMAC + bcrypt).
+ * `User.pin` permanece para rollback; a rota nunca faz `WHERE pin = candidato`.
  *
  * Nenhuma resposta, log ou registo de auditoria desta rota contém o PIN, o token ou
  * o cookie.
@@ -45,6 +44,10 @@ import {
   verifyPinAuthorizationToken,
   type PinAuthorizationEvent,
 } from "@/lib/auth/pin-authorization"
+import {
+  authenticateSupervisorPin,
+  SUPERVISOR_ROLE_FILTER,
+} from "@/lib/auth/verify-supervisor-pin"
 // Motor ÚNICO de rate limit do repositório (em memória, por instância). O nome é
 // histórico — nasceu no portal do contador —, mas a chave é namespacada por
 // `buildPinRateLimitKey`, então os orçamentos não se cruzam. Duplicar o motor era
@@ -58,11 +61,6 @@ import {
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
-
-/** Papel do supervisor no modelo legado `User` — gravado ora maiúsculo, ora minúsculo. */
-function supervisorRoleFilter(): { OR: { role: string }[] } {
-  return { OR: [{ role: "ADMIN" }, { role: "admin" }] }
-}
 
 async function currentIpHash(): Promise<string> {
   const h = await headers()
@@ -110,18 +108,11 @@ function deny(
 }
 
 /**
- * Ponto ÚNICO de comparação do PIN. Isolado de propósito: a migration `pinHash` troca
- * só esta função (passa a `bcrypt.compare`) sem tocar no resto do fluxo.
- *
- * O valor recebido nunca é logado, ecoado nem devolvido.
+ * Ponto ÚNICO de comparação do PIN nesta rota. Delega ao verificador central
+ * (hash bcrypt / legado plaintext com upgrade). O valor nunca é logado.
  */
 async function matchSupervisor(pin: string): Promise<{ id: string; name: string } | null> {
-  await prismaEnsureConnected()
-  const found = await prisma.user.findFirst({
-    where: { pin, ...supervisorRoleFilter() },
-    select: { id: true, name: true },
-  })
-  return found ? { id: found.id, name: found.name } : null
+  return authenticateSupervisorPin(pin)
 }
 
 /**
@@ -175,7 +166,7 @@ export async function GET(request: Request) {
   try {
     await prismaEnsureConnected()
     const supervisor = await prisma.user.findFirst({
-      where: { id: verification.payload.supervisorId, ...supervisorRoleFilter() },
+      where: { id: verification.payload.supervisorId, ...SUPERVISOR_ROLE_FILTER },
       select: { id: true, name: true },
     })
     if (!supervisor) return NextResponse.json({ authenticated: false })

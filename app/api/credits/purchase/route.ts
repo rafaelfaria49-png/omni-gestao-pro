@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { requireCreditsUserIdForApi } from "@/lib/credits/api-auth"
+import { creditsLedgerUserCreateData } from "@/lib/credits/ledger-user"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -49,10 +50,7 @@ export async function POST(req: Request) {
       where: { id: userId },
       update: {},
       create: {
-        id: userId,
-        name: "Administrador",
-        pin: `mock-${userId}`,
-        role: "ADMIN",
+        ...creditsLedgerUserCreateData(userId),
         credits: 0,
       },
       select: { id: true, credits: true },

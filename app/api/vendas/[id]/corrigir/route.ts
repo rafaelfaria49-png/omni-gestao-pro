@@ -44,6 +44,7 @@ import { estornarMovimentacaoPorReferencia } from "@/lib/financeiro/services/mov
 import { cancelContaReceber, upsertContaReceber } from "@/lib/financeiro/services/contas-receber-service"
 import { RECEBER_STATUS, normalizeReceberStatus } from "@/lib/financeiro/contracts/status"
 import { aPrazoExigeCliente, podeLimparCliente, tituloEditavel, parseVencimentoBr } from "@/lib/vendas/correcao-cliente-titulo-plan"
+import { authenticateSupervisorPin } from "@/lib/auth/verify-supervisor-pin"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -202,10 +203,7 @@ export async function POST(
           { status: 403 },
         )
       }
-      const admin = await prisma.user.findFirst({
-        where: { pin: supervisorPin.trim(), OR: [{ role: "ADMIN" }, { role: "admin" }] },
-        select: { id: true, name: true },
-      })
+      const admin = await authenticateSupervisorPin(supervisorPin)
       if (!admin) {
         return NextResponse.json(
           { ok: false, error: "PIN de supervisor inválido", code: "pin_invalid" },
@@ -534,10 +532,7 @@ export async function POST(
           { status: 403 },
         )
       }
-      const adminCli = await prisma.user.findFirst({
-        where: { pin: supervisorPin.trim(), OR: [{ role: "ADMIN" }, { role: "admin" }] },
-        select: { id: true, name: true },
-      })
+      const adminCli = await authenticateSupervisorPin(supervisorPin)
       if (!adminCli) {
         return NextResponse.json({ ok: false, error: "PIN de supervisor inválido", code: "pin_invalid" }, { status: 401 })
       }

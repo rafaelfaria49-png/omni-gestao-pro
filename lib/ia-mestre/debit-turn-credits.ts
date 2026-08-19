@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma"
 import type { Prisma } from "@/generated/prisma"
 import type { IaMestreBillableAction } from "@/lib/ia-mestre/credit-costs"
+import { creditsLedgerUserCreateData } from "@/lib/credits/ledger-user"
 
 /** `userId` deve vir de `resolveCreditsUserId()` (NextAuth `session.user.id` em produção). */
 
@@ -21,12 +22,7 @@ export async function ensureCreditsUser(userId: string): Promise<{ credits: numb
   const user = await prisma.user.upsert({
     where: { id: userId },
     update: {},
-    create: {
-      id: userId,
-      name: "Administrador",
-      pin: `mock-${userId}`,
-      role: "ADMIN",
-    },
+    create: creditsLedgerUserCreateData(userId),
     select: { credits: true },
   })
   return { credits: user.credits }

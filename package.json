@@ -32,6 +32,7 @@
     "db:smoke": "node --env-file=.env scripts/prisma-smoke.mjs",
     "db:seed-admin": "npx tsx scripts/seed-admin.ts",
     "db:seed-supervisor-pin": "npx tsx scripts/seed-supervisor-pin.ts",
+    "db:backfill-supervisor-pin-hash": "npx tsx scripts/backfill-supervisor-pin-hash.ts",
     "stripe:setup": "npx tsx scripts/stripe-setup.ts",
     "db:migrate-loja": "node --env-file=.env scripts/migrate-loja-ids.mjs",
     "db:check-rls": "node --env-file=.env scripts/check-rls-tables.mjs",
