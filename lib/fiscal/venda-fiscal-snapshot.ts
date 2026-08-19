@@ -24,6 +24,11 @@ import {
 } from "@/lib/produto-fiscal"
 import { calculateTax } from "./tax-engine"
 import type { TaxEngineInput, TaxRegime } from "./tax-engine"
+import {
+  derivePagamentoFiscalFromBreakdown,
+  type PagamentoFiscalCanonico,
+  type PagamentoFiscalErro,
+} from "./payment"
 
 export const VENDA_FISCAL_SNAPSHOT_VERSAO = 1
 
@@ -92,7 +97,7 @@ export type SnapshotVendaInput = {
   desconto: number
   operador: string
   terminal: string
-  /** Quebra por forma de pagamento (congelada como veio). */
+  /** Quebra por forma de pagamento (congelada como veio — evidência bruta). */
   paymentBreakdown: Record<string, unknown> | null
 }
 
@@ -176,7 +181,14 @@ export type SnapshotVenda = {
   desconto: number
   operador: string
   terminal: string
+  /** Evidência bruta persistida. O XML NÃO interpreta este campo. */
   paymentBreakdown: Record<string, unknown> | null
+  /**
+   * Contrato de pagamento fiscal v1 (GOAL 030). Aditivo: snapshots legados não
+   * têm este campo — emissão futura falha fechado, sem reconstruir de dado vivo.
+   */
+  pagamentoFiscal?: PagamentoFiscalCanonico | null
+  pagamentoFiscalErro?: PagamentoFiscalErro | null
 }
 
 /** Componente de um imposto (ICMS/PIS/COFINS) congelado no snapshot. */
@@ -544,17 +556,27 @@ export function buildVendaFiscalSnapshot(input: BuildSnapshotInput): BuildSnapsh
     }
   })
 
+  const brutoPagamento = input.venda.paymentBreakdown
+  const paymentBreakdown: Record<string, unknown> | null =
+    brutoPagamento && typeof brutoPagamento === "object" && !Array.isArray(brutoPagamento)
+      ? { ...(brutoPagamento as Record<string, unknown>) }
+      : brutoPagamento && typeof brutoPagamento === "object"
+        ? (JSON.parse(JSON.stringify(brutoPagamento)) as Record<string, unknown>)
+        : null
+
+  const totalVenda = round2(num(input.venda.total))
+  const derivedPag = derivePagamentoFiscalFromBreakdown(brutoPagamento, totalVenda)
+
   const venda: SnapshotVenda = {
     pedidoId: s(input.venda.pedidoId),
     data: toIso(input.venda.data),
-    total: round2(num(input.venda.total)),
+    total: totalVenda,
     desconto: round2(num(input.venda.desconto)),
     operador: s(input.venda.operador),
     terminal: s(input.venda.terminal),
-    paymentBreakdown:
-      input.venda.paymentBreakdown && typeof input.venda.paymentBreakdown === "object"
-        ? { ...input.venda.paymentBreakdown }
-        : null,
+    paymentBreakdown,
+    pagamentoFiscal: derivedPag.ok ? derivedPag.pagamento : null,
+    pagamentoFiscalErro: derivedPag.ok ? null : derivedPag.erro,
   }
 
   const itensSemFiscal = itens.filter((i) => !i.fiscalCompleto).map((i) => i.numeroItem)

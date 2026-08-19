@@ -87,7 +87,7 @@ export function buildSyntheticSnapshot(input: SyntheticFixtureInput): VendaFisca
       desconto: 0,
       operador: "OPERADOR SINTETICO SEM VALOR FISCAL",
       terminal: "TERM-SINTETICO",
-      paymentBreakdown: { dinheiro: 10, _marker: "SEM VALOR FISCAL" },
+      paymentBreakdown: { dinheiro: 10 },
     },
     itens: [
       {

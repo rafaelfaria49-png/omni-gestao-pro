@@ -19,6 +19,7 @@
 
 import { onlyDigits } from "../fiscal-validators"
 import type { QrV3Destinatario } from "../danfce/qr-v3/types"
+import { assertPagamentoFiscalCanonico } from "../payment"
 import type {
   SnapshotItem,
   SnapshotItemTributos,
@@ -185,63 +186,57 @@ function buildDetNode(item: SnapshotItem, trib: SnapshotItemTributos, der: ItemD
   return group("det", [prod, buildImpostoNode(item, trib)], { nItem: String(item.numeroItem) })
 }
 
-// ── pag (best-effort sobre o paymentBreakdown congelado) ─────────────────────────────────
+// ── pag (somente o contrato canônico congelado — GOAL 030) ─────────────────────────────
+//
+// NÃO lê `paymentBreakdown`. NÃO consulta Caixa/Financeiro/PDV/Cliente vivo.
+// NÃO cai para DINHEIRO. NÃO converte forma desconhecida em tPag=99.
 
-const MAP_TPAG: Record<string, string> = {
-  dinheiro: "01", especie: "01", cash: "01",
-  cheque: "02",
-  credito: "03", cartaocredito: "03", creditcard: "03",
-  debito: "04", cartaodebito: "04", debitcard: "04",
-  creditoloja: "05", crediario: "05",
-  valealimentacao: "10", valerefeicao: "11", valepresente: "12",
-  boleto: "15", boletobancario: "15",
-  deposito: "16",
-  pix: "17",
-  transferencia: "18", ted: "18", doc: "18",
-  fidelidade: "19", cashback: "19",
-  sempagamento: "90",
-  vale: "99", outros: "99", outro: "99",
-}
-function tPagDe(key: string): string {
-  const k = key.toLowerCase().replace(/[^a-z]/g, "")
-  return MAP_TPAG[k] ?? "99"
-}
-
-type Pagamento = { tPag: string; vPag: number }
-
-function parsePagamentos(breakdown: Record<string, unknown> | null): Pagamento[] {
-  if (!breakdown) return []
-  if (Array.isArray(breakdown)) {
-    return (breakdown as unknown[])
-      .map((entry): Pagamento => {
-        const o = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {}
-        const rawKey = String(o.forma ?? o.tipo ?? o.metodo ?? o.method ?? o.tPag ?? "")
-        const valor = round2(Number(o.valor ?? o.amount ?? o.vPag ?? o.value ?? 0))
-        const tPag = /^\d{2}$/.test(rawKey) ? rawKey : tPagDe(rawKey)
-        return { tPag, vPag: valor }
-      })
-      .filter((p) => p.vPag > 0)
-  }
-  return Object.keys(breakdown)
-    .map((k): Pagamento => ({ tPag: tPagDe(k), vPag: round2(Number(breakdown[k])) }))
-    .filter((p) => p.vPag > 0)
-}
-
-/**
- * Resolve as formas de pagamento. Usa o detalhamento congelado quando ele FECHA com o total
- * (Σ vPag = vNF, tolerância de 1 centavo); caso contrário, cai para um único `detPag` com o
- * total (garante consistência exigida pela SEFAZ). NFC-e exige `pag` com ao menos um `detPag`.
- */
 function buildPagNode(snapshot: VendaFiscalSnapshot, vNF: number): XmlNode {
-  const totalR = round2(vNF)
-  const parsed = parsePagamentos(snapshot.venda.paymentBreakdown)
-  const soma = round2(parsed.reduce((s, p) => s + p.vPag, 0))
-  const pagamentos: Pagamento[] =
-    parsed.length > 0 && Math.abs(soma - totalR) <= 0.01 ? parsed : [{ tPag: "01", vPag: totalR }]
-  return group(
-    "pag",
-    pagamentos.map((p) => group("detPag", [leafRequired("tPag", p.tPag), leafRequired("vPag", dec2(p.vPag))])),
+  const canonico = snapshot.venda.pagamentoFiscal
+  if (!canonico) {
+    const frozen = snapshot.venda.pagamentoFiscalErro
+    throw new NfceXmlError(
+      frozen ? mapPagamentoErro(frozen.code) : "pagamento_canonico_ausente",
+      frozen?.mensagem ??
+        "Snapshot sem contrato de pagamento fiscal canônico. XML não interpreta paymentBreakdown.",
+      null,
+      frozen?.campo ?? "venda.pagamentoFiscal",
+    )
+  }
+  const checked = assertPagamentoFiscalCanonico(canonico, round2(vNF))
+  if (!checked.ok) {
+    throw new NfceXmlError(
+      mapPagamentoErro(checked.erro.code),
+      checked.erro.mensagem,
+      null,
+      checked.erro.campo,
+    )
+  }
+  const detNodes = checked.pagamento.det.map((p) =>
+    group("detPag", [leafRequired("tPag", p.tPag), leafRequired("vPag", dec2(p.vPag))]),
   )
+  return group("pag", detNodes)
+}
+
+function mapPagamentoErro(
+  code: import("../payment").PagamentoFiscalErroCode,
+): import("./nfce-xml.types").NfceXmlErrorCode {
+  switch (code) {
+    case "PAGAMENTO_AUSENTE":
+      return "pagamento_ausente"
+    case "PAGAMENTO_FORMATO_INVALIDO":
+      return "pagamento_formato_invalido"
+    case "PAGAMENTO_VALOR_INVALIDO":
+      return "pagamento_valor_invalido"
+    case "PAGAMENTO_FORMA_DESCONHECIDA":
+      return "pagamento_forma_desconhecida"
+    case "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL":
+      return "pagamento_forma_sem_capacidade"
+    case "PAGAMENTO_SOMA_DIVERGENTE":
+      return "pagamento_soma_divergente"
+    case "PAGAMENTO_CANONICO_AUSENTE":
+      return "pagamento_canonico_ausente"
+  }
 }
 
 // ── emit / dest / ide ────────────────────────────────────────────────────────────────────

@@ -80,7 +80,7 @@ function baseInput(over: Partial<BuildSnapshotInput> = {}): BuildSnapshotInput {
       desconto: 0,
       operador: "João Caixa",
       terminal: "PDV1",
-      paymentBreakdown: null,
+      paymentBreakdown: { dinheiro: 50 },
     },
     itens: [item()],
     ...over,
@@ -129,7 +129,9 @@ describe("buildNfceXml · venda simples (Simples Nacional, sem destaque)", () =>
 
 describe("buildNfceXml · desconto do cabeçalho", () => {
   it("reflete vDesc total e vNF líquido; desconto rateado vira vDesc do item", () => {
-    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, desconto: 10 } }))
+    const xml = buildNfceXml(
+      snap({ venda: { ...baseInput().venda, total: 40, desconto: 10, paymentBreakdown: { dinheiro: 40 } } }),
+    )
     expect(xml).toContain("<vDesc>10.00</vDesc>")
     expect(xml).toContain("<vNF>40.00</vNF>")
     expect(xml).toContain("<vProd>50.00</vProd>")
@@ -140,7 +142,7 @@ describe("buildNfceXml · múltiplos itens", () => {
   it("gera um det por item com nItem sequencial e soma vProd", () => {
     const xml = buildNfceXml(
       snap({
-        venda: { ...baseInput().venda, total: 400 },
+        venda: { ...baseInput().venda, total: 400, paymentBreakdown: { dinheiro: 400 } },
         itens: [
           item({ itemVendaId: "a", quantidade: 1, valorUnitario: 100, valorTotal: 100 }),
           item({ itemVendaId: "b", quantidade: 1, valorUnitario: 300, valorTotal: 300 }),
@@ -207,6 +209,152 @@ describe("buildNfceXml · snapshot inválido / campos obrigatórios", () => {
 
   it("snapshot vazio → lança NfceXmlError", () => {
     expect(() => buildNfceXml({} as VendaFiscalSnapshot)).toThrow(NfceXmlError)
+  })
+})
+
+describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
+  it("dinheiro válido → tPag 01 e vPag do contrato", () => {
+    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { dinheiro: 50 } } }))
+    expect(xml).toMatch(/<detPag>\s*<tPag>01<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toContain("<card>")
+    expect(xml).not.toContain("<vTroco>")
+  })
+
+  it("Pix válido → tPag 17, nunca cai para dinheiro", () => {
+    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 } } }))
+    expect(xml).toMatch(/<detPag>\s*<tPag>17<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toMatch(/<tPag>01<\/tPag>/)
+  })
+
+  it("débito válido → tPag 04 sem grupo card", () => {
+    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoDebito: 50 } } }))
+    expect(xml).toMatch(/<detPag>\s*<tPag>04<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toContain("<tpIntegra>")
+    expect(xml).not.toContain("<tBand>")
+    expect(xml).not.toContain("<cAut>")
+  })
+
+  it("crédito válido → tPag 03 sem grupo card", () => {
+    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoCredito: 50 } } }))
+    expect(xml).toMatch(/<detPag>\s*<tPag>03<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toContain("<card>")
+  })
+
+  it("split/misto válido", () => {
+    const xml = buildNfceXml(
+      snap({
+        venda: {
+          ...baseInput().venda,
+          paymentBreakdown: { dinheiro: 10, pix: 15, cartaoDebito: 10, cartaoCredito: 15 },
+        },
+      }),
+    )
+    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>10\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>03<\/tPag>\s*<vPag>15\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>04<\/tPag>\s*<vPag>10\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>17<\/tPag>\s*<vPag>15\.00<\/vPag>/)
+  })
+
+  it("forma desconhecida → erro explícito, XML não é gerado, não vira tPag=99 nem 01", () => {
+    const act = () => snap({ venda: { ...baseInput().venda, paymentBreakdown: { cripto: 50 } } })
+    const s = act()
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_DESCONHECIDA")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_forma_desconhecida" })
+    }
+  })
+
+  it("breakdown ausente → não cai para dinheiro", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: null } })
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_ausente" })
+      expect(String(e)).not.toMatch(/tPag>01/)
+    }
+  })
+
+  it("soma abaixo do total → erro, sem correção para dinheiro", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 10 } } })
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_soma_divergente" })
+    }
+  })
+
+  it("soma acima do total → erro", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { dinheiro: 90 } } })
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_soma_divergente" })
+    }
+  })
+
+  it("valor inválido → erro", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { dinheiro: Number.NaN } } })
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_valor_invalido" })
+    }
+  })
+
+  it("snapshot legado sem contrato canônico: não reconstrói de paymentBreakdown nem cai para dinheiro", () => {
+    const s = snap()
+    const legado = {
+      ...s,
+      venda: { pedidoId: s.venda.pedidoId, data: s.venda.data, total: s.venda.total, desconto: s.venda.desconto, operador: s.venda.operador, terminal: s.venda.terminal, paymentBreakdown: { dinheiro: 50 } },
+    } as VendaFiscalSnapshot
+    expect(legado.venda.pagamentoFiscal).toBeUndefined()
+    expect(() => buildNfceXml(legado)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(legado)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_canonico_ausente" })
+    }
+  })
+
+  it("XML nunca consulta paymentBreakdown (contrato canônico é a única fonte)", () => {
+    const s = snap()
+    const trap = {
+      ...s,
+      venda: {
+        ...s.venda,
+        paymentBreakdown: { dinheiro: 50 },
+        pagamentoFiscal: {
+          ...s.venda.pagamentoFiscal!,
+          det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+          soma: 50,
+        },
+      },
+    } as VendaFiscalSnapshot
+    const xml = buildNfceXml(trap)
+    expect(xml).toMatch(/<tPag>17<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>01<\/tPag>/)
+  })
+})
+
+describe("nfce-xml-builder · fronteira fail-closed (fonte)", () => {
+  it("não contém fallback tPag=01, MAP_TPAG, parse heurístico nem imports vivos", () => {
+    const src = readFileSync(resolve(process.cwd(), "lib/fiscal/xml/nfce-xml-builder.ts"), "utf8")
+    expect(src).not.toContain("MAP_TPAG")
+    expect(src).not.toContain("parsePagamentos")
+    expect(src).not.toContain("tPagDe")
+    expect(src).not.toMatch(/tPag:\s*"01"/)
+    expect(src).not.toMatch(/from ["']@\/lib\/prisma/)
+    expect(src).not.toMatch(/from ["']@\/lib\/caixa/)
+    expect(src).not.toMatch(/from ["']@\/lib\/financeiro/)
+    expect(src).not.toContain("snapshot.venda.paymentBreakdown")
   })
 })
 

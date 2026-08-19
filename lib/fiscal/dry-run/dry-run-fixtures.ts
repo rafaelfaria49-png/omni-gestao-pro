@@ -96,7 +96,7 @@ function buildCaseInput(kind: DryRunCaseKind): BuildSnapshotInput {
       desconto: 0,
       operador: "João",
       terminal: "PDV1",
-      paymentBreakdown: null,
+      paymentBreakdown: { dinheiro: 50 },
     },
     itens: [itemTeste()],
   }
@@ -105,11 +105,11 @@ function buildCaseInput(kind: DryRunCaseKind): BuildSnapshotInput {
     case "simples":
       return base
     case "com_desconto":
-      return { ...base, venda: { ...base.venda, desconto: 10 } }
+      return { ...base, venda: { ...base.venda, total: 40, desconto: 10, paymentBreakdown: { dinheiro: 40 } } }
     case "multiplos_itens":
       return {
         ...base,
-        venda: { ...base.venda, total: 400 },
+        venda: { ...base.venda, total: 400, paymentBreakdown: { dinheiro: 400 } },
         itens: [
           itemTeste({ itemVendaId: "a", quantidade: 1, valorUnitario: 100, valorTotal: 100 }),
           itemTeste({ itemVendaId: "b", quantidade: 1, valorUnitario: 300, valorTotal: 300 }),

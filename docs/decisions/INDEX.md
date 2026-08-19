@@ -101,6 +101,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 | 0020 | Fronteira do Provider SEFAZ Direto e Estado Incerto (P2-only · REGISTRY sem `SEFAZ_DIRETO` · `PROCESSING`/`THROTTLED`) | cross / fiscal | ✅ Aceita | 2026-08-04 | [`ADR-0020-fronteira-provider-sefaz-direto-estado-incerto.md`](./ADR-0020-fronteira-provider-sefaz-direto-estado-incerto.md) |
 | 0021 | Identidade técnica (`clientSaleId`) × número comercial (`pedidoId`) da venda · replay por `(storeId, clientSaleId)` · gate de runtime fail-open para o writer v1 | pdv / multi_loja | ✅ Aceita | 2026-08-04 | [`ADR-0021-identidade-tecnica-e-numero-comercial-da-venda.md`](./ADR-0021-identidade-tecnica-e-numero-comercial-da-venda.md) |
 | 0022 | NFC-e modelo 65 como trilha principal em SP; SAT/CF-e-SAT fora do roadmap ativo; `SAT_LOCAL` reservado/descartável | cross / fiscal | ✅ Aceita | 2026-08-19 | [`ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md`](./ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md) |
+| 0023 | Contrato canônico de pagamento fiscal da NFC-e (fail-closed; XML não interpreta `paymentBreakdown`) | cross / fiscal | 🟡 Proposta | 2026-08-19 | [`ADR-0023-pagamento-fiscal-canonico-nfce-fail-closed.md`](./ADR-0023-pagamento-fiscal-canonico-nfce-fail-closed.md) |
 
 > **Nota sobre o ADR legado:** `OS_ROUTE_OFICIAL.md` foi escrito antes desta convenção e não segue o template/naming atual. Mantido como histórico. Quando precisar ser referenciado, citar como **ADR-0001 (legado)**. Migração para o naming `ADR-0001-os-route-oficial.md` é uma tarefa **opcional** e exige autorização (renomear histórico pode quebrar links externos).
 
@@ -111,6 +112,7 @@ cp docs/decisions/TEMPLATE_ADR.md docs/decisions/ADR-<NNNN>-<slug>.md
 | # | Título | HUB | Proponente | Data |
 |---|--------|-----|------------|------|
 | 0005 (draft) | Liberação controlada do modo COWORK (Fase 1 supervisionada) | governança | Opus | 2026-06-01 |
+| 0023 | Contrato canônico de pagamento fiscal da NFC-e (fail-closed) | cross / fiscal | Grok (GOAL 030) | 2026-08-19 |
 
 > **0005 (CoWork)** vive como draft em [`drafts/ADR_PROPOSAL_0005_LIBERAR_COWORK.md`](./drafts/ADR_PROPOSAL_0005_LIBERAR_COWORK.md) (aguarda decisão humana). **0006 (WhatsApp)** foi **aceito** no Gate #2 da sprint `MULTI_LOJA-S-003` (ver §3). **0007 (Depósitos)** foi **aceito** no Gate #1 em 2026-06-01 (decisão); **Fase 1 (Fundação) implementada** em 2026-06-02 (`SPRINT_BL07_FASE1`, validada `tsc`/`build`/vitest) — ver **Adendo §9** do ADR (reconciliação as-built: `ProdutoDeposito`≡`EstoqueSaldo`, `principal`≡`isDefault`; `custoMedio`/`tipo`/`depositoId@ledger` diferidos p/ Fase 2/3). Cutover (`db:push`+backfill) pendente. O número `0006` decorre de `0005` já estar reservado ao CoWork (não se renumera histórico publicado).
 
