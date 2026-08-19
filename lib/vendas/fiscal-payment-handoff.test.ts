@@ -2,8 +2,8 @@
  * GOAL 075 — handoff fiscal de pagamento no instante da persistência da Venda.
  *
  * Cobre o contrato produzido a partir do `PaymentBreakdownFull` real dos PDVs:
- * tPag só quando unívoco; PIX/carnê/a prazo/vale bloqueados; sem troco fabricado;
- * sem metadata de cartão inventada.
+ * tPag só quando unívoco; PIX/carnê/a prazo bloqueados; creditoVale→21;
+ * sem troco fabricado; sem metadata de cartão inventada.
  */
 import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
@@ -54,6 +54,14 @@ describe("buildFiscalPaymentHandoff · formas com tPag comprovado", () => {
     ])
     expect(h.linhas.every((l) => l.capability === "supported")).toBe(true)
   })
+
+  it("creditoVale → tPag 21 suportado (crédito em loja de devolução)", () => {
+    const h = buildFiscalPaymentHandoff({ creditoVale: 40 }, 40)
+    expect(h.linhas).toEqual([
+      { formaOrigem: "creditoVale", valor: 40, tPag: "21", capability: "supported", status: "ok" },
+    ])
+    expect(JSON.stringify(h)).not.toMatch(/"tPag":"12"|"tPag":"19"|"tPag":"99"/)
+  })
 })
 
 describe("buildFiscalPaymentHandoff · formas bloqueadas (sem inferir tPag)", () => {
@@ -77,19 +85,18 @@ describe("buildFiscalPaymentHandoff · formas bloqueadas (sem inferir tPag)", ()
     expect(h.linhas[0]!.dadoAdicionalNecessario).toMatch(/05|15/)
   })
 
-  it("aPrazo permanece bloqueado (05 vs 91 vs 15)", () => {
+  it("aPrazo permanece bloqueado (05 vs 91; 15/14 excluídos)", () => {
     const h = buildFiscalPaymentHandoff({ aPrazo: 50 }, 50)
     expect(h.linhas[0]!.tPag).toBeUndefined()
     expect(h.linhas[0]!.capability).toBe("blocked")
     expect(h.linhas[0]!.motivo).toBe("aprazo_tpag_ambiguo")
     expect(h.linhas[0]!.dadoAdicionalNecessario).toMatch(/91/)
+    expect(h.linhas[0]!.dadoAdicionalNecessario).toMatch(/05/)
   })
 
-  it("creditoVale permanece bloqueado (19 vs 21)", () => {
-    const h = buildFiscalPaymentHandoff({ creditoVale: 40 }, 40)
-    expect(h.linhas[0]!.tPag).toBeUndefined()
-    expect(h.linhas[0]!.capability).toBe("blocked")
-    expect(h.linhas[0]!.motivo).toBe("credito_vale_tpag_ambiguo")
+  it("hints.tPag 19 no creditoVale é ignorado — servidor deriva 21", () => {
+    const h = buildFiscalPaymentHandoff({ creditoVale: 40 }, 40, { ...( { tPag: "19" } as object ) })
+    expect(h.linhas[0]).toMatchObject({ formaOrigem: "creditoVale", tPag: "21", capability: "supported" })
   })
 
   it("forma desconhecida não vira tPag=99", () => {
@@ -172,6 +179,34 @@ describe("buildFiscalPaymentHandoff · pixQrKind (GOAL 077)", () => {
     expect(h.linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("17")
     expect(h.linhas.find((l) => l.formaOrigem === "cartaoCredito")?.tPag).toBe("03")
     expect(h.linhas.every((l) => l.capability === "supported")).toBe(true)
+  })
+
+  it("split creditoVale + dinheiro", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 60, creditoVale: 40 }, 100)
+    expect(h.linhas.find((l) => l.formaOrigem === "dinheiro")).toMatchObject({ tPag: "01", capability: "supported" })
+    expect(h.linhas.find((l) => l.formaOrigem === "creditoVale")).toMatchObject({ tPag: "21", capability: "supported" })
+  })
+
+  it("split creditoVale + PIX com pixQrKind estático", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 30, creditoVale: 70 }, 100, { pixQrKind: "estatico" })
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")).toMatchObject({ tPag: "20", capability: "supported" })
+    expect(h.linhas.find((l) => l.formaOrigem === "creditoVale")).toMatchObject({ tPag: "21", capability: "supported" })
+  })
+
+  it("split creditoVale + cartão", () => {
+    const h = buildFiscalPaymentHandoff({ cartaoDebito: 25, creditoVale: 25 }, 50)
+    expect(h.linhas.find((l) => l.formaOrigem === "cartaoDebito")?.tPag).toBe("04")
+    expect(h.linhas.find((l) => l.formaOrigem === "creditoVale")?.tPag).toBe("21")
+  })
+
+  it("split carne + dinheiro: carne bloqueado, dinheiro comprovado", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 20, carne: 80 }, 100)
+    expect(h.linhas.find((l) => l.formaOrigem === "dinheiro")?.tPag).toBe("01")
+    expect(h.linhas.find((l) => l.formaOrigem === "carne")).toMatchObject({
+      capability: "blocked",
+      motivo: "carne_tpag_ambiguo",
+    })
+    expect(h.linhas.find((l) => l.formaOrigem === "carne")?.tPag).toBeUndefined()
   })
 })
 

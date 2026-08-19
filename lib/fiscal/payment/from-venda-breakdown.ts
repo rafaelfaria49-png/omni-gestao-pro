@@ -30,10 +30,11 @@ const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 const FORMAS_PERSISTIDAS: ReadonlySet<string> = new Set(FORMAS_INTERNAS_PERSISTIDAS)
 
 /**
- * Mapeamento unívoco do breakdown legado (sem handoff). PIX NÃO entra:
- * `pix` numérico não prova subtipo 17/20/23 (GOAL 079).
+ * Mapeamento unívoco do breakdown legado (sem handoff). PIX e creditoVale NÃO entram:
+ * `pix` numérico não prova subtipo 17/20/23 (GOAL 079);
+ * `creditoVale` numérico em venda histórica sem handoff permanece fail-closed (GOAL 081).
  */
-const FORMA_PARA_TPAG: Record<Exclude<FormaInternaComTPag, "pix">, string> = {
+const FORMA_PARA_TPAG: Record<Exclude<FormaInternaComTPag, "pix" | "creditoVale">, string> = {
   dinheiro: "01",
   cartaoCredito: "03",
   cartaoDebito: "04",
@@ -42,8 +43,12 @@ const FORMA_PARA_TPAG: Record<Exclude<FormaInternaComTPag, "pix">, string> = {
 const MSG_PIX_LEGADO =
   "PIX legado sem evidência de subtipo (17/20/23). Emissão futura exige fiscalPaymentHandoff com pixQrKind. Sem inferência para tPag 17."
 
+const MSG_CREDITO_VALE_LEGADO =
+  "crédito/vale legado sem fiscalPaymentHandoff. Emissão futura deriva tPag 21 só do handoff produzido na persistência. Sem reclassificar venda histórica."
+
 function tPagCompativelComFormaInterna(forma: FormaInternaComTPag, tPag: string): boolean {
   if (forma === "pix") return tPag in TPAG_PIX_QR_KIND
+  if (forma === "creditoVale") return tPag === "21"
   return FORMA_PARA_TPAG[forma] === tPag
 }
 
@@ -110,6 +115,9 @@ export function derivePagamentoFiscalFromBreakdown(
       const formaInterna = key as FormaInternaComTPag
       if (formaInterna === "pix") {
         return erro("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA", MSG_PIX_LEGADO, `venda.paymentBreakdown.${key}`)
+      }
+      if (formaInterna === "creditoVale") {
+        return erro("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL", MSG_CREDITO_VALE_LEGADO, `venda.paymentBreakdown.${key}`)
       }
       const tPag = FORMA_PARA_TPAG[formaInterna]
       if (!isTPagOficial(tPag)) {
@@ -200,6 +208,13 @@ export function assertPagamentoFiscalCanonico(
       return erro(
         "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA",
         "Contrato canônico com PIX tPag 17 derivado de paymentBreakdown (inferência histórica). Não autoriza nova preparação/assinatura/transmissão.",
+        "venda.pagamentoFiscal.det",
+      )
+    }
+    if (pagamento.fonte === "venda.payload.paymentBreakdown" && d.formaInterna === "creditoVale") {
+      return erro(
+        "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL",
+        "Contrato canônico com creditoVale derivado de paymentBreakdown. Emissão futura exige fiscalPaymentHandoff. Sem reclassificar venda histórica.",
         "venda.pagamentoFiscal.det",
       )
     }

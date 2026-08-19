@@ -8,6 +8,8 @@
  * PaymentModal ou SEFAZ. Não inventa tPag, grupo `card` nem troco.
  *
  * PIX: tPag 17/20/23 só quando `pixQrKind` conhecido é observado. Sem default.
+ * creditoVale: tPag 21 unívoco (crédito em loja de devolução/troca). Carne e aPrazo
+ * permanecem bloqueados — mecanismos comerciais não distinguem tPag oficial.
  * tPag enviado pelo cliente é ignorado — o servidor deriva pelo catálogo oficial.
  *
  * Autoridade de códigos: IT 2024.002 v1.11 + XSD `PL_010e_v1.02` (`tPag` = `[0-9]{2}`).
@@ -41,16 +43,24 @@ export type HandoffFormaOrigem = (typeof HANDOFF_FORMAS_ORIGEM)[number]
 /**
  * Únicas formas com tPag oficial unívoco a partir da chave persistida sozinha.
  * PIX entra só quando `pixQrKind` conhecido acompanha o valor — nunca pela chave `pix`.
+ * creditoVale → 21: único originador de ClienteCredito é devolução/troca
+ * (IT 2024.002 v1.00 item 21 = crédito em loja de valor antecipado / devolução).
  */
-export const HANDOFF_FORMAS_COM_TPAG_COMPROVADO = ["dinheiro", "cartaoDebito", "cartaoCredito"] as const
+export const HANDOFF_FORMAS_COM_TPAG_COMPROVADO = [
+  "dinheiro",
+  "cartaoDebito",
+  "cartaoCredito",
+  "creditoVale",
+] as const
 
 export type HandoffFormaComTPagComprovado = (typeof HANDOFF_FORMAS_COM_TPAG_COMPROVADO)[number]
 
-/** Mapeamento comprovado — não é semelhança de nome; cada par tem evidência no relatório 075. */
+/** Mapeamento comprovado — não é semelhança de nome; cada par tem evidência no relatório. */
 export const HANDOFF_TPAG_COMPROVADO: Readonly<Record<HandoffFormaComTPagComprovado, string>> = {
   dinheiro: "01",
   cartaoCredito: "03",
   cartaoDebito: "04",
+  creditoVale: "21",
 }
 
 export type FiscalPaymentHandoffCapability = "supported" | "blocked"
@@ -122,7 +132,7 @@ function bloqueioCarne(): Pick<FiscalPaymentHandoffLinha, "motivo" | "dadoAdicio
   return {
     motivo: "carne_tpag_ambiguo",
     dadoAdicionalNecessario:
-      "Discriminar tPag 05 (crediário / private label) vs 15 (boleto). O PDV colapsa `carne` e `boleto` na mesma chave persistida.",
+      "Carnê e boleto colapsam na mesma chave e no mesmo mecanismo (recebimento imediato no caixa; carnê HTML local; sem boleto bancário, sem Conta a Receber). tPag 05 (crediário com/sem carnê) e 15 (boleto bancário) não são unívocos. Sem picker: os rótulos do operador não implementam mecanismos distintos.",
   }
 }
 
@@ -130,15 +140,7 @@ function bloqueioAPrazo(): Pick<FiscalPaymentHandoffLinha, "motivo" | "dadoAdici
   return {
     motivo: "aprazo_tpag_ambiguo",
     dadoAdicionalNecessario:
-      "Discriminar tPag 05 (crediário), 15 (boleto) ou 91 (pagamento posterior). aPrazoConfig (parcelas/vencimento) é dado financeiro, não tPag.",
-  }
-}
-
-function bloqueioCreditoVale(): Pick<FiscalPaymentHandoffLinha, "motivo" | "dadoAdicionalNecessario"> {
-  return {
-    motivo: "credito_vale_tpag_ambiguo",
-    dadoAdicionalNecessario:
-      "Discriminar tPag 19 (programa de fidelidade / cashback / crédito virtual) vs 21 (crédito em loja).",
+      "aPrazo cria ContaReceberTitulo (pagamento ainda não ocorrido). Não gera boleto (15) nem duplicata (14). Resta 05 (crediário) vs 91 (pagamento posterior). aPrazoConfig (parcelas/vencimento) é dado financeiro, não tPag. Um único fluxo cobre fiado 1x e parcelamento Nx.",
   }
 }
 
@@ -181,7 +183,6 @@ function linhaDeForma(key: string, valor: number, pixQrKindHint: unknown): Fisca
   }
   if (key === "carne") return linhaBloqueada(key, valor, bloqueioCarne())
   if (key === "aPrazo") return linhaBloqueada(key, valor, bloqueioAPrazo())
-  if (key === "creditoVale") return linhaBloqueada(key, valor, bloqueioCreditoVale())
   if (FORMAS_ORIGEM.has(key)) {
     return linhaBloqueada(key, valor, {
       motivo: "forma_sem_capacidade_fiscal",

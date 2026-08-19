@@ -358,6 +358,66 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
     expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
   })
+
+  it("handoff de creditoVale emite tPag 21", () => {
+    const handoff = buildFiscalPaymentHandoff({ creditoVale: 50 }, 50)
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { creditoVale: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "creditoVale", tPag: "21", vPag: 50 }])
+  })
+
+  it("venda histórica sem handoff + creditoVale permanece bloqueada", () => {
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { creditoVale: 50 } } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+  })
+
+  it("handoff de aPrazo permanece bloqueado", () => {
+    const handoff = buildFiscalPaymentHandoff({ aPrazo: 50 }, 50)
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { aPrazo: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+  })
+
+  it("handoff legado de creditoVale bloqueado não é reclassificado", () => {
+    const r = buildVendaFiscalSnapshot(
+      baseInput({
+        venda: {
+          ...baseInput().venda,
+          paymentBreakdown: { creditoVale: 50 },
+          fiscalPaymentHandoff: {
+            version: 1,
+            catalogoTPag: "IT-2024.002-v1.11",
+            linhas: [
+              {
+                formaOrigem: "creditoVale",
+                valor: 50,
+                capability: "blocked",
+                status: "blocked",
+                motivo: "credito_vale_tpag_ambiguo",
+              },
+            ],
+          },
+        },
+      }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+  })
 })
 
 // ── Idempotência (localKey determinística) ────────────────────────────────────────────
