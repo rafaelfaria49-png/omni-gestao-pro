@@ -42,8 +42,11 @@ import {
   statusV3FromOS,
   type OperacaoStatusV3,
 } from "@/lib/operacoes-v3/status-machine";
-import { lerDadosBasicosV3, LOCAL_FISICO_LABEL_V3 } from "@/lib/operacoes-v3/dados-basicos-model";
-import { lerRecepcaoV3 } from "@/lib/operacoes-v3/workspace-model";
+import {
+  lerDadosBasicosV3,
+  LOCAL_FISICO_LABEL_V3,
+  type NovaOSLocalFisicoV3,
+} from "@/lib/operacoes-v3/dados-basicos-model";
 import { isOrcamentoPreOsAtivoV4 } from "@/lib/operacoes-v4/orcamento-pre-os";
 import {
   DESTINOS_RAPIDOS_PRODUCAO_V4,
@@ -60,11 +63,12 @@ const SEM_TECNICO_ID = "__sem_tecnico__";
 /** Destinos rápidos da Bancada — mesma política da Fila (sem pares comerciais). */
 export const DESTINOS_RAPIDOS_BANCADA_V4 = DESTINOS_RAPIDOS_PRODUCAO_V4;
 
-export type FiltroBancadaV4 = "todos" | "sem_tecnico" | "em_execucao" | "aguardando_peca" | "pronta";
+export type FiltroBancadaV4 = "todos" | "sem_tecnico" | "na_bancada" | "em_execucao" | "aguardando_peca" | "pronta";
 
 export const FILTROS_BANCADA_V4: { id: FiltroBancadaV4; label: string }[] = [
   { id: "todos", label: "Todos" },
   { id: "sem_tecnico", label: "Sem técnico" },
+  { id: "na_bancada", label: "Na bancada" },
   { id: "em_execucao", label: "Em execução" },
   { id: "aguardando_peca", label: "Aguardando peça" },
   { id: "pronta", label: "Prontas" },
@@ -99,7 +103,9 @@ export interface BancadaOsV4 {
   tecnicoNome: string | null;
   semTecnico: boolean;
   sla: BancadaSlaV4;
+  localFisicoId: NovaOSLocalFisicoV3 | "";
   localFisico: string;
+  naBancada: boolean;
   criadoEm: string;
   acoesRapidas: AcaoRapidaBancadaV4[];
   /** Diagnóstico / aguardando aprovação: abre a OS. Não muta status comercial. */
@@ -234,8 +240,8 @@ export function projetarOsProducaoV4(os: OrdemServico, now: Date = new Date()): 
   const tecnicoNome = txt(os.tecnico?.nome) || null;
   const tecnicoId = txt(os.tecnico?.id) || (tecnicoNome ? SEM_TECNICO_ID : null);
   const semTecnico = !txt(os.tecnico?.id);
-  const localRaw = lerRecepcaoV3(os).localFisico ?? "";
-  const localFisico = LOCAL_FISICO_LABEL_V3[localRaw] || localRaw;
+  const localRaw = lerDadosBasicosV3(os).localFisico;
+  const localFisico = localRaw ? LOCAL_FISICO_LABEL_V3[localRaw] || localRaw : "";
   return {
     osId: os.id,
     numero: txt(os.codigo) || "OS",
@@ -250,7 +256,9 @@ export function projetarOsProducaoV4(os: OrdemServico, now: Date = new Date()): 
     tecnicoNome: semTecnico ? null : tecnicoNome,
     semTecnico,
     sla: montarSlaBancadaV4(os, now),
+    localFisicoId: localRaw,
     localFisico,
+    naBancada: localRaw === "bancada",
     criadoEm: txt(os.criadoEm),
     acoesRapidas: acoesRapidasBancadaV4(os),
     ctaComercial: ctaComercialProducaoV4(status),
@@ -372,10 +380,19 @@ function matchBusca(row: BancadaOsV4, q: string): boolean {
 function matchFiltro(row: BancadaOsV4, filtro: FiltroBancadaV4): boolean {
   if (filtro === "todos") return true;
   if (filtro === "sem_tecnico") return row.semTecnico;
+  if (filtro === "na_bancada") return row.naBancada;
   if (filtro === "em_execucao") return row.status === "em_execucao";
   if (filtro === "aguardando_peca") return row.status === "aguardando_peca";
   if (filtro === "pronta") return row.status === "pronta";
   return true;
+}
+
+export function destinoSaidaBancadaV4(_atual?: NovaOSLocalFisicoV3 | ""): NovaOSLocalFisicoV3 {
+  return "balcao";
+}
+
+export function labelMovimentoBancadaV4(naBancada: boolean): string {
+  return naBancada ? "Sair da bancada" : "Entrar na bancada";
 }
 
 /** Filtro client-side sobre a projeção já lida. Não reconsulta o servidor. */

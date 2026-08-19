@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Operações V4 Preview — telas de módulo do rail (Visão geral, SLA, PDV).
- * Fila e Bancada têm superfícies próprias (`FilaV4`, `BancadaV4`).
+ * Operações V4 Preview — telas de módulo do rail (Visão geral, PDV, Garantias).
+ * Fila, Bancada e SLA têm superfícies próprias (`FilaV4`, `BancadaV4`, `SlaV4`).
  *
  * Cada módulo lê dados REAIS da lista de OS já carregada da loja ativa. Quando
  * não há base real, exibe um estado vazio ESPECÍFICO e honesto — nunca cliente,
@@ -11,7 +11,6 @@
 import { useMemo, useState } from "react";
 import { C, card } from "../tokens";
 import type { V4Vals } from "../use-v4-preview";
-import type { RailOsRow } from "../rails-adapter";
 import {
   filtrarGarantiasPortfolioV4,
   type GarantiaPortfolioFiltroV4,
@@ -25,7 +24,7 @@ function moduleTemDados(v: V4Vals): boolean {
     case "bancada":
       return v.producaoBancada.temProducao;
     case "sla":
-      return v.slaView.temDados;
+      return v.slaOperacional.temDados;
     case "pdv":
       return v.pdvView.temDados;
     case "garantias":
@@ -86,7 +85,7 @@ function Body({ v }: { v: V4Vals }) {
     case "bancada":
       return null;
     case "sla":
-      return <SlaBody v={v} />;
+      return null;
     case "pdv":
       return <PdvBody v={v} />;
     case "garantias":
@@ -194,56 +193,6 @@ function DashboardBody({ v }: { v: V4Vals }) {
   );
 }
 
-// ---- SLA -------------------------------------------------------------------
-
-function SlaBody({ v }: { v: V4Vals }) {
-  const s = v.slaView;
-  if (!s.temDados) {
-    return (
-      <EmptyBox
-        titulo="SLA & atrasos"
-        texto="SLA real ainda não está configurado para esta visão."
-        sub="Nenhuma OS desta loja tem prazo/SLA registrado. Quando houver, as OS atrasadas e vencendo aparecem aqui — sem inventar prazos."
-      />
-    );
-  }
-  const semPendencia = s.atrasadas.length === 0 && s.vencendo.length === 0;
-  return (
-    <div style={{ maxWidth: 760, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
-      {s.atrasadas.length > 0 && (
-        <SlaSecao titulo="Atrasadas" cor={C.dangerFg} count={s.atrasadas.length}>
-          {s.atrasadas.map((row) => (
-            <RailRow key={row.id} row={row} onClick={() => v.openOSFromRail(row.id)} />
-          ))}
-        </SlaSecao>
-      )}
-      {s.vencendo.length > 0 && (
-        <SlaSecao titulo="Vencendo (atenção)" cor={C.warnFg} count={s.vencendo.length}>
-          {s.vencendo.map((row) => (
-            <RailRow key={row.id} row={row} onClick={() => v.openOSFromRail(row.id)} />
-          ))}
-        </SlaSecao>
-      )}
-      <p style={{ margin: 0, fontSize: 12, color: C.muted }}>
-        {semPendencia ? "Nenhuma OS atrasada ou vencendo. " : ""}
-        {s.noPrazo} {s.noPrazo === 1 ? "OS no prazo" : "OS no prazo"}.
-      </p>
-    </div>
-  );
-}
-
-function SlaSecao({ titulo, cor, count, children }: { titulo: string; cor: string; count: number; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: cor }}>{titulo}</span>
-        <span style={{ fontSize: 12, color: C.muted }}>· {count}</span>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 // ---- PDV de serviço --------------------------------------------------------
 
 function PdvBody({ v }: { v: V4Vals }) {
@@ -298,29 +247,6 @@ function PdvBody({ v }: { v: V4Vals }) {
 }
 
 // ---- compartilhados --------------------------------------------------------
-
-function RailRow({ row, onClick }: { row: RailOsRow; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", border: `1px solid ${C.line}`, background: C.surface, borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}
-    >
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: C.ink, whiteSpace: "nowrap" }}>{row.codigo}</span>
-          <Pill tone={row.tone} texto={row.statusLabel} />
-        </div>
-        <div style={{ fontSize: 12.5, color: C.body, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{row.cliente}</div>
-        <div style={{ fontSize: 11.5, color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {row.aparelho}
-          {row.previsao ? ` · prev. ${row.previsao}` : ""}
-        </div>
-      </div>
-      <span style={{ color: C.subtle, fontSize: 16, flex: "none" }}>›</span>
-    </button>
-  );
-}
 
 function Pill({ tone, texto }: { tone: { bg: string; fg: string; dot: string }; texto: string }) {
   return (

@@ -84,8 +84,9 @@ export function CommandHeader({ v }: { v: V4Vals }) {
   const comercial = v.comercialHeader;
   const financeiro = v.financeiroHeader;
   const historico = v.historicoHeader;
-  const slaAlert = v.os.sla !== NI && /estourado|atenção|atras/i.test(v.os.sla);
   const producao = v.producaoAtual;
+  const slaTexto = producao?.sla.texto && producao.sla.texto !== "Sem SLA" ? producao.sla.texto : (v.os.sla !== NI ? v.os.sla : "");
+  const slaAlert = producao?.sla.situacao === "atrasada" || producao?.sla.situacao === "em_risco" || /estourado|atenção|atras/i.test(slaTexto);
   const posVendaLabel = (() => {
     if (v.posVenda.retornoAberto?.osRetornoCodigo) return `Retorno · ${v.posVenda.retornoAberto.osRetornoCodigo}`;
     if (v.posVenda.retornoAberto) return "Retorno aberto";
@@ -110,11 +111,11 @@ export function CommandHeader({ v }: { v: V4Vals }) {
         <span style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 9px", background: v.tone.bg, color: v.tone.fg, borderRadius: 999, fontSize: 11.5, fontWeight: 600, flex: "none", whiteSpace: "nowrap" }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: v.tone.dot, flex: "none" }} />{v.statusLabel}
         </span>
-        {v.os.sla !== NI && (
+        {slaTexto ? (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 4, height: 22, padding: "0 9px", background: slaAlert ? C.warnBg : C.successBg, color: slaAlert ? C.warnFg : C.successFg, borderRadius: 999, fontSize: 11.5, fontWeight: 600, flex: "none", whiteSpace: "nowrap" }}>
-            ⏱ SLA {v.os.sla}
+            ⏱ {slaTexto.startsWith("SLA") || slaTexto.startsWith("ATRASADA") ? slaTexto : `SLA ${slaTexto}`}
           </span>
-        )}
+        ) : null}
         {v.osSelected && producao ? (
           <div className={pickerStyles.wrap} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <button

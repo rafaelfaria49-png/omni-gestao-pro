@@ -11,12 +11,23 @@
 import { revalidatePath } from "next/cache";
 import type { Session } from "next-auth";
 import type { Prisma } from "@/generated/prisma";
-import type { EventoTimeline, OrdemServico, Tecnico } from "@/types/os";
+import type { EventoTimeline, ObservacaoTecnica, OrdemServico, Tecnico } from "@/types/os";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { requireEnterpriseWith } from "@/lib/auth/guard-enterprise";
 import { assertActiveStoreId } from "@/lib/operacoes/assert-active-store";
+import {
+  LOCAL_FISICO_LABEL_V3,
+  isLocalFisicoV3,
+  type NovaOSLocalFisicoV3,
+} from "./dados-basicos-model";
 import { PRIORIDADE_META_V3, isPrioridadeV3, lerPrioridadeV3, tecnicoIdFromNomeV3, type PrioridadeV3 } from "./producao-model";
+
+export interface ChecklistTecnicoItemV3 {
+  id: string;
+  label: string;
+  ok: boolean;
+}
 
 type OSPayloadFull = OrdemServico & Record<string, unknown>;
 
@@ -53,6 +64,7 @@ async function carregar(storeId: string, osId: string): Promise<{ id: string; se
 async function gravar(id: string, next: OSPayloadFull): Promise<OrdemServico> {
   await prisma.ordemServico.update({ where: { id }, data: { payload: next as unknown as Prisma.InputJsonValue } });
   revalidatePath("/dashboard/operacoes-v3");
+  revalidatePath("/dashboard/operacoes-v4-preview");
   return next as unknown as OrdemServico;
 }
 
@@ -126,5 +138,125 @@ export async function definirPrioridadeV3(storeId: string, osId: string, priorid
   );
 
   const next: OSPayloadFull = { ...payload, prioridadeV3: prioridade, timeline: appendTimeline(payload, evento), atualizadoEm: nowIso() } as OSPayloadFull;
+  return gravar(id, next);
+}
+
+function localFisicoAtual(payload: OSPayloadFull): NovaOSLocalFisicoV3 | "" {
+  const abertura = payload.aberturaV3 && typeof payload.aberturaV3 === "object" ? (payload.aberturaV3 as Record<string, unknown>) : {};
+  const recepcao = abertura.recepcao && typeof abertura.recepcao === "object" ? (abertura.recepcao as Record<string, unknown>) : {};
+  return isLocalFisicoV3(recepcao.localFisico) ? recepcao.localFisico : "";
+}
+
+/** Move a OS entre locais físicos (entrada/saída da bancada). Não muda status. */
+export async function definirLocalFisicoV3(
+  storeId: string,
+  osId: string,
+  localFisico: NovaOSLocalFisicoV3,
+): Promise<OrdemServico> {
+  if (!isLocalFisicoV3(localFisico)) throw new Error("Localização física inválida.");
+  const { id, session, payload } = await carregar(storeId, osId);
+  const operador = operadorLabel(session);
+  const anterior = localFisicoAtual(payload);
+  if (anterior === localFisico) return payload as unknown as OrdemServico;
+
+  const aberturaAtual =
+    payload.aberturaV3 && typeof payload.aberturaV3 === "object" ? (payload.aberturaV3 as Record<string, unknown>) : {};
+  const recepcaoAtual =
+    aberturaAtual.recepcao && typeof aberturaAtual.recepcao === "object" ? (aberturaAtual.recepcao as Record<string, unknown>) : {};
+
+  const deLabel = anterior ? LOCAL_FISICO_LABEL_V3[anterior] || anterior : "não informado";
+  const paraLabel = LOCAL_FISICO_LABEL_V3[localFisico] || localFisico;
+  const evento = makeEvento(
+    "observacao",
+    operador,
+    localFisico === "bancada"
+      ? `OS entrou na bancada (era ${deLabel}).`
+      : anterior === "bancada"
+        ? `OS saiu da bancada para ${paraLabel}.`
+        : `Localização alterada para ${paraLabel} (era ${deLabel}).`,
+    { evento: "local_fisico_alterado", de: anterior || null, para: localFisico },
+  );
+
+  const next: OSPayloadFull = {
+    ...payload,
+    aberturaV3: {
+      ...aberturaAtual,
+      recepcao: { ...recepcaoAtual, localFisico },
+    },
+    timeline: appendTimeline(payload, evento),
+    atualizadoEm: nowIso(),
+  } as OSPayloadFull;
+  return gravar(id, next);
+}
+
+/** Observação interna de produção — timeline auditável + lista interna. Nunca vai ao cliente. */
+export async function adicionarObservacaoInternaV3(storeId: string, osId: string, texto: string): Promise<OrdemServico> {
+  const conteudo = (texto ?? "").trim();
+  if (!conteudo) throw new Error("Informe a observação interna.");
+  if (conteudo.length > 2000) throw new Error("Observação interna deve ter no máximo 2000 caracteres.");
+
+  const { id, session, payload } = await carregar(storeId, osId);
+  const operador = operadorLabel(session);
+  const evento = makeEvento("observacao", operador, conteudo, { evento: "observacao_interna_producao", interna: true });
+
+  const nota: ObservacaoTecnica = {
+    id: evento.id,
+    autor: operador,
+    conteudo,
+    interna: true,
+    criadoEm: evento.criadoEm,
+  };
+  const observacoes = Array.isArray(payload.observacoes) ? [...(payload.observacoes as ObservacaoTecnica[]), nota] : [nota];
+
+  const aberturaAtual =
+    payload.aberturaV3 && typeof payload.aberturaV3 === "object" ? (payload.aberturaV3 as Record<string, unknown>) : {};
+  const prevInternas = typeof aberturaAtual.observacoesInternas === "string" ? aberturaAtual.observacoesInternas.trim() : "";
+  const observacoesInternas = prevInternas ? `${prevInternas}\n${conteudo}` : conteudo;
+
+  const next: OSPayloadFull = {
+    ...payload,
+    observacoes,
+    aberturaV3: { ...aberturaAtual, observacoesInternas },
+    timeline: appendTimeline(payload, evento),
+    atualizadoEm: nowIso(),
+  } as OSPayloadFull;
+  return gravar(id, next);
+}
+
+/** Checklist técnico de bancada (pós-reparo). Payload-only — sem `updateOSPayload`/Financeiro. */
+export async function salvarChecklistTecnicoV3(
+  storeId: string,
+  osId: string,
+  itens: ChecklistTecnicoItemV3[],
+): Promise<OrdemServico> {
+  const { id, session, payload } = await carregar(storeId, osId);
+  const operador = operadorLabel(session);
+  const checklistTecnico: ChecklistTecnicoItemV3[] = (Array.isArray(itens) ? itens : []).map((it, i) => ({
+    id: String(it?.id || `chk_${i}`).trim() || `chk_${i}`,
+    label: String(it?.label || "").trim() || `Item ${i + 1}`,
+    ok: !!it?.ok,
+  }));
+  if (checklistTecnico.length === 0) throw new Error("Informe ao menos um item do checklist técnico.");
+
+  const prev = Array.isArray(payload.checklistTecnico) ? (payload.checklistTecnico as ChecklistTecnicoItemV3[]) : [];
+  const allOk = checklistTecnico.every((x) => x.ok);
+  const wasAllOk = prev.length > 0 && prev.every((x) => x.ok);
+  const okCount = checklistTecnico.filter((x) => x.ok).length;
+
+  const evento = makeEvento(
+    allOk && !wasAllOk ? "checklist_finalizado" : "observacao",
+    operador,
+    allOk && !wasAllOk
+      ? `Checklist técnico concluído (${checklistTecnico.length} itens).`
+      : `Checklist técnico atualizado (${okCount}/${checklistTecnico.length}).`,
+    { evento: "checklist_tecnico_atualizado", ok: okCount, total: checklistTecnico.length, concluido: allOk },
+  );
+
+  const next: OSPayloadFull = {
+    ...payload,
+    checklistTecnico,
+    timeline: appendTimeline(payload, evento),
+    atualizadoEm: nowIso(),
+  } as OSPayloadFull;
   return gravar(id, next);
 }

@@ -7,17 +7,16 @@
  * reais (eventos de execução da timeline), peças consumidas (estoqueMovimentos)
  * e anexos de bancada — ou exibe empty state honesto. Nada de valor inventado.
  *
- * GOAL OPS-V4-EXECUCAO-REAL-007: as transições de status (iniciar/retomar
- * execução, marcar aguardando peça, marcar pronta) deixam de ser preview —
- * chamam `aplicarTransicaoStatusV3` (reuso da V3, via `use-v4-preview`) e só
- * ficam habilitadas quando a máquina única permite a partir do status real
- * (`v.execAcoes`). Checklist técnico, apontamentos, peças/estoque e observação
- * técnica permanecem read-only: não existe action V3 segura para editá-los
- * ainda (checklist técnico só grava pelo write-path legado da V2, fora do
- * escopo permitido). */
+ * GOAL OPS-V4-TECNICO-BANCADA-FILA-016: técnico, bancada, prioridade, checklist
+ * técnico e observação interna passam a gravar via actions V3 payload-only
+ * (`atribuirTecnicoV3` / `definirLocalFisicoV3` / `salvarChecklistTecnicoV3` /
+ * `adicionarObservacaoInternaV3`). Transições de status continuam na máquina V3. */
 import { useState } from "react";
+import { CHECKLIST_TECNICO_PADRAO } from "@/types/os";
 import { C, card, cardTitle, upLabel, HATCH } from "../../tokens";
 import type { V4Vals } from "../../use-v4-preview";
+import { PrioridadePickerV4, TecnicoPickerV4 } from "../ProducaoControlesV4";
+import pickerStyles from "../bancada-v4.module.css";
 
 const col3 = "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr)";
 const col2 = "minmax(0,1fr) minmax(0,1fr)";
@@ -125,21 +124,94 @@ function servicoAprovadoLabel(v: V4Vals): string {
 function ProducaoResumoExecucao({ v }: { v: V4Vals }) {
   const p = v.producaoAtual;
   const servico = servicoAprovadoLabel(v);
+  const osId = v.selectedOsId;
+  const [open, setOpen] = useState<null | "tec" | "prio">(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<boolean>) => {
+    if (busy || !osId) return false;
+    setBusy(true);
+    try {
+      return await fn();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div style={card}>
       <div style={{ ...cardTitle, marginBottom: 10 }}>Execução</div>
       <div style={{ display: "grid", gridTemplateColumns: col3, gap: 10 }}>
-        <div>
+        <div className={pickerStyles.wrap}>
           <div style={upLabel}>Responsável</div>
-          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.tecnicoNome ?? "Sem técnico"}</div>
+          <button
+            type="button"
+            disabled={!osId || busy}
+            onClick={() => setOpen(open === "tec" ? null : "tec")}
+            style={{ ...fieldBox, cursor: osId ? "pointer" : "default", width: "100%", textAlign: "left", background: "transparent" }}
+          >
+            {p?.tecnicoNome ?? "Sem técnico"}
+          </button>
+          {open === "tec" && osId ? (
+            <>
+              <button type="button" onClick={() => setOpen(null)} style={{ position: "fixed", inset: 0, border: 0, background: "transparent", zIndex: 30 }} aria-label="Fechar" />
+              <TecnicoPickerV4
+                conhecidos={v.producaoBancada.tecnicosConhecidos}
+                atualNome={p?.tecnicoNome ?? null}
+                pending={busy}
+                onAtribuir={(nome, id) => run(() => v.atribuirTecnico(osId, nome, id))}
+                onRemover={p?.semTecnico ? undefined : () => run(() => v.removerTecnico(osId))}
+                onClose={() => setOpen(null)}
+              />
+            </>
+          ) : null}
         </div>
-        <div>
+        <div className={pickerStyles.wrap}>
           <div style={upLabel}>Prioridade</div>
-          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.prioridadeLabel ?? v.prio.label}</div>
+          <button
+            type="button"
+            disabled={!osId || busy}
+            onClick={() => setOpen(open === "prio" ? null : "prio")}
+            style={{ ...fieldBox, cursor: osId ? "pointer" : "default", width: "100%", textAlign: "left", background: "transparent" }}
+          >
+            {p?.prioridadeLabel ?? v.prio.label}
+          </button>
+          {open === "prio" && osId && p ? (
+            <>
+              <button type="button" onClick={() => setOpen(null)} style={{ position: "fixed", inset: 0, border: 0, background: "transparent", zIndex: 30 }} aria-label="Fechar" />
+              <PrioridadePickerV4
+                atual={p.prioridade}
+                pending={busy}
+                onEscolher={(prio) => run(() => v.definirPrioridade(osId, prio))}
+                onClose={() => setOpen(null)}
+              />
+            </>
+          ) : null}
         </div>
         <div>
           <div style={upLabel}>Status</div>
           <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.statusLabel ?? v.statusLabel}</div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: col3, gap: 10, marginTop: 10 }}>
+        <div>
+          <div style={upLabel}>SLA</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.sla.texto ?? v.os.sla}</div>
+        </div>
+        <div>
+          <div style={upLabel}>Local</div>
+          <div style={{ fontSize: 13, fontWeight: 650, color: C.body }}>{p?.localFisico || "Não informado"}</div>
+        </div>
+        <div>
+          {osId ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void run(() => (p?.naBancada ? v.sairBancada(osId) : v.entrarBancada(osId)))}
+              style={{ ...btnGhost, marginTop: 16, cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1 }}
+            >
+              {busy ? "Salvando…" : p?.naBancada ? "Sair da bancada" : "Entrar na bancada"}
+            </button>
+          ) : null}
         </div>
       </div>
       {servico ? (
@@ -152,6 +224,89 @@ function ProducaoResumoExecucao({ v }: { v: V4Vals }) {
   );
 }
 
+function ObservacaoInternaCard({ v }: { v: V4Vals }) {
+  const osId = v.selectedOsId;
+  const [texto, setTexto] = useState("");
+  const [busy, setBusy] = useState(false);
+  const internas = v.os.observacoesInternas;
+  return (
+    <div style={card}>
+      <div style={{ ...cardTitle, marginBottom: 10 }}>Observações internas</div>
+      {internas ? <p style={{ margin: "0 0 10px", fontSize: 12.5, color: C.body, whiteSpace: "pre-wrap" }}>{internas}</p> : <div style={{ ...emptyText, marginBottom: 8 }}>Nenhuma observação interna registrada.</div>}
+      <textarea
+        value={texto}
+        onChange={(e) => setTexto(e.target.value)}
+        placeholder="Nota visível só para a equipe…"
+        rows={3}
+        disabled={!osId || busy}
+        style={{ width: "100%", minHeight: 72, resize: "vertical", border: `1px solid ${C.inputBd}`, borderRadius: 8, background: C.surface, color: C.body, padding: 8, fontSize: 12.5 }}
+      />
+      <button
+        type="button"
+        disabled={!osId || busy || !texto.trim()}
+        onClick={async () => {
+          if (!osId || busy) return;
+          setBusy(true);
+          try {
+            const ok = await v.adicionarObservacaoInterna(osId, texto);
+            if (ok) setTexto("");
+          } finally {
+            setBusy(false);
+          }
+        }}
+        style={{ ...btnPrimary, marginTop: 8, background: C.primary, cursor: !osId || busy || !texto.trim() ? "default" : "pointer", opacity: !osId || busy || !texto.trim() ? 0.7 : 1 }}
+      >
+        {busy ? "Salvando…" : "Registrar observação"}
+      </button>
+    </div>
+  );
+}
+
+function ChecklistTecnicoCard({ v }: { v: V4Vals }) {
+  const osId = v.selectedOsId;
+  const e = v.execucao;
+  const [busy, setBusy] = useState(false);
+  const itens = e.checklist.length > 0 ? e.checklist : CHECKLIST_TECNICO_PADRAO.map((d) => ({ id: d.id, label: d.label, ok: false }));
+  const persistidos = e.checklist.length > 0;
+
+  const gravar = async (next: { id: string; label: string; ok: boolean }[]) => {
+    if (!osId || busy) return;
+    setBusy(true);
+    try {
+      await v.salvarChecklistTecnico(osId, next);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={card}>
+      <div style={{ ...cardTitle, marginBottom: 11 }}>
+        Checklist técnico (pós-reparo){persistidos ? ` · ${e.checklistOk}/${e.checklist.length}` : ""}
+      </div>
+      {!persistidos ? (
+        <div style={{ ...emptyText, marginBottom: 8 }}>Nenhum checklist de execução registrado. Inicie o padrão da bancada para marcar as etapas.</div>
+      ) : null}
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {itens.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            disabled={!osId || busy}
+            onClick={() => void gravar(itens.map((it) => (it.id === t.id ? { ...it, ok: !it.ok } : it)))}
+            style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5, color: t.ok ? C.body : C.subtle, background: "transparent", border: 0, padding: 0, textAlign: "left", cursor: !osId || busy ? "default" : "pointer" }}
+          >
+            {t.ok
+              ? <span style={{ width: 18, height: 18, borderRadius: 5, background: C.success, color: C.white, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "none" }}>✓</span>
+              : <span style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${C.dashed}`, flex: "none" }} />}
+            {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ExecucaoStage({ v }: { v: V4Vals }) {
   const e = v.execucao;
 
@@ -160,6 +315,8 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <ProducaoResumoExecucao v={v} />
         <ExecAcoesCard v={v} />
+        <ChecklistTecnicoCard v={v} />
+        <ObservacaoInternaCard v={v} />
         <div style={card}>
           <div style={{ ...cardTitle, marginBottom: 6 }}>Apontamentos</div>
           <div style={emptyText}>Ainda não existe execução registrada para esta Ordem de Serviço.</div>
@@ -173,42 +330,7 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
       <ProducaoResumoExecucao v={v} />
       <ExecAcoesCard v={v} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, alignItems: "start" }}>
-        {/* Produção / Técnico (real) */}
-        <div style={card}>
-          <div style={{ ...cardTitle, marginBottom: 10 }}>⚙ Produção / Técnico</div>
-          <div style={{ ...upLabel, marginBottom: 5 }}>Técnico responsável</div>
-          {e.temTecnico ? (
-            <div style={{ ...fieldBox, marginBottom: 11 }}>{e.tecnico}</div>
-          ) : (
-            <div style={{ ...emptyText, marginBottom: 6 }}>Nenhum técnico vinculado à execução.</div>
-          )}
-          <div style={{ display: "grid", gridTemplateColumns: col3, gap: 10, borderTop: `1px solid ${C.line3}`, paddingTop: 11 }}>
-            <div><div style={upLabel}>Prioridade</div><div style={{ fontSize: 12.5, color: v.prio.fg, fontWeight: 600 }}>{v.producaoAtual?.prioridadeLabel ?? v.prio.label}</div></div>
-            <div><div style={upLabel}>Status</div><div style={{ fontSize: 12.5, color: C.body, fontWeight: 500 }}>{v.statusLabel}</div></div>
-            <div><div style={upLabel}>SLA</div><div style={{ fontSize: 12.5, color: C.body, fontWeight: 500 }}>{v.producaoAtual?.sla.texto ?? v.os.sla}</div></div>
-          </div>
-        </div>
-
-        {/* Checklist técnico (pós-reparo) — real da OS */}
-        <div style={card}>
-          <div style={{ ...cardTitle, marginBottom: 11 }}>
-            Checklist técnico (pós-reparo){e.checklist.length > 0 ? ` · ${e.checklistOk}/${e.checklist.length}` : ""}
-          </div>
-          {e.checklist.length === 0 ? (
-            <div style={emptyText}>Nenhum checklist de execução registrado.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-              {e.checklist.map((t) => (
-                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5, color: t.ok ? C.body : C.subtle }}>
-                  {t.ok
-                    ? <span style={{ width: 18, height: 18, borderRadius: 5, background: C.success, color: C.white, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "none" }}>✓</span>
-                    : <span style={{ width: 18, height: 18, borderRadius: 5, border: `1.5px solid ${C.dashed}`, flex: "none" }} />}
-                  {t.label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <ChecklistTecnicoCard v={v} />
 
         {/* Apontamentos de produção — eventos reais de execução da timeline */}
         <div style={card}>
@@ -279,6 +401,8 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
           )}
         </div>
       </div>
+
+      <ObservacaoInternaCard v={v} />
 
     </div>
   );

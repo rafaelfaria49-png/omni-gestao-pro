@@ -98,11 +98,12 @@ describe("rails-adapter — SLA", () => {
     expect(view.temDados).toBe(false);
   });
 
-  it("separa atrasadas / vencendo / no prazo", () => {
+  it("separa atrasadas / vencendo / no prazo com o reader V3", () => {
+    const now = Date.now();
     const view = buildSlaView([
-      mkOS({ id: "1", status: "em_execucao", sla: { status: "estourado" } }),
-      mkOS({ id: "2", status: "aberta", sla: { status: "atencao" } }),
-      mkOS({ id: "3", status: "aberta", sla: { status: "ok" } }),
+      mkOS({ id: "1", status: "em_execucao", sla: { status: "estourado", prazo: new Date(now - 3600000).toISOString() } }),
+      mkOS({ id: "2", status: "aberta", sla: { status: "atencao", prazo: new Date(now + 2 * 3600000).toISOString() } }),
+      mkOS({ id: "3", status: "aberta", sla: { status: "ok", prazo: new Date(now + 48 * 3600000).toISOString() } }),
     ]);
     expect(view.temDados).toBe(true);
     expect(view.atrasadas.map((r) => r.id)).toEqual(["1"]);

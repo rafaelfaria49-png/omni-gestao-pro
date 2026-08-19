@@ -54,6 +54,9 @@ vi.mock("@/lib/operacoes-v3/dados-basicos-actions", () => ({
 vi.mock("@/lib/operacoes-v3/producao-actions", () => ({
   atribuirTecnicoV3: vi.fn(async () => ({})),
   definirPrioridadeV3: vi.fn(async () => ({})),
+  definirLocalFisicoV3: vi.fn(async () => ({})),
+  adicionarObservacaoInternaV3: vi.fn(async () => ({})),
+  salvarChecklistTecnicoV3: vi.fn(async () => ({})),
 }))
 // Assinatura de retirada + auditoria de impressão (GOAL OPS-V4-DOCS-ASSINATURA-
 // TERMOS-ANEXOS-012): mesma razão dos mocks acima — ambas são "use server" (→ @/auth).
@@ -247,6 +250,10 @@ const ctx: V4DataCtx = {
   removerTecnico: async () => false,
   definirPrioridade: async () => false,
   avancarStatusBancada: async () => false,
+  entrarBancada: async () => false,
+  sairBancada: async () => false,
+  adicionarObservacaoInterna: async () => false,
+  salvarChecklistTecnico: async () => false,
   moverStatusFila: async () => false,
   modoFila: "kanban",
   setModoFila: () => {},
@@ -1722,11 +1729,7 @@ describe("OPS-V4-EXECUCAO-REAL-007 — handlers reais (runWrite) e wiring do Exe
     }
   })
 
-  it("checklist técnico e consumo de estoque continuam read-only (sem novo handler de escrita para eles)", () => {
-    // Nenhuma action V3 segura existe para checklist técnico (só via updateOSPayload
-    // legado, fora do escopo) nem para consumo de peças — por isso o stage não ganhou
-    // nenhum botão de "salvar checklist" ou "consumir peça" neste slice.
-    expect(execStage).not.toMatch(/salvarChecklistTecnico/i)
+  it("consumo de estoque continua read-only (sem handler de baixa neste stage)", () => {
     expect(execStage).not.toMatch(/consumirPeca|baixarEstoque/i)
   })
 })
@@ -3191,8 +3194,8 @@ describe("OPS-V4-PRODUCAO-TECNICO-BANCADA-003 — Bancada operacional reusa o mo
     expect(bancada).toContain("Atribuir técnico")
     expect(bancada).toContain("TecnicoPickerV4")
     expect(bancada).toContain("PrioridadePickerV4")
-    expect(bancada).toContain("Abrir OS")
-    expect(bancada).toContain("openOSFromRail")
+    expect(bancada).toContain("Abrir execução")
+    expect(bancada).toContain("openOSProducao")
     expect(bancada).toContain("FILTROS_BANCADA_V4")
     expect(bancada).toContain("OS, cliente, aparelho")
   })
@@ -3284,7 +3287,7 @@ describe("OPS-V4-FILA-KANBAN-WRITE-004 — Fila operacional reusa a máquina V3"
     expect(fila).toContain("onDrop")
     expect(fila).toContain("Mover para")
     expect(fila).toContain('e.key === "m"')
-    expect(fila).toContain("openOSFromRail")
+    expect(fila).toContain("openOSProducao")
     expect(fila).toContain("Filtrar por técnico")
     expect(fila).toContain("Filtrar por prioridade")
     expect(fila).toContain("Filtrar por SLA")
@@ -3546,5 +3549,78 @@ describe("GOAL OPS-V4-DOCUMENTOS-ASSINATURA-ANEXOS-015 — Docs reais + fotos de
     expect(orquestrador).toContain("montarLinkWaV4")
     expect(orquestrador).toContain("montarMensagemAtualizacaoOSV4")
     expect(orquestrador).toContain("adicionarFotoSaidaV3")
+  })
+})
+
+describe("OPS-V4-TECNICO-BANCADA-FILA-016 — Técnico / Bancada / Fila / SLA reais", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const shell = readFileSync(join(DIR, "OperacoesV4Preview.tsx"), "utf8")
+  const bancada = readFileSync(join(DIR, "parts", "BancadaV4.tsx"), "utf8")
+  const fila = readFileSync(join(DIR, "parts", "FilaV4.tsx"), "utf8")
+  const sla = readFileSync(join(DIR, "parts", "SlaV4.tsx"), "utf8")
+  const execucao = readFileSync(join(DIR, "parts", "stages", "ExecucaoStage.tsx"), "utf8")
+  const actions = readFileSync(join(process.cwd(), "lib", "operacoes-v3", "producao-actions.ts"), "utf8")
+
+  it("reusa actions V3 payload-only — sem schema e sem updateOSPayload", () => {
+    expect(orquestrador).toContain("definirLocalFisicoV3")
+    expect(orquestrador).toContain("adicionarObservacaoInternaV3")
+    expect(orquestrador).toContain("salvarChecklistTecnicoV3")
+    expect(orquestrador).toContain('definirLocalFisicoV3(sid, idOs, "bancada")')
+    expect(actions).toContain("revalidatePath(\"/dashboard/operacoes-v4-preview\")")
+    expect(actions).not.toMatch(/updateOSPayload\(/)
+    expect(actions).not.toContain("prisma.schema")
+  })
+
+  it("rails Fila, Bancada e SLA têm identidade própria", () => {
+    expect(shell).toContain("<SlaV4")
+    expect(shell).toContain("<BancadaV4")
+    expect(shell).toContain("<FilaV4")
+    expect(bancada).toContain("Produção da assistência hoje")
+    expect(fila).toContain("Fila da assistência")
+    expect(sla).toContain("Prazos da assistência")
+    expect(sla).toContain("Operacional")
+    expect(sla).not.toContain("Somente leitura")
+    expect(sla).not.toContain("Protótipo")
+  })
+
+  it("ações rápidas abrem a Execução e recarregam o workspace sem F5", () => {
+    expect(orquestrador).toContain('openOSFromRail(id, false, "execucao")')
+    expect(bancada).toContain("openOSProducao")
+    expect(fila).toContain("openOSProducao")
+    expect(sla).toContain("openOSProducao")
+    expect(orquestrador).toMatch(/runWriteOnOs = useCallback\([\s\S]*catch \(e\) \{\s*reloadOrdens\(\)/)
+  })
+
+  it("Workspace Execução grava técnico, bancada, checklist e observação interna", () => {
+    expect(execucao).toContain("v.entrarBancada")
+    expect(execucao).toContain("v.sairBancada")
+    expect(execucao).toContain("v.adicionarObservacaoInterna")
+    expect(execucao).toContain("v.salvarChecklistTecnico")
+    expect(execucao).toContain("CHECKLIST_TECNICO_PADRAO")
+    expect(execucao).toContain("TecnicoPickerV4")
+  })
+
+  it("projeção SLA no vals usa lerSlaV3 — prazo real atrasa mesmo sem status legado", () => {
+    const now = Date.now()
+    const v = buildVals(
+      makeState({ novaOS: false }),
+      () => {},
+      () => {},
+      {
+        ...ctx,
+        ordens: [
+          mkOS({
+            id: "atrasada",
+            status: "em_execucao",
+            codigo: "OS-A",
+            sla: { prazo: new Date(now - 2 * 3600000).toISOString() },
+          }),
+          mkOS({ id: "entregue", status: "entregue", codigo: "OS-E", sla: { status: "estourado" } }),
+        ],
+      },
+    )
+    expect(v.slaOperacional.temDados).toBe(true)
+    expect(v.slaOperacional.atrasadas.map((r) => r.osId)).toEqual(["atrasada"])
+    expect(v.slaOperacional.lista.map((r) => r.osId)).not.toContain("entregue")
   })
 })

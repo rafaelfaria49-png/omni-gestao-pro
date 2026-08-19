@@ -109,6 +109,32 @@ describe("sem técnico × bucket de técnico", () => {
   });
 });
 
+describe("entrada e saída da bancada", () => {
+  it("local físico bancada marca naBancada; demais não", () => {
+    const na = projetarOsProducaoV4(
+      os({
+        id: "1",
+        operacaoStatusV3: "em_execucao",
+        aberturaV3: { recepcao: { localFisico: "bancada" } },
+      }),
+      NOW,
+    );
+    const fora = projetarOsProducaoV4(
+      os({
+        id: "2",
+        operacaoStatusV3: "em_execucao",
+        aberturaV3: { recepcao: { localFisico: "balcao" } },
+      }),
+      NOW,
+    );
+    expect(na.naBancada).toBe(true);
+    expect(na.localFisicoId).toBe("bancada");
+    expect(na.localFisico).toBe("Bancada");
+    expect(fora.naBancada).toBe(false);
+    expect(fora.localFisicoId).toBe("balcao");
+  });
+});
+
 describe("prioridade e SLA", () => {
   it("interpreta prioridade V3 e o fallback V2", () => {
     expect(projetarOsProducaoV4(os({ prioridadeV3: "urgente" }), NOW).prioridade).toBe("urgente");

@@ -14,6 +14,7 @@
  */
 import type { OrdemServico } from "@/types/os";
 import type { FinancialProjectionOSV4, FinancialStatusV4 } from "@/lib/operacoes-v4/financial-projection";
+import { isAtrasadaV3, lerSlaV3 } from "@/lib/operacoes-v3/producao-model";
 import type { V4Status, V4Tone } from "./types";
 import { STATUS_LABEL, TONE } from "./mock-data";
 import { aparelhoLabel, fmtData, resolverStatusV4 } from "./os-adapter";
@@ -73,6 +74,8 @@ function ordemEntrada(a: OrdemServico, b: OrdemServico): number {
 }
 
 function temSlaReal(os: OrdemServico): boolean {
+  const situacao = lerSlaV3(os).situacao;
+  if (situacao !== "sem_prazo") return true;
   return !!os.sla && (!!os.sla.prazo || !!os.sla.status);
 }
 
@@ -113,7 +116,7 @@ export function buildDashboardResumo(ordens: OrdemServico[]): DashboardResumo {
     ativos: ordens.filter(isAtivo).length,
     buckets,
     temSla: ordens.some(temSlaReal),
-    atrasadas: ordens.filter((o) => o.sla?.status === "estourado").length,
+    atrasadas: ordens.filter((o) => isAtrasadaV3(o)).length,
   };
 }
 
@@ -170,9 +173,9 @@ export function buildSlaView(ordens: OrdemServico[]): SlaView {
   const ativos = comSla.filter(isAtivo);
   return {
     temDados: true,
-    atrasadas: ativos.filter((o) => o.sla?.status === "estourado").slice().sort(ordemEntrada).map(toRow),
-    vencendo: ativos.filter((o) => o.sla?.status === "atencao").slice().sort(ordemEntrada).map(toRow),
-    noPrazo: ativos.filter((o) => o.sla?.status === "ok").length,
+    atrasadas: ativos.filter((o) => lerSlaV3(o).situacao === "atrasada").slice().sort(ordemEntrada).map(toRow),
+    vencendo: ativos.filter((o) => lerSlaV3(o).situacao === "em_risco").slice().sort(ordemEntrada).map(toRow),
+    noPrazo: ativos.filter((o) => lerSlaV3(o).situacao === "no_prazo").length,
   };
 }
 

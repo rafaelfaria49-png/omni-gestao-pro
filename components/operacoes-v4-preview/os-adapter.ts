@@ -1213,6 +1213,13 @@ const EXEC_EVENTO_TIPOS = new Set<EventoTipo>([
   "checklist_finalizado",
 ]);
 
+const EXEC_OBSERVACAO_EVENTOS = new Set([
+  "prioridade_alterada",
+  "local_fisico_alterado",
+  "observacao_interna_producao",
+  "checklist_tecnico_atualizado",
+]);
+
 export interface V4ExecChecklistItem {
   id: string;
   label: string;
@@ -1268,7 +1275,11 @@ export function adaptExecucao(os: OrdemServico): V4ExecucaoView {
 
   const tl = Array.isArray(os.timeline) ? os.timeline : [];
   const apontamentos = tl
-    .filter((ev: EventoTimeline) => EXEC_EVENTO_TIPOS.has(ev.tipo))
+    .filter((ev: EventoTimeline) => {
+      if (EXEC_EVENTO_TIPOS.has(ev.tipo)) return true;
+      const metaEvento = (ev.metadata as { evento?: unknown } | undefined)?.evento;
+      return ev.tipo === "observacao" && typeof metaEvento === "string" && EXEC_OBSERVACAO_EVENTOS.has(metaEvento);
+    })
     .slice()
     .sort((a, b) => new Date(b.criadoEm).getTime() - new Date(a.criadoEm).getTime())
     .map((ev: EventoTimeline): V4HistEvento => ({

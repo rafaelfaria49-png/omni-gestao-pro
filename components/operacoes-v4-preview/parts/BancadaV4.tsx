@@ -13,7 +13,7 @@ import type { V4Vals } from "../use-v4-preview";
 import { PrioridadePickerV4, TecnicoPickerV4 } from "./ProducaoControlesV4";
 import styles from "./bancada-v4.module.css";
 
-type BusyKind = "tecnico" | "prioridade" | "status";
+type BusyKind = "tecnico" | "prioridade" | "status" | "local";
 
 function slaPill(situacao: BancadaOsV4["sla"]["situacao"]): string {
   if (situacao === "atrasada") return styles.pillDanger;
@@ -139,6 +139,17 @@ function OsRow({
           </button>
         ))}
 
+        <button
+          type="button"
+          className={row.naBancada ? styles.btnGhost : styles.btnPri}
+          disabled={locked}
+          onClick={() =>
+            void onBusy(row.osId, "local", () => (row.naBancada ? v.sairBancada(row.osId) : v.entrarBancada(row.osId)))
+          }
+        >
+          {locked && busy?.kind === "local" ? "Salvando…" : row.naBancada ? "Sair da bancada" : "Entrar na bancada"}
+        </button>
+
         {row.ctaComercial ? (
           <button
             type="button"
@@ -150,8 +161,8 @@ function OsRow({
           </button>
         ) : null}
 
-        <button type="button" className={styles.btnGhost} onClick={() => v.openOSFromRail(row.osId)}>
-          Abrir OS
+        <button type="button" className={styles.btnGhost} onClick={() => v.openOSProducao(row.osId)}>
+          Abrir execução
         </button>
       </div>
       {erro ? <p className={styles.err} style={{ gridColumn: "1 / -1" }}>{erro}</p> : null}
@@ -190,7 +201,9 @@ export function BancadaV4({ v }: { v: V4Vals }) {
               ? "Não foi possível atribuir o técnico. Tente novamente."
               : kind === "prioridade"
                 ? "Não foi possível alterar a prioridade. Tente novamente."
-                : "Não foi possível avançar o status. Tente novamente.",
+                : kind === "local"
+                  ? "Não foi possível mover a OS na bancada. Tente novamente."
+                  : "Não foi possível avançar o status. Tente novamente.",
         }));
       }
       return ok;

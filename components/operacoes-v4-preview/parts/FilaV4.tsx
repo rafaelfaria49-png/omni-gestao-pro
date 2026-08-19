@@ -17,7 +17,9 @@ import {
   type FiltrosFilaV4,
 } from "@/lib/operacoes-v4/fila-v4";
 import type { V4Vals } from "../use-v4-preview";
+import { TecnicoPickerV4 } from "./ProducaoControlesV4";
 import styles from "./fila-v4.module.css";
+import pickerStyles from "./bancada-v4.module.css";
 
 function prioClass(p: PrioridadeV3): string {
   if (p === "urgente") return styles.prioUrgente;
@@ -91,18 +93,24 @@ function MoverMenu({
 
 function TicketActions({
   row,
+  v,
   locked,
   menuAberto,
+  pickerTec,
   setMenu,
   onMover,
   onAbrir,
+  onAtribuir,
 }: {
   row: FilaOsV4;
+  v: V4Vals;
   locked: boolean;
   menuAberto: boolean;
+  pickerTec: boolean;
   setMenu: (id: string | null) => void;
   onMover: (to: OperacaoStatusV3) => void;
   onAbrir: () => void;
+  onAtribuir: (nome: string, id?: string) => Promise<boolean>;
 }) {
   return (
     <div
@@ -110,6 +118,29 @@ function TicketActions({
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
+      <div className={pickerStyles.wrap}>
+        <button
+          type="button"
+          className={styles.btnGhost}
+          disabled={locked}
+          onClick={() => setMenu(pickerTec ? null : `${row.osId}:tec`)}
+        >
+          {row.semTecnico ? "Atribuir" : "Técnico"}
+        </button>
+        {pickerTec ? (
+          <>
+            <button type="button" onClick={() => setMenu(null)} style={{ position: "fixed", inset: 0, border: 0, background: "transparent", zIndex: 30 }} aria-label="Fechar" />
+            <TecnicoPickerV4
+              conhecidos={v.filaOperacional.tecnicosConhecidos}
+              atualNome={row.tecnicoNome}
+              pending={locked}
+              onAtribuir={onAtribuir}
+              onRemover={row.semTecnico ? undefined : () => v.removerTecnico(row.osId)}
+              onClose={() => setMenu(null)}
+            />
+          </>
+        ) : null}
+      </div>
       <div className={styles.wrap}>
         <button
           type="button"
@@ -141,7 +172,7 @@ function TicketActions({
         ) : null}
       </div>
       <button type="button" className={styles.btnPri} onClick={onAbrir}>
-        Abrir OS
+        Abrir execução
       </button>
     </div>
   );
@@ -382,11 +413,14 @@ export function FilaV4({ v }: { v: V4Vals }) {
                           <td>
                             <TicketActions
                               row={row}
+                              v={v}
                               locked={locked}
                               menuAberto={menu === row.osId}
+                              pickerTec={menu === `${row.osId}:tec`}
                               setMenu={setMenu}
                               onMover={(to) => void mover(row.osId, to)}
-                              onAbrir={() => v.openOSFromRail(row.osId)}
+                              onAbrir={() => v.openOSProducao(row.osId)}
+                              onAtribuir={(nome, id) => v.atribuirTecnico(row.osId, nome, id)}
                             />
                             {erros[row.osId] ? <p className={styles.err}>{erros[row.osId]}</p> : null}
                           </td>
@@ -461,12 +495,12 @@ export function FilaV4({ v }: { v: V4Vals }) {
                                         skipClick.current = false;
                                         return;
                                       }
-                                      v.openOSFromRail(row.osId);
+                                      v.openOSProducao(row.osId);
                                     }}
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter") {
                                         e.preventDefault();
-                                        v.openOSFromRail(row.osId);
+                                        v.openOSProducao(row.osId);
                                       }
                                       if (e.key === "m" || e.key === "M") {
                                         e.preventDefault();
@@ -478,11 +512,14 @@ export function FilaV4({ v }: { v: V4Vals }) {
                                     <TicketBody row={row} />
                                     <TicketActions
                                       row={row}
+                                      v={v}
                                       locked={locked}
                                       menuAberto={menu === row.osId}
+                                      pickerTec={menu === `${row.osId}:tec`}
                                       setMenu={setMenu}
                                       onMover={(to) => void mover(row.osId, to)}
-                                      onAbrir={() => v.openOSFromRail(row.osId)}
+                                      onAbrir={() => v.openOSProducao(row.osId)}
+                                      onAtribuir={(nome, id) => v.atribuirTecnico(row.osId, nome, id)}
                                     />
                                     {erros[row.osId] ? <p className={styles.err}>{erros[row.osId]}</p> : null}
                                   </article>

@@ -41,15 +41,24 @@ import {
   recusarOrcamentoV3,
 } from "@/lib/operacoes-v3/orcamento-actions";
 import { aplicarTransicaoStatusV3 } from "@/lib/operacoes-v3/status-actions";
-import { atribuirTecnicoV3, definirPrioridadeV3 } from "@/lib/operacoes-v3/producao-actions";
+import {
+  adicionarObservacaoInternaV3,
+  atribuirTecnicoV3,
+  definirLocalFisicoV3,
+  definirPrioridadeV3,
+  salvarChecklistTecnicoV3,
+  type ChecklistTecnicoItemV3,
+} from "@/lib/operacoes-v3/producao-actions";
 import { PRIORIDADE_META_V3, type PrioridadeV3 } from "@/lib/operacoes-v3/producao-model";
 import {
   buildProducaoBancadaV4,
+  destinoSaidaBancadaV4,
   labelAcaoBancadaV4,
   podeAvancarStatusBancadaV4,
   podeMutarProducaoV4,
   projetarOsProducaoV4,
 } from "@/lib/operacoes-v4/producao-v4";
+import { buildSlaOperacionalV4 } from "@/lib/operacoes-v4/sla-v4";
 import {
   buildFilaOperacionalV4,
   FILA_VIEW_PREF_KEY,
@@ -278,6 +287,10 @@ export interface V4DataCtx {
   removerTecnico: (osId: string) => Promise<boolean>;
   definirPrioridade: (osId: string, prioridade: PrioridadeV3) => Promise<boolean>;
   avancarStatusBancada: (osId: string, to: OperacaoStatusV3) => Promise<boolean>;
+  entrarBancada: (osId: string) => Promise<boolean>;
+  sairBancada: (osId: string) => Promise<boolean>;
+  adicionarObservacaoInterna: (osId: string, texto: string) => Promise<boolean>;
+  salvarChecklistTecnico: (osId: string, itens: ChecklistTecnicoItemV3[]) => Promise<boolean>;
   // ---- Fila / Kanban (GOAL OPS-V4-FILA-KANBAN-WRITE-004) ----
   // Mesma action V3; o recorte de destinos (sem recebida/entregue/cancelada) vive no adapter.
   moverStatusFila: (osId: string, to: OperacaoStatusV3) => Promise<boolean>;
@@ -900,6 +913,7 @@ export function buildVals(
   const producaoBancada = buildProducaoBancadaV4(ctx.ordens);
   const producaoAtual = ctx.realOS ? projetarOsProducaoV4(ctx.realOS) : null;
   const slaView = buildSlaView(ctx.ordens);
+  const slaOperacional = buildSlaOperacionalV4(ctx.ordens);
   const pdvView = buildPdvView(ctx.ordens, ctx.financialProjectionsByOsId);
 
   // Seleciona a OS REAL (identidade/financeiro reais no workspace). Único caminho de
@@ -936,6 +950,8 @@ export function buildVals(
     const temSaldoAberto = fromPdv && (projection?.financialStatus === "OPEN" || projection?.financialStatus === "PARTIAL");
     selectOS(o, stageOverride ?? (temSaldoAberto ? "financeiro" : undefined));
   };
+  /** Fila / Bancada / SLA abrem o workspace na Execução — identidade de produção, não o stage genérico. */
+  const openOSProducao = (id: string) => openOSFromRail(id, false, "execucao");
 
   // Nova OS criada (REAL) pelo modal → fecha o modal, abre a OS recém-criada no workspace
   // e recarrega a lista. Recebe apenas o id resultante; a identidade/financeiro são
@@ -1385,6 +1401,7 @@ export function buildVals(
     selectedOsId: st.selectedOsId,
     selectOS,
     openOSFromRail,
+    openOSProducao,
     goToOSSearch,
     clearSelection: () => update({ selectedOsId: null, focus: false, left: true }),
     // lista real para o seletor
@@ -1407,10 +1424,15 @@ export function buildVals(
     removerTecnico: ctx.removerTecnico,
     definirPrioridade: ctx.definirPrioridade,
     avancarStatusBancada: ctx.avancarStatusBancada,
+    entrarBancada: ctx.entrarBancada,
+    sairBancada: ctx.sairBancada,
+    adicionarObservacaoInterna: ctx.adicionarObservacaoInterna,
+    salvarChecklistTecnico: ctx.salvarChecklistTecnico,
     moverStatusFila: ctx.moverStatusFila,
     modoFila: ctx.modoFila,
     setModoFila: ctx.setModoFila,
     slaView,
+    slaOperacional,
     pdvView,
     pdvFinancialLoading: ctx.financialRailLoading,
     pdvFinancialError: ctx.financialRailError,
@@ -1573,6 +1595,11 @@ export function useV4Preview(): V4Vals {
         notify(okMsg);
         return true;
       } catch (e) {
+        reloadOrdens();
+        if ((selectedOsId ?? "").trim() === osId) {
+          reloadDetail();
+          reloadFinancial();
+        }
         notify(e instanceof Error ? e.message : "Não foi possível concluir a ação.");
         return false;
       }
@@ -1977,6 +2004,38 @@ export function useV4Preview(): V4Vals {
       ),
     [runWriteOnOs],
   );
+  const entrarBancada = useCallback(
+    (osId: string) => runWriteOnOs(osId, (sid, idOs) => definirLocalFisicoV3(sid, idOs, "bancada"), "OS entrou na bancada."),
+    [runWriteOnOs],
+  );
+  const sairBancada = useCallback(
+    (osId: string) => {
+      const alvo = osDaLista(osId);
+      const local = alvo ? projetarOsProducaoV4(alvo).localFisicoId : "";
+      return runWriteOnOs(
+        osId,
+        (sid, idOs) => definirLocalFisicoV3(sid, idOs, destinoSaidaBancadaV4(local)),
+        "OS saiu da bancada.",
+      );
+    },
+    [runWriteOnOs, osDaLista],
+  );
+  const adicionarObservacaoInterna = useCallback(
+    (osId: string, texto: string) => {
+      const body = texto.trim();
+      if (!body) {
+        notify("Informe a observação interna.");
+        return Promise.resolve(false);
+      }
+      return runWriteOnOs(osId, (sid, idOs) => adicionarObservacaoInternaV3(sid, idOs, body), "Observação interna registrada.");
+    },
+    [runWriteOnOs, notify],
+  );
+  const salvarChecklistTecnico = useCallback(
+    (osId: string, itens: ChecklistTecnicoItemV3[]) =>
+      runWriteOnOs(osId, (sid, idOs) => salvarChecklistTecnicoV3(sid, idOs, itens), "Checklist técnico salvo."),
+    [runWriteOnOs],
+  );
   const avancarStatusBancada = useCallback(
     (osId: string, to: OperacaoStatusV3) => {
       const alvo = osDaLista(osId);
@@ -2096,6 +2155,10 @@ export function useV4Preview(): V4Vals {
       removerTecnico,
       definirPrioridade,
       avancarStatusBancada,
+      entrarBancada,
+      sairBancada,
+      adicionarObservacaoInterna,
+      salvarChecklistTecnico,
       moverStatusFila,
       modoFila,
       setModoFila,
@@ -2153,6 +2216,10 @@ export function useV4Preview(): V4Vals {
       removerTecnico,
       definirPrioridade,
       avancarStatusBancada,
+      entrarBancada,
+      sairBancada,
+      adicionarObservacaoInterna,
+      salvarChecklistTecnico,
       moverStatusFila,
       modoFila,
       setModoFila,
