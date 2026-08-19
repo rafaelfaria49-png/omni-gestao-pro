@@ -207,6 +207,8 @@ export interface VinculoRetornoV3 {
   retornoId?: string;
   motivo?: string;
   garantiaAtivaNaAbertura?: boolean;
+  finalizadoEm?: string;
+  finalizadoPorEntrega?: boolean;
 }
 
 export function lerVinculoRetornoV3(os: OrdemServico | null | undefined): VinculoRetornoV3 | undefined {
@@ -221,6 +223,8 @@ export function lerVinculoRetornoV3(os: OrdemServico | null | undefined): Vincul
     retornoId: s(o.retornoId) || undefined,
     motivo: s(o.motivo) || undefined,
     garantiaAtivaNaAbertura: typeof o.garantiaAtivaNaAbertura === "boolean" ? o.garantiaAtivaNaAbertura : undefined,
+    finalizadoEm: s(o.finalizadoEm) || undefined,
+    finalizadoPorEntrega: o.finalizadoPorEntrega === true ? true : undefined,
   };
 }
 

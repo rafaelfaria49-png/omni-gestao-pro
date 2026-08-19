@@ -3,8 +3,8 @@ title: Roadmap Fiscal (NFC-e/SAT/NF-e) — OmniGestão Pro
 hub: fiscal
 status: vivo
 owner: produto/arquitetura
-last_update: 2026-08-03
-sprint_atual: GOAL-016C integrado na main (PR #33) · GOAL-016D planejado, revisado em cruzado (parecer B) e NÃO iniciado; zero homologação, zero produção
+last_update: 2026-08-19
+sprint_atual: GOAL-016C integrado na main (PR #33) · GOAL-016D planejado, não iniciado · FISCAL-029 (SAT×NFC-e SP) documental — ADR-0022 proposta; H-9/H-10 e #73 intocados
 ---
 
 # 🧾 Roadmap Fiscal — OmniGestão Pro
@@ -17,6 +17,19 @@ sprint_atual: GOAL-016C integrado na main (PR #33) · GOAL-016D planejado, revis
 > **Base factual:** `docs/audits/AUDITORIA_PRE_FISCAL_READINESS_v01.md`,
 > `docs/audits/AUDITORIA_FISCAL_GAPS_v01.md`. **Governa:**
 > `docs/governance/MASTER_FISCAL_EXECUTION_PLAN.md`.
+
+## Atualização regulatória — GOAL-029 / ADR-0022 (2026-08-19)
+
+- **SAT/CF-e-SAT em SP:** emissão **vedada desde 01/01/2026** (Portaria CAT 147/2012 art. 34-D,
+  Portaria SRE 79/2024; Comunicado SRE 06/2025; RC 32089/2025 e RC 33856/2026; portal SAT:
+  erro 1001).
+- **NFC-e modelo 65:** documento de varejo paulista **obrigatório** desde a mesma data
+  (portal SEFAZ-SP; Portaria SRE 40/2024 + Ajuste SINIEF 19/16). Piloto ADR-0016 inalterado.
+- **`SAT_LOCAL`:** **reservado/descartável** — sem implementação; fora do roadmap ativo.
+  Enum do schema **não** é alterado neste GOAL (área protegida).
+- Dossiê: [`FISCAL_SAT_NFCE_SP_REGULATORY_DOSSIER_029.md`](../fiscal/FISCAL_SAT_NFCE_SP_REGULATORY_DOSSIER_029.md).
+  ADR: [`ADR-0022`](../decisions/ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md) (status
+  **proposta** até aceite humano). **Zero código.** H-9/H-10 e PR #73 intocados.
 
 ## Atualização arquitetural — GOAL-009 (2026-07-22)
 
@@ -110,9 +123,10 @@ técnica só começa após a integração na `main`. Fonte:
 
 ## 1. Visão
 
-Emitir documentos fiscais (NFC-e primeiro; SAT/NF-e depois) de forma **provider-agnóstica,
-multi-loja e satélite** — sem nunca travar o balcão — transformando cada venda do PDV em
-documento fiscal válido na SEFAZ.
+Emitir documentos fiscais (**NFC-e primeiro**; NF-e modelo 55 depois, se o mix exigir) de forma
+**provider-agnóstica, multi-loja e satélite** — sem nunca travar o balcão — transformando cada
+venda do PDV em documento fiscal válido na SEFAZ. **SAT/CF-e-SAT não entra no roadmap ativo**
+para SP (ADR-0022).
 
 ## 2. Objetivos
 
@@ -168,7 +182,8 @@ sem caller no fluxo de venda e o banco fiscal está vazio.
 2. DANFCE com QR-Code.
 3. Cancelamento + inutilização.
 4. Contingência offline.
-5. NF-e modelo 55 (B2B) e SAT (SP).
+5. NF-e modelo 55 (B2B), se o mix do piloto exigir. **SAT/CF-e-SAT (SP) fora do roadmap ativo**
+   (ADR-0022 · dossiê FISCAL-029).
 6. Integração contábil (exportação de XML/relatórios).
 7. Painel de observabilidade fiscal (fila/falhas/cStat).
 
@@ -485,6 +500,8 @@ demais lojas, UFs e qualquer produção permanecem fail-closed.
 - Plano do primeiro adapter SEFAZ (GOAL-016D, **planejado — não iniciado**):
   `docs/fiscal/FISCAL_GOAL_016D_SEFAZ_ADAPTER_PLAN.md`.
 - Parâmetros oficiais SEFAZ-SP (GOAL-015): `docs/fiscal/FISCAL_SEFAZ_DOSSIE_UF_001.md`.
+- Decisão SAT×NFC-e/SP (GOAL-029): `docs/decisions/ADR-0022-sat-fora-do-roadmap-nfce-principal-sp.md`
+  + `docs/fiscal/FISCAL_SAT_NFCE_SP_REGULATORY_DOSSIER_029.md`.
 - Decisões do GOAL-009: `docs/decisions/ADR-0014-supabase-vault-backend-kms-fiscal.md`,
   `docs/decisions/ADR-0015-sefaz-direta-homologacao-inicial.md` e
   `docs/decisions/ADR-0016-piloto-homologacao-sp-matriz-rafacell.md`.
