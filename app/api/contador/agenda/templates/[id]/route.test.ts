@@ -6,24 +6,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PermissaoTransicaoError } from "@/lib/contador/status/matriz"
 import { TemplateNaoEncontradoError } from "@/lib/contador/agenda/erros"
 
-const authMock = vi.fn()
-const requireContadorScope = vi.fn()
-const resolverCapacidadesContador = vi.fn()
-const atualizarTemplate = vi.fn()
-const removerTemplate = vi.fn()
-const criarRepoAgenda = vi.fn(() => ({ tag: "repo" }))
-
-vi.mock("@/auth", () => ({ auth: (...args: unknown[]) => authMock(...args) }))
-vi.mock("@/lib/contador/scope", () => ({
-  requireContadorScope: (...args: unknown[]) => requireContadorScope(...args),
-}))
-vi.mock("@/lib/contador/status/permissoes", () => ({
-  resolverCapacidadesContador: (...args: unknown[]) => resolverCapacidadesContador(...args),
-}))
+vi.mock("@/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/lib/contador/scope", () => ({ requireContadorScope: vi.fn() }))
+vi.mock("@/lib/contador/status/permissoes", () => ({ resolverCapacidadesContador: vi.fn() }))
 vi.mock("@/lib/contador/agenda", () => ({
-  criarRepoAgenda: (...args: unknown[]) => criarRepoAgenda(...args),
-  atualizarTemplate: (...args: unknown[]) => atualizarTemplate(...args),
-  removerTemplate: (...args: unknown[]) => removerTemplate(...args),
+  criarRepoAgenda: vi.fn(() => ({ tag: "repo" })),
+  atualizarTemplate: vi.fn(),
+  removerTemplate: vi.fn(),
 }))
 vi.mock("@/lib/contador/documentos/http", () => ({
   respostaFalhaEscopo: (escopo: { motivo: string }) =>
@@ -31,6 +20,10 @@ vi.mock("@/lib/contador/documentos/http", () => ({
   logEvento: vi.fn(),
 }))
 
+import { auth } from "@/auth"
+import { requireContadorScope } from "@/lib/contador/scope"
+import { resolverCapacidadesContador } from "@/lib/contador/status/permissoes"
+import { atualizarTemplate, removerTemplate } from "@/lib/contador/agenda"
 import { DELETE, PATCH } from "./route"
 
 const SCOPE_OK = { ok: true as const, storeId: "loja-1", userId: "u1" }
@@ -48,22 +41,22 @@ function req(method: string, body?: unknown, query = "") {
 }
 
 beforeEach(() => {
-  authMock.mockReset().mockResolvedValue({ user: { id: "u1" } })
-  requireContadorScope.mockReset().mockResolvedValue(SCOPE_OK)
-  resolverCapacidadesContador.mockReset().mockReturnValue(CAP_ALTO)
-  atualizarTemplate.mockReset().mockImplementation(async (_escopo, _id, _entrada, cap: { podeConferir?: boolean }) => {
-    if (!cap?.podeConferir) throw new PermissaoTransicaoError("resolver")
-    return TPL
+  vi.mocked(auth).mockReset().mockResolvedValue({ user: { id: "u1" } } as never)
+  vi.mocked(requireContadorScope).mockReset().mockResolvedValue(SCOPE_OK as never)
+  vi.mocked(resolverCapacidadesContador).mockReset().mockReturnValue(CAP_ALTO)
+  vi.mocked(atualizarTemplate).mockReset().mockImplementation(async (_escopo, _id, _entrada, cap) => {
+    if (!cap.podeConferir) throw new PermissaoTransicaoError("resolver")
+    return TPL as never
   })
-  removerTemplate.mockReset().mockImplementation(async (_escopo, _id, cap: { podeConferir?: boolean }) => {
-    if (!cap?.podeConferir) throw new PermissaoTransicaoError("resolver")
+  vi.mocked(removerTemplate).mockReset().mockImplementation(async (_escopo, _id, cap) => {
+    if (!cap.podeConferir) throw new PermissaoTransicaoError("resolver")
     return { inativado: false }
   })
 })
 
 describe("PATCH /api/contador/agenda/templates/:id", () => {
   it("HUB sem podeConferir → 403", async () => {
-    resolverCapacidadesContador.mockReturnValue(CAP_BAIXO)
+    vi.mocked(resolverCapacidadesContador).mockReturnValue(CAP_BAIXO)
     const res = await PATCH(req("PATCH", { titulo: "hack" }), CTX)
     expect(res.status).toBe(403)
     const json = (await res.json()) as { ok: boolean; mensagem: string }
@@ -75,11 +68,11 @@ describe("PATCH /api/contador/agenda/templates/:id", () => {
   it("financeiro/admin → 200", async () => {
     const res = await PATCH(req("PATCH", { titulo: "DAS-2" }), CTX)
     expect(res.status).toBe(200)
-    expect(atualizarTemplate.mock.calls[0][3]).toMatchObject({ podeConferir: true })
+    expect(vi.mocked(atualizarTemplate).mock.calls[0][3]).toMatchObject({ podeConferir: true })
   })
 
   it("cross-store fail-closed → 404", async () => {
-    atualizarTemplate.mockRejectedValue(new TemplateNaoEncontradoError())
+    vi.mocked(atualizarTemplate).mockRejectedValue(new TemplateNaoEncontradoError())
     const res = await PATCH(req("PATCH", { titulo: "hack" }), CTX)
     expect(res.status).toBe(404)
     const json = (await res.json()) as { ok: boolean; mensagem: string }
@@ -90,7 +83,7 @@ describe("PATCH /api/contador/agenda/templates/:id", () => {
 
 describe("DELETE /api/contador/agenda/templates/:id", () => {
   it("HUB sem podeConferir → 403", async () => {
-    resolverCapacidadesContador.mockReturnValue(CAP_BAIXO)
+    vi.mocked(resolverCapacidadesContador).mockReturnValue(CAP_BAIXO)
     const res = await DELETE(req("DELETE"), CTX)
     expect(res.status).toBe(403)
   })
@@ -98,11 +91,11 @@ describe("DELETE /api/contador/agenda/templates/:id", () => {
   it("financeiro/admin → 200", async () => {
     const res = await DELETE(req("DELETE"), CTX)
     expect(res.status).toBe(200)
-    expect(removerTemplate.mock.calls[0][2]).toMatchObject({ podeConferir: true })
+    expect(vi.mocked(removerTemplate).mock.calls[0][2]).toMatchObject({ podeConferir: true })
   })
 
   it("cross-store fail-closed → 404", async () => {
-    removerTemplate.mockRejectedValue(new TemplateNaoEncontradoError())
+    vi.mocked(removerTemplate).mockRejectedValue(new TemplateNaoEncontradoError())
     const res = await DELETE(req("DELETE"), CTX)
     expect(res.status).toBe(404)
   })

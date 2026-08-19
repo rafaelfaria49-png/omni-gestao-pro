@@ -5,24 +5,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PermissaoTransicaoError } from "@/lib/contador/status/matriz"
 
-const authMock = vi.fn()
-const requireContadorScope = vi.fn()
-const resolverCapacidadesContador = vi.fn()
-const listarTemplates = vi.fn()
-const criarTemplate = vi.fn()
-const criarRepoAgenda = vi.fn(() => ({ tag: "repo" }))
-
-vi.mock("@/auth", () => ({ auth: (...args: unknown[]) => authMock(...args) }))
-vi.mock("@/lib/contador/scope", () => ({
-  requireContadorScope: (...args: unknown[]) => requireContadorScope(...args),
-}))
-vi.mock("@/lib/contador/status/permissoes", () => ({
-  resolverCapacidadesContador: (...args: unknown[]) => resolverCapacidadesContador(...args),
-}))
+vi.mock("@/auth", () => ({ auth: vi.fn() }))
+vi.mock("@/lib/contador/scope", () => ({ requireContadorScope: vi.fn() }))
+vi.mock("@/lib/contador/status/permissoes", () => ({ resolverCapacidadesContador: vi.fn() }))
 vi.mock("@/lib/contador/agenda", () => ({
-  criarRepoAgenda: (...args: unknown[]) => criarRepoAgenda(...args),
-  listarTemplates: (...args: unknown[]) => listarTemplates(...args),
-  criarTemplate: (...args: unknown[]) => criarTemplate(...args),
+  criarRepoAgenda: vi.fn(() => ({ tag: "repo" })),
+  listarTemplates: vi.fn(),
+  criarTemplate: vi.fn(),
 }))
 vi.mock("@/lib/contador/documentos/http", () => ({
   respostaFalhaEscopo: (escopo: { motivo: string }) =>
@@ -30,6 +19,10 @@ vi.mock("@/lib/contador/documentos/http", () => ({
   logEvento: vi.fn(),
 }))
 
+import { auth } from "@/auth"
+import { requireContadorScope } from "@/lib/contador/scope"
+import { resolverCapacidadesContador } from "@/lib/contador/status/permissoes"
+import { criarTemplate, listarTemplates } from "@/lib/contador/agenda"
 import { GET, POST } from "./route"
 
 const SCOPE_OK = { ok: true as const, storeId: "loja-1", userId: "u1" }
@@ -46,27 +39,26 @@ function req(method: string, body?: unknown, query = "") {
 }
 
 beforeEach(() => {
-  authMock.mockReset().mockResolvedValue({ user: { id: "u1" } })
-  requireContadorScope.mockReset().mockResolvedValue(SCOPE_OK)
-  resolverCapacidadesContador.mockReset().mockReturnValue(CAP_ALTO)
-  listarTemplates.mockReset().mockResolvedValue([TPL])
-    criarTemplate.mockReset().mockImplementation(async (_escopo, _entrada, cap: { podeConferir?: boolean }) => {
-      if (!cap?.podeConferir) throw new PermissaoTransicaoError("resolver")
-      return TPL
-    })
-  criarRepoAgenda.mockClear()
+  vi.mocked(auth).mockReset().mockResolvedValue({ user: { id: "u1" } } as never)
+  vi.mocked(requireContadorScope).mockReset().mockResolvedValue(SCOPE_OK as never)
+  vi.mocked(resolverCapacidadesContador).mockReset().mockReturnValue(CAP_ALTO)
+  vi.mocked(listarTemplates).mockReset().mockResolvedValue([TPL] as never)
+  vi.mocked(criarTemplate).mockReset().mockImplementation(async (_escopo, _entrada, cap) => {
+    if (!cap.podeConferir) throw new PermissaoTransicaoError("resolver")
+    return TPL as never
+  })
 })
 
 describe("GET /api/contador/agenda/templates", () => {
   it("escopo HUB basta — não exige podeConferir", async () => {
-    resolverCapacidadesContador.mockReturnValue(CAP_BAIXO)
+    vi.mocked(resolverCapacidadesContador).mockReturnValue(CAP_BAIXO)
     const res = await GET(req("GET"))
     expect(res.status).toBe(200)
     const json = (await res.json()) as { ok: boolean; templates: unknown[] }
     expect(json.ok).toBe(true)
     expect(json.templates).toHaveLength(1)
     expect(listarTemplates).toHaveBeenCalledTimes(1)
-    expect(authMock).not.toHaveBeenCalled()
+    expect(auth).not.toHaveBeenCalled()
     expect(criarTemplate).not.toHaveBeenCalled()
   })
 
@@ -79,7 +71,7 @@ describe("GET /api/contador/agenda/templates", () => {
 
 describe("POST /api/contador/agenda/templates", () => {
   it("HUB sem podeConferir → 403 sem vazar título/loja", async () => {
-    resolverCapacidadesContador.mockReturnValue(CAP_BAIXO)
+    vi.mocked(resolverCapacidadesContador).mockReturnValue(CAP_BAIXO)
     const res = await POST(req("POST", { titulo: "segredo-interno", tipo: "tarefa" }))
     expect(res.status).toBe(403)
     const json = (await res.json()) as { ok: boolean; mensagem: string }
@@ -95,6 +87,6 @@ describe("POST /api/contador/agenda/templates", () => {
     const json = (await res.json()) as { ok: boolean; template: { id: string } }
     expect(json.ok).toBe(true)
     expect(json.template.id).toBe("tpl-1")
-    expect(criarTemplate.mock.calls[0][2]).toMatchObject({ podeConferir: true })
+    expect(vi.mocked(criarTemplate).mock.calls[0][2]).toMatchObject({ podeConferir: true })
   })
 })
