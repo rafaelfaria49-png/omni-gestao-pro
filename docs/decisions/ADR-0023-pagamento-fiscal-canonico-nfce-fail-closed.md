@@ -1,0 +1,136 @@
+---
+title: ADR-0023 · Contrato canônico de pagamento fiscal da NFC-e (fail-closed)
+status: aceita
+data: 2026-08-19
+autor: Grok (FISCAL-030-PAYMENT-BOUNDARY-CANONICAL-CONTRACT-073)
+revisores: [revisão independente de outra família — ver relatório 030]
+hub: cross
+tags: [fiscal, nfce, pagamento, tPag, snapshot, fail-closed]
+superado_por:
+substitui:
+---
+
+# ADR-0023 · Contrato canônico de pagamento fiscal da NFC-e (fail-closed)
+
+> **Status:** aceita
+> **Decisão em uma frase:** o XML NFC-e consome somente um contrato tipado/versionado de
+> pagamento congelado no snapshot da venda; inconsistência bloqueia a emissão; Fiscal não
+> executa, corrige, inventa nem reconstrói pagamento a partir de dado vivo.
+
+---
+
+## 1. Contexto
+
+Antes deste GOAL, `VendaFiscalSnapshot.venda.paymentBreakdown` era `Record<string, unknown>`
+e o builder XML (`lib/fiscal/xml/nfce-xml-builder.ts`) interpretava o objeto com heurística
+(`forma`/`tipo`/`method`, aliases `cash`/`especie`, fallback `tPag=99`) e, se a soma não
+fechava com `vNF` ou o breakdown faltava, **caía silenciosamente para um único `detPag`
+DINHEIRO/`tPag=01`**. Isso é inadequado para homologação.
+
+**Estado atual relevante:**
+- PDVs ativos persistem `PaymentBreakdownFull`: `dinheiro`, `pix`, `cartaoDebito`,
+  `cartaoCredito`, `carne`, `aPrazo`, `creditoVale` (números). Não persistem array
+  `{forma, valor}`, nem `tPag`, nem grupo de cartão, nem valor entregue/troco
+  (`normalizePaymentsToMatchTotal` corta o excesso de dinheiro no PDV).
+- Snapshot e `snapshotPagamento` JSONB já são o veículo aditivo (hash, tributação).
+
+---
+
+## 2. Decisão
+
+Criar `lib/fiscal/payment/**` (contrato v1) e congelá-lo em
+`snapshot.venda.pagamentoFiscal` (JSONB aditivo, **sem migration**).
+
+- O XML lê **somente** `pagamentoFiscal`. Nunca `paymentBreakdown`, Caixa, Financeiro ou PDV vivo.
+- Forma desconhecida, valor inválido, soma divergente, ausência e snapshot legado sem contrato
+  → erro fiscal explícito **antes** de assinatura/provider.
+- Zero fallback para dinheiro. Zero conversão automática para `tPag=99`.
+- `tPag` somente do catálogo IT 2024.002 v1.11 + padrão XSD `PL_010e_v1.02`.
+- Cartão: emite `tPag` 03/04 + `vPag`; **não** emite grupo `card` (tpIntegra/CNPJ/tBand/cAut
+  não existem na venda persistida — não inventar “não integrado”).
+- Troco: `vTroco` sempre `null` neste contrato.
+- Histórico: NotaFiscal já persistida **não é reescrita**. Emissão futura de snapshot legado
+  falha com `pagamento_canonico_ausente`.
+
+**O que esta decisão NÃO inclui:**
+- alterar produtores de pagamento (PaymentModal, finalizeSale, Caixa, Financeiro);
+- TEF/adquirência; schema/migration; SEFAZ; H-9/H-10; #73.
+
+---
+
+## 3. Alternativas consideradas
+
+| Alternativa | Prós | Contras | Por que não escolhida |
+|---|---|---|---|
+| A) Continuar heurística + fallback dinheiro | XML sempre monta | Homologação mentirosa | Proibida pelo GOAL |
+| B) Inventar tpIntegra=2 / tPag=05/91/19 | Cartão e a prazo “completos” | Dado fiscal fabricado | Proibida (classificação D) |
+| C) Contrato canônico fail-closed sobre o persistido (escolhida) | Fronteira honesta | Gaps B nas formas sem evidência | — |
+
+---
+
+## 4. Consequências
+
+### 4.1 Positivas
+- NFC-e de dinheiro/PIX/débito/crédito/split com evidência persistida suficiente.
+- Inconsistência visível e bloqueante, não silenciosa.
+
+### 4.2 Negativas / Custos
+- Vendas a prazo, carnê e crédito-vale **não emitem** até handoff do PDV (gap B).
+- Débito/crédito sem grupo `card` podem ser recusados por regra de negócio SEFAZ mesmo
+  válidos no XSD (`card` minOccurs=0).
+
+### 4.3 Riscos introduzidos
+- Homologação com cartão sem TEF · mitigação: não inventar grupo; documentar gap.
+- PIX 17 vs 20/23 · mitigação: 17 é código oficial vigente; tipo de QR não persistido.
+
+### 4.4 O que muda imediatamente
+- Arquivos: `lib/fiscal/payment/**`, snapshot, XML builder/validation, testes, este ADR.
+- Docs: `docs/fiscal/FISCAL_PAYMENT_BOUNDARY_030_REPORT.md`.
+
+### 4.5 O que muda no longo prazo
+- Handoff mínimo do PDV para fechar gaps B (ver relatório 030).
+
+---
+
+## 5. Plano de implementação
+
+**Esta decisão é só decisão — a implementação deste GOAL já materializa o contrato v1.**
+
+- Owner humano: Rafael
+- Pré-requisitos: GOAL 029 na main (`659fb296`)
+- Critério de pronto: testes do contrato/snapshot/XML verdes; typecheck; zero schema; zero SEFAZ.
+
+---
+
+## 6. Validação / como saberemos que deu certo
+
+- XML com PIX/débito/crédito nunca contém fallback `tPag=01`.
+- Snapshot legado sem `pagamentoFiscal` não gera XML.
+- `git diff --check` e `npm run typecheck` limpos.
+
+---
+
+## 7. Referências
+
+- ADRs relacionados: ADR-0008 (arquitetura fiscal), ADR-0022 (NFC-e SP)
+- XSD: `lib/fiscal/xsd/schemas/PL_010e_v1.02/NFe/leiauteNFe_v4.00.xsd` (grupo `pag`)
+- IT 2024.002 v1.11 (Portal Nacional da NF-e / ENCAT, 04/03/2026)
+- Relatório: `docs/fiscal/FISCAL_PAYMENT_BOUNDARY_030_REPORT.md`
+
+---
+
+## 8. Notas / discussão
+
+Aceite formal humano em 2026-08-19 via GOAL `FISCAL-030-PAYMENT-BOUNDARY-ACCEPT-AND-INTEGRATE-074`. A decisão técnica permanece inalterada.
+
+Mapeamento comprovado neste GOAL:
+
+| Forma interna persistida | tPag | Situação |
+|---|---|---|
+| `dinheiro` | 01 | A |
+| `pix` | 17 | A no valor; B no subtipo 17/20/23 |
+| `cartaoCredito` | 03 | A no valor; B no grupo `card` |
+| `cartaoDebito` | 04 | A no valor; B no grupo `card` |
+| `aPrazo` | — | B (05 vs 91 vs 15) |
+| `carne` | — | B (05 vs 15) |
+| `creditoVale` | — | B (19 vs 21) |

@@ -64,7 +64,7 @@ function snapshotInput(): BuildSnapshotInput {
       desconto: 0,
       operador: "João",
       terminal: "PDV1",
-      paymentBreakdown: null,
+      paymentBreakdown: { dinheiro: 50 },
     },
     itens: [
       {

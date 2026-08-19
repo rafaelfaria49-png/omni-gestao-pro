@@ -18,7 +18,7 @@
     "comparison": "store-fiscal-proof-b"
   },
   "hashes": {
-    "snapshotSha256": "efd6f54c362bddb781395514112ff3540418b868c854b1444b1122e8159bae2e",
+    "snapshotSha256": "a22b74f8d70cef15086c52d7b834e9d56757a9062def333d9ae02828bcf8e3ec",
     "unsignedXmlSha256": "ca8adf9772fde2723d7e173511ae48b43a60103ef1b80412ba2e40418e91533f",
     "referencedNodeC14nSha256": "5b2914270bb0363ad2ba61b3ac59af8f300bdac27d6faef2d40e0aa71b6cbe34",
     "signedInfoSha256": "aa1d73a8c58f9bb1b6da172984579652120230cbe0ebcf2e1548a12603ce97b4",

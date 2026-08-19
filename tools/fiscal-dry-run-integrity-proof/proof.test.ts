@@ -783,11 +783,11 @@ describe("FISCAL-DRY-RUN-INTEGRITY-PROOF-005 · honestidade da evidência XSD", 
   }, 30_000)
 
   it("XSD-H16 hashes criptográficos do XML permanecem os do GOAL-005", () => {
-    // Rebaselinados após a correção do `verProc` (fixture ≤ 20 chars) que tornou o positivo
-    // válido no `xmllint` real (005B). `snapshotSha256` é invariante — o snapshot não carrega
-    // `verProc`; só o fluxo XML (não assinado → C14N → SignedInfo → DigestValue → assinado) mudou.
+    // Rebaselinados no GOAL 030: `snapshotSha256` muda porque o snapshot ganha o contrato
+    // aditivo `pagamentoFiscal` (JSONB; sem schema). O fluxo XML (não assinado → C14N →
+    // SignedInfo → DigestValue → assinado) permanece byte-idêntico ao GOAL-005/005B.
     expect(primary.hashes.snapshotSha256).toBe(
-      "efd6f54c362bddb781395514112ff3540418b868c854b1444b1122e8159bae2e",
+      "a22b74f8d70cef15086c52d7b834e9d56757a9062def333d9ae02828bcf8e3ec",
     )
     expect(primary.hashes.unsignedXmlSha256).toBe(
       "ca8adf9772fde2723d7e173511ae48b43a60103ef1b80412ba2e40418e91533f",

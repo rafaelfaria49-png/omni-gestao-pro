@@ -106,7 +106,7 @@ function snapshotInput(kind: DanfceFixtureKind): BuildSnapshotInput {
       desconto: 0,
       operador: "João",
       terminal: "PDV1",
-      paymentBreakdown: null,
+      paymentBreakdown: { dinheiro: 50 },
     },
     itens: [item()],
   }
@@ -122,7 +122,7 @@ function snapshotInput(kind: DanfceFixtureKind): BuildSnapshotInput {
     case "multiplos_itens":
       return {
         ...base,
-        venda: { ...base.venda, total: 400 },
+        venda: { ...base.venda, total: 400, paymentBreakdown: { dinheiro: 400 } },
         itens: [
           item({ itemVendaId: "a", descricao: "Película", quantidade: 1, valorUnitario: 100, valorTotal: 100 }),
           item({ itemVendaId: "b", descricao: "Capa", quantidade: 2, valorUnitario: 150, valorTotal: 300 }),

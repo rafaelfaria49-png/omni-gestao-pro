@@ -254,6 +254,16 @@ describe("venda com múltiplos itens, desconto e paymentBreakdown", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.snapshot.venda.paymentBreakdown).toEqual(pb)
+    expect(r.snapshot.venda.pagamentoFiscal?.det.map((d) => d.tPag).sort()).toEqual(["01", "17"])
+    expect(r.snapshot.venda.pagamentoFiscalErro).toBeNull()
+  })
+
+  it("breakdown nulo congela erro canônico e não inventa forma", () => {
+    const r = buildVendaFiscalSnapshot(baseInput({ venda: { ...baseInput().venda, paymentBreakdown: null } }))
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_AUSENTE")
   })
 
   it("venda sem itens → erro controlado", () => {
