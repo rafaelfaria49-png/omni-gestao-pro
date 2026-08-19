@@ -108,6 +108,73 @@ describe("buildFiscalPaymentHandoff · formas bloqueadas (sem inferir tPag)", ()
   })
 })
 
+describe("buildFiscalPaymentHandoff · pixQrKind (GOAL 077)", () => {
+  it.each([
+    ["dinamico", "17"],
+    ["estatico", "20"],
+    ["automatico", "23"],
+  ] as const)("PIX com pixQrKind %s → tPag %s suportado", (kind, tPag) => {
+    const h = buildFiscalPaymentHandoff({ pix: 80 }, 80, { pixQrKind: kind })
+    expect(h.linhas).toEqual([
+      {
+        formaOrigem: "pix",
+        valor: 80,
+        pixQrKind: kind,
+        tPag,
+        capability: "supported",
+        status: "ok",
+      },
+    ])
+  })
+
+  it("PIX sem pixQrKind permanece bloqueado — sem default 17/20/23", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 50 }, 50, {})
+    expect(h.linhas[0]!.tPag).toBeUndefined()
+    expect(h.linhas[0]!.pixQrKind).toBeUndefined()
+    expect(h.linhas[0]!.capability).toBe("blocked")
+    expect(h.linhas[0]!.motivo).toBe("pix_subtipo_nao_discriminado")
+  })
+
+  it("pixQrKind desconhecido bloqueia e não inventa tPag", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "17" })
+    expect(h.linhas[0]!.tPag).toBeUndefined()
+    expect(h.linhas[0]!.capability).toBe("blocked")
+    expect(h.linhas[0]!.motivo).toBe("pix_qr_kind_desconhecido")
+    expect(JSON.stringify(h)).not.toMatch(/"tPag":"17"|"tPag":"20"|"tPag":"23"|"tPag":"01"|"tPag":"99"/)
+  })
+
+  it("hints.tPag do cliente é ignorado — só pixQrKind deriva tPag", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "estatico", ...( { tPag: "17" } as object ) })
+    expect(h.linhas[0]!.tPag).toBe("20")
+    expect(h.linhas[0]!.pixQrKind).toBe("estatico")
+  })
+
+  it("venda sem PIX ignora pixQrKind — não cria linha PIX", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, { pixQrKind: "dinamico" })
+    expect(h.linhas).toEqual([
+      { formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported", status: "ok" },
+    ])
+    expect(JSON.stringify(h)).not.toMatch(/pixQrKind/)
+  })
+
+  it("split PIX + dinheiro com pixQrKind estático", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 20, pix: 80 }, 100, { pixQrKind: "estatico" })
+    expect(h.linhas.find((l) => l.formaOrigem === "dinheiro")).toMatchObject({ tPag: "01", capability: "supported" })
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")).toMatchObject({
+      tPag: "20",
+      pixQrKind: "estatico",
+      capability: "supported",
+    })
+  })
+
+  it("split PIX + cartão com pixQrKind dinâmico", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 40, cartaoCredito: 60 }, 100, { pixQrKind: "dinamico" })
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("17")
+    expect(h.linhas.find((l) => l.formaOrigem === "cartaoCredito")?.tPag).toBe("03")
+    expect(h.linhas.every((l) => l.capability === "supported")).toBe(true)
+  })
+})
+
 describe("buildFiscalPaymentHandoff · troco e formato", () => {
   it("não persiste vTroco nem valorEntregue mesmo com dinheiro", () => {
     const h = buildFiscalPaymentHandoff({ dinheiro: 50 }, 50)

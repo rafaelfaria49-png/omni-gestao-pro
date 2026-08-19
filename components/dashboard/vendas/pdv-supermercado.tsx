@@ -1464,6 +1464,7 @@ export function PdvSupermercado({
               discountPercent: meta?.discountPercent ?? discountPercent,
             },
             aPrazoConfig,
+            pixQrKind: meta?.pixQrKind,
           })
 
           if (!result.ok) {

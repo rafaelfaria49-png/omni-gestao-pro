@@ -5,14 +5,25 @@
  * que a venda é persistida. Congelado em `Venda.payload.fiscalPaymentHandoff`.
  *
  * Fiscal é somente consumidor. Este módulo é PURO: sem Prisma, Caixa, Financeiro,
- * PaymentModal ou SEFAZ. Não inventa tPag, grupo `card`, subtipo PIX nem troco.
+ * PaymentModal ou SEFAZ. Não inventa tPag, grupo `card` nem troco.
+ *
+ * PIX: tPag 17/20/23 só quando `pixQrKind` conhecido é observado. Sem default.
+ * tPag enviado pelo cliente é ignorado — o servidor deriva pelo catálogo oficial.
  *
  * Autoridade de códigos: IT 2024.002 v1.11 + XSD `PL_010e_v1.02` (`tPag` = `[0-9]{2}`).
  */
 
+import {
+  isPixQrKind,
+  tPagFromPixQrKind,
+  type PixQrKind,
+} from "@/lib/fiscal/payment/pix-qr-kind"
+
 export const FISCAL_PAYMENT_HANDOFF_VERSION = 1 as const
 
 export const FISCAL_PAYMENT_HANDOFF_CATALOGO_TPAG = "IT-2024.002-v1.11" as const
+
+export type { PixQrKind }
 
 /** Formas internas persistidas pelos PDVs ativos (`PaymentBreakdownFull`). */
 export const HANDOFF_FORMAS_ORIGEM = [
@@ -28,8 +39,8 @@ export const HANDOFF_FORMAS_ORIGEM = [
 export type HandoffFormaOrigem = (typeof HANDOFF_FORMAS_ORIGEM)[number]
 
 /**
- * Únicas formas com tPag oficial unívoco a partir da chave persistida.
- * PIX NÃO entra: IT 2024.002 cinde 17/20/23 e o PDV não discrimina o subtipo.
+ * Únicas formas com tPag oficial unívoco a partir da chave persistida sozinha.
+ * PIX entra só quando `pixQrKind` conhecido acompanha o valor — nunca pela chave `pix`.
  */
 export const HANDOFF_FORMAS_COM_TPAG_COMPROVADO = ["dinheiro", "cartaoDebito", "cartaoCredito"] as const
 
@@ -48,8 +59,10 @@ export type FiscalPaymentHandoffStatus = "ok" | "blocked"
 export type FiscalPaymentHandoffLinha = {
   readonly formaOrigem: string
   readonly valor: number
-  /** Presente somente quando o tPag é unívoco a partir da forma persistida. */
+  /** Presente somente quando o tPag é unívoco (forma persistida ou pixQrKind oficial). */
   readonly tPag?: string
+  /** Discriminador observado de PIX. Ausente = subtipo não informado. */
+  readonly pixQrKind?: PixQrKind
   readonly capability: FiscalPaymentHandoffCapability
   readonly status: FiscalPaymentHandoffStatus
   readonly motivo?: string
@@ -82,7 +95,26 @@ function bloqueioPix(): Pick<FiscalPaymentHandoffLinha, "motivo" | "dadoAdiciona
   return {
     motivo: "pix_subtipo_nao_discriminado",
     dadoAdicionalNecessario:
-      "Discriminar tPag 17 (QR dinâmico), 20 (QR estático) ou 23 (PIX automático) no instante do pagamento. A forma genérica `pix` não autoriza inferir o subtipo.",
+      "Informar pixQrKind (dinamico | estatico | automatico) no instante do pagamento. A forma genérica `pix` não autoriza inferir tPag 17/20/23.",
+  }
+}
+
+function bloqueioPixQrKindDesconhecido(): Pick<FiscalPaymentHandoffLinha, "motivo" | "dadoAdicionalNecessario"> {
+  return {
+    motivo: "pix_qr_kind_desconhecido",
+    dadoAdicionalNecessario:
+      "pixQrKind deve ser dinamico (tPag 17), estatico (tPag 20) ou automatico (tPag 23). Valor desconhecido não autoriza tPag.",
+  }
+}
+
+function linhaPixComprovada(valor: number, pixQrKind: PixQrKind): FiscalPaymentHandoffLinha {
+  return {
+    formaOrigem: "pix",
+    valor,
+    pixQrKind,
+    tPag: tPagFromPixQrKind(pixQrKind),
+    capability: "supported",
+    status: "ok",
   }
 }
 
@@ -134,11 +166,19 @@ function linhaBloqueada(
   }
 }
 
-function linhaDeForma(key: string, valor: number): FiscalPaymentHandoffLinha {
+function linhaDeForma(key: string, valor: number, pixQrKindHint: unknown): FiscalPaymentHandoffLinha {
   if (FORMAS_COMPROVADAS.has(key)) {
     return linhaComprovada(key as HandoffFormaComTPagComprovado, valor)
   }
-  if (key === "pix") return linhaBloqueada(key, valor, bloqueioPix())
+  if (key === "pix") {
+    if (pixQrKindHint == null || pixQrKindHint === "") {
+      return linhaBloqueada(key, valor, bloqueioPix())
+    }
+    if (!isPixQrKind(pixQrKindHint)) {
+      return linhaBloqueada(key, valor, bloqueioPixQrKindDesconhecido())
+    }
+    return linhaPixComprovada(valor, pixQrKindHint)
+  }
   if (key === "carne") return linhaBloqueada(key, valor, bloqueioCarne())
   if (key === "aPrazo") return linhaBloqueada(key, valor, bloqueioAPrazo())
   if (key === "creditoVale") return linhaBloqueada(key, valor, bloqueioCreditoVale())
@@ -154,13 +194,23 @@ function linhaDeForma(key: string, valor: number): FiscalPaymentHandoffLinha {
   })
 }
 
+export type FiscalPaymentHandoffHints = {
+  readonly pixQrKind?: unknown
+}
+
 /**
  * Constrói o handoff a partir do `paymentBreakdown` já persistido.
  * Nunca lança — a venda continua fechando; o Fiscal decide se emite.
- * Não lê PaymentMethod[], maquininha, Caixa nem valor entregue.
+ * Não lê PaymentMethod[], maquininha, Caixa, valor entregue nem tPag do cliente.
+ * `hints.pixQrKind` é o discriminador observado; tPag é derivado só pelo catálogo.
  */
-export function buildFiscalPaymentHandoff(breakdown: unknown, _totalReferencia?: number): FiscalPaymentHandoff {
+export function buildFiscalPaymentHandoff(
+  breakdown: unknown,
+  _totalReferencia?: number,
+  hints?: FiscalPaymentHandoffHints,
+): FiscalPaymentHandoff {
   const linhas: FiscalPaymentHandoffLinha[] = []
+  const pixQrKindHint = hints?.pixQrKind
 
   if (breakdown == null) {
     return { version: FISCAL_PAYMENT_HANDOFF_VERSION, catalogoTPag: FISCAL_PAYMENT_HANDOFF_CATALOGO_TPAG, linhas }
@@ -196,7 +246,7 @@ export function buildFiscalPaymentHandoff(breakdown: unknown, _totalReferencia?:
       continue
     }
 
-    linhas.push(linhaDeForma(key, round2(n)))
+    linhas.push(linhaDeForma(key, round2(n), pixQrKindHint))
   }
 
   linhas.sort((a, b) => (a.formaOrigem < b.formaOrigem ? -1 : a.formaOrigem > b.formaOrigem ? 1 : 0))

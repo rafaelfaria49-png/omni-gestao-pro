@@ -97,6 +97,76 @@ describe("derivePagamentoFiscalFromHandoff · bloqueios explícitos", () => {
   })
 })
 
+describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
+  it.each([
+    ["dinamico", "17"],
+    ["estatico", "20"],
+    ["automatico", "23"],
+  ] as const)("PIX %s → tPag %s", (kind, tPag) => {
+    const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ pix: 80 }, 80, { pixQrKind: kind }), 80)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.pagamento.det).toEqual([{ formaInterna: "pix", tPag, vPag: 80 }])
+    expect(JSON.stringify(r.pagamento)).not.toMatch(/tpIntegra|tBand|cAut|"01"|"99"/)
+  })
+
+  it("split PIX estático + dinheiro", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ dinheiro: 20, pix: 80 }, 100, { pixQrKind: "estatico" }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "20"])
+  })
+
+  it("split PIX dinâmico + crédito", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ pix: 40, cartaoCredito: 60 }, 100, { pixQrKind: "dinamico" }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["03", "17"])
+  })
+
+  it("tPag 17 injetado no handoff sem pixQrKind continua rejeitado", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "pix", valor: 50, tPag: "17", capability: "supported", status: "ok" }],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
+  })
+
+  it("pixQrKind e tPag divergentes são rejeitados", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [
+          {
+            formaOrigem: "pix",
+            valor: 50,
+            pixQrKind: "estatico",
+            tPag: "17",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
+  })
+})
+
 describe("derivePagamentoFiscalFromHandoff · inconsistente sem fallback", () => {
   it("versão desconhecida não cai para breakdown dinheiro", () => {
     const r = derivePagamentoFiscal({ dinheiro: 50 }, 50, { version: 99, linhas: [{ formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported", status: "ok" }] })

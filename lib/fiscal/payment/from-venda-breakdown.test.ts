@@ -22,6 +22,8 @@ describe("catálogo tPag oficial", () => {
     expect(isTPagOficial("03")).toBe(true)
     expect(isTPagOficial("04")).toBe(true)
     expect(isTPagOficial("17")).toBe(true)
+    expect(isTPagOficial("20")).toBe(true)
+    expect(isTPagOficial("23")).toBe(true)
     expect(isTPagOficial("99")).toBe(true)
     expect(isTPagOficial("00")).toBe(false)
     expect(isTPagOficial("1")).toBe(false)
@@ -188,6 +190,21 @@ describe("assertPagamentoFiscalCanonico", () => {
     const a = assertPagamentoFiscalCanonico(d.pagamento, 40)
     expect(a.ok).toBe(false)
     if (!a.ok) expect(a.erro.code).toBe("PAGAMENTO_SOMA_DIVERGENTE")
+  })
+
+  it("PIX com tPag 20/23 (handoff) continua canônico; 01/99 não", () => {
+    const base = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      soma: 50,
+      vTroco: null,
+    }
+    expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "20", vPag: 50 }] }, 50).ok).toBe(true)
+    expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "23", vPag: 50 }] }, 50).ok).toBe(true)
+    expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "17", vPag: 50 }] }, 50).ok).toBe(true)
+    expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "01", vPag: 50 }] }, 50).ok).toBe(false)
+    expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "99", vPag: 50 }] }, 50).ok).toBe(false)
   })
 })
 

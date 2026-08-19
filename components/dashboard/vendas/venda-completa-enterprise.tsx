@@ -610,7 +610,10 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
   }
 
   // ── Confirmação e finalização ─────────────────────────────────────────────
-  async function handleConfirmPayment(payments: PaymentMethod[]): Promise<boolean> {
+  async function handleConfirmPayment(
+    payments: PaymentMethod[],
+    meta?: { pixQrKind?: string },
+  ): Promise<boolean> {
     if (!selectedCliente || cart.length === 0 || total <= 0) return false
     if (payments.length === 0) {
       toast({ title: "Selecione a forma de pagamento", variant: "destructive" })
@@ -665,6 +668,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
         customerName: selectedCliente.name,
         clienteId: selectedCliente.id || undefined,
         aPrazoConfig,
+        pixQrKind: meta?.pixQrKind,
       })
 
       if (!result.ok) {

@@ -412,6 +412,112 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     expect(s.venda.pagamentoFiscal).toBeNull()
     expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
   })
+
+  it("handoff de PIX estático emite tPag 20 e nunca cai para 01/99", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "pix",
+              valor: 50,
+              pixQrKind: "estatico",
+              tPag: "20",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<detPag>\s*<tPag>20<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toMatch(/<tPag>01<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>17<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>99<\/tPag>/)
+    expect(xml).not.toContain("<card>")
+  })
+
+  it("handoff de PIX dinâmico emite tPag 17 sem grupo card", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "pix",
+              valor: 50,
+              pixQrKind: "dinamico",
+              tPag: "17",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>17<\/tPag>\s*<vPag>50\.00<\/vPag>/)
+    expect(xml).not.toContain("<card>")
+  })
+
+  it("handoff de PIX automático emite tPag 23", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "pix",
+              valor: 50,
+              pixQrKind: "automatico",
+              tPag: "23",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    expect(buildNfceXml(s)).toMatch(/<tPag>23<\/tPag>/)
+  })
+
+  it("split PIX + dinheiro no XML não cai para um único tPag=01", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 30, dinheiro: 20 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            { formaOrigem: "dinheiro", valor: 20, tPag: "01", capability: "supported", status: "ok" },
+            {
+              formaOrigem: "pix",
+              valor: 30,
+              pixQrKind: "estatico",
+              tPag: "20",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>20\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>20<\/tPag>\s*<vPag>30\.00<\/vPag>/)
+  })
 })
 
 describe("buildNfceXmlResult · compatibilidade com o snapshot atual + numeração por contexto", () => {

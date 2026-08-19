@@ -13,6 +13,16 @@ export {
 export type { TPagOficial, TPagCatalogoEntry } from "./tpag-catalog"
 
 export {
+  PIX_QR_KINDS,
+  PIX_QR_KIND_TO_TPAG,
+  TPAG_PIX_QR_KIND,
+  PIX_QR_KIND_OPCOES_OPERADOR,
+  isPixQrKind,
+  tPagFromPixQrKind,
+} from "./pix-qr-kind"
+export type { PixQrKind } from "./pix-qr-kind"
+
+export {
   PAGAMENTO_FISCAL_CONTRATO_VERSAO,
   FORMAS_INTERNAS_PERSISTIDAS,
   FORMAS_INTERNAS_COM_TPAG,

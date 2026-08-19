@@ -22,6 +22,7 @@ import {
   type PagamentoFiscalErro,
 } from "./types"
 import { isTPagOficial } from "./tpag-catalog"
+import { TPAG_PIX_QR_KIND } from "./pix-qr-kind"
 
 const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 const FORMAS_PERSISTIDAS: ReadonlySet<string> = new Set(FORMAS_INTERNAS_PERSISTIDAS)
@@ -33,10 +34,15 @@ const FORMA_PARA_TPAG: Record<FormaInternaComTPag, string> = {
   /**
    * LEGADO (vendas históricas sem `fiscalPaymentHandoff`): o PDV persistia apenas
    * `pix` (número). IT 2024.002 cinde PIX em 17/20/23. Este mapeamento para 17
-   * permanece só no caminho legado; o handoff de origem (GOAL 075) NÃO infere
-   * o subtipo.
+   * permanece só no caminho legado; o handoff (GOAL 075/077) NÃO infere
+   * o subtipo — tPag 17/20/23 só com pixQrKind.
    */
   pix: "17",
+}
+
+function tPagCompativelComFormaInterna(forma: FormaInternaComTPag, tPag: string): boolean {
+  if (forma === "pix") return tPag in TPAG_PIX_QR_KIND
+  return FORMA_PARA_TPAG[forma] === tPag
 }
 
 function round2(n: number): number {
@@ -178,7 +184,7 @@ export function assertPagamentoFiscalCanonico(
     if (!FORMAS_COM_TPAG.has(d.formaInterna) || !isTPagOficial(d.tPag)) {
       return erro("PAGAMENTO_FORMA_DESCONHECIDA", `detPag com forma/tPag inválido (${d.formaInterna}/${d.tPag}).`, "venda.pagamentoFiscal.det")
     }
-    if (FORMA_PARA_TPAG[d.formaInterna as FormaInternaComTPag] !== d.tPag) {
+    if (!tPagCompativelComFormaInterna(d.formaInterna as FormaInternaComTPag, d.tPag)) {
       return erro("PAGAMENTO_FORMA_DESCONHECIDA", `tPag ${d.tPag} não corresponde à forma interna ${d.formaInterna}.`, "venda.pagamentoFiscal.det")
     }
     if (!Number.isFinite(d.vPag) || d.vPag <= 0) {
