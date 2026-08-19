@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   consumirEstoque: vi.fn(),
   emitirEvento: vi.fn(),
   revalidatePath: vi.fn(),
+  autoClose: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -24,6 +25,7 @@ vi.mock("@/lib/operacoes/assert-active-store", () => ({ assertActiveStoreId: vi.
 vi.mock("./estoque-sync", () => ({ consumirEstoqueOSV3: mocks.consumirEstoque }));
 vi.mock("./event-publisher", () => ({ emitirEventoOperacaoV3: mocks.emitirEvento }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("./retorno-auto-close-actions", () => ({ finalizarRetornoPorEntregaVinculadaV3: mocks.autoClose }));
 
 import { registrarEntregaV3 } from "./entrega-actions";
 
@@ -80,6 +82,7 @@ beforeEach(() => {
   mocks.consumirEstoque.mockReset().mockResolvedValue({ status: "consumed", itens: 1 });
   mocks.emitirEvento.mockReset();
   mocks.revalidatePath.mockReset();
+  mocks.autoClose.mockReset().mockResolvedValue({ status: "skipped" });
 });
 
 afterEach(() => {
@@ -109,6 +112,7 @@ describe("registrarEntregaV3 — guard financeiro server-side", () => {
     expect(mocks.consumirEstoque).not.toHaveBeenCalled();
     expect(mocks.emitirEvento).not.toHaveBeenCalled();
     expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    expect(mocks.autoClose).not.toHaveBeenCalled();
   });
 
   it("bloqueia pagamento parcial na chamada direta", async () => {
@@ -229,5 +233,17 @@ describe("registrarEntregaV3 — guard financeiro server-side", () => {
     expect(mocks.osUpdate).not.toHaveBeenCalled();
     expect(mocks.consumirEstoque).not.toHaveBeenCalled();
     expect(mocks.emitirEvento).not.toHaveBeenCalled();
+    expect(mocks.autoClose).toHaveBeenCalledTimes(1);
+    expect(mocks.autoClose).toHaveBeenCalledWith(expect.objectContaining({
+      storeId,
+      osFilha: expect.objectContaining({ id: osId }),
+    }));
+  });
+
+  it("após persistir a entrega, tenta finalizar o retorno original vinculado", async () => {
+    await registrarEntregaV3(storeId, osId);
+    expect(mocks.osUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.autoClose).toHaveBeenCalledTimes(1);
+    expect(mocks.osUpdate.mock.invocationCallOrder[0]).toBeLessThan(mocks.autoClose.mock.invocationCallOrder[0]);
   });
 });

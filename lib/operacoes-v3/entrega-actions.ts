@@ -36,6 +36,7 @@ import {
   type EntregaSemCobrancaV3,
 } from "./delivery-financial-guard";
 import { localKeyContaReceberOSV3 } from "./payment-model";
+import { finalizarRetornoPorEntregaVinculadaV3 } from "./retorno-auto-close-actions";
 
 type OSPayloadFull = OrdemServico & Record<string, unknown>;
 
@@ -88,6 +89,11 @@ export async function registrarEntregaV3(storeId: string, osId: string, input: R
   // caminho unificado (Kanban/Command Bar/PDV/PosVenda) contra duplo-clique e
   // chamadas concorrentes de superfícies diferentes — efeitos rodam UMA vez.
   if (from === "entregue") {
+    await finalizarRetornoPorEntregaVinculadaV3({
+      storeId: sid,
+      osFilha: { ...(payload as unknown as OrdemServico), id },
+      operador: operadorLabel(session),
+    });
     return payload as unknown as OrdemServico;
   }
   if (from !== "pronta" && from !== "recebida") {
@@ -248,6 +254,14 @@ export async function registrarEntregaV3(storeId: string, osId: string, input: R
   });
 
   revalidatePath("/dashboard/operacoes-v3");
+  revalidatePath("/dashboard/operacoes-v4-preview");
+
+  await finalizarRetornoPorEntregaVinculadaV3({
+    storeId: sid,
+    osFilha: { ...(next as unknown as OrdemServico), id, storeId: sid },
+    operador,
+  });
+
   return next as unknown as OrdemServico;
 }
 
