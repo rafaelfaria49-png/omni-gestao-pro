@@ -134,3 +134,14 @@ Mapeamento comprovado neste GOAL:
 | `aPrazo` | — | B (05 vs 91 vs 15) |
 | `carne` | — | B (05 vs 15) |
 | `creditoVale` | — | B (19 vs 21) |
+
+---
+
+## 9. Adendo — GOAL 075 (handoff de origem)
+
+Em 2026-08-19 o GOAL `FISCAL-030-PAYMENT-ORIGIN-HANDOFF-075` materializou o handoff
+mínimo previsto em §4.5: `Venda.payload.fiscalPaymentHandoff` (JSONB aditivo, sem
+schema), produzido só em `upsertVendaInTransaction`. Fiscal passou a preferir o
+handoff; vendas históricas sem o campo preservam o caminho legado deste ADR
+(incluindo PIX→17). O handoff **não** infere subtipo PIX 17/20/23. Relatório:
+[`FISCAL_PAYMENT_ORIGIN_HANDOFF_075_REPORT.md`](../fiscal/FISCAL_PAYMENT_ORIGIN_HANDOFF_075_REPORT.md).

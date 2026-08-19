@@ -24,8 +24,14 @@ export type {
   PagamentoFiscalErroCode,
   PagamentoFiscalErro,
   PagamentoFiscalDetalhe,
+  PagamentoFiscalFonte,
   PagamentoFiscalCanonico,
   PagamentoFiscalDeriveResult,
 } from "./types"
 
 export { derivePagamentoFiscalFromBreakdown, assertPagamentoFiscalCanonico } from "./from-venda-breakdown"
+export {
+  derivePagamentoFiscalFromHandoff,
+  derivePagamentoFiscal,
+  isFiscalPaymentHandoffPresent,
+} from "./from-handoff"

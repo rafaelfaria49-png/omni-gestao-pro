@@ -25,7 +25,7 @@ import {
 import { calculateTax } from "./tax-engine"
 import type { TaxEngineInput, TaxRegime } from "./tax-engine"
 import {
-  derivePagamentoFiscalFromBreakdown,
+  derivePagamentoFiscal,
   type PagamentoFiscalCanonico,
   type PagamentoFiscalErro,
 } from "./payment"
@@ -99,6 +99,11 @@ export type SnapshotVendaInput = {
   terminal: string
   /** Quebra por forma de pagamento (congelada como veio — evidência bruta). */
   paymentBreakdown: Record<string, unknown> | null
+  /**
+   * Handoff versionado persistido na Venda (GOAL 075). Ausente em vendas históricas.
+   * Quando presente, o snapshot NÃO cai para o breakdown.
+   */
+  fiscalPaymentHandoff?: unknown
 }
 
 export type BuildSnapshotInput = {
@@ -565,7 +570,11 @@ export function buildVendaFiscalSnapshot(input: BuildSnapshotInput): BuildSnapsh
         : null
 
   const totalVenda = round2(num(input.venda.total))
-  const derivedPag = derivePagamentoFiscalFromBreakdown(brutoPagamento, totalVenda)
+  const derivedPag = derivePagamentoFiscal(
+    brutoPagamento,
+    totalVenda,
+    input.venda.fiscalPaymentHandoff,
+  )
 
   const venda: SnapshotVenda = {
     pedidoId: s(input.venda.pedidoId),
