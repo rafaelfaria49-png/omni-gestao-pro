@@ -66,6 +66,11 @@ import {
   type FormaPagamentoConfig,
   type FormaPagamentoConfigId,
 } from "@/lib/pdv-formas-pagamento"
+import {
+  PIX_QR_KIND_OPCOES_OPERADOR,
+  isPixQrKind,
+  type PixQrKind,
+} from "@/lib/fiscal/payment/pix-qr-kind"
 
 function formatMoneyInput(value: string): string {
   const clean = value.replace(/\D/g, "")
@@ -160,7 +165,13 @@ interface PaymentModalProps {
   cashierId?: string
   onConfirm?: (
     payments: PaymentMethod[],
-    meta?: { cashierId?: string; discountAuthorizedByAdminId?: string; discountReais?: number; discountPercent?: number }
+    meta?: {
+      cashierId?: string
+      discountAuthorizedByAdminId?: string
+      discountReais?: number
+      discountPercent?: number
+      pixQrKind?: PixQrKind
+    }
   ) => boolean | void | Promise<boolean | void>
   /** Quando definido ao abrir, adiciona automaticamente uma linha quitando o total restante com essa forma (pagamento “full” em um toque). */
   instantPayIntent?: PaymentMethodType | null
@@ -188,6 +199,49 @@ interface PaymentModalProps {
    * o cliente, o shell atualiza `selectedCustomer` e o fluxo à prazo é liberado.
    */
   onRequireCustomer?: () => void
+}
+
+function PixQrKindPicker({
+  pixTotal,
+  value,
+  onChange,
+}: {
+  pixTotal: number
+  value: PixQrKind | null
+  onChange: (next: PixQrKind | null) => void
+}) {
+  if (pixTotal <= 0.02) return null
+  return (
+    <div className="min-w-0 space-y-2 rounded-lg border border-border bg-card px-3 py-3">
+      <div className="min-w-0 space-y-1">
+        <Label className="text-sm font-medium text-foreground">Como o PIX foi recebido</Label>
+        <p className="text-xs text-muted-foreground">
+          Só para a nota fiscal. Não muda o valor. Se não souber, deixe em branco — a venda fecha e a NFC-e fica bloqueada.
+        </p>
+      </div>
+      <div className="min-w-0 space-y-2">
+        {PIX_QR_KIND_OPCOES_OPERADOR.map((opcao) => {
+          const selected = value === opcao.kind
+          return (
+            <button
+              key={opcao.kind}
+              type="button"
+              onClick={() => onChange(selected ? null : opcao.kind)}
+              className={cn(
+                "flex w-full min-w-0 flex-col gap-0.5 rounded-md border px-3 py-2 text-left transition-colors",
+                selected
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-border bg-background text-foreground hover:bg-muted/50",
+              )}
+            >
+              <span className="min-w-0 text-sm font-medium">{opcao.titulo}</span>
+              <span className="min-w-0 text-xs text-muted-foreground">{opcao.descricao}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export function PaymentModal({ 
@@ -218,6 +272,7 @@ export function PaymentModal({
   const { pdvParams, storeId: storeIdForPdv } = useStoreSettings()
   const { toast } = useToast()
   const [payments, setPayments] = useState<PaymentMethod[]>([])
+  const [pixQrKind, setPixQrKind] = useState<PixQrKind | null>(null)
   const [currentValue, setCurrentValue] = useState("")
   const [selectedType, setSelectedType] = useState<PaymentMethodType | null>(null)
   const valueInputRef = useRef<HTMLInputElement | null>(null)
@@ -320,6 +375,7 @@ export function PaymentModal({
     payments.some((p) => p.type === "carne" || p.type === "a_prazo") && !documentoClienteValido(cpfEfetivo)
 
   const totalPaid = payments.reduce((sum, p) => sum + p.value, 0)
+  const pixTotal = payments.reduce((sum, p) => (p.type === "pix" ? sum + p.value : sum), 0)
   const faltaPagar = Math.max(0, total - totalPaid)
   const temDinheiro = payments.some((p) => p.type === "dinheiro")
   const troco =
@@ -444,6 +500,7 @@ export function PaymentModal({
             discountAuthorizedByAdminId: descontoManualAtivo ? adminIdForAudit : undefined,
             discountReais: Number(discountReais) || 0,
             discountPercent: Number(discountPercent) || 0,
+            ...(pixTotal > 0.02 && isPixQrKind(pixQrKind) ? { pixQrKind } : {}),
           })
           if (success === false) {
             finalConfirmBusyRef.current = false
@@ -463,7 +520,7 @@ export function PaymentModal({
         }
       })()
     }, 50)
-  }, [isConfirming, payments, total, descontoManualAtivo, authorizedAdmin, onConfirm, cashierId, discountReais, discountPercent, onClose, returnFocusToPaymentConfirm, toast])
+  }, [isConfirming, payments, total, pixTotal, pixQrKind, descontoManualAtivo, authorizedAdmin, onConfirm, cashierId, discountReais, discountPercent, onClose, returnFocusToPaymentConfirm, toast])
 
   // ── Computações à prazo ──────────────────────────────────────────────────────
   const aPrazoBundleTotal = Math.min(
@@ -493,6 +550,7 @@ export function PaymentModal({
     if (!isOpen) {
       setShowFinalConfirm(false)
       setPayments([])
+      setPixQrKind(null)
       setCurrentValue("")
       setSelectedType(null)
       setSupervisorPin("")
@@ -506,6 +564,10 @@ export function PaymentModal({
       setAPrazoObs("")
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (pixTotal <= 0.02 && pixQrKind !== null) setPixQrKind(null)
+  }, [pixTotal, pixQrKind])
 
   useEffect(() => {
     if (!isOpen) return
@@ -1358,6 +1420,8 @@ export function PaymentModal({
                 </div>
               )}
 
+              <PixQrKindPicker pixTotal={pixTotal} value={pixQrKind} onChange={setPixQrKind} />
+
               {aPrazoFormaAtiva && faltaPagar > 0.02 && selectedType !== "a_prazo" && selectedType !== "carne" && (
                 <button
                   type="button"
@@ -1850,6 +1914,8 @@ export function PaymentModal({
               </div>
             </div>
           )}
+
+          <PixQrKindPicker pixTotal={pixTotal} value={pixQrKind} onChange={setPixQrKind} />
 
           {/* Input de Valor */}
           {faltaPagar > 0 && (

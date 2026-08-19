@@ -145,3 +145,16 @@ schema), produzido só em `upsertVendaInTransaction`. Fiscal passou a preferir o
 handoff; vendas históricas sem o campo preservam o caminho legado deste ADR
 (incluindo PIX→17). O handoff **não** infere subtipo PIX 17/20/23. Relatório:
 [`FISCAL_PAYMENT_ORIGIN_HANDOFF_075_REPORT.md`](../fiscal/FISCAL_PAYMENT_ORIGIN_HANDOFF_075_REPORT.md).
+
+---
+
+## 10. Adendo — GOAL 077 (semântica fiscal do PIX)
+
+Em 2026-08-19 o GOAL `FISCAL-030-PIX-SEMANTICS-CAPTURE-077` passou a capturar
+`pixQrKind` (`dinamico` | `estatico` | `automatico`) no instante do pagamento,
+somente quando PIX > 0 e sem default. O servidor deriva tPag 17/20/23 pelo
+IT 2024.002 v1.11; tPag enviado pelo cliente é ignorado. PIX sem discriminador
+permanece fail-closed; a venda comercial continua finalizando. A UI do caixa
+oferece só `estatico`/`dinamico` (observáveis); `automatico` (tPag 23) existe
+no contrato mas não é escolha do operador. Relatório:
+[`FISCAL_PAYMENT_PIX_SEMANTICS_077_REPORT.md`](../fiscal/FISCAL_PAYMENT_PIX_SEMANTICS_077_REPORT.md).

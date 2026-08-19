@@ -1921,6 +1921,7 @@ export function PdvClassic({
             customerName: selectedCustomer?.name,
             clienteId: selectedCustomer?.id || undefined,
             aPrazoConfig,
+            pixQrKind: meta?.pixQrKind,
           })
           if (!result.ok) {
             toast({ title: "Falha transacional", description: result.reason })

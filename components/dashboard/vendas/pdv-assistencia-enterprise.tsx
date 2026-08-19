@@ -1772,7 +1772,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   // ── Payment confirm ────────────────────────────────────────────────────────────
   const handlePaymentConfirm = async (
     payments: PaymentMethod[],
-    meta?: { cashierId?: string; discountAuthorizedByAdminId?: string; discountReais?: number; discountPercent?: number },
+    meta?: { cashierId?: string; discountAuthorizedByAdminId?: string; discountReais?: number; discountPercent?: number; pixQrKind?: string },
   ) => {
     if (cart.length === 0 || discountOverTotal) return
 
@@ -1859,6 +1859,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
         discountAuthorizedByAdminId: meta?.discountAuthorizedByAdminId,
       },
       aPrazoConfig,
+      pixQrKind: meta?.pixQrKind,
     })
 
     if (!result.ok) {

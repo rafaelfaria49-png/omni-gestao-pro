@@ -13,6 +13,7 @@ import {
   type FiscalPaymentHandoffLinha,
   type HandoffFormaComTPagComprovado,
 } from "@/lib/vendas/fiscal-payment-handoff"
+import { isPixQrKind, tPagFromPixQrKind } from "./pix-qr-kind"
 import {
   FORMAS_INTERNAS_COM_TPAG,
   PAGAMENTO_FISCAL_CONTRATO_VERSAO,
@@ -43,9 +44,12 @@ function detSortKey(d: PagamentoFiscalDetalhe): string {
   return `${d.tPag}:${d.formaInterna}`
 }
 
-function tPagComprovadoDaForma(formaOrigem: string): string | null {
-  if (formaOrigem === "dinheiro" || formaOrigem === "cartaoDebito" || formaOrigem === "cartaoCredito") {
-    return HANDOFF_TPAG_COMPROVADO[formaOrigem as HandoffFormaComTPagComprovado]
+function tPagComprovadoDaLinha(linha: FiscalPaymentHandoffLinha): string | null {
+  if (linha.formaOrigem === "dinheiro" || linha.formaOrigem === "cartaoDebito" || linha.formaOrigem === "cartaoCredito") {
+    return HANDOFF_TPAG_COMPROVADO[linha.formaOrigem as HandoffFormaComTPagComprovado]
+  }
+  if (linha.formaOrigem === "pix" && isPixQrKind(linha.pixQrKind)) {
+    return tPagFromPixQrKind(linha.pixQrKind)
   }
   return null
 }
@@ -68,12 +72,21 @@ function asLinha(raw: unknown, index: number): FiscalPaymentHandoffLinha | Pagam
     return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} com status inválido.`, `venda.fiscalPaymentHandoff.linhas[${index}].status`)
   }
   const tPag = typeof raw.tPag === "string" ? raw.tPag : undefined
+  const pixQrKindRaw = raw.pixQrKind
+  if (pixQrKindRaw !== undefined && pixQrKindRaw !== null && !isPixQrKind(pixQrKindRaw)) {
+    return erro(
+      "PAGAMENTO_HANDOFF_INVALIDO",
+      `Linha ${index} com pixQrKind desconhecido.`,
+      `venda.fiscalPaymentHandoff.linhas[${index}].pixQrKind`,
+    )
+  }
   const linha: FiscalPaymentHandoffLinha = {
     formaOrigem,
     valor: Number.isFinite(valor) ? valor : Number.NaN,
     capability,
     status,
     ...(tPag !== undefined ? { tPag } : {}),
+    ...(isPixQrKind(pixQrKindRaw) ? { pixQrKind: pixQrKindRaw } : {}),
     ...(typeof raw.motivo === "string" ? { motivo: raw.motivo } : {}),
     ...(typeof raw.dadoAdicionalNecessario === "string"
       ? { dadoAdicionalNecessario: raw.dadoAdicionalNecessario }
@@ -142,7 +155,15 @@ export function derivePagamentoFiscalFromHandoff(
       )
     }
 
-    const tPagEsperado = tPagComprovadoDaForma(linha.formaOrigem)
+    const tPagEsperado = tPagComprovadoDaLinha(linha)
+
+    if (linha.formaOrigem === "pix" && linha.tPag !== undefined && linha.pixQrKind === undefined) {
+      return erro(
+        "PAGAMENTO_HANDOFF_INVALIDO",
+        `Handoff atribuiu tPag ${linha.tPag} à forma "pix" sem pixQrKind. tPag do cliente não é autoridade.`,
+        "venda.fiscalPaymentHandoff.linhas",
+      )
+    }
 
     if (linha.tPag !== undefined) {
       if (!isTPagOficial(linha.tPag)) {

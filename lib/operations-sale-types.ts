@@ -2,6 +2,7 @@
 
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 import type { SaleLineItemType } from "@/lib/sale-line-classification"
+import type { PixQrKind } from "@/lib/fiscal/payment/pix-qr-kind"
 
 export interface APrazoConfig {
   parcelas: number           // 1-24, default 1
@@ -82,6 +83,11 @@ export interface SaleRecord {
   /** FK real para Cliente (cuid). Nulo em consumidor final ou vendas antigas. */
   clienteId?: string
   paymentBreakdown: PaymentBreakdownFull
+  /**
+   * Discriminador fiscal observado do PIX (GOAL 077). Só existe quando PIX > 0
+   * e o operador informou o subtipo. Sem default. Não altera o valor do PIX.
+   */
+  pixQrKind?: PixQrKind | string
   /** Auditoria: operador do caixa (id local do dispositivo). */
   cashierId?: string
   /** Sessão de caixa ativa no momento da venda (persiste no payload JSON da Venda). */

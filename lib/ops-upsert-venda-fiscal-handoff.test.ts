@@ -149,6 +149,75 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
     expect(linhas[0]!.tPag).toBeUndefined()
   })
 
+  it("PIX com pixQrKind estático persiste tPag 20 e ignora tPag do cliente", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({
+        paymentBreakdown: { pix: 50 },
+        pixQrKind: "estatico",
+        tPag: "17",
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [{ formaOrigem: "pix", valor: 50, tPag: "17", capability: "supported", status: "ok" }],
+        },
+      } as SalePayload & { tPag?: string }),
+    )
+    const payload = vendas[0]!.payload
+    expect(payload.tPag).toBeUndefined()
+    const linhas = (payload.fiscalPaymentHandoff as { linhas: Array<Record<string, unknown>> }).linhas
+    expect(linhas[0]).toMatchObject({
+      formaOrigem: "pix",
+      valor: 50,
+      pixQrKind: "estatico",
+      tPag: "20",
+      capability: "supported",
+      status: "ok",
+    })
+    expect(payload.pixQrKind).toBe("estatico")
+    expect(financeiro).toHaveLength(1)
+    expect(financeiro[0]!.valor).toBe(50)
+  })
+
+  it("PIX com pixQrKind inválido bloqueia fiscal e a venda comercial ainda persiste", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({ paymentBreakdown: { pix: 50 }, pixQrKind: "qr-inventado" }),
+    )
+    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ tPag?: string; motivo?: string }> }).linhas
+    expect(linhas[0]!.tPag).toBeUndefined()
+    expect(linhas[0]!.motivo).toBe("pix_qr_kind_desconhecido")
+    expect(financeiro).toHaveLength(1)
+  })
+
+  it("split PIX + dinheiro com pixQrKind dinâmico", async () => {
+    const { tx, vendas } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({ total: 100, paymentBreakdown: { pix: 40, dinheiro: 60 }, pixQrKind: "dinamico" }),
+    )
+    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ formaOrigem: string; tPag?: string }> }).linhas
+    expect(linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("17")
+    expect(linhas.find((l) => l.formaOrigem === "dinheiro")?.tPag).toBe("01")
+  })
+
+  it("split PIX + cartão com pixQrKind automático", async () => {
+    const { tx, vendas } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({ total: 90, paymentBreakdown: { pix: 30, cartaoDebito: 60 }, pixQrKind: "automatico" }),
+    )
+    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ formaOrigem: string; tPag?: string }> }).linhas
+    expect(linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("23")
+    expect(linhas.find((l) => l.formaOrigem === "cartaoDebito")?.tPag).toBe("04")
+  })
+
   it("não persiste vTroco", async () => {
     const { tx, vendas } = makeFakeTx()
     await upsertVendaInTransaction(tx, STORE, avulsoSale({ paymentBreakdown: { dinheiro: 50 } }))
@@ -174,5 +243,22 @@ describe("PDVs ativos não produzem o handoff — só o motor central", () => {
       expect(src, rel).not.toContain("fiscalPaymentHandoff")
       expect(src, rel).not.toContain("buildFiscalPaymentHandoff")
     }
+  })
+
+  it("PaymentModal captura pixQrKind em linguagem operacional, sem oferecer tPag nua", () => {
+    const src = readFileSync(resolve(process.cwd(), "components/dashboard/vendas/payment-modal.tsx"), "utf8")
+    expect(src).toContain("PixQrKindPicker")
+    expect(src).toContain("pixQrKind")
+    expect(src).toContain("PIX_QR_KIND_OPCOES_OPERADOR")
+    expect(src).not.toMatch(/tPag:\s*"17"|tPag:\s*"20"|tPag:\s*"23"/)
+    expect(src).not.toContain("buildFiscalPaymentHandoff")
+  })
+
+  it("finalizeSaleTransaction propaga pixQrKind e não deriva tPag no cliente", () => {
+    const src = readFileSync(resolve(process.cwd(), "lib/operations-store.tsx"), "utf8")
+    expect(src).toContain("pixQrKind")
+    expect(src).not.toContain("buildFiscalPaymentHandoff")
+    expect(src).not.toContain("fiscalPaymentHandoff")
+    expect(src).not.toMatch(/tPagFromPixQrKind|tPag:\s*"17"/)
   })
 })

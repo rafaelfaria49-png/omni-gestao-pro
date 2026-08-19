@@ -381,6 +381,11 @@ interface OperationsContextType {
     total: number
     linkedOsId?: string | null
     paymentBreakdown?: Partial<PaymentBreakdownFull> & { cartao?: number }
+    /**
+     * Discriminador fiscal observado do PIX. O cliente não envia tPag.
+     * Ausente com PIX > 0: a venda comercial fecha; o handoff Fiscal permanece bloqueado.
+     */
+    pixQrKind?: unknown
     customerCpf?: string
     customerName?: string
     /** FK real para o cliente cadastrado (cuid de Cliente). Nulo em consumidor final. */
@@ -1964,6 +1969,7 @@ export function OperationsProvider({
       saldoInicialAoAbrir,
       auditMeta,
       aPrazoConfig,
+      pixQrKind,
     }) => {
       const current = stateRef.current
       const next: OpsState = {
@@ -2088,6 +2094,7 @@ export function OperationsProvider({
         customerName: customerName?.trim() || undefined,
         clienteId: clienteId?.trim() || undefined,
         paymentBreakdown: pb,
+        ...(pb.pix > 0.02 && typeof pixQrKind === "string" && pixQrKind !== "" ? { pixQrKind } : {}),
         cashierId: auditMeta?.cashierId,
         sessaoId: current.caixaSessaoId ?? undefined,
         terminalId: readSelectedTerminal(opsLojaIdFromStorageKey(storageKey))?.id || undefined,

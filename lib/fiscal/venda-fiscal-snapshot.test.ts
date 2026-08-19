@@ -18,6 +18,7 @@ import {
   type SnapshotLojaInput,
 } from "./venda-fiscal-snapshot"
 import { getProdutoFiscal, sanitizeProdutoFiscal, PRODUTO_FISCAL_VAZIO } from "@/lib/produto-fiscal"
+import { buildFiscalPaymentHandoff } from "@/lib/vendas/fiscal-payment-handoff"
 
 // ── Fixtures ────────────────────────────────────────────────────────────────────────
 
@@ -312,6 +313,28 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     if (!r.ok) return
     expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.paymentBreakdown")
     expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
+  })
+
+  it("handoff de PIX com pixQrKind estático emite tPag 20", () => {
+    const handoff = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "estatico" })
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "20", vPag: 50 }])
+  })
+
+  it("handoff de PIX sem pixQrKind permanece bloqueado", () => {
+    const handoff = buildFiscalPaymentHandoff({ pix: 50 }, 50)
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
   })
 })
 

@@ -1,6 +1,7 @@
 import type { Prisma } from "@/generated/prisma"
 import { isVirtualSaleLine } from "@/lib/os-pdv-virtual-lines"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
+import type { PixQrKind } from "@/lib/fiscal/payment/pix-qr-kind"
 import { buildFiscalPaymentHandoff, type FiscalPaymentHandoff } from "@/lib/vendas/fiscal-payment-handoff"
 import type { SaleLineItemType } from "@/lib/sale-line-classification"
 import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
@@ -283,6 +284,11 @@ export type SalePayload = {
   linkedOsId?: string | null
   /** Formas de pagamento — usado para gerar MovimentacaoFinanceira por forma. */
   paymentBreakdown?: Partial<PaymentBreakdownFull>
+  /**
+   * Discriminador fiscal observado do PIX (GOAL 077). O cliente informa só o
+   * `pixQrKind`; o servidor deriva tPag. Ausente com PIX > 0 → handoff bloqueado.
+   */
+  pixQrKind?: PixQrKind | string
   /**
    * Handoff fiscal versionado (GOAL 075). Gravado pelo SERVIDOR no create.
    * Cliente que enviar este campo é ignorado — o motor reconstrói a partir do breakdown.
@@ -659,13 +665,17 @@ export async function upsertVendaInTransaction(
   // em qualquer outro navegador (pendência fantasma). Blacklist, não whitelist: campos
   // legítimos ainda não tipados continuam sendo persistidos.
   const salePersistivel = stripClientSyncFlags(sale)
+  const saleSemAutoridadeFiscalCliente = salePersistivel as SalePayload & { tPag?: unknown }
+  // tPag e fiscalPaymentHandoff do cliente nunca são autoridade.
+  const { tPag: _tPagClienteIgnorado, fiscalPaymentHandoff: _handoffClienteIgnorado, ...saleSemTPagCliente } =
+    saleSemAutoridadeFiscalCliente
 
   // `lines` são as linhas já resaneadas por `sanitizeSaleLinesPayload` (acessórios) —
   // sobrescrevem as linhas cruas do cliente. Quando o sync foi retroativo (sessão original
   // fechada, autorizado explicitamente), carimba metadados de auditoria — nunca enviados
   // pelo cliente, calculados aqui no servidor no momento da gravação.
   const salePayloadForStorage: SalePayload = {
-    ...salePersistivel,
+    ...saleSemTPagCliente,
     id: pedidoId,
     ...(clientSaleId ? { clientSaleId } : {}),
     lines,
@@ -679,8 +689,9 @@ export async function upsertVendaInTransaction(
       : {}),
     // Sempre por último: o cliente nunca é autoridade deste contrato.
     fiscalPaymentHandoff: buildFiscalPaymentHandoff(
-      (salePersistivel as SalePayload).paymentBreakdown,
+      saleSemTPagCliente.paymentBreakdown,
       total,
+      { pixQrKind: saleSemTPagCliente.pixQrKind },
     ),
   }
 

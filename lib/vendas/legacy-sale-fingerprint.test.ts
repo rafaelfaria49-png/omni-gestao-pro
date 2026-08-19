@@ -80,6 +80,9 @@ describe("legacy-sale-fingerprint", () => {
       operador: "Nome mutável no servidor",
       requestId: "campo-de-transporte",
       idempotencyKey: "chave-de-transporte",
+      pixQrKind: "estatico",
+      fiscalPaymentHandoff: { version: 1, linhas: [] },
+      tPag: "17",
     }
 
     const first = buildLegacySaleFingerprint(sale)
