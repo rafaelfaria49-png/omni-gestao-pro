@@ -42,7 +42,7 @@ import { isOperacaoStatusV3, projetarStatusV2 } from "@/lib/operacoes-v3/status-
 // Reuso PURO (read-only) da garantia/entrega REAIS da V3 (GOAL OPS-V4-DOCS-
 // ASSINATURA-TERMOS-ANEXOS-012): mesma fonte já usada pelas telas de pós-venda
 // e pela impressão da OS (`aberturaV3.garantiaPrevista` / `entregaV3`).
-import { lerEntregaV3 } from "@/lib/operacoes-v3/pos-venda-model";
+import { lerEntregaV3, lerFotosSaidaV3 } from "@/lib/operacoes-v3/pos-venda-model";
 import {
   buildGarantiaPosVendaV4,
   buildPosVendaV4,
@@ -624,15 +624,48 @@ export interface V4Anexo {
   id: string;
   kind: string;
   name: string;
+  /** Thumb real quando a fonte é data URL (prova de entrada / fotos de saída). */
+  dataUrl?: string;
+}
+
+const CATEGORIA_FOTO_SAIDA_TAG: Record<string, string> = {
+  reparado: "SAÍDA",
+  acessorio: "ACESSÓRIO",
+  outro: "SAÍDA",
+};
+
+export function adaptFotosSaida(os: OrdemServico): V4FotoEntrada[] {
+  return lerFotosSaidaV3(os).map((f) => ({
+    id: f.id,
+    tag: CATEGORIA_FOTO_SAIDA_TAG[f.categoria] ?? "SAÍDA",
+    name: txt(f.nome) || "Foto de saída",
+    dataUrl: f.dataUrl,
+  }));
 }
 
 export function adaptAnexos(os: OrdemServico): V4Anexo[] {
-  const lista = Array.isArray(os.anexos) ? os.anexos : [];
-  return lista.map((a: Anexo) => ({
-    id: a.id,
-    kind: ANEXO_KIND_LABEL[a.tipo] ?? "ANEXO",
-    name: txt(a.nome) || "Anexo",
+  const entrada = adaptFotosEntrada(os).map((f) => ({
+    id: f.id,
+    kind: f.tag,
+    name: f.name,
+    dataUrl: f.dataUrl,
   }));
+  const saida = adaptFotosSaida(os).map((f) => ({
+    id: f.id,
+    kind: f.tag,
+    name: f.name,
+    dataUrl: f.dataUrl,
+  }));
+  const ids = new Set([...entrada, ...saida].map((a) => a.id));
+  const lista = Array.isArray(os.anexos) ? os.anexos : [];
+  const legado = lista
+    .filter((a: Anexo) => a?.id && !ids.has(a.id))
+    .map((a: Anexo) => ({
+      id: a.id,
+      kind: ANEXO_KIND_LABEL[a.tipo] ?? "ANEXO",
+      name: txt(a.nome) || "Anexo",
+    }));
+  return [...entrada, ...saida, ...legado];
 }
 
 export interface V4Observacao {
@@ -1367,6 +1400,8 @@ export interface V4EntregaView {
   temAssinatura: boolean;
   /** Assinatura digital real de retirada (data URL PNG); vazio quando ausente. */
   assinaturaDataUrl: string;
+  /** Fotos de saída reais (`entregaV3.fotosSaida`). */
+  fotosSaida: V4FotoEntrada[];
   /** Acessórios reais do aparelho (devolvidos com o equipamento). */
   acessorios: string[];
   eventos: V4HistEvento[];
@@ -1383,6 +1418,7 @@ export const EMPTY_ENTREGA_VIEW: V4EntregaView = {
   observacao: "",
   temAssinatura: false,
   assinaturaDataUrl: "",
+  fotosSaida: [],
   acessorios: [],
   eventos: [],
   garantia: EMPTY_GARANTIA_VIEW,
@@ -1421,10 +1457,11 @@ export function adaptEntrega(os: OrdemServico): V4EntregaView {
     }));
 
   const garantia = adaptGarantia(os);
+  const fotosSaida = adaptFotosSaida(os);
 
   return {
     temRegistro:
-      entregue || !!retiradoPor || !!assinaturaDataUrl || !!observacao || eventos.length > 0 || garantia.temGarantia,
+      entregue || !!retiradoPor || !!assinaturaDataUrl || !!observacao || eventos.length > 0 || garantia.temGarantia || fotosSaida.length > 0,
     entregue,
     statusLabel,
     statusTone,
@@ -1433,6 +1470,7 @@ export function adaptEntrega(os: OrdemServico): V4EntregaView {
     observacao,
     temAssinatura: !!assinaturaDataUrl,
     assinaturaDataUrl,
+    fotosSaida,
     acessorios,
     eventos,
     garantia,

@@ -46,7 +46,11 @@ export function HistoricoStage({ v }: { v: V4Vals }) {
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 8 }}>
                 {v.anexos.map((ax) => (
                   <div key={ax.id} style={{ border: `1px solid ${C.line2}`, borderRadius: 9, overflow: "hidden" }}>
-                    <div style={{ height: 62, background: HATCH, position: "relative" }}>
+                    <div style={{ height: 62, background: ax.dataUrl ? C.surface2 : HATCH, position: "relative" }}>
+                      {ax.dataUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={ax.dataUrl} alt={ax.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      ) : null}
                       <span style={{ position: "absolute", left: 5, top: 5, fontSize: 8, background: "rgba(0,0,0,.55)", color: C.white, padding: "1px 5px", borderRadius: 3 }}>{ax.kind}</span>
                     </div>
                     <div style={{ padding: "6px 8px", fontSize: 11, color: C.body, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{ax.name}</div>

@@ -42,7 +42,20 @@ export function ActivityColumn({ v }: { v: V4Vals }) {
                 </section>
                 <section style={{ padding: "15px 0", borderBottom: `1px solid ${C.line3}` }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, color: C.body, fontSize: 12, fontWeight: 700 }}><Paperclip size={13} /> Anexos <span style={{ marginLeft: "auto", color: C.subtle, fontSize: 10 }}>{v.anexos.length}</span></div>
-                  {v.anexos.length ? <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 46px)", gap: 6 }}>{v.anexos.slice(0, 4).map((anexo) => <div key={anexo.id} title={anexo.name} style={{ width: 46, height: 46, borderRadius: 8, background: HATCH }} />)}</div> : <div style={{ color: C.subtle, fontSize: 11.5 }}>Nenhum anexo disponível.</div>}
+                  {v.anexos.length ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 46px)", gap: 6 }}>
+                      {v.anexos.slice(0, 4).map((anexo) => (
+                        <div key={anexo.id} title={anexo.name} style={{ width: 46, height: 46, borderRadius: 8, overflow: "hidden", background: anexo.dataUrl ? C.surface2 : HATCH }}>
+                          {anexo.dataUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={anexo.dataUrl} alt={anexo.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ color: C.subtle, fontSize: 11.5 }}>Nenhum anexo disponível.</div>
+                  )}
                 </section>
                 <button type="button" onClick={v.toHistCliente} style={{ width: "100%", height: 34, marginTop: 15, border: `1px solid ${C.inputBd}`, background: C.surface, color: C.body, borderRadius: 8, fontSize: 11.5, fontWeight: 650, cursor: "pointer" }}>Abrir histórico do cliente</button>
               </div>
@@ -100,7 +113,12 @@ export function ActivityColumn({ v }: { v: V4Vals }) {
           </div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {v.anexos.slice(0, 3).map((ax) => (
-              <div key={ax.id} title={ax.name} style={{ width: 46, height: 46, borderRadius: 8, background: HATCH }} />
+              <div key={ax.id} title={ax.name} style={{ width: 46, height: 46, borderRadius: 8, overflow: "hidden", background: ax.dataUrl ? C.surface2 : HATCH }}>
+                {ax.dataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={ax.dataUrl} alt={ax.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                ) : null}
+              </div>
             ))}
             <div onClick={v.act.addFoto} style={{ width: 46, height: 46, borderRadius: 8, border: `1px dashed ${C.hatch}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.subtle, cursor: "pointer" }}>+</div>
           </div>

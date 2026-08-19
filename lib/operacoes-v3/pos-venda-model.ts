@@ -48,6 +48,49 @@ export interface EntregaV3View {
   assinaturaRetiradaDataUrl?: string;
 }
 
+export type CategoriaFotoSaidaV3 = "reparado" | "acessorio" | "outro";
+
+export const CATEGORIAS_FOTO_SAIDA_V3: { id: CategoriaFotoSaidaV3; label: string }[] = [
+  { id: "reparado", label: "Aparelho reparado" },
+  { id: "acessorio", label: "Acessório na saída" },
+  { id: "outro", label: "Outra" },
+];
+
+export interface FotoSaidaV3 {
+  id: string;
+  categoria: CategoriaFotoSaidaV3;
+  nome?: string;
+  dataUrl: string;
+  tamanho: number;
+  criadoEm: string;
+}
+
+function categoriaFotoSaidaV3(v: unknown): CategoriaFotoSaidaV3 {
+  return v === "acessorio" || v === "outro" ? v : "reparado";
+}
+
+/** Fotos de saída reais em `payload.entregaV3.fotosSaida` (data URL). Lista vazia = honesto. */
+export function lerFotosSaidaV3(os: OrdemServico | null | undefined): FotoSaidaV3[] {
+  const e = (os as { entregaV3?: { fotosSaida?: unknown } } | null | undefined)?.entregaV3;
+  const lista = Array.isArray(e?.fotosSaida) ? e.fotosSaida : [];
+  const out: FotoSaidaV3[] = [];
+  for (const raw of lista) {
+    if (!raw || typeof raw !== "object") continue;
+    const f = raw as Record<string, unknown>;
+    const dataUrl = s(f.dataUrl);
+    if (!dataUrl.startsWith("data:image/")) continue;
+    out.push({
+      id: s(f.id) || `foto_saida_${out.length + 1}`,
+      categoria: categoriaFotoSaidaV3(f.categoria),
+      nome: s(f.nome) || undefined,
+      dataUrl,
+      tamanho: typeof f.tamanho === "number" && Number.isFinite(f.tamanho) ? f.tamanho : 0,
+      criadoEm: s(f.criadoEm),
+    });
+  }
+  return out;
+}
+
 export function lerEntregaV3(os: OrdemServico | null | undefined): EntregaV3View {
   const e = (os as { entregaV3?: Record<string, unknown> } | null | undefined)?.entregaV3;
   const entregueEm = s(e?.entregueEm) || s(os?.entregueEm) || s(os?.retirada?.retiradoEm) || undefined;

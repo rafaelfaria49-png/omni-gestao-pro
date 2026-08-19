@@ -6,8 +6,8 @@
  * e só oferece um botão "Ir para" que rola/foca o card JÁ EXISTENTE em
  * `EntradaStage.tsx` — não grava nada, não duplica os saves já cablados
  * (`salvarDadosBasicos`/`salvarIdentificacao`/`salvarProvaEntrada`/
- * `salvarChecklist`/`salvarAcessorios`). Item sem contrato real (fotos) fica
- * sempre informativo, nunca acionável.
+ * `salvarChecklist`/`salvarAcessorios`/`adicionarFotoEntrada`). Fotos de entrada
+ * já têm contrato real; o botão "Ir para" só foca o card existente.
  *
  * Some sozinho quando não há OS real ou quando todos os itens com contrato já
  * estão preenchidos — nunca marca "completo" sem dado real do servidor.

@@ -1,5 +1,11 @@
 # Changelog — OmniGestão Pro
 
+## 2026-08-19 — Operações V4: documentos, assinatura, fotos e anexos
+
+- Termo de Garantia, Termo de Entrega, OS cliente, via interna, etiqueta e orçamento imprimem/reimprimem pelo motor V3 já existente.
+- Fotos de saída persistem em `entregaV3.fotosSaida` (sem apagar na confirmação da entrega). Anexos e thumbs usam as imagens reais de entrada/saída.
+- WhatsApp do documento usa o mesmo `wa.me` do orçamento, só quando o documento é visível ao cliente e o telefone é válido.
+
 ## 2026-08-18 — Histórico de Vendas: cancelar venda confirmada após recovery
 
 - O diálogo de cancelamento de uma venda `REMOTE_CONFIRMED` (ou com detalhe `GET /api/vendas/[id]` ok) envia o POST oficial `/api/vendas/{id}/cancelar` mesmo se existir cópia local stale do mesmo id.

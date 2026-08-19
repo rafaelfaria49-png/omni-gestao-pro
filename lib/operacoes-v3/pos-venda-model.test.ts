@@ -4,6 +4,7 @@ import {
   classificarGarantiasV3,
   kpisPosVendaV3,
   lerEntregaV3,
+  lerFotosSaidaV3,
   lerGarantiaV3,
   lerRetornosV3,
   resumoRetornosV3,
@@ -38,6 +39,36 @@ describe("entrega — leitura", () => {
   });
   it("fallback para os.entregueEm/retirada", () => {
     expect(lerEntregaV3(os({ entregueEm: diasAtras(2) })).entregue).toBe(true);
+  });
+});
+
+describe("fotos de saída — leitura", () => {
+  it("sem entregaV3.fotosSaida → lista vazia honesta", () => {
+    expect(lerFotosSaidaV3(os({}))).toEqual([]);
+  });
+  it("ignora item sem data URL de imagem", () => {
+    expect(
+      lerFotosSaidaV3(
+        os({
+          entregaV3: {
+            fotosSaida: [{ id: "x", categoria: "reparado", dataUrl: "http://x" }],
+          },
+        }),
+      ),
+    ).toEqual([]);
+  });
+  it("lê fotos reais de saída", () => {
+    const fotos = lerFotosSaidaV3(
+      os({
+        entregaV3: {
+          fotosSaida: [
+            { id: "f1", categoria: "reparado", dataUrl: "data:image/jpeg;base64,AAAA", tamanho: 12, criadoEm: "2026-08-01T12:00:00.000Z" },
+          ],
+        },
+      }),
+    );
+    expect(fotos).toHaveLength(1);
+    expect(fotos[0]).toMatchObject({ id: "f1", categoria: "reparado" });
   });
 });
 
