@@ -584,5 +584,6 @@ describe("Contador HUB — central de avisos REAL (GOAL 017)", () => {
 
   it("agenda mantém microcopy informado pelo responsável", () => {
     expect(avisosSrc).toContain("informado pelo responsável")
+    expect(avisosSrc).not.toContain("janela de 7 dias informada pelo responsável")
   })
 })

@@ -6,7 +6,8 @@
  */
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import type { Competencia } from "@/lib/contador/competencia"
-import type { DedupeAlerta, NotificacoesRepo, NotificacoesRepoLeitura } from "./repo"
+import type { DedupeAlerta, DedupeChaveAlerta, NotificacoesRepo, NotificacoesRepoLeitura } from "./repo"
+import { reconstruirPendenciasViaMontarPendencias } from "./pacote-fonte"
 import type {
   CompetenciaAlerta,
   DocumentoAlerta,
@@ -15,6 +16,7 @@ import type {
   NovoEventoAlerta,
   PacoteAlerta,
 } from "./tipos"
+import { EVENTO_ALERTA_EMITIDO, EVENTO_ALERTA_TRATADO } from "./tipos"
 
 type TxClient = {
   contadorCompetencia: {
@@ -27,7 +29,7 @@ type TxClient = {
     findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<GuiaAlerta[]>
   }
   contadorPacote: {
-    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<PacoteAlerta[]>
+    findMany(args: { where: Record<string, unknown>; select: Record<string, unknown> }): Promise<Array<{ versao: number }>>
   }
   contadorEvento: {
     findMany(args: { where: Record<string, unknown>; select: Record<string, unknown>; orderBy: Record<string, unknown> }): Promise<EventoAlertaRow[]>
@@ -65,6 +67,23 @@ function eventoData(e: NovoEventoAlerta): Record<string, unknown> {
   }
 }
 
+function whereChave(
+  storeId: string,
+  chave: DedupeChaveAlerta,
+  tipo: string,
+): Record<string, unknown> {
+  return {
+    competenciaId: chave.competenciaId,
+    storeId,
+    tipo,
+    AND: [
+      { metadata: { path: ["regra"], equals: chave.regra } },
+      { metadata: { path: ["alvo"], equals: chave.alvo } },
+      { metadata: { path: ["janela"], equals: chave.janela } },
+    ],
+  }
+}
+
 export function criarRepoNotificacoes(client?: DbClient): NotificacoesRepo {
   const obter = async (): Promise<DbClient> => {
     if (client) return client
@@ -99,10 +118,29 @@ export function criarRepoNotificacoes(client?: DbClient): NotificacoesRepo {
 
     async listarPacotes(competenciaId): Promise<PacoteAlerta[]> {
       const db = await obter()
-      return db.contadorPacote.findMany({
-        where: { competenciaId },
-        select: { versao: true },
-      })
+      const [rows, comp] = await Promise.all([
+        db.contadorPacote.findMany({
+          where: { competenciaId },
+          select: { versao: true },
+        }),
+        db.contadorCompetencia.findUnique({
+          where: { id: competenciaId },
+          select: { ano: true, mes: true, snapshot: true },
+        }),
+      ])
+      if (rows.length === 0) return []
+      const max = Math.max(...rows.map((r) => r.versao))
+      const pendencias =
+        comp && typeof (comp as { ano?: unknown }).ano === "number"
+          ? reconstruirPendenciasViaMontarPendencias((comp as { snapshot: unknown }).snapshot, {
+              ano: (comp as { ano: number }).ano,
+              mes: (comp as { mes: number }).mes,
+            })
+          : Object.freeze([])
+      return rows.map((r) => ({
+        versao: r.versao,
+        pendencias: r.versao === max ? pendencias : Object.freeze([]),
+      }))
     },
 
     async listarEventos(competenciaId, storeId, tipos): Promise<EventoAlertaRow[]> {
@@ -141,6 +179,33 @@ export function criarRepoNotificacoes(client?: DbClient): NotificacoesRepo {
         if (existente) return { criado: false }
         await tx.contadorEvento.create({ data: eventoData(evento) })
         return { criado: true }
+      })
+    },
+
+    async garantirEmitidoETratado(emitido, tratado, chave): Promise<{ emitidoCriado: boolean; tratadoCriado: boolean }> {
+      const db = await obter()
+      return db.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT id FROM contador_competencias
+          WHERE id = ${chave.competenciaId} AND "storeId" = ${emitido.storeId}
+          FOR UPDATE
+        `
+
+        const jaTratado = await tx.contadorEvento.findFirst({
+          where: whereChave(emitido.storeId, chave, EVENTO_ALERTA_TRATADO),
+        })
+        if (jaTratado) return { emitidoCriado: false, tratadoCriado: false }
+
+        const jaEmitido = await tx.contadorEvento.findFirst({
+          where: whereChave(emitido.storeId, chave, EVENTO_ALERTA_EMITIDO),
+        })
+        let emitidoCriado = false
+        if (!jaEmitido) {
+          await tx.contadorEvento.create({ data: eventoData(emitido) })
+          emitidoCriado = true
+        }
+        await tx.contadorEvento.create({ data: eventoData(tratado) })
+        return { emitidoCriado, tratadoCriado: true }
       })
     },
   }

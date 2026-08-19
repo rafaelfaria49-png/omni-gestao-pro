@@ -179,7 +179,7 @@ export function ContadorAvisosReal({ competencia }: { competencia: Competencia }
           </h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
             Alertas internos de <b className="text-foreground">{codigo}</b>. Sem envio externo.
-            Guias usam a janela de 7 dias informada pelo responsável.
+            Vencimentos e dados da guia são informados pelo responsável.
           </p>
         </div>
         <div className="flex min-w-0 flex-wrap gap-2">

@@ -1,8 +1,9 @@
 /**
  * POST /api/contador/notificacoes/[id]/tratar
  *
- * Reavalia o alerta no servidor (loja + competência) e grava `alerta_tratado`.
- * Idempotente. Não confia em metadata do cliente.
+ * Reavalia o alerta no servidor (loja + competência) e garante a trilha
+ * `alerta_emitido` → `alerta_tratado` na mesma transação.
+ * Não exige POST /avaliar prévio. Idempotente. Não confia em metadata do cliente.
  */
 import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"

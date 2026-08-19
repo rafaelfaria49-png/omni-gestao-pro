@@ -4,7 +4,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { gerarRascunho } from "@/lib/contador/notificacoes/rascunhos"
 import { CHECKLIST_IDS_STALE, EXTERNAL_SEND_ALLOWED } from "@/lib/contador/notificacoes/tipos"
-import { THRESHOLD_HUMAN_DECISION_REQUIRED } from "@/lib/contador/notificacoes/limiares"
+import { DOCUMENTO_PENDENTE_THRESHOLD, FECHAMENTO_PROXIMO_DAYS, THRESHOLD_HUMAN_DECISION_REQUIRED } from "@/lib/contador/notificacoes/limiares"
 
 const DIR = dirname(fileURLToPath(import.meta.url))
 const NOTIF_DIR = join(DIR, "../../notificacoes")
@@ -34,18 +34,20 @@ describe("notificacoes · honesty de envio e fontes", () => {
 
   it("não usa os sinais stale do checklist como fonte", () => {
     const regras = readFileSync(join(NOTIF_DIR, "regras.ts"), "utf8")
-    expect(regras).toContain("CHECKLIST_IDS_STALE")
+    const fontePacote = readFileSync(join(NOTIF_DIR, "pacote-fonte.ts"), "utf8")
+    expect(fontePacote).toContain("CHECKLIST_IDS_STALE")
+    expect(fontePacote).toContain("montarPendencias")
     expect(CHECKLIST_IDS_STALE).toEqual(["documentos", "fechamento_oficial"])
-    expect(regras).toContain("STALE.has(id)")
-    expect(regras).not.toMatch(/id === ["']documentos["']/)
-    expect(regras).not.toMatch(/id === ["']fechamento_oficial["']/)
+    expect(regras).not.toContain("snapshot.checklist")
+    expect(regras).not.toContain("pendenciasOperacionaisDoSnapshot")
+    expect(regras).not.toContain("montarPendencias")
+    expect(regras).toContain("pendenciasOperacionaisDoManifesto")
   })
 
-  it("limiares sem número aprovado ficam explícitos", () => {
-    expect(THRESHOLD_HUMAN_DECISION_REQUIRED).toEqual([
-      "docPendenteDiasAntesFechamento",
-      "competenciaAbertaAposDia",
-    ])
+  it("limiares ratificados: estado do documento, 7 dias de fechamento, sem pendência humana", () => {
+    expect(DOCUMENTO_PENDENTE_THRESHOLD).toBe("STATE_ONLY")
+    expect(FECHAMENTO_PROXIMO_DAYS).toBe(7)
+    expect(THRESHOLD_HUMAN_DECISION_REQUIRED).toBe(false)
   })
 
   it("rascunho recusa se o texto cair no padrão proibido", () => {

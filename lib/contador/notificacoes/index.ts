@@ -1,4 +1,10 @@
-export { GUIAS_VENCENDO_DIAS, JANELA_OPERACIONAL_DIAS, THRESHOLD_HUMAN_DECISION_REQUIRED } from "./limiares"
+export {
+  DOCUMENTO_PENDENTE_THRESHOLD,
+  FECHAMENTO_PROXIMO_DAYS,
+  GUIAS_VENCENDO_DIAS,
+  JANELA_OPERACIONAL_DIAS,
+  THRESHOLD_HUMAN_DECISION_REQUIRED,
+} from "./limiares"
 export { avaliarRegras, diasAteFimCompetencia } from "./regras"
 export { gerarRascunho } from "./rascunhos"
 export { alertIdDe, chaveCanonico, montarChave } from "./chave"

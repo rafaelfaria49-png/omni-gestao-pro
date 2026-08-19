@@ -3,8 +3,9 @@
  *
  * GET  → carrega fontes + avalia + cruza histórico. Zero escrita.
  * POST avaliar → persiste só `alerta_emitido` novos (dedupe + lock).
- * POST tratar  → reavalia no servidor, localiza pelo alertId, grava `alerta_tratado`.
- * GET rascunho → reavalia, localiza, gera texto. Nunca envia.
+ * POST tratar  → reavalia, garante trilha `alerta_emitido` → `alerta_tratado`
+ *                na mesma transação (não exige POST /avaliar prévio).
+ * GET rascunho → só alerta atualmente ativo. Nunca envia.
  */
 import { formatCompetencia, type Competencia } from "@/lib/contador/competencia"
 import { alertIdDe } from "./chave"
@@ -129,6 +130,31 @@ function acharCandidatoPorId(
   return null
 }
 
+function eventoDeCandidato(
+  c: AlertaCandidato,
+  escopo: EscopoNotificacoes,
+  competenciaId: string,
+  codigo: string,
+  tipo: typeof EVENTO_ALERTA_EMITIDO | typeof EVENTO_ALERTA_TRATADO,
+) {
+  return {
+    storeId: escopo.storeId,
+    competenciaId,
+    tipo,
+    atorTipo: ATOR_TIPO_INTERNO,
+    atorId: escopo.userId,
+    entidade: c.origem,
+    entidadeId: c.alvo,
+    origem: ORIGEM_NOTIFICACOES,
+    metadata: {
+      regra: c.regra,
+      alvo: c.alvo,
+      janela: c.janela,
+      competencia: codigo,
+    },
+  } as const
+}
+
 /** Somente leitura. Nunca chama registrarEventoUnico. */
 export async function listarAlertas(
   escopo: EscopoNotificacoes,
@@ -212,26 +238,12 @@ export async function tratarAlerta(
   const candidato = acharCandidatoPorId(fontes, id, agora)
   if (!candidato) throw new AlertaNaoEncontradoError()
 
-  await repo.registrarEventoUnico(
-    {
-      storeId: escopo.storeId,
-      competenciaId: competencia.id,
-      tipo: EVENTO_ALERTA_TRATADO,
-      atorTipo: ATOR_TIPO_INTERNO,
-      atorId: escopo.userId,
-      entidade: candidato.origem,
-      entidadeId: candidato.alvo,
-      origem: ORIGEM_NOTIFICACOES,
-      metadata: {
-        regra: candidato.regra,
-        alvo: candidato.alvo,
-        janela: candidato.janela,
-        competencia: formatCompetencia(comp),
-      },
-    },
+  const codigo = formatCompetencia(comp)
+  await repo.garantirEmitidoETratado(
+    eventoDeCandidato(candidato, escopo, competencia.id, codigo, EVENTO_ALERTA_EMITIDO),
+    eventoDeCandidato(candidato, escopo, competencia.id, codigo, EVENTO_ALERTA_TRATADO),
     {
       competenciaId: competencia.id,
-      tipo: EVENTO_ALERTA_TRATADO,
       regra: candidato.regra,
       alvo: candidato.alvo,
       janela: candidato.janela,
@@ -252,10 +264,12 @@ export async function rascunhoAlerta(
   if (!id) throw new AlertaNaoEncontradoError()
 
   const fontes = await carregarFontes(escopo, comp, repo)
-  if (!fontes.competencia) throw new AlertaNaoEncontradoError()
+  const competencia = fontes.competencia
+  if (!competencia) throw new AlertaNaoEncontradoError()
 
   const candidato = acharCandidatoPorId(fontes, id, agora)
   if (!candidato) throw new AlertaNaoEncontradoError()
+  if (silenciado(fontes.eventosAlerta, candidato)) throw new AlertaNaoEncontradoError()
 
   return gerarRascunho(candidato, {
     competencia: formatCompetencia(comp),

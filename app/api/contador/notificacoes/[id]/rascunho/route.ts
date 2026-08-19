@@ -1,7 +1,8 @@
 /**
  * GET /api/contador/notificacoes/[id]/rascunho?c=AAAA-MM
  *
- * Gera rascunho pt-BR. Nunca envia. Não há rota de envio externo.
+ * Gera rascunho pt-BR somente para alerta atualmente ativo.
+ * Tratado/suprimido → 404. Nunca envia. Não há rota de envio externo.
  */
 import { NextResponse } from "next/server"
 import { requireContadorScope } from "@/lib/contador/scope"

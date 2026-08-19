@@ -33,6 +33,13 @@ export interface NotificacoesRepoLeitura {
   ): Promise<EventoAlertaRow[]>
 }
 
+export type DedupeChaveAlerta = Readonly<{
+  competenciaId: string
+  regra: string
+  alvo: string
+  janela: string
+}>
+
 export interface NotificacoesRepo extends NotificacoesRepoLeitura {
   /**
    * Lock da competência (`SELECT … FOR UPDATE`) + findFirst da chave + create.
@@ -40,4 +47,13 @@ export interface NotificacoesRepo extends NotificacoesRepoLeitura {
    * Falha da transação → zero evento parcial.
    */
   registrarEventoUnico(evento: NovoEventoAlerta, dedupe: DedupeAlerta): Promise<{ criado: boolean }>
+  /**
+   * Trilha auditável na mesma transação: `alerta_emitido` (se ainda não existir)
+   * e `alerta_tratado` (se ainda não existir). Idempotente. Rollback total se falhar.
+   */
+  garantirEmitidoETratado(
+    emitido: NovoEventoAlerta,
+    tratado: NovoEventoAlerta,
+    chave: DedupeChaveAlerta,
+  ): Promise<{ emitidoCriado: boolean; tratadoCriado: boolean }>
 }

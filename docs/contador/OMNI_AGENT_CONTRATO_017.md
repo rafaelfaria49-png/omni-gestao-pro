@@ -18,15 +18,16 @@ O Omni Core (`lib/omni-agent/**`) permanece intocado. Integração futura consom
 | `fechamento_proximo` | `ContadorCompetencia` (GOAL 012) | status ≠ `FECHADA` e faltam ≤ 7 dias civis SP para o último dia da competência (ou o mês já passou) | competência `FECHADA`; folga > 7 dias |
 | `guia_vencendo` | Agenda (GOAL 016) | `estaVencendo` (janela canônica de **7 dias**) | paga (`pagaEm`); fora da janela |
 | `guia_vencida` | Agenda (GOAL 016) | `estaVencido` (dia UTC do vencimento < hoje SP) | paga |
-| `pacote_com_pendencias` | Pacote oficial + snapshot | existe `ContadorPacote` e o checklist do snapshot tem item ≠ `ok` / `nao_disponivel` **exceto** ids stale | sem pacote; só stale; tudo `ok`/`nao_disponivel` |
+| `pacote_com_pendencias` | `manifesto.pendencias` da versão efetiva do `ContadorPacote` (GOAL 012). Não usa `snapshot.checklist`. | pacote existe e há pendência operacional após filtrar ids stale | sem pacote; só stale; manifesto sem pendência operacional |
 | `alteracao_pos_fechamento` | `ContadorEvento` persistido (POST 012) | existe evento `alteracao_pos_fechamento` | ausência de evento (GET vivo de divergência **não** inventa alerta) |
 
 Itens stale **nunca** usados como fonte: `documentos`, `fechamento_oficial`.
 
-Limiares **sem número aprovado** (não inventados):
+Limiares **ratificados** (sem número extra, sem preferência persistente):
 
-- `docPendenteDiasAntesFechamento` — regra de estado, não de N dias.
-- `competenciaAbertaAposDia` — o 017 reusa a janela canônica de 7 dias até o fim da competência, em vez de um dia X do mês.
+- `DOCUMENTO_PENDENTE_THRESHOLD=STATE_ONLY` — dispara só com `status === PENDENTE`.
+- `FECHAMENTO_PROXIMO_DAYS=7` — últimos 7 dias civis até o fim da competência (`JANELA_OPERACIONAL_DIAS`).
+- `THRESHOLD_HUMAN_DECISION_REQUIRED=false`
 
 ---
 
@@ -58,8 +59,8 @@ Chave: `regra + alvo + storeId + competenciaId + janela`
 
 Persistência: `ContadorEvento`
 
-- `alerta_emitido` — só no `POST /avaliar`
-- `alerta_tratado` — `POST /[id]/tratar` (idempotente)
+- `alerta_emitido` — `POST /avaliar` (materialização explícita) **e** `POST /[id]/tratar` quando o candidato ainda não tinha evento
+- `alerta_tratado` — `POST /[id]/tratar` (idempotente). Trilha obrigatória: `alerta_emitido` → `alerta_tratado` na **mesma** transação (1+1). Não exige clique prévio em «Atualizar avisos».
 - `alerta_suprimido` — reconhecido na leitura; o 017 não o emite
 - `mensagem_enviada` — **reservado, não emitido**
 
@@ -70,6 +71,8 @@ Tratado/suprimido silencia a **mesma** chave até nova janela válida (novo dia 
 Falha da transação: zero evento parcial / órfão.
 
 `GET /api/contador/notificacoes` é **somente leitura** (avalia + lista + consulta histórico; zero INSERT/UPDATE).
+
+Fonte do pacote: `PacoteAlerta.pendencias` = `manifesto.pendencias` da maior versão. A regra não lê `snapshot.checklist`. O JSON do manifesto não vive na linha `ContadorPacote` (schema fora); o adapter Prisma reutiliza `montarPendencias` (GOAL 008) sobre o checklist congelado da versão efetiva, sem copiar a regra.
 
 ---
 
@@ -82,7 +85,9 @@ ação:   copiar
 envio:  proibido
 ```
 
-Agenda mantém a microcopy **«informado pelo responsável»**.
+Agenda mantém a microcopy **«informado pelo responsável»** só para vencimentos/dados da guia. A janela de 7 dias é canônica do sistema — não é informada pelo responsável.
+
+`GET /[id]/rascunho` representa somente alerta **atualmente ativo**. Chave já `alerta_tratado` ou `alerta_suprimido` → 404 (não gera rascunho novo). Sem persistência de rascunho.
 
 Não existe `POST /enviar`.
 
@@ -94,8 +99,8 @@ Não existe `POST /enviar`.
 |---|---|---|
 | GET | `/api/contador/notificacoes?c=AAAA-MM` | lista (read-only) |
 | POST | `/api/contador/notificacoes/avaliar` | reavalia e persiste `alerta_emitido` novos |
-| POST | `/api/contador/notificacoes/[id]/tratar` | `alerta_tratado` |
-| GET | `/api/contador/notificacoes/[id]/rascunho?c=AAAA-MM` | gera rascunho |
+| POST | `/api/contador/notificacoes/[id]/tratar` | garante `alerta_emitido` (se ausente) + `alerta_tratado` atomicamente |
+| GET | `/api/contador/notificacoes/[id]/rascunho?c=AAAA-MM` | rascunho só de alerta ativo |
 
 Escopo: sessão + loja ativa. `storeId` / `competenciaId` / metadata de alerta no cliente → 400. Cross-store → 404 fail-closed.
 

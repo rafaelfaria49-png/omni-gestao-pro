@@ -91,13 +91,52 @@ describe("notificacoes · regras puras", () => {
     expect(rPaga.some((a) => a.regra.startsWith("guia_"))).toBe(false)
   })
 
-  it("pacote com pendências operacionais dispara; só stale ou sem pacote silencia", () => {
-    const snapshotStale = {
-      checklist: {
-        itens: CHECKLIST_IDS_STALE.map((id) => ({ id, estado: "pendente" })),
-      },
-    }
-    const snapshotReal = {
+  it("pacote com pendências canônicas dispara; só stale ou sem pacote silencia", () => {
+    const soStale = avaliarRegras(
+      fontes({
+        competencia: competenciaRow({
+          snapshot: {
+            checklist: { itens: [{ id: "caixa", estado: "atencao" }] },
+          },
+        }),
+        pacotes: [
+          {
+            versao: 1,
+            pendencias: CHECKLIST_IDS_STALE.map((id) => `[pendente] ${id} — sinal stale`),
+          },
+        ],
+      }),
+      HOJE,
+    )
+    const comPend = avaliarRegras(
+      fontes({
+        competencia: competenciaRow({ snapshot: { checklist: { itens: [] } } }),
+        pacotes: [{ versao: 1, pendencias: ["[atencao] caixa — conferência"] }],
+      }),
+      HOJE,
+    )
+    const semPacote = avaliarRegras(
+      fontes({
+        competencia: competenciaRow({ snapshot: { checklist: { itens: [{ id: "caixa", estado: "atencao" }] } } }),
+        pacotes: [],
+      }),
+      HOJE,
+    )
+    const semPend = avaliarRegras(
+      fontes({
+        pacotes: [{ versao: 2, pendencias: [] }],
+      }),
+      HOJE,
+    )
+
+    expect(soStale.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+    expect(comPend.some((a) => a.regra === "pacote_com_pendencias" && a.alvo === "v1")).toBe(true)
+    expect(semPacote.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+    expect(semPend.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+  })
+
+  it("quando snapshot e manifesto.pendencias divergem, o alerta segue o pacote", () => {
+    const snapshotPendente = {
       checklist: {
         itens: [
           { id: "documentos", estado: "pendente" },
@@ -105,29 +144,40 @@ describe("notificacoes · regras puras", () => {
         ],
       },
     }
+    const snapshotLimpo = {
+      checklist: { itens: [{ id: "caixa", estado: "ok" }] },
+    }
 
-    const soStale = avaliarRegras(
+    const seguePacoteVazio = avaliarRegras(
       fontes({
-        competencia: competenciaRow({ snapshot: snapshotStale }),
-        pacotes: [{ versao: 1 }],
+        competencia: competenciaRow({ snapshot: snapshotPendente }),
+        pacotes: [{ versao: 3, pendencias: [] }],
       }),
       HOJE,
     )
-    const comPend = avaliarRegras(
+    const seguePacoteComPend = avaliarRegras(
       fontes({
-        competencia: competenciaRow({ snapshot: snapshotReal }),
-        pacotes: [{ versao: 1 }],
+        competencia: competenciaRow({ snapshot: snapshotLimpo }),
+        pacotes: [{ versao: 3, pendencias: ["[atencao] sessoes_caixa — diferença"] }],
       }),
       HOJE,
     )
-    const semPacote = avaliarRegras(
-      fontes({ competencia: competenciaRow({ snapshot: snapshotReal }), pacotes: [] }),
+    const staleNoPacoteNaoReaparece = avaliarRegras(
+      fontes({
+        competencia: competenciaRow({ snapshot: snapshotPendente }),
+        pacotes: [
+          {
+            versao: 3,
+            pendencias: ["[pendente] documentos — domínio", "[pendente] fechamento_oficial — GOAL"],
+          },
+        ],
+      }),
       HOJE,
     )
 
-    expect(soStale.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
-    expect(comPend.some((a) => a.regra === "pacote_com_pendencias")).toBe(true)
-    expect(semPacote.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+    expect(seguePacoteVazio.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
+    expect(seguePacoteComPend.some((a) => a.regra === "pacote_com_pendencias" && a.alvo === "v3")).toBe(true)
+    expect(staleNoPacoteNaoReaparece.some((a) => a.regra === "pacote_com_pendencias")).toBe(false)
   })
 
   it("alteracao_pos_fechamento só nasce de evento persistido", () => {

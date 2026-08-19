@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { avaliarEPersistir } from "@/lib/contador/notificacoes/service"
-import { EVENTO_ALERTA_EMITIDO } from "@/lib/contador/notificacoes/tipos"
+import { avaliarEPersistir, listarAlertas, tratarAlerta } from "@/lib/contador/notificacoes/service"
+import { EVENTO_ALERTA_EMITIDO, EVENTO_ALERTA_TRATADO } from "@/lib/contador/notificacoes/tipos"
 import { COMP, ESCOPO_A, competenciaRow, fakeRepoNotificacoes } from "./helpers"
 
 const HOJE = new Date("2026-08-31T15:00:00.000Z")
@@ -56,6 +56,70 @@ describe("notificacoes · concorrência", () => {
     expect(
       repo.estado.eventos.filter(
         (e) => e.tipo === EVENTO_ALERTA_EMITIDO && e.metadata?.regra === "documento_pendente",
+      ),
+    ).toHaveLength(1)
+  })
+
+  it("duas tratativas concorrentes geram 1 emitido + 1 tratado", async () => {
+    const repo = fakeRepoNotificacoes({
+      competencias: [competenciaRow()],
+      documentos: [
+        {
+          id: "doc-1",
+          status: "PENDENTE",
+          titulo: "Extrato",
+          vencimento: null,
+          competenciaId: "comp-1",
+          storeId: "loja-1",
+        },
+      ],
+    })
+    const list = await listarAlertas(ESCOPO_A, COMP, repo, HOJE)
+    const id = list.avisos.find((a) => a.regra === "documento_pendente")!.id
+    await Promise.all([
+      tratarAlerta(ESCOPO_A, COMP, id, repo, HOJE),
+      tratarAlerta(ESCOPO_A, COMP, id, repo, HOJE),
+    ])
+    expect(
+      repo.estado.eventos.filter(
+        (e) => e.tipo === EVENTO_ALERTA_EMITIDO && e.metadata?.regra === "documento_pendente",
+      ),
+    ).toHaveLength(1)
+    expect(
+      repo.estado.eventos.filter(
+        (e) => e.tipo === EVENTO_ALERTA_TRATADO && e.metadata?.regra === "documento_pendente",
+      ),
+    ).toHaveLength(1)
+  })
+
+  it("avaliar e tratar concorrentes não duplicam emitido", async () => {
+    const repo = fakeRepoNotificacoes({
+      competencias: [competenciaRow()],
+      documentos: [
+        {
+          id: "doc-1",
+          status: "PENDENTE",
+          titulo: "Extrato",
+          vencimento: null,
+          competenciaId: "comp-1",
+          storeId: "loja-1",
+        },
+      ],
+    })
+    const list = await listarAlertas(ESCOPO_A, COMP, repo, HOJE)
+    const id = list.avisos.find((a) => a.regra === "documento_pendente")!.id
+    await Promise.all([
+      avaliarEPersistir(ESCOPO_A, COMP, repo, HOJE),
+      tratarAlerta(ESCOPO_A, COMP, id, repo, HOJE),
+    ])
+    expect(
+      repo.estado.eventos.filter(
+        (e) => e.tipo === EVENTO_ALERTA_EMITIDO && e.metadata?.regra === "documento_pendente",
+      ),
+    ).toHaveLength(1)
+    expect(
+      repo.estado.eventos.filter(
+        (e) => e.tipo === EVENTO_ALERTA_TRATADO && e.metadata?.regra === "documento_pendente",
       ),
     ).toHaveLength(1)
   })

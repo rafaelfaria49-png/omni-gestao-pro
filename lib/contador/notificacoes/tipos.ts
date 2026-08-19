@@ -100,11 +100,6 @@ export type GuiaAlerta = Readonly<{
   pagaEm: Date | string | null
 }>
 
-export type ChecklistItemAlerta = Readonly<{
-  id: string
-  estado: string
-}>
-
 export type CompetenciaAlerta = Readonly<{
   id: string
   storeId: string
@@ -115,8 +110,13 @@ export type CompetenciaAlerta = Readonly<{
   snapshot: unknown
 }>
 
+/**
+ * Versão persistida do pacote oficial + `manifesto.pendencias` daquela versão.
+ * Alvo/janela da regra usam a versão efetiva (maior `versao`).
+ */
 export type PacoteAlerta = Readonly<{
   versao: number
+  pendencias: readonly string[]
 }>
 
 export type FontesAvaliacao = Readonly<{
