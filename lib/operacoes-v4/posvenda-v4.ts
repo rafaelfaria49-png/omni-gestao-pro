@@ -3,8 +3,10 @@ import {
   lerEntregaV3,
   lerGarantiaV3,
   lerRetornosV3,
+  lerVinculoRetornoV3,
   type GarantiaSituacaoV3,
   type RetornoV3,
+  type VinculoRetornoV3,
 } from "@/lib/operacoes-v3/pos-venda-model";
 import { termoGarantiaDaOSV3 } from "@/lib/operacoes-v3/print-model";
 import { statusV3FromOS } from "@/lib/operacoes-v3/status-machine";
@@ -62,6 +64,8 @@ export interface PosVendaV4 {
   historico: RetornoV3[];
   timeline: TimelinePosVendaV4[];
   headerLabel: string;
+  /** Presente quando ESTA OS é o atendimento gerado a partir de um retorno. */
+  vinculoOrigem?: VinculoRetornoV3;
 }
 
 export const EMPTY_POSVENDA_V4: PosVendaV4 = {
@@ -219,8 +223,14 @@ function timelinePosVenda(os: OrdemServico): TimelinePosVendaV4[] {
     }));
 }
 
-function headerLabel(garantia: GarantiaPosVendaV4, retornoAberto: RetornoV3 | undefined): string {
+function headerLabel(
+  garantia: GarantiaPosVendaV4,
+  retornoAberto: RetornoV3 | undefined,
+  vinculoOrigem?: VinculoRetornoV3,
+): string {
+  if (retornoAberto?.osRetornoCodigo) return `Retorno · ${retornoAberto.osRetornoCodigo}`;
   if (retornoAberto) return "Retorno aberto";
+  if (vinculoOrigem) return `Retorno de ${vinculoOrigem.osOrigemCodigo || "OS original"}`;
   if (garantia.situacao === "ativa" && garantia.vencimento) return `Garantia até ${garantia.vencimento}`;
   if (garantia.situacao === "vencida") return "Garantia vencida";
   if (garantia.situacao === "prevista" && garantia.prazoDias > 0) return `Garantia ${garantia.prazoDias} dias`;
@@ -233,6 +243,7 @@ export function buildPosVendaV4(os: OrdemServico, now: Date = new Date()): PosVe
   const retornos = lerRetornosV3(os);
   const retornoAberto = retornos.find((retorno) => retorno.status === "aberto");
   const elegibilidade = elegibilidadeRetorno(os, garantia, retornoAberto);
+  const vinculoOrigem = lerVinculoRetornoV3(os);
   return {
     garantia,
     elegibilidade,
@@ -242,7 +253,8 @@ export function buildPosVendaV4(os: OrdemServico, now: Date = new Date()): PosVe
     podeFinalizarRetorno: !!retornoAberto,
     historico: retornos,
     timeline: timelinePosVenda(os),
-    headerLabel: headerLabel(garantia, retornoAberto),
+    headerLabel: headerLabel(garantia, retornoAberto, vinculoOrigem),
+    vinculoOrigem,
   };
 }
 

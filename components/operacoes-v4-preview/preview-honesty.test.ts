@@ -215,6 +215,7 @@ const ctx: V4DataCtx = {
   salvarGarantia: async () => false,
   abrirRetorno: async () => false,
   finalizarRetorno: async () => false,
+  abrirOsVinculada: () => {},
   lancarAPrazo: async () => false,
   cancelarOS: async () => false,
   pdvServico: {
@@ -3402,9 +3403,9 @@ describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — actions/readers reais", () =
 
   it("reusa abrirRetornoV3/finalizarRetornoV3 pelo wrapper de reload confirmado", () => {
     expect(orquestrador).toContain('from "@/lib/operacoes-v3/retorno-actions"')
-    expect(orquestrador).toContain("abrirRetornoV3(sid, osId, { motivo })")
+    expect(orquestrador).toContain("abrirRetornoV3(sid, osId, { motivo, observacao })")
     expect(orquestrador).toContain("finalizarRetornoV3(sid, osId, retornoId, { observacao })")
-    expect(orquestrador).toMatch(/const abrirRetorno = useCallback\([\s\S]*runWrite\(/)
+    expect(orquestrador).toContain("result.atendimento?.id")
     expect(orquestrador).toMatch(/const finalizarRetorno = useCallback\([\s\S]*runWrite\(/)
     expect(orquestrador).toMatch(/catch \(e\) \{[\s\S]*reloadOrdens\(\);[\s\S]*reloadDetail\(\);[\s\S]*reloadFinancial\(\);[\s\S]*notify\(/)
   })
@@ -3417,8 +3418,9 @@ describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — actions/readers reais", () =
   })
 
   it("stage chama handlers reais, tem busy-lock e não simula persistência", () => {
-    expect(stage).toContain("v.abrirRetorno(motivo.trim())")
+    expect(stage).toContain("v.abrirRetorno(motivo.trim(), obsAbertura.trim() || undefined)")
     expect(stage).toContain("v.finalizarRetorno(finalizar.id")
+    expect(stage).toContain("v.abrirOsVinculada")
     expect(stage).toContain("if (busy")
     expect(stage).not.toContain("setTimeout")
     expect(stage).not.toContain("retornosCount")
@@ -3430,9 +3432,11 @@ describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — actions/readers reais", () =
     expect(sources).not.toContain("RetornoV4Action")
   })
 
-  it("motor V3 bloqueia segundo retorno aberto antes de gravar", () => {
-    expect(retornoAction).toContain('existentes.some((retorno) => retorno.status === "aberto")')
+  it("motor V3 bloqueia segundo retorno quando o atendimento já foi vinculado", () => {
+    expect(retornoAction).toContain("aberto?.osRetornoId")
     expect(retornoAction).toContain("Já existe um retorno em andamento para esta OS.")
+    expect(retornoAction).toContain("criarOSEnterpriseV3")
+    expect(retornoAction).toContain("vinculoRetornoV3")
   })
 
   it("header, stage e rail consomem a mesma projeção pós-venda", () => {
@@ -3452,14 +3456,15 @@ describe("OPS-V4-POSVENDA-RETORNO-GARANTIAS-006 — contrato exposto pelo buildV
     const local: V4DataCtx = {
       ...ctx,
       realOS: os,
-      abrirRetorno: async (motivo) => { chamadas.push(["abrir", motivo]); return true },
+      abrirRetorno: async (motivo, observacao) => { chamadas.push(["abrir", motivo, observacao]); return true },
       finalizarRetorno: async (id, observacao) => { chamadas.push(["finalizar", id, observacao]); return true },
+      abrirOsVinculada: () => {},
     }
     const v = buildVals(makeState({ selectedOsId: "os-ret", stage: "posvenda", novaOS: false }), () => {}, () => {}, local)
-    await expect(v.abrirRetorno("Touch voltou a falhar")).resolves.toBe(true)
+    await expect(v.abrirRetorno("Touch voltou a falhar", "Deixou o aparelho")).resolves.toBe(true)
     await expect(v.finalizarRetorno("ret-1", "Tela substituída")).resolves.toBe(true)
     expect(chamadas).toEqual([
-      ["abrir", "Touch voltou a falhar"],
+      ["abrir", "Touch voltou a falhar", "Deixou o aparelho"],
       ["finalizar", "ret-1", "Tela substituída"],
     ])
   })

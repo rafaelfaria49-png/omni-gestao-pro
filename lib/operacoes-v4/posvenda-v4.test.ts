@@ -70,6 +70,29 @@ describe("buildPosVendaV4", () => {
     expect(view.headerLabel).toBe("Retorno aberto");
   });
 
+  it("projeta o atendimento vinculado e o vínculo da OS nova", () => {
+    const original = buildPosVendaV4(garantia(90, "2026-08-01T12:00:00.000Z", {
+      retornosV3: [{
+        id: "aberto",
+        osOriginalId: "os-1",
+        osOriginalCodigo: "OS-1042",
+        motivo: "Touch falhou",
+        criadoEm: "2026-08-14T10:00:00.000Z",
+        status: "aberto",
+        osRetornoId: "os-2001",
+        osRetornoCodigo: "OS-2001",
+      }],
+    }), NOW);
+    expect(original.headerLabel).toBe("Retorno · OS-2001");
+    expect(original.retornoAberto?.osRetornoId).toBe("os-2001");
+
+    const nova = buildPosVendaV4(os({
+      vinculoRetornoV3: { osOrigemId: "os-1", osOrigemCodigo: "OS-1042", retornoId: "aberto" },
+    }), NOW);
+    expect(nova.vinculoOrigem?.osOrigemCodigo).toBe("OS-1042");
+    expect(nova.headerLabel).toBe("Retorno de OS-1042");
+  });
+
   it("não duplica eventos de retorno na timeline auxiliar", () => {
     const view = buildPosVendaV4(os({
       timeline: [

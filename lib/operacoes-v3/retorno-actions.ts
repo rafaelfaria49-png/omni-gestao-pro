@@ -3,10 +3,11 @@
 // ============================================================================
 // Operações V3 — Fase 3A · RETORNO em garantia (retrabalho/reincidência)
 // ----------------------------------------------------------------------------
-// Abre/finaliza um retorno VINCULADO à OS original. O retorno é um registro
-// embutido em `payload.retornosV3[]` (sem schema, sem nova entidade/linha de OS),
-// carregando o vínculo `osOriginalId`. Cada ação grava timeline na OS (auditável).
-// NÃO toca Financeiro/estoque/V2/schema.
+// Abre/finaliza um retorno VINCULADO à OS original em `payload.retornosV3[]`
+// (`osOriginalId` + timeline). Quando a original já foi entregue (status final),
+// também cria o atendimento novo pelo contrato existente `criarOSEnterpriseV3`
+// (origem retorno/garantia) e grava o vínculo nos dois lados. Sem schema novo,
+// sem Financeiro/estoque/V2.
 // ============================================================================
 
 import { revalidatePath } from "next/cache";
@@ -17,8 +18,11 @@ import { prisma } from "@/lib/prisma";
 import { auth } from "@/auth";
 import { requireEnterpriseWith } from "@/lib/auth/guard-enterprise";
 import { assertActiveStoreId } from "@/lib/operacoes/assert-active-store";
-import { lerGarantiaV3, lerRetornosV3, type RetornoV3 } from "./pos-venda-model";
+import { lerEntregaV3, lerGarantiaV3, lerRetornosV3, type RetornoV3 } from "./pos-venda-model";
 import { emitirEventoOperacaoV3 } from "./event-publisher";
+import { criarOSEnterpriseV3 } from "./nova-os-actions";
+import { validarNovaOSDraftV3 } from "./nova-os-model";
+import { buildRetornoAtendimentoDraftV3 } from "./retorno-atendimento";
 
 type OSPayloadFull = OrdemServico & Record<string, unknown>;
 
@@ -55,57 +59,146 @@ async function carregar(storeId: string, osId: string): Promise<{ id: string; se
 async function gravar(id: string, next: OSPayloadFull): Promise<OrdemServico> {
   await prisma.ordemServico.update({ where: { id }, data: { payload: next as unknown as Prisma.InputJsonValue } });
   revalidatePath("/dashboard/operacoes-v3");
+  revalidatePath("/dashboard/operacoes-v4-preview");
   return next as unknown as OrdemServico;
 }
 
+export interface AbrirRetornoV3Input {
+  motivo: string;
+  observacao?: string;
+}
+
+export interface AbrirRetornoV3Result {
+  os: OrdemServico;
+  atendimento: OrdemServico | null;
+}
+
 /** Abre um retorno em garantia vinculado à OS original. Registra motivo + timeline. */
-export async function abrirRetornoV3(storeId: string, osId: string, input: { motivo: string }): Promise<OrdemServico> {
+export async function abrirRetornoV3(storeId: string, osId: string, input: AbrirRetornoV3Input): Promise<AbrirRetornoV3Result> {
   const { id, session, payload } = await carregar(storeId, osId);
   const motivo = (input.motivo ?? "").trim();
+  const observacao = (input.observacao ?? "").trim() || undefined;
   if (!motivo) throw new Error("Informe o motivo do retorno.");
 
   const os = payload as unknown as OrdemServico;
   const existentes = lerRetornosV3(os);
-  if (existentes.some((retorno) => retorno.status === "aberto")) {
+  const aberto = existentes.find((retorno) => retorno.status === "aberto");
+  if (aberto?.osRetornoId) {
     throw new Error("Já existe um retorno em andamento para esta OS.");
   }
   const garantia = lerGarantiaV3(os);
   const garantiaAtivaNaAbertura = garantia.situacao === "ativa";
   const operador = operadorLabel(session);
+  const sid = (storeId ?? "").trim();
+  const entregue = !!lerEntregaV3(os).entregue;
+  const retornoId = aberto?.id ?? eventId();
+  const motivoFinal = textOr(aberto?.motivo, motivo);
+  const observacaoFinal = aberto?.observacao ?? observacao;
+
+  let atendimento: OrdemServico | null = null;
+  if (entregue) {
+    const guardCriar = await requireEnterpriseWith(sid, (p) => p.operacoes.criarOs, "Sem permissão para abrir o atendimento de retorno.");
+    if (!guardCriar.ok) throw new Error(guardCriar.error);
+    const draft = buildRetornoAtendimentoDraftV3(os, {
+      motivo: motivoFinal,
+      observacao: observacaoFinal,
+      garantiaAtiva: garantiaAtivaNaAbertura,
+    });
+    const invalido = validarNovaOSDraftV3(draft);
+    if (invalido) throw new Error(invalido);
+    const criado = await criarOSEnterpriseV3(sid, draft, {
+      tags: ["retorno-garantia", `origem:${os.codigo ?? id}`],
+      vinculoRetornoV3: {
+        osOrigemId: id,
+        osOrigemCodigo: os.codigo ?? undefined,
+        retornoId,
+        motivo: motivoFinal,
+        garantiaAtivaNaAbertura,
+      },
+    });
+    const avisoNova = garantiaAtivaNaAbertura ? "" : " (garantia expirada/não ativa na abertura)";
+    const tlNova = Array.isArray(criado.os.timeline) ? criado.os.timeline : [];
+    atendimento = await gravar(criado.os.id, {
+      ...(criado.os as OSPayloadFull),
+      timeline: [
+        ...tlNova,
+        makeEvento(
+          "garantia_acionada",
+          operador,
+          `Atendimento de retorno da OS ${os.codigo ?? id}. Motivo: ${motivoFinal}${avisoNova}`,
+          { osOriginalId: id, osOriginalCodigo: os.codigo, retornoId, motivo: motivoFinal },
+        ),
+      ],
+      atualizadoEm: nowIso(),
+    });
+  } else if (aberto) {
+    throw new Error("Já existe um retorno em andamento para esta OS.");
+  }
 
   const retorno: RetornoV3 = {
-    id: eventId(),
+    id: retornoId,
     osOriginalId: id,
     osOriginalCodigo: os.codigo ?? undefined,
-    motivo,
-    criadoEm: nowIso(),
-    criadoPor: operador,
+    motivo: motivoFinal,
+    observacao: observacaoFinal,
+    criadoEm: aberto?.criadoEm ?? nowIso(),
+    criadoPor: aberto?.criadoPor ?? operador,
     status: "aberto",
     garantiaAtivaNaAbertura,
+    osRetornoId: atendimento?.id,
+    osRetornoCodigo: atendimento?.codigo,
   };
-  const retornos = [...existentes, retorno];
+  const retornos = aberto ? existentes.map((item) => (item.id === retornoId ? retorno : item)) : [...existentes, retorno];
 
   const aviso = garantiaAtivaNaAbertura ? "" : " (garantia expirada/não ativa na abertura)";
-  const evento = makeEvento(
-    "garantia_acionada",
-    operador,
-    `Retorno em garantia aberto: ${motivo}${aviso}.`,
-    { retornoId: retorno.id, motivo, garantiaAtivaNaAbertura, osOriginalId: id },
-  );
-
+  const vinculoTxt = atendimento?.codigo ? ` Atendimento ${atendimento.codigo} aberto.` : "";
   const timeline = Array.isArray(payload.timeline) ? (payload.timeline as EventoTimeline[]) : [];
-  const next: OSPayloadFull = { ...payload, retornosV3: retornos, timeline: [...timeline, evento], atualizadoEm: nowIso() } as OSPayloadFull;
+  const evento = aberto
+    ? null
+    : makeEvento(
+        "garantia_acionada",
+        operador,
+        `Retorno em garantia aberto: ${motivoFinal}${aviso}.${vinculoTxt}`,
+        {
+          retornoId: retorno.id,
+          motivo: motivoFinal,
+          observacao: observacaoFinal,
+          garantiaAtivaNaAbertura,
+          osOriginalId: id,
+          osRetornoId: atendimento?.id,
+          osRetornoCodigo: atendimento?.codigo,
+        },
+      );
+
+  const next: OSPayloadFull = {
+    ...payload,
+    retornosV3: retornos,
+    timeline: evento ? [...timeline, evento] : timeline,
+    atualizadoEm: nowIso(),
+  } as OSPayloadFull;
   const salva = await gravar(id, next);
 
-  // Espinha de eventos (3C.0): retorno em garantia aberto.
-  emitirEventoOperacaoV3({
-    tipo: "os_retorno_aberto",
-    os: salva,
-    storeId: (storeId ?? "").trim(),
-    origem: "retorno",
-    metadata: { retornoId: retorno.id, motivo, garantiaAtivaNaAbertura },
-  });
-  return salva;
+  if (!aberto) {
+    emitirEventoOperacaoV3({
+      tipo: "os_retorno_aberto",
+      os: salva,
+      storeId: sid,
+      origem: "retorno",
+      metadata: {
+        retornoId: retorno.id,
+        motivo: motivoFinal,
+        garantiaAtivaNaAbertura,
+        osRetornoId: atendimento?.id,
+        osRetornoCodigo: atendimento?.codigo,
+      },
+    });
+  }
+  return { os: salva, atendimento };
+}
+
+function textOr(value: string | undefined, fallback: string): string {
+  const trimmed = (value ?? "").trim();
+  return trimmed || fallback;
 }
 
 /** Finaliza um retorno (conclui o retrabalho). Registra observação + timeline. */

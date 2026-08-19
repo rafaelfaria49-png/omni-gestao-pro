@@ -185,14 +185,43 @@ export interface RetornoV3 {
   osOriginalId: string;
   osOriginalCodigo?: string;
   motivo: string;
+  /** Observação de abertura (relato do atendente). */
+  observacao?: string;
   criadoEm: string;
   criadoPor?: string;
   status: RetornoStatusV3;
   /** Snapshot: a garantia estava ativa quando o retorno foi aberto? */
   garantiaAtivaNaAbertura?: boolean;
+  /** Atendimento novo gerado para trabalhar o retorno (OS entregue é status final). */
+  osRetornoId?: string;
+  osRetornoCodigo?: string;
   finalizadoEm?: string;
   finalizadoPor?: string;
   observacaoFinal?: string;
+}
+
+/** Vínculo gravado no payload da OS nova (`vinculoRetornoV3`). */
+export interface VinculoRetornoV3 {
+  osOrigemId: string;
+  osOrigemCodigo?: string;
+  retornoId?: string;
+  motivo?: string;
+  garantiaAtivaNaAbertura?: boolean;
+}
+
+export function lerVinculoRetornoV3(os: OrdemServico | null | undefined): VinculoRetornoV3 | undefined {
+  const raw = (os as { vinculoRetornoV3?: unknown } | null | undefined)?.vinculoRetornoV3;
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const osOrigemId = s(o.osOrigemId);
+  if (!osOrigemId) return undefined;
+  return {
+    osOrigemId,
+    osOrigemCodigo: s(o.osOrigemCodigo) || undefined,
+    retornoId: s(o.retornoId) || undefined,
+    motivo: s(o.motivo) || undefined,
+    garantiaAtivaNaAbertura: typeof o.garantiaAtivaNaAbertura === "boolean" ? o.garantiaAtivaNaAbertura : undefined,
+  };
 }
 
 function isRetornoStatus(v: unknown): v is RetornoStatusV3 {
@@ -214,10 +243,13 @@ export function lerRetornosV3(os: OrdemServico | null | undefined): RetornoV3[] 
         osOriginalId: s(o.osOriginalId) || s(os?.id),
         osOriginalCodigo: s(o.osOriginalCodigo) || undefined,
         motivo: s(o.motivo),
+        observacao: s(o.observacao) || undefined,
         criadoEm: s(o.criadoEm),
         criadoPor: s(o.criadoPor) || undefined,
         status: isRetornoStatus(o.status) ? o.status : "aberto",
         garantiaAtivaNaAbertura: typeof o.garantiaAtivaNaAbertura === "boolean" ? o.garantiaAtivaNaAbertura : undefined,
+        osRetornoId: s(o.osRetornoId) || undefined,
+        osRetornoCodigo: s(o.osRetornoCodigo) || undefined,
         finalizadoEm: s(o.finalizadoEm) || undefined,
         finalizadoPor: s(o.finalizadoPor) || undefined,
         observacaoFinal: s(o.observacaoFinal) || undefined,

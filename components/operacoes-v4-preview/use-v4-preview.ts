@@ -229,10 +229,12 @@ export interface V4DataCtx {
   // ---- Garantia da OS (GOAL OPS-V4-GARANTIA-EDITOR-IMPL-014) ----
   /** Define/edita a garantia prevista da OS (reuso de `salvarGarantiaOSV3`). */
   salvarGarantia: (input: { modeloId: string; prazoDias?: number }) => Promise<boolean>;
-  /** Abre retorno no payload da OS original via motor V3. */
-  abrirRetorno: (motivo: string) => Promise<boolean>;
+  /** Abre retorno no payload da OS original via motor V3 e, se entregue, o atendimento vinculado. */
+  abrirRetorno: (motivo: string, observacao?: string) => Promise<boolean>;
   /** Finaliza o retorno indicado via motor V3. */
   finalizarRetorno: (retornoId: string, observacao?: string) => Promise<boolean>;
+  /** Abre a OS original ou o atendimento de retorno pelo id persistido. */
+  abrirOsVinculada: (osId: string) => void;
   // ---- Cancelamento de OS (GOAL OPS-V4-CANCELAR-OS-CONNECT-021) ----
   /** Cancela a OS via `aplicarTransicaoStatusV3(sid, osId, "cancelada", { motivo })` (motivo obrigatório, contrato já blindado — commit f825867). */
   cancelarOS: (motivo: string) => Promise<boolean>;
@@ -1298,6 +1300,7 @@ export function buildVals(
     salvarGarantia: ctx.salvarGarantia,
     abrirRetorno: ctx.abrirRetorno,
     finalizarRetorno: ctx.finalizarRetorno,
+    abrirOsVinculada: ctx.abrirOsVinculada,
     realOS,
 
     // ---- PDV de Serviço / recebimento real (slice PDV-SERVICO-OS-RECEBIMENTO-REAL-001) ----
@@ -1750,10 +1753,72 @@ export function useV4Preview(): V4Vals {
 
   // ---- Pós-venda real: contratos exatos da V3. O wrapper só recarrega depois
   // da confirmação do servidor; nenhum retorno é projetado otimisticamente.
+  // Se o servidor devolver atendimento novo (OS entregue), abre esse workspace.
+  const abrirOsVinculada = useCallback(
+    (osIdArg: string) => {
+      const id = osIdArg.trim();
+      if (!id) return;
+      const existente = ordens.find((item) => item.id === id);
+      const status = existente ? resolverStatusV4(existente) : "aberta";
+      update({
+        selectedOsId: id,
+        status,
+        stage: existente ? stageForStatus(status) : "entrada",
+        module: "workspace",
+        view: "cockpit",
+        menu: null,
+        focus: true,
+        left: false,
+        right: false,
+      });
+      reloadOrdens();
+    },
+    [ordens, update, reloadOrdens],
+  );
   const abrirRetorno = useCallback(
-    (motivo: string) =>
-      runWrite((sid, osId) => abrirRetornoV3(sid, osId, { motivo }), "Retorno aberto."),
-    [runWrite],
+    async (motivo: string, observacao?: string) => {
+      const sid = (lojaAtivaId ?? "").trim();
+      const osId = (selectedOsId ?? "").trim();
+      if (!sid || !osId) {
+        notify("Selecione uma OS na loja ativa para concluir a ação.");
+        return false;
+      }
+      try {
+        const result = await abrirRetornoV3(sid, osId, { motivo, observacao });
+        reloadOrdens();
+        reloadDetail();
+        reloadFinancial();
+        const atendimentoId = result.atendimento?.id?.trim();
+        if (atendimentoId) {
+          update({
+            selectedOsId: atendimentoId,
+            status: "aberta",
+            stage: "entrada",
+            module: "workspace",
+            view: "cockpit",
+            menu: null,
+            focus: true,
+            left: false,
+            right: false,
+          });
+          notify(
+            result.atendimento?.codigo
+              ? `Retorno aberto. Atendimento ${result.atendimento.codigo} vinculado.`
+              : "Retorno aberto e atendimento vinculado.",
+          );
+        } else {
+          notify("Retorno aberto.");
+        }
+        return true;
+      } catch (e) {
+        reloadOrdens();
+        reloadDetail();
+        reloadFinancial();
+        notify(e instanceof Error ? e.message : "Não foi possível concluir a ação.");
+        return false;
+      }
+    },
+    [lojaAtivaId, selectedOsId, reloadOrdens, reloadDetail, reloadFinancial, notify, update],
   );
   const finalizarRetorno = useCallback(
     (retornoId: string, observacao?: string) =>
@@ -1977,6 +2042,7 @@ export function useV4Preview(): V4Vals {
       salvarGarantia,
       abrirRetorno,
       finalizarRetorno,
+      abrirOsVinculada,
       lancarAPrazo,
       cancelarOS,
       pdvServico,
@@ -2031,6 +2097,7 @@ export function useV4Preview(): V4Vals {
       salvarGarantia,
       abrirRetorno,
       finalizarRetorno,
+      abrirOsVinculada,
       lancarAPrazo,
       cancelarOS,
       pdvServico,

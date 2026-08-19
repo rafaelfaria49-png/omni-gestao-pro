@@ -56,6 +56,7 @@ export interface CriarOSEnterpriseV3Result {
 export async function criarOSEnterpriseV3(
   storeId: string,
   draft: NovaOSDraftV3,
+  extras?: Record<string, unknown>,
 ): Promise<CriarOSEnterpriseV3Result> {
   const sid = (storeId ?? "").trim();
   assertActiveStoreId(sid, "Operações V3");
@@ -228,6 +229,7 @@ export async function criarOSEnterpriseV3(
     // Extras V3 (sobrevivem ao spread do payload):
     operacaoStatusV3: "aberta",
     aberturaV3,
+    ...(extras ?? {}),
   };
 
   const criada = await criarOSImpl(input as unknown as Parameters<typeof criarOSImpl>[0], operador);

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   assertStore: vi.fn(),
   emitirEvento: vi.fn(),
   revalidatePath: vi.fn(),
+  criarOS: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -18,11 +19,13 @@ vi.mock("@/lib/auth/guard-enterprise", () => ({ requireEnterpriseWith: mocks.gua
 vi.mock("@/lib/operacoes/assert-active-store", () => ({ assertActiveStoreId: mocks.assertStore }));
 vi.mock("./event-publisher", () => ({ emitirEventoOperacaoV3: mocks.emitirEvento }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("./nova-os-actions", () => ({ criarOSEnterpriseV3: mocks.criarOS }));
 
 import { abrirRetornoV3, finalizarRetornoV3 } from "./retorno-actions";
 
 const storeId = "store-real";
 const osId = "os-1042";
+const atendimento = { id: "os-2001", codigo: "OS-2001" };
 
 function payload(extra: Record<string, unknown> = {}) {
   return {
@@ -30,7 +33,9 @@ function payload(extra: Record<string, unknown> = {}) {
     codigo: "OS-1042",
     status: "entregue",
     operacaoStatusV3: "entregue",
-    cliente: { nome: "Cliente" },
+    clienteId: "cli-1",
+    cliente: { id: "cli-1", nome: "Cliente", telefone: "11988887777" },
+    equipamento: { tipo: "Smartphone", marca: "Samsung", modelo: "S22", numeroSerie: "IMEI-1" },
     entregaV3: { entregueEm: "2026-08-01T12:00:00.000Z" },
     aberturaV3: { garantiaPrevista: { modelo: "tela", label: "Troca de tela", prazoDias: 90 } },
     timeline: [],
@@ -48,6 +53,7 @@ beforeEach(() => {
   mocks.assertStore.mockReset();
   mocks.emitirEvento.mockReset();
   mocks.revalidatePath.mockReset();
+  mocks.criarOS.mockReset().mockResolvedValue({ os: atendimento });
 });
 
 afterEach(() => {
@@ -69,32 +75,53 @@ describe("abrirRetornoV3", () => {
     expect(mocks.update).not.toHaveBeenCalled();
   });
 
-  it("valida loja/ACL, persiste na OS original e grava cobertura/timeline", async () => {
-    await abrirRetornoV3(storeId, osId, { motivo: "  Touch voltou a falhar  " });
+  it("valida loja/ACL, persiste na OS original, cria atendimento vinculado e grava cobertura/timeline", async () => {
+    const result = await abrirRetornoV3(storeId, osId, { motivo: "  Touch voltou a falhar  ", observacao: "  Deixou o aparelho  " });
 
     expect(mocks.assertStore).toHaveBeenCalledWith(storeId, "Operações V3");
     expect(mocks.guard).toHaveBeenCalledWith(storeId, expect.any(Function), expect.any(String));
     expect(mocks.findFirst).toHaveBeenCalledWith({ where: { id: osId, storeId }, select: { id: true, payload: true } });
-    const next = mocks.update.mock.calls[0]![0].data.payload;
+    expect(mocks.criarOS).toHaveBeenCalledWith(
+      storeId,
+      expect.objectContaining({
+        recepcao: expect.objectContaining({ origem: "garantia", prioridade: "alta" }),
+        problema: expect.objectContaining({
+          defeitoRelatado: "Touch voltou a falhar",
+          observacoesInternas: expect.stringContaining("Deixou o aparelho"),
+        }),
+      }),
+      expect.objectContaining({
+        tags: ["retorno-garantia", "origem:OS-1042"],
+        vinculoRetornoV3: expect.objectContaining({ osOrigemId: osId, osOrigemCodigo: "OS-1042" }),
+      }),
+    );
+    const next = mocks.update.mock.calls.find((call) => call[0].where.id === osId)![0].data.payload;
     expect(next.retornosV3).toEqual([
       expect.objectContaining({
         osOriginalId: osId,
         osOriginalCodigo: "OS-1042",
         motivo: "Touch voltou a falhar",
+        observacao: "Deixou o aparelho",
         status: "aberto",
         garantiaAtivaNaAbertura: true,
+        osRetornoId: "os-2001",
+        osRetornoCodigo: "OS-2001",
       }),
     ]);
     expect(next.timeline).toEqual([
-      expect.objectContaining({ tipo: "garantia_acionada", metadata: expect.objectContaining({ osOriginalId: osId }) }),
+      expect.objectContaining({
+        tipo: "garantia_acionada",
+        metadata: expect.objectContaining({ osOriginalId: osId, osRetornoId: "os-2001" }),
+      }),
     ]);
     expect(mocks.emitirEvento).toHaveBeenCalledWith(expect.objectContaining({ tipo: "os_retorno_aberto", storeId }));
+    expect(result.atendimento?.id).toBe("os-2001");
   });
 
   it("permite fora da garantia, mas registra snapshot sem cobertura", async () => {
     mocks.findFirst.mockResolvedValue({ id: osId, payload: payload({ entregaV3: { entregueEm: "2025-01-01T12:00:00.000Z" } }) });
     await abrirRetornoV3(storeId, osId, { motivo: "Falha recorrente" });
-    const retorno = mocks.update.mock.calls[0]![0].data.payload.retornosV3[0];
+    const retorno = mocks.update.mock.calls.find((call) => call[0].where.id === osId)![0].data.payload.retornosV3[0];
     expect(retorno.garantiaAtivaNaAbertura).toBe(false);
   });
 
@@ -102,12 +129,45 @@ describe("abrirRetornoV3", () => {
     await expect(abrirRetornoV3(storeId, osId, { motivo: "  " })).rejects.toThrow("Informe o motivo do retorno.");
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.emitirEvento).not.toHaveBeenCalled();
+    expect(mocks.criarOS).not.toHaveBeenCalled();
   });
 
-  it("bloqueia retry/segundo retorno enquanto já existe um aberto", async () => {
-    mocks.findFirst.mockResolvedValue({ id: osId, payload: payload({ retornosV3: [{ id: "ret-open", osOriginalId: osId, motivo: "Primeiro", criadoEm: "2026-08-14T12:00:00.000Z", status: "aberto" }] }) });
+  it("não cria atendimento novo quando a OS ainda não foi entregue", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: osId,
+      payload: payload({ entregaV3: undefined, entregueEm: undefined, status: "pronta", operacaoStatusV3: "pronta" }),
+    });
+    const result = await abrirRetornoV3(storeId, osId, { motivo: "Relato antecipado" });
+    expect(mocks.criarOS).not.toHaveBeenCalled();
+    expect(result.atendimento).toBeNull();
+    expect(mocks.update.mock.calls.find((call) => call[0].where.id === osId)![0].data.payload.retornosV3[0].osRetornoId).toBeUndefined();
+  });
+
+  it("bloqueia segundo retorno quando o atendimento vinculado já existe", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: osId,
+      payload: payload({
+        retornosV3: [{ id: "ret-open", osOriginalId: osId, motivo: "Primeiro", criadoEm: "2026-08-14T12:00:00.000Z", status: "aberto", osRetornoId: "os-2001" }],
+      }),
+    });
     await expect(abrirRetornoV3(storeId, osId, { motivo: "Segundo" })).rejects.toThrow("Já existe um retorno em andamento para esta OS.");
     expect(mocks.update).not.toHaveBeenCalled();
+    expect(mocks.criarOS).not.toHaveBeenCalled();
+  });
+
+  it("completa atendimento quando o retorno aberto ainda não tem OS vinculada", async () => {
+    mocks.findFirst.mockResolvedValue({
+      id: osId,
+      payload: payload({
+        retornosV3: [{ id: "ret-open", osOriginalId: osId, motivo: "Primeiro", criadoEm: "2026-08-14T12:00:00.000Z", status: "aberto" }],
+      }),
+    });
+    await abrirRetornoV3(storeId, osId, { motivo: "Ignorado" });
+    expect(mocks.criarOS).toHaveBeenCalledTimes(1);
+    expect(mocks.update.mock.calls.find((call) => call[0].where.id === osId)![0].data.payload.retornosV3[0]).toEqual(
+      expect.objectContaining({ id: "ret-open", motivo: "Primeiro", osRetornoId: "os-2001" }),
+    );
+    expect(mocks.emitirEvento).not.toHaveBeenCalled();
   });
 });
 

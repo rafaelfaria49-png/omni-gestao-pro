@@ -87,7 +87,9 @@ export function CommandHeader({ v }: { v: V4Vals }) {
   const slaAlert = v.os.sla !== NI && /estourado|atenção|atras/i.test(v.os.sla);
   const producao = v.producaoAtual;
   const posVendaLabel = (() => {
+    if (v.posVenda.retornoAberto?.osRetornoCodigo) return `Retorno · ${v.posVenda.retornoAberto.osRetornoCodigo}`;
     if (v.posVenda.retornoAberto) return "Retorno aberto";
+    if (v.posVenda.vinculoOrigem) return `Retorno de ${v.posVenda.vinculoOrigem.osOrigemCodigo || "OS original"}`;
     const garantia = v.posVenda.garantia;
     if (garantia.situacao === "ativa" && garantia.vencimento) {
       const data = new Date(garantia.vencimento);
