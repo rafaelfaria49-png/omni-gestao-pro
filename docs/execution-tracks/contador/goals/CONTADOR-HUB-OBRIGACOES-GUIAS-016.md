@@ -1,28 +1,32 @@
 <!-- AEP:META
 {
   "aep": "1.0-R2",
-  "id": "CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015",
+  "id": "CONTADOR-HUB-OBRIGACOES-GUIAS-016",
   "track": "contador",
-  "title": "Portal externo read-only do contador",
-  "status": "DONE",
+  "title": "Obrigações e guias manuais do Contador HUB",
+  "status": "READY",
   "class": "C2",
   "risk_tier": "ALTO",
-  "branch": "origin/main",
-  "worktree": "<PREENCHER>",
+  "branch": "goal/contador-016-obrigacoes",
+  "worktree": "/workspace",
   "test_command": "npm run typecheck",
   "allowlist": [
-    "app/dashboard/contador/**",
-    "app/contador/**",
-    "app/login-contador/**",
-    "app/api/contador/**",
-    "components/dashboard/contador/**",
-    "lib/contador/**",
-    "docs/contador/**",
     "prisma/schema.prisma",
-    "prisma/migrations/0014_contador_hub_nucleo/**"
+    "prisma/migrations/0017_contador_agenda/**",
+    "lib/contador/agenda/**",
+    "lib/contador/fechamento/montar-checklist.ts",
+    "lib/contador/fechamento/montar-checklist.test.ts",
+    "app/api/contador/agenda/**",
+    "app/dashboard/contador/page.tsx",
+    "components/dashboard/contador/**",
+    "docs/status/MOCKS_TRACKING.md",
+    "docs/contador/**",
+    "docs/ai-execution/_evidence/**"
   ],
-  "gates_liberados": [],
-  "read_budget": 8,
+  "gates_liberados": [
+    "G-DADOS-SCHEMA"
+  ],
+  "read_budget": 60,
   "plan_ref": "CONTADOR-HUB-FABLE5-MASTERPLAN-001",
   "plan_rev": 1,
   "familia_executor": null,
@@ -84,16 +88,26 @@
       "status": "pendente",
       "dependencias": []
     }
-  ]
+  ],
+  "gate_humano": {
+    "requerido": true,
+    "pendente": false,
+    "aprovacao": {
+      "aprovado": true,
+      "autorizacao": "AUTORIZO G-DADOS-SCHEMA exclusivamente para o GOAL 016, limitado a: alteração aditiva do schema aprovada no PLAN REV2; criação da migration local correspondente; implementação completa do GOAL na branch/worktree dedicada; testes; commit local; push somente da branch do GOAL.",
+      "registrado_por": "humano na sessao Cursor (GOAL CONTADOR-HUB-OBRIGACOES-GUIAS-016)",
+      "em": "2026-08-19T04:18:00Z"
+    }
+  }
 }
 -->
 
-# CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015 — Portal externo read-only do contador
+# CONTADOR-HUB-OBRIGACOES-GUIAS-016 — Obrigações e guias manuais do Contador HUB
 
 - trilha: `contador`
-- classe: C2 · status: DONE
+- classe: C2 · status: READY
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
-- branch: `origin/main`
+- branch: `goal/contador-016-obrigacoes`
 - teste: `npm run typecheck`
 
 ## Fontes (documentos de origem — o importador NÃO reimplementa nada)
@@ -105,18 +119,18 @@
 
 ## Allowlist
 
-- `app/dashboard/contador/**`
-- `app/contador/**`
-- `app/login-contador/**`
-- `app/api/contador/**`
-- `components/dashboard/contador/**`
-- `lib/contador/**`
-- `docs/contador/**`
 - `prisma/schema.prisma`
-- `prisma/migrations/0014_contador_hub_nucleo/**`
+- `prisma/migrations/0017_contador_agenda/**`
+- `lib/contador/agenda/**`
+- `lib/contador/fechamento/montar-checklist.ts`
+- `lib/contador/fechamento/montar-checklist.test.ts`
+- `app/api/contador/agenda/**`
+- `app/dashboard/contador/page.tsx`
+- `components/dashboard/contador/**`
+- `docs/status/MOCKS_TRACKING.md`
+- `docs/contador/**`
+- `docs/ai-execution/_evidence/**`
 
-## Proveniência
+## Critério de pronto
 
-- importado de `CONTADOR-HUB-FABLE5-MASTERPLAN-001` em 2026-08-19T02:20:36.206Z
-- commit confirmado: `baad18b2a7040350b25aad1fe9060ef79ca2cc08` na branch `origin/main`
-- evidência: `git merge-base --is-ancestor baad18b2a7040350b25aad1fe9060ef79ca2cc08 origin/main` → commit existe e está na branch declarada
+- <PREENCHER>

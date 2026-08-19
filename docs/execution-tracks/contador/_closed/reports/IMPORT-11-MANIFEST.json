@@ -1,0 +1,227 @@
+{
+  "aep": "1.0-R2",
+  "track": "contador",
+  "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
+  "plan_ref": "CONTADOR-HUB-FABLE5-MASTERPLAN-001",
+  "plan_rev": 1,
+  "risk_tier": "ALTO",
+  "branch_pattern": "goal/contador-<nnn>-<slug>",
+  "test_command": "npm run typecheck",
+  "paths_base": [
+    "app/dashboard/contador/**",
+    "app/contador/**",
+    "app/login-contador/**",
+    "app/api/contador/**",
+    "components/dashboard/contador/**",
+    "lib/contador/**",
+    "docs/contador/**",
+    "prisma/schema.prisma",
+    "prisma/migrations/0014_contador_hub_nucleo/**"
+  ],
+  "gates_extra": [
+    "main",
+    "schema",
+    "migration",
+    "auth_externa",
+    "storage_r2_preview",
+    "storage_r2_production",
+    "fiscal_readonly",
+    "portal_legado",
+    "dados_destrutivos",
+    "secrets",
+    "deploy"
+  ],
+  "fontes": {
+    "resumo_canonico": "import/contador/RESUMO.md",
+    "masterplan": "import/contador/MASTERPLAN.md",
+    "comandos": "import/contador/COMANDOS.md",
+    "relatorios": "import/contador/reports/"
+  },
+  "goals_declarados": [
+    {
+      "id": "CONTADOR-HUB-STATUS-RECONCILE-001",
+      "situacao": "SUPERSEDED"
+    },
+    {
+      "id": "CONTADOR-HUB-HONESTY-ROUTE-SAFETY-002",
+      "situacao": "DONE",
+      "commit": "7310d9e69ede8981eabca39aff87c9cc3024ab1a",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-P0-AUTH-EXTERNA-003",
+      "situacao": "DONE",
+      "commit": "a23c0f8aefa5147ad183f2c8a2d1b688a3b66dd6",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-P0-STORE-SCOPE-004",
+      "situacao": "DONE",
+      "commit": "066e9f2324f8889c169f3b01b723732214b6b54c",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-COMPETENCIA-CONTRATOS-005",
+      "situacao": "DONE",
+      "commit": "50c1db823215a36622b05fad759ea80357130f24",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-DADOS-REAIS-READONLY-006",
+      "situacao": "DONE",
+      "commit": "4f901968365efc0cded6d9a2e348b9f381c1d0c4",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-FECHAMENTO-READONLY-007",
+      "situacao": "DONE",
+      "commit": "7217acbf378e618c4d6409500f8467038f6922f8",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-PACOTE-EXPORT-MVP-008",
+      "situacao": "DONE",
+      "commit": "ab0b754e8b605b2d220be3f6610403bdcc483e0a",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-SCHEMA-NUCLEO-009",
+      "situacao": "DONE",
+      "commit": "2d808c442428f41bc1417917421ac8b6c29ab6e6",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-DOCUMENTOS-REAL-010",
+      "situacao": "SUPERSEDED"
+    },
+    {
+      "id": "CONTADOR-HUB-STATUS-COMENTARIOS-011",
+      "situacao": "DONE",
+      "commit": "1f1190a078ea54e2092da02ce844856f380ec11c",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012",
+      "situacao": "SUPERSEDED"
+    },
+    {
+      "id": "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
+      "situacao": "DONE",
+      "commit": "7f4361e52437f68c21c9748db06238d9a4412e11",
+      "branch": "origin/main",
+      "gate_humano": {
+        "requerido": true,
+        "aprovacao": {
+          "aprovado": true,
+          "autorizacao": "AUTORIZO O PUSH FAST-FORWARD DO CONTADOR 012G E SUA RECONCILIACAO AEP PARA ORIGIN/MAIN",
+          "registrado_por": "humano na sessao Kimi K3 (chat)",
+          "em": "2026-07-31T15:52:23Z"
+        }
+      }
+    },
+    {
+      "id": "CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013",
+      "situacao": "DONE",
+      "title": "Auditoria do Portal Externo do Contador",
+      "branch": "origin/main",
+      "allowlist": [
+        "docs/contador/**",
+        "docs/ai-execution/_evidence/**"
+      ],
+      "read_budget": 60,
+      "commit": "0ef448ce5f669b7b25b40245507da14da488cf84",
+      "gate_humano": {
+        "requerido": true,
+        "aprovacao": {
+          "aprovado": true,
+          "autorizacao": "AUTORIZO O PUSH FAST-FORWARD DA AUDITORIA DO CONTADOR 013 E SUA RECONCILIACAO AEP PARA ORIGIN/MAIN",
+          "registrado_por": "humano na sessao Kimi K3 (chat)",
+          "em": "2026-07-31T20:45:41.872Z"
+        }
+      }
+    },
+    {
+      "id": "CONTADOR-HUB-IDENTIDADE-CONVITE-014",
+      "situacao": "DONE",
+      "title": "Identidade externa, vínculo e convite do contador",
+      "branch": "origin/main",
+      "commit": "858c1289116527fe0ac2d28bdc5d75e671e2a6f0",
+      "gate_humano": {
+        "requerido": true,
+        "aprovacao": {
+          "aprovado": true,
+          "autorizacao": "AUTORIZO O PUSH FAST-FORWARD DO GOAL 014 E SUA RECONCILIACAO AEP PARA ORIGIN/MAIN",
+          "registrado_por": "humano na sessao Kimi K3 (chat)",
+          "em": "2026-08-01T08:45:00Z"
+        }
+      }
+    },
+    {
+      "id": "CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015",
+      "situacao": "DONE",
+      "title": "Portal externo read-only do contador",
+      "commit": "baad18b2a7040350b25aad1fe9060ef79ca2cc08",
+      "branch": "origin/main"
+    },
+    {
+      "id": "CONTADOR-HUB-OBRIGACOES-GUIAS-016",
+      "situacao": "READY",
+      "title": "Obrigações e guias manuais do Contador HUB",
+      "class": "C2",
+      "branch": "goal/contador-016-obrigacoes",
+      "worktree": "/workspace",
+      "read_budget": 60,
+      "test_command": "npm run typecheck",
+      "gates_liberados": [
+        "G-DADOS-SCHEMA"
+      ],
+      "allowlist": [
+        "prisma/schema.prisma",
+        "prisma/migrations/0017_contador_agenda/**",
+        "lib/contador/agenda/**",
+        "lib/contador/fechamento/montar-checklist.ts",
+        "lib/contador/fechamento/montar-checklist.test.ts",
+        "app/api/contador/agenda/**",
+        "app/dashboard/contador/page.tsx",
+        "components/dashboard/contador/**",
+        "docs/status/MOCKS_TRACKING.md",
+        "docs/contador/**",
+        "docs/ai-execution/_evidence/**"
+      ],
+      "gate_humano": {
+        "requerido": true,
+        "aprovacao": {
+          "aprovado": true,
+          "autorizacao": "AUTORIZO G-DADOS-SCHEMA exclusivamente para o GOAL 016, limitado a: alteração aditiva do schema aprovada no PLAN REV2; criação da migration local correspondente; implementação completa do GOAL na branch/worktree dedicada; testes; commit local; push somente da branch do GOAL.",
+          "registrado_por": "humano na sessao Cursor (GOAL CONTADOR-HUB-OBRIGACOES-GUIAS-016)",
+          "em": "2026-08-19T04:18:00Z"
+        }
+      }
+    }
+  ],
+  "package_revision": 4,
+  "package_corrected_at": "2026-07-30",
+  "package_correction": "Revisão R4: reclassifica CONTADOR-HUB-STATUS-RECONCILE-001 de DONE para SUPERSEDED. Commit histórico f56039918fb34a45e7f7790e861f0d871832469b é branch-only (goal/contador-001-status-reconcile) e não publicado em main; sua função foi substituída pela reconciliação AEP-IMPORT-CONTADOR-001. commit/branch removidos como prova operacional de DONE; a referência histórica permanece na documentação bruta (MANIFEST.json R3) e no documento de evidência.",
+  "plano_ids": [
+    "CONTADOR-HUB-STATUS-RECONCILE-001",
+    "CONTADOR-HUB-HONESTY-ROUTE-SAFETY-002",
+    "CONTADOR-HUB-P0-AUTH-EXTERNA-003",
+    "CONTADOR-HUB-P0-STORE-SCOPE-004",
+    "CONTADOR-HUB-COMPETENCIA-CONTRATOS-005",
+    "CONTADOR-HUB-DADOS-REAIS-READONLY-006",
+    "CONTADOR-HUB-FECHAMENTO-READONLY-007",
+    "CONTADOR-HUB-PACOTE-EXPORT-MVP-008",
+    "CONTADOR-HUB-SCHEMA-NUCLEO-009",
+    "CONTADOR-HUB-DOCUMENTOS-REAL-010",
+    "CONTADOR-HUB-STATUS-COMENTARIOS-011",
+    "CONTADOR-HUB-FECHAMENTO-SNAPSHOT-012",
+    "CONTADOR-HUB-FECHAMENTO-R2-012G-PUBLISH-MAIN",
+    "CONTADOR-HUB-PORTAL-EXTERNO-AUDIT-013",
+    "CONTADOR-HUB-IDENTIDADE-CONVITE-014",
+    "CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015",
+    "CONTADOR-HUB-OBRIGACOES-GUIAS-016",
+    "CONTADOR-HUB-OMNI-AGENT-INTEGRATION-017",
+    "CONTADOR-HUB-FISCAL-INTEGRATION-018",
+    "CONTADOR-HUB-PRODUCTION-HARDENING-019"
+  ]
+}

@@ -1,16 +1,16 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 10 · 2026-08-02T00:48:14.896Z
+- importação nº 11 · 2026-08-19T04:22:13.647Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-10-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-11-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
 
-- delta: 1 NOVO · 0 ALTERADO · 15 INALTERADO
+- delta: 1 NOVO · 0 ALTERADO · 16 INALTERADO
 - linhas anexadas ao LEDGER.jsonl: 0 (o ledger é append-only; nada foi reescrito)
-- `CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
+- `CONTADOR-HUB-OBRIGACOES-GUIAS-016` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
 
 ### Deltas sensíveis
 
@@ -46,6 +46,8 @@ _(nenhum)_
   - evidência: `git merge-base --is-ancestor 0ef448ce5f669b7b25b40245507da14da488cf84 origin/main` → commit existe e está na branch declarada
 - `CONTADOR-HUB-IDENTIDADE-CONVITE-014` → DONE · commit `858c1289116527fe0ac2d28bdc5d75e671e2a6f0` · branch `origin/main`
   - evidência: `git merge-base --is-ancestor 858c1289116527fe0ac2d28bdc5d75e671e2a6f0 origin/main` → commit existe e está na branch declarada
+- `CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015` → DONE · commit `baad18b2a7040350b25aad1fe9060ef79ca2cc08` · branch `origin/main`
+  - evidência: `git merge-base --is-ancestor baad18b2a7040350b25aad1fe9060ef79ca2cc08 origin/main` → commit existe e está na branch declarada
 
 ## 2. Divergentes (BLOCKED — nunca presumidos DONE)
 
@@ -53,9 +55,6 @@ _(nenhum)_
 
 ## 3. Pendentes de planejamento (DRAFT — fora de goals/)
 
-- `CONTADOR-HUB-OBRIGACOES-GUIAS-016` → DRAFT · no plano (`plano_ids`) e não declarado no manifesto
-  - planejamento futuro: não exige commit, branch nem prova no Git.
-  - fora do caminho quente, fora do ledger e NÃO elegível para `open`.
 - `CONTADOR-HUB-OMNI-AGENT-INTEGRATION-017` → DRAFT · no plano (`plano_ids`) e não declarado no manifesto
   - planejamento futuro: não exige commit, branch nem prova no Git.
   - fora do caminho quente, fora do ledger e NÃO elegível para `open`.
@@ -78,4 +77,4 @@ _(nenhum)_
 
 ## 6. Caminho quente após a importação
 
-- `CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015` → `docs/execution-tracks/contador/goals/CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015.md` (READY)
+- `CONTADOR-HUB-OBRIGACOES-GUIAS-016` → `docs/execution-tracks/contador/goals/CONTADOR-HUB-OBRIGACOES-GUIAS-016.md` (READY)
