@@ -127,6 +127,10 @@ model Store {
   // ─── Contador HUB identidade externa (GOAL 014 — aditivo; só relações inversas) ──
   contadorConvites         ContadorConvite[]
   contadorAcessos          ContadorAcesso[]
+  // ─── Contador HUB agenda (GOAL 016 — aditivo; só relações inversas, sem coluna física) ──
+  contadorObrigacaoTemplates ContadorObrigacaoTemplate[]
+  contadorObrigacoes         ContadorObrigacao[]
+  contadorGuias              ContadorGuia[]
   // ─── Numeração server-side de venda (GOAL 002B — aditivo/dormente) ──
   seriesVenda              SerieVenda[]
 
@@ -2700,6 +2704,9 @@ model ContadorCompetencia {
   pacotes        ContadorPacote[]
   comentarios    ContadorComentario[]
   eventos        ContadorEvento[]
+  // GOAL 016 — inversas Prisma-only (sem ALTER na tabela existente).
+  obrigacoes     ContadorObrigacao[]
+  guias          ContadorGuia[]
 
   @@unique([storeId, ano, mes])
   // Alvo das FKs compostas escopadas (documento/evento) — garante que competenciaId
@@ -2760,6 +2767,9 @@ model ContadorDocumento {
   updatedAt      DateTime  @updatedAt @map("updatedAt")
 
   comentarios    ContadorComentario[]
+  // GOAL 016 — inversas nomeadas Prisma-only (sem ALTER na tabela existente).
+  guiasPdf         ContadorGuia[] @relation("ContadorGuiaPdf")
+  guiasComprovante ContadorGuia[] @relation("ContadorGuiaComprovante")
 
   // Alvo da FK composta do comentário (documento da MESMA competência).
   @@unique([id, competenciaId])
@@ -3029,4 +3039,152 @@ model ContadorSessaoExterna {
   @@index([usuarioId])
   @@index([expiraEm])
   @@map("contador_sessoes_externas")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contador HUB · OBRIGAÇÕES E GUIAS MANUAIS (GOAL 016)
+//
+// Blocos 100% NOVOS e aditivos (migration 0017). Zero alteração destrutiva em
+// models existentes. Sem `vencido` persistido, sem cálculo fiscal, sem cron,
+// sem backfill, sem seed por loja. Valor, vencimento e tipo são SEMPRE
+// informados pelo responsável.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Tipo informado da obrigação — catálogo operacional, não motor fiscal. */
+enum ContadorObrigacaoTipo {
+  ENVIO_DOCUMENTO @map("envio_documento")
+  PAGAMENTO_GUIA  @map("pagamento_guia")
+  CONFERENCIA     @map("conferencia")
+  DECLARACAO      @map("declaracao")
+  ENTREGA_ARQUIVO @map("entrega_arquivo")
+  FECHAMENTO      @map("fechamento")
+  TAREFA          @map("tarefa")
+}
+
+/** Recorrência do template. `mensal` entra em «Gerar deste mês»; `nenhuma` não. */
+enum ContadorObrigacaoRecorrencia {
+  MENSAL  @map("mensal")
+  NENHUMA @map("nenhuma")
+}
+
+/** Origem da guia — sempre informada; nunca calculada. */
+enum ContadorGuiaOrigem {
+  MANUAL   @map("manual")
+  CONTADOR @map("contador")
+}
+
+/**
+ * Template de obrigação da loja (GOAL 016).
+ *
+ * Não pertence a uma competência. `diaVencimento` 1..31 (CHECK no SQL); recorrência
+ * `mensal` exige dia. Instanciação é sempre explícita (lote ou seleção) — nunca por
+ * tempo/cron/boot. `vencido` NÃO existe aqui.
+ */
+model ContadorObrigacaoTemplate {
+  id            String                       @id @default(cuid())
+  storeId       String                       @map("storeId")
+  store         Store                        @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  titulo        String                       @map("titulo")
+  descricao     String?                      @map("descricao") @db.Text
+  tipo          ContadorObrigacaoTipo        @map("tipo")
+  diaVencimento Int?                         @map("diaVencimento")
+  recorrencia   ContadorObrigacaoRecorrencia @default(MENSAL) @map("recorrencia")
+  ativo         Boolean                      @default(true) @map("ativo")
+
+  criadoPorTipo String                       @map("criadoPorTipo")
+  criadoPorId   String                       @map("criadoPorId")
+
+  createdAt     DateTime                     @default(now()) @map("createdAt")
+  updatedAt     DateTime                     @updatedAt @map("updatedAt")
+
+  obrigacoes    ContadorObrigacao[]
+
+  @@unique([id, storeId])
+  @@index([storeId, ativo])
+  @@map("contador_obrigacao_templates")
+}
+
+/**
+ * Obrigação da competência (GOAL 016).
+ *
+ * Status reutiliza `ContadorItemStatus` (matriz 011). Sem coluna `vencido` e sem
+ * `valorCentavos`. `templateId` nullable: UNIQUE(templateId, competenciaId) sem
+ * predicado parcial — Postgres permite vários NULL (obrigações manuais).
+ * FK composta (competenciaId, storeId) pina a loja da competência.
+ */
+model ContadorObrigacao {
+  id            String                @id @default(cuid())
+  storeId       String                @map("storeId")
+  store         Store                 @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  competenciaId String                @map("competenciaId")
+  competencia   ContadorCompetencia   @relation(fields: [competenciaId, storeId], references: [id, storeId], onDelete: Restrict)
+
+  templateId    String?               @map("templateId")
+  template      ContadorObrigacaoTemplate? @relation(fields: [templateId, storeId], references: [id, storeId], onDelete: Restrict)
+
+  titulo        String                @map("titulo")
+  descricao     String?               @map("descricao") @db.Text
+  tipo          ContadorObrigacaoTipo @map("tipo")
+  vencimento    DateTime?             @map("vencimento")
+  status        ContadorItemStatus    @default(PENDENTE) @map("status")
+
+  criadoPorTipo String                @map("criadoPorTipo")
+  criadoPorId   String                @map("criadoPorId")
+
+  createdAt     DateTime              @default(now()) @map("createdAt")
+  updatedAt     DateTime              @updatedAt @map("updatedAt")
+
+  guias         ContadorGuia[]
+
+  @@unique([templateId, competenciaId])
+  @@unique([id, storeId])
+  @@unique([id, competenciaId, storeId])
+  @@index([competenciaId, status])
+  @@index([storeId, status])
+  @@map("contador_obrigacoes")
+}
+
+/**
+ * Guia informada da competência (GOAL 016).
+ *
+ * Sem máquina 011: paga = `pagaEm` não nulo (one-way). `valorCentavos` ≥ 0 (CHECK
+ * no SQL). PDF e comprovante reutilizam `ContadorDocumento` da MESMA competência
+ * e loja (FKs compostas nomeadas). Sem storage paralelo.
+ */
+model ContadorGuia {
+  id                     String              @id @default(cuid())
+  storeId                String              @map("storeId")
+  store                  Store               @relation(fields: [storeId], references: [id], onDelete: Restrict)
+
+  competenciaId          String              @map("competenciaId")
+  competencia            ContadorCompetencia @relation(fields: [competenciaId, storeId], references: [id, storeId], onDelete: Restrict)
+
+  obrigacaoId            String?             @map("obrigacaoId")
+  obrigacao              ContadorObrigacao?  @relation(fields: [obrigacaoId, competenciaId, storeId], references: [id, competenciaId, storeId], onDelete: Restrict)
+
+  titulo                 String              @map("titulo")
+  valorCentavos          Int                 @map("valorCentavos")
+  vencimento             DateTime            @map("vencimento")
+  origem                 ContadorGuiaOrigem  @map("origem")
+
+  pdfDocumentoId         String?             @map("pdfDocumentoId")
+  pdf                    ContadorDocumento?  @relation("ContadorGuiaPdf", fields: [pdfDocumentoId, competenciaId, storeId], references: [id, competenciaId, storeId], onDelete: Restrict)
+
+  comprovanteDocumentoId String?             @map("comprovanteDocumentoId")
+  comprovante            ContadorDocumento?  @relation("ContadorGuiaComprovante", fields: [comprovanteDocumentoId, competenciaId, storeId], references: [id, competenciaId, storeId], onDelete: Restrict)
+
+  pagaEm                 DateTime?           @map("pagaEm")
+
+  criadoPorTipo          String              @map("criadoPorTipo")
+  criadoPorId            String              @map("criadoPorId")
+
+  createdAt              DateTime            @default(now()) @map("createdAt")
+  updatedAt              DateTime            @updatedAt @map("updatedAt")
+
+  @@unique([id, storeId])
+  @@index([competenciaId, vencimento])
+  @@index([storeId, vencimento])
+  @@map("contador_guias")
 }
