@@ -144,6 +144,7 @@ describe("Contador HUB — valores sensíveis do preview seguem marcados como il
     expect(obrigacoes).toContain("<ContadorAgendaReal")
     expect(obrigacoes).not.toContain("<PreviewBanner")
     expect(obrigacoes).not.toContain("OBRIGACOES_ROWS")
+    expect(hubSrc).toContain("<ContadorAvisosReal")
   })
 })
 
@@ -549,5 +550,45 @@ describe("Contador HUB — Obrigações REAL (GOAL 016)", () => {
     expect(pageSrc).toContain("leituraOk: false")
     expect(checklistSrc).not.toMatch(/from ["']@\/lib\/prisma["']/)
     expect(checklistSrc).not.toMatch(/prisma\./)
+  })
+})
+
+describe("Contador HUB — central de avisos REAL (GOAL 017)", () => {
+  const avisosSrc = readFileSync(join(DIR, "avisos/contador-avisos-real.tsx"), "utf8")
+
+  it("a Visão geral monta a central real e não o array VISAO_ALERTAS", () => {
+    const renderVisaoIdx = hubSrc.indexOf("const renderVisao = ()")
+    const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
+    const visao = hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)
+    expect(visao).toContain("<ContadorAvisosReal")
+    expect(visao).not.toContain("VISAO_ALERTAS")
+    expect(hubSrc).not.toMatch(/VISAO_ALERTAS/)
+  })
+
+  it("não há botão Enviar; há atualizar, tratado, rascunho e copiar", () => {
+    expect(avisosSrc).toContain("Atualizar avisos")
+    expect(avisosSrc).toContain("Marcar tratado")
+    expect(avisosSrc).toContain("Gerar rascunho")
+    expect(avisosSrc).toContain("Copiar rascunho")
+    expect(avisosSrc).not.toMatch(/>\s*Enviar\s*</)
+    expect(avisosSrc).not.toContain("/enviar")
+    expect(avisosSrc).not.toContain("sendCloudApi")
+    expect(avisosSrc).not.toContain("sendWhatsAppMessage")
+  })
+
+  it("GET inicial é read-only; persistir só via POST /avaliar", () => {
+    expect(avisosSrc).toContain("/api/contador/notificacoes?c=")
+    expect(avisosSrc).toContain("/api/contador/notificacoes/avaliar")
+    expect(avisosSrc).toContain('method: "POST"')
+  })
+
+  it("fonte de pacote indisponível é honesta e não afirma ausência de pendências", () => {
+    expect(avisosSrc).toContain("fontePacote")
+    expect(avisosSrc).toContain("Não foi possível ler o manifesto oficial do pacote desta competência.")
+  })
+
+  it("agenda mantém microcopy informado pelo responsável", () => {
+    expect(avisosSrc).toContain("informado pelo responsável")
+    expect(avisosSrc).not.toContain("janela de 7 dias informada pelo responsável")
   })
 })
