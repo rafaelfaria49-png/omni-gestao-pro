@@ -45,7 +45,7 @@ function detSortKey(d: PagamentoFiscalDetalhe): string {
 }
 
 function tPagComprovadoDaLinha(linha: FiscalPaymentHandoffLinha): string | null {
-  if (linha.formaOrigem === "dinheiro" || linha.formaOrigem === "cartaoDebito" || linha.formaOrigem === "cartaoCredito") {
+  if (linha.formaOrigem === "dinheiro" || linha.formaOrigem === "cartaoDebito" || linha.formaOrigem === "cartaoCredito" || linha.formaOrigem === "creditoVale") {
     return HANDOFF_TPAG_COMPROVADO[linha.formaOrigem as HandoffFormaComTPagComprovado]
   }
   if (linha.formaOrigem === "pix" && isPixQrKind(linha.pixQrKind)) {

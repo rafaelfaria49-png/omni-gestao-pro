@@ -29,10 +29,18 @@ export const FORMAS_INTERNAS_PERSISTIDAS = [
 export type FormaInternaPersistida = (typeof FORMAS_INTERNAS_PERSISTIDAS)[number]
 
 /**
- * Formas com evidência persistida E mapeamento `tPag` comprovado neste GOAL.
- * Carne / a prazo / crédito-vale existem na venda mas NÃO entram aqui (gap B).
+ * Formas com evidência persistida E mapeamento `tPag` comprovado neste contrato.
+ * Carne / a prazo existem na venda mas NÃO entram aqui (gap B).
+ * creditoVale entra só via handoff (tPag 21); o breakdown legado permanece
+ * fail-closed — não reclassifica venda histórica.
  */
-export const FORMAS_INTERNAS_COM_TPAG = ["dinheiro", "pix", "cartaoDebito", "cartaoCredito"] as const
+export const FORMAS_INTERNAS_COM_TPAG = [
+  "dinheiro",
+  "pix",
+  "cartaoDebito",
+  "cartaoCredito",
+  "creditoVale",
+] as const
 
 export type FormaInternaComTPag = (typeof FORMAS_INTERNAS_COM_TPAG)[number]
 
