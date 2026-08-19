@@ -232,6 +232,8 @@ function mapPagamentoErro(
       return "pagamento_forma_desconhecida"
     case "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL":
       return "pagamento_forma_sem_capacidade"
+    case "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA":
+      return "pagamento_pix_legado_sem_evidencia"
     case "PAGAMENTO_SOMA_DIVERGENTE":
       return "pagamento_soma_divergente"
     case "PAGAMENTO_CANONICO_AUSENTE":

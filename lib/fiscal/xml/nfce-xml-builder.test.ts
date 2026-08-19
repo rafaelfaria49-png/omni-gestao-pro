@@ -220,10 +220,17 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
     expect(xml).not.toContain("<vTroco>")
   })
 
-  it("Pix válido → tPag 17, nunca cai para dinheiro", () => {
-    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 } } }))
-    expect(xml).toMatch(/<detPag>\s*<tPag>17<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
-    expect(xml).not.toMatch(/<tPag>01<\/tPag>/)
+  it("PIX legado sem evidência → bloqueia, nunca cai para dinheiro", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 50 } } })
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_pix_legado_sem_evidencia" })
+      expect(String(e)).not.toMatch(/tPag>01|tPag>99/)
+    }
   })
 
   it("débito válido → tPag 04 sem grupo card", () => {
@@ -240,19 +247,19 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
     expect(xml).not.toContain("<card>")
   })
 
-  it("split/misto válido", () => {
+  it("split/misto válido sem PIX", () => {
     const xml = buildNfceXml(
       snap({
         venda: {
           ...baseInput().venda,
-          paymentBreakdown: { dinheiro: 10, pix: 15, cartaoDebito: 10, cartaoCredito: 15 },
+          paymentBreakdown: { dinheiro: 10, pix: 0, cartaoDebito: 15, cartaoCredito: 25 },
         },
       }),
     )
     expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>10\.00<\/vPag>/)
-    expect(xml).toMatch(/<tPag>03<\/tPag>\s*<vPag>15\.00<\/vPag>/)
-    expect(xml).toMatch(/<tPag>04<\/tPag>\s*<vPag>10\.00<\/vPag>/)
-    expect(xml).toMatch(/<tPag>17<\/tPag>\s*<vPag>15\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>03<\/tPag>\s*<vPag>25\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>04<\/tPag>\s*<vPag>15\.00<\/vPag>/)
+    expect(xml).not.toMatch(/<tPag>17<\/tPag>/)
   })
 
   it("forma desconhecida → erro explícito, XML não é gerado, não vira tPag=99 nem 01", () => {
@@ -280,7 +287,7 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
   })
 
   it("soma abaixo do total → erro, sem correção para dinheiro", () => {
-    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { pix: 10 } } })
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { dinheiro: 10 } } })
     expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
     try {
       buildNfceXml(s)
@@ -333,6 +340,7 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
         paymentBreakdown: { dinheiro: 50 },
         pagamentoFiscal: {
           ...s.venda.pagamentoFiscal!,
+          fonte: "venda.payload.fiscalPaymentHandoff",
           det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
           soma: 50,
         },
@@ -341,6 +349,35 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
     const xml = buildNfceXml(trap)
     expect(xml).toMatch(/<tPag>17<\/tPag>/)
     expect(xml).not.toMatch(/<tPag>01<\/tPag>/)
+  })
+
+  it("contrato congelado fonte paymentBreakdown + PIX17 bloqueia XML e não reescreve o JSON", () => {
+    const s = snap()
+    const frozen = {
+      ...s,
+      venda: {
+        ...s.venda,
+        pagamentoFiscal: {
+          versao: 1 as const,
+          fonte: "venda.payload.paymentBreakdown" as const,
+          catalogoTPag: "IT-2024.002-v1.11" as const,
+          det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+          soma: 50,
+          vTroco: null,
+        },
+        pagamentoFiscalErro: null,
+      },
+    } as VendaFiscalSnapshot
+    expect(frozen.venda.pagamentoFiscal?.fonte).toBe("venda.payload.paymentBreakdown")
+    expect(frozen.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
+    expect(() => buildNfceXml(frozen)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(frozen)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_pix_legado_sem_evidencia" })
+      expect(String(e)).not.toMatch(/tPag>01|tPag>99/)
+    }
+    expect(frozen.venda.pagamentoFiscal?.det[0]?.tPag).toBe("17")
   })
 })
 

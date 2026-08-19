@@ -99,6 +99,7 @@ export type NfceXmlErrorCode =
   | "pagamento_valor_invalido"
   | "pagamento_forma_desconhecida"
   | "pagamento_forma_sem_capacidade"
+  | "pagamento_pix_legado_sem_evidencia"
   | "pagamento_soma_divergente"
   | "pagamento_canonico_ausente"
 

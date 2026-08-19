@@ -451,6 +451,27 @@ describe("reconstructSnapshotFromNota", () => {
     const semBlocos = { ...notaRowFromSnapshot(SNAPSHOT_OK), snapshotEmitente: null, snapshotPagamento: null }
     expect(reconstructSnapshotFromNota(semBlocos)).toBeNull()
   })
+
+  it("não reescreve pagamentoFiscal histórico (PIX 17 inferido permanece no JSONB)", () => {
+    const historico: VendaFiscalSnapshot = {
+      ...SNAPSHOT_OK,
+      venda: {
+        ...SNAPSHOT_OK.venda,
+        pagamentoFiscal: {
+          versao: 1,
+          fonte: "venda.payload.paymentBreakdown",
+          catalogoTPag: "IT-2024.002-v1.11",
+          det: [{ formaInterna: "pix", tPag: "17", vPag: 10 }],
+          soma: 10,
+          vTroco: null,
+        },
+        pagamentoFiscalErro: null,
+      },
+    }
+    const reconstruido = reconstructSnapshotFromNota(notaRowFromSnapshot(historico))
+    expect(reconstruido?.venda.pagamentoFiscal).toEqual(historico.venda.pagamentoFiscal)
+    expect(reconstruido?.venda.pagamentoFiscal?.det[0]?.tPag).toBe("17")
+  })
 })
 
 // ── 3. Serviço (Prisma mockado) ───────────────────────────────────────────────────────────

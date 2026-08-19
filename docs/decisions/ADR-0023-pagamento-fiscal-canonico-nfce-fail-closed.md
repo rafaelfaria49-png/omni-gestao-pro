@@ -158,3 +158,23 @@ permanece fail-closed; a venda comercial continua finalizando. A UI do caixa
 oferece só `estatico`/`dinamico` (observáveis); `automatico` (tPag 23) existe
 no contrato mas não é escolha do operador. Relatório:
 [`FISCAL_PAYMENT_PIX_SEMANTICS_077_REPORT.md`](../fiscal/FISCAL_PAYMENT_PIX_SEMANTICS_077_REPORT.md).
+
+---
+
+## 11. Adendo — GOAL 079 (PIX legado fail-closed)
+
+Em 19/08/2026 o GOAL `FISCAL-030-PIX-LEGACY-FAIL-CLOSED-079` eliminou a inferência
+`pix → tPag 17` do caminho legado (`paymentBreakdown` sem `fiscalPaymentHandoff`).
+
+- Venda nova com handoff: inalterada (`dinamico→17`, `estatico→20`, `automatico→23`;
+  ausência de `pixQrKind` → fail-closed).
+- Venda histórica sem handoff e `pix > 0`: erro `PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA`.
+  Não usa `PAGAMENTO_FORMA_DESCONHECIDA`.
+- Contrato já congelado `fonte=venda.payload.paymentBreakdown` + `formaInterna=pix` +
+  `tPag=17` **não autoriza** nova preparação/assinatura/transmissão. O JSONB **não**
+  é reescrito. A versão do contrato permanece **1**: `fonte` já distingue inferência
+  histórica de evidência explícita no handoff.
+- NFC-e já AUTORIZADA (XML/protocolo persistidos): leitura e DANFC-e/reimpressão
+  continuam no documento persistido; sem reconstrução de pagamento e sem retransmissão.
+
+Relatório: [`FISCAL_PAYMENT_PIX_LEGACY_FAIL_CLOSED_079_REPORT.md`](../fiscal/FISCAL_PAYMENT_PIX_LEGACY_FAIL_CLOSED_079_REPORT.md).

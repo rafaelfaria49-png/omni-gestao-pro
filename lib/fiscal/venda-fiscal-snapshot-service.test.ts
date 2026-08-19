@@ -92,6 +92,34 @@ describe("createVendaFiscalSnapshot · idempotência", () => {
     expect(db.notaCreate).not.toHaveBeenCalled()
     expect(db.vendaFindFirst).not.toHaveBeenCalled()
   })
+
+  it("nota vigente com PIX 17 inferido não é reescrita nem recalculada", async () => {
+    db.notaFindFirst.mockResolvedValueOnce({
+      id: "nf-pix-legado",
+      localKey: "nfce-snapshot:loja-1:venda-1",
+      snapshotPagamento: {
+        hash: "hash-congelado",
+        hashContratoVersao: 1,
+        venda: {
+          pagamentoFiscal: {
+            fonte: "venda.payload.paymentBreakdown",
+            det: [{ formaInterna: "pix", tPag: "17", vPag: 50 }],
+          },
+        },
+      },
+    })
+
+    const r = await createVendaFiscalSnapshot({ storeId: "loja-1", vendaId: "venda-1" })
+
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.created).toBe(false)
+      expect(r.notaFiscalId).toBe("nf-pix-legado")
+      expect(r.snapshotHash).toBe("hash-congelado")
+    }
+    expect(db.notaCreate).not.toHaveBeenCalled()
+    expect(db.vendaFindFirst).not.toHaveBeenCalled()
+  })
 })
 
 describe("createVendaFiscalSnapshot · caminho feliz grava tributos congelados", () => {

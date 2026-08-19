@@ -267,7 +267,10 @@ describe("computeSnapshotHash · canonização (ordem de chaves não afeta)", ()
     const h2 = computeSnapshotHash(r2.snapshot)
     // Ordem de chaves no paymentBreakdown não deve afetar o hash (canonização).
     expect(h1).toBe(h2)
-    expect(r1.snapshot.venda.pagamentoFiscal?.det).toEqual(r2.snapshot.venda.pagamentoFiscal?.det)
+    expect(r1.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r2.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r1.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA")
+    expect(r2.snapshot.venda.pagamentoFiscalErro?.code).toBe(r1.snapshot.venda.pagamentoFiscalErro?.code)
   })
 
   it("snapshot legado (sem pagamentoFiscal) e snapshot novo com contrato têm hashes diferentes", () => {

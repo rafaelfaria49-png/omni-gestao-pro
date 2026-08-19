@@ -19,6 +19,7 @@ import {
   type SnapshotItemInput,
   type SnapshotLojaInput,
 } from "@/lib/fiscal/venda-fiscal-snapshot"
+import { buildFiscalPaymentHandoff } from "@/lib/vendas/fiscal-payment-handoff"
 import { createQrV3OfflinePemSigner } from "../qr-v3"
 import { selectNfceSpPublicUrls, type NfceSpAmbientePublico } from "../urls-sp"
 import type { AuthorizedXmlDocument } from "@/lib/fiscal/storage"
@@ -131,7 +132,17 @@ function snapshotInput(kind: DanfceFixtureKind): BuildSnapshotInput {
     case "multiplos_pagamentos":
       return {
         ...base,
-        venda: { ...base.venda, paymentBreakdown: { dinheiro: 20, pix: 30 } },
+        venda: {
+          ...base.venda,
+          paymentBreakdown: { dinheiro: 20, pix: 30 },
+          // Documento autorizado de teste: evidência explícita (dinamico→17).
+          // Reimpressão lê o XML persistido — não reconstrói pagamento.
+          fiscalPaymentHandoff: buildFiscalPaymentHandoff(
+            { dinheiro: 20, pix: 30 },
+            50,
+            { pixQrKind: "dinamico" },
+          ),
+        },
       }
     case "producao":
       return { ...base, loja: { ...LOJA!, ambiente: "PRODUCAO" }, cliente: CLIENTE_CPF }
