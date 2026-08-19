@@ -25,6 +25,7 @@ import { ModuleView } from "./parts/ModuleView";
 import { BancadaV4 } from "./parts/BancadaV4";
 import { FilaV4 } from "./parts/FilaV4";
 import { SlaV4 } from "./parts/SlaV4";
+import { DashboardV4 } from "./parts/DashboardV4";
 import { AuditoriaPage } from "./parts/AuditoriaPage";
 import { NovaOSModal } from "./parts/NovaOSModal";
 import { NovoAtendimentoLauncher } from "./parts/NovoAtendimentoLauncher";
@@ -66,10 +67,11 @@ export function OperacoesV4Preview() {
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
         <IconRail v={v} />
         {v.isWorkspace && <WorkspaceView v={v} />}
+        {v.isModule && v.moduleId === "dashboard" && <DashboardV4 v={v} />}
         {v.isModule && v.moduleId === "bancada" && <BancadaV4 v={v} />}
         {v.isModule && v.moduleId === "fila" && <FilaV4 v={v} />}
         {v.isModule && v.moduleId === "sla" && <SlaV4 v={v} />}
-        {v.isModule && v.moduleId !== "bancada" && v.moduleId !== "fila" && v.moduleId !== "sla" && <ModuleView v={v} />}
+        {v.isModule && v.moduleId !== "dashboard" && v.moduleId !== "bancada" && v.moduleId !== "fila" && v.moduleId !== "sla" && <ModuleView v={v} />}
         {v.isAuditoria && <AuditoriaPage v={v} />}
       </div>
 

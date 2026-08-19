@@ -20,7 +20,7 @@ import {
 function moduleTemDados(v: V4Vals): boolean {
   switch (v.moduleId) {
     case "dashboard":
-      return v.dashboardResumo.temDados;
+      return v.dashboardOperacional.temDados;
     case "bancada":
       return v.producaoBancada.temProducao;
     case "sla":
@@ -56,7 +56,7 @@ export function ModuleView({ v }: { v: V4Vals }) {
             fontWeight: 600,
           }}
         >
-          {v.moduleId === "garantias" ? (temDados ? "Operacional" : "Sem dados") : temDados ? "Somente leitura" : "Protótipo"}
+          {temDados ? "Operacional" : "Sem dados"}
         </span>
         <span style={{ flex: 1 }} />
         <button type="button" onClick={v.railWorkspace} style={{ height: 30, padding: "0 12px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--foreground)", borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: "pointer" }}>Abrir OS Workspace →</button>
@@ -81,7 +81,7 @@ export function ModuleView({ v }: { v: V4Vals }) {
 function Body({ v }: { v: V4Vals }) {
   switch (v.moduleId) {
     case "dashboard":
-      return <DashboardBody v={v} />;
+      return null;
     case "bancada":
       return null;
     case "sla":
@@ -160,39 +160,6 @@ function GarantiasBody({ v }: { v: V4Vals }) {
   );
 }
 
-// ---- Visão geral -----------------------------------------------------------
-
-function DashboardBody({ v }: { v: V4Vals }) {
-  const r = v.dashboardResumo;
-  if (!r.temDados) {
-    return <EmptyBox titulo="Visão geral" texto="Nenhuma base operacional disponível para resumo nesta Preview." />;
-  }
-  return (
-    <div style={{ maxWidth: 880, margin: "0 auto", display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 12 }}>
-        <Kpi label="Total de OS" valor={r.total} />
-        <Kpi label="Ativas (em andamento)" valor={r.ativos} />
-        {r.temSla ? (
-          <Kpi label="Atrasadas (SLA)" valor={r.atrasadas} tone={r.atrasadas > 0 ? "danger" : "neutro"} />
-        ) : (
-          <KpiTexto label="Atrasadas (SLA)" texto="SLA não configurado" />
-        )}
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0,1fr))", gap: 10 }}>
-        {r.buckets.map((b) => (
-          <div key={b.key} style={{ ...card, padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 22, fontWeight: 700, color: C.ink, lineHeight: 1 }}>{b.count}</span>
-            <span style={{ fontSize: 11.5, color: C.muted }}>{b.label}</span>
-          </div>
-        ))}
-      </div>
-      <p style={{ margin: 0, fontSize: 11.5, color: C.subtle, lineHeight: 1.5 }}>
-        Resumo somente leitura da loja ativa. Abra uma OS na Fila ou no Workspace para ver os dados completos.
-      </p>
-    </div>
-  );
-}
-
 // ---- PDV de serviço --------------------------------------------------------
 
 function PdvBody({ v }: { v: V4Vals }) {
@@ -261,15 +228,6 @@ function Kpi({ label, valor, tone = "neutro" }: { label: string; valor: number; 
   return (
     <div style={{ ...card, padding: 14, display: "flex", flexDirection: "column", gap: 4 }}>
       <span style={{ fontSize: 26, fontWeight: 700, lineHeight: 1, color: tone === "danger" ? C.dangerFg : C.ink }}>{valor}</span>
-      <span style={{ fontSize: 12, color: C.muted }}>{label}</span>
-    </div>
-  );
-}
-
-function KpiTexto({ label, texto }: { label: string; texto: string }) {
-  return (
-    <div style={{ ...card, padding: 14, display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 13, fontWeight: 600, color: C.subtle }}>{texto}</span>
       <span style={{ fontSize: 12, color: C.muted }}>{label}</span>
     </div>
   );

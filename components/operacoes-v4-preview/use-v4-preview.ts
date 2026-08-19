@@ -7,7 +7,7 @@
  * REAL via actions V3 reusadas (cancelar, diagnóstico, orçamento, execução,
  * entrega, assinatura, garantia, recebimento — ver blocos "REAL" abaixo). As
  * telas de rail e o modal Nova OS de fato criam/leem dados reais da loja. Só
- * os handlers marcados `PREVIEW_NOOP` continuam sem efeito (ex.: ligar/exportar
+ * os handlers marcados `PREVIEW_NOOP` continuam sem efeito (ex.: configurações do módulo,
  * histórico/portal do cliente — sem contrato) e disparam um toast honesto.
  */
 "use client";
@@ -178,6 +178,8 @@ import {
   buildPdvView,
   buildSlaView,
 } from "./rails-adapter";
+import { buildDashboardOperacionalV4 } from "@/lib/operacoes-v4/dashboard-v4";
+import { buildHistoricoTransversalV4, montarAuditoriaExportV4 } from "@/lib/operacoes-v4/historico-v4";
 
 /** Entrada do editor de diagnóstico V4 → action `salvarDiagnosticoV3`. */
 export interface DiagnosticoInputV4 {
@@ -907,6 +909,8 @@ export function buildVals(
   // (`ctx.ordens`). Cada builder sinaliza `temDados` para a UI escolher entre dado
   // real e empty state honesto específico do módulo. Sem número/técnico/SLA fabricado.
   const dashboardResumo = buildDashboardResumo(ctx.ordens);
+  const dashboardOperacional = buildDashboardOperacionalV4(ctx.ordens);
+  const historicoTransversal = buildHistoricoTransversalV4(realOS, ctx.ordens);
   const filaItens = buildFilaItens(ctx.ordens);
   const filaOperacional = buildFilaOperacionalV4(ctx.ordens);
   const bancadaView = buildBancadaView(ctx.ordens);
@@ -1053,9 +1057,41 @@ export function buildVals(
       }
       window.open(link.url, "_blank", "noopener,noreferrer");
     },
-    ligar: () => notify(PREVIEW_NOOP),
-    novaObs: () => notify(PREVIEW_NOOP),
-    exportHist: () => notify(PREVIEW_NOOP),
+    ligar: () => {
+      const tel = `${realOS?.cliente?.telefone || realOS?.cliente?.whatsapp || ""}`.replace(/\D/g, "");
+      if (!tel) {
+        notify("Esta OS não tem telefone do cliente.");
+        return;
+      }
+      window.location.href = `tel:${tel}`;
+    },
+    novaObs: () => {
+      if (!realOS) {
+        notify("Selecione uma OS para registrar observação.");
+        return;
+      }
+      go("historico");
+    },
+    exportHist: () => {
+      if (!realOS) {
+        notify("Selecione uma OS para exportar a auditoria.");
+        return;
+      }
+      const corpo = montarAuditoriaExportV4({
+        codigo: osView.codigo,
+        cliente: osView.cliente,
+        aparelho: osView.aparelho,
+        eventos: hist.map((ev) => ({ text: ev.text, meta: ev.meta })),
+      });
+      const blob = new Blob([corpo], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `auditoria-${osView.codigo || "os"}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      notify("Auditoria exportada.");
+    },
   };
 
   // ---- Segurança/autorização (PREVIEW) ----------------------------------------
@@ -1141,7 +1177,8 @@ export function buildVals(
     goAuditoria: () => setView("auditoria"),
     railWorkspace: () => setModule("workspace"),
     railFila: () => setModule("fila"),
-    railSettings: () => notify(PREVIEW_NOOP),
+    setModule: (m: V4State["module"]) => setModule(m),
+    railSettings: () => notify("Configurações do módulo Operações ainda não estão nesta versão — nada foi alterado."),
 
     rail, modeBtns,
     mod,
@@ -1164,7 +1201,13 @@ export function buildVals(
     },
     // "Trocar OS" (coluna de contexto) usa o fluxo real de busca/seleção.
     onTrocar: goToOSSearch,
-    toHistCliente: () => notify(PREVIEW_NOOP),
+    toHistCliente: () => {
+      if (!realOS) {
+        notify("Selecione uma OS para ver o histórico do cliente.");
+        return;
+      }
+      go("historico");
+    },
 
     // ---- Modo foco (recolhe rail + gavetas; só visual) ----
     focusActive: st.focus && !!st.selectedOsId,
@@ -1415,6 +1458,8 @@ export function buildVals(
     // ---- telas de rail (identidade própria; dado real ou empty honesto) ----
     moduleId: st.module,
     dashboardResumo,
+    dashboardOperacional,
+    historicoTransversal,
     filaItens,
     filaOperacional,
     bancadaView,

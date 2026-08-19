@@ -3624,3 +3624,51 @@ describe("OPS-V4-TECNICO-BANCADA-FILA-016 — Técnico / Bancada / Fila / SLA re
     expect(v.slaOperacional.lista.map((r) => r.osId)).not.toContain("entregue")
   })
 })
+
+describe("OPS-V4-DASHBOARD-HISTORICO-FINAL-017 — Visão geral e histórico transversal", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const shell = readFileSync(join(DIR, "OperacoesV4Preview.tsx"), "utf8")
+  const dash = readFileSync(join(DIR, "parts", "DashboardV4.tsx"), "utf8")
+  const hist = readFileSync(join(DIR, "parts", "stages", "HistoricoStage.tsx"), "utf8")
+  const modules = readFileSync(join(DIR, "parts", "ModuleView.tsx"), "utf8")
+
+  it("Visão geral deixa o ModuleView genérico e ganha superfície própria", () => {
+    expect(shell).toContain("<DashboardV4")
+    expect(dash).toContain("Operacional")
+    expect(dash).toContain("Fila por status")
+    expect(dash).toContain("Retornos abertos")
+    expect(dash).not.toContain("Protótipo")
+    expect(modules).not.toContain("function DashboardBody")
+  })
+
+  it("dashboard operacional agrega fila/SLA/técnico/retornos no vals", () => {
+    const now = Date.now()
+    const v = buildVals(
+      makeState({ novaOS: false, module: "dashboard" }),
+      () => {},
+      () => {},
+      {
+        ...ctx,
+        ordens: [
+          mkOS({ id: "a", status: "em_execucao", codigo: "OS-A", sla: { prazo: new Date(now - 3600000).toISOString() } }),
+          mkOS({ id: "b", status: "pronta", codigo: "OS-B" }),
+        ],
+      },
+    )
+    expect(v.dashboardOperacional.temDados).toBe(true)
+    expect(v.dashboardOperacional.resumo.atrasadas).toBe(1)
+    expect(v.dashboardOperacional.resumo.prontas).toBe(1)
+  })
+
+  it("histórico transversal navega OS relacionadas e deixa de ser no-op em ligar/export/obs/cliente", () => {
+    expect(hist).toContain("historicoTransversal")
+    expect(hist).toContain("OS relacionadas")
+    expect(hist).toContain("adicionarObservacaoInterna")
+    expect(orquestrador).toContain("montarAuditoriaExportV4")
+    expect(orquestrador).toContain("location.href = `tel:")
+    expect(orquestrador).toMatch(/toHistCliente:[\s\S]*go\("historico"\)/)
+    expect(orquestrador).not.toMatch(/exportHist: \(\) => notify\(PREVIEW_NOOP\)/)
+    expect(orquestrador).not.toMatch(/ligar: \(\) => notify\(PREVIEW_NOOP\)/)
+    expect(orquestrador).not.toMatch(/toHistCliente: \(\) => notify\(PREVIEW_NOOP\)/)
+  })
+})
