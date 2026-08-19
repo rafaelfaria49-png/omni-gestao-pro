@@ -1,6 +1,6 @@
 ---
 title: ADR-0022 · NFC-e como trilha principal em SP; SAT/CF-e-SAT fora do roadmap ativo
-status: proposta
+status: aceita
 data: 2026-08-19
 autor: Grok (FISCAL-029-SAT-SP-REGULATORY-DECISION-070)
 revisores: [revisão independente de outra família — ver dossiê]
@@ -12,7 +12,7 @@ substitui:
 
 # ADR-0022 · NFC-e como trilha principal em SP; SAT fora do roadmap ativo
 
-> **Status:** proposta (aceite humano pendente — PR Draft; não mergear sem autorização)
+> **Status:** aceita
 > **Decisão em uma frase:** para o OmniGestão Pro no Estado de São Paulo, a trilha fiscal de
 > varejo é **NFC-e modelo 65**; **SAT/CF-e-SAT fica fora do roadmap ativo**; o enum
 > `SAT_LOCAL` permanece no schema como valor **reservado/descartável**, **sem implementação**.
@@ -101,7 +101,6 @@ Adota-se a **opção A** do GOAL FISCAL-029:
 - Implementação de NFC-e, contingência, DANFCE, fila, provider SEFAZ.
 - Declaração do método atual de emissão da RafaCell (H-5).
 - Dispensa MEI / produtor rural (fora do piloto).
-- Aceite humano desta ADR (status = proposta até Gate humano).
 
 ---
 
@@ -207,5 +206,5 @@ ADR nova, **não** implementação de `SAT_LOCAL` emissor.
   emitir.
 - A cláusula 11, II, do Ajuste SINIEF 19/16 ainda menciona SAT “a critério da UF”. O critério
   paulista vigente é o 34-D: emissão vedada. Não se implementa o inciso II em SP.
-- Status `proposta`: a evidência regulatória está fechada; o aceite humano da ADR é o Gate
-  de merge.
+- Status `aceita`: o GOAL 070 fechou a Opção A; o GOAL 071 registrou o aceite humano
+  sem alterar fundamentos, fontes, alternativas ou a decisão técnica.
