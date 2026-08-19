@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "contador",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "MEDIO",
-  "current_goal": "CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 12,
+    "goals_done": 13,
     "goals_blocked": 0,
     "goals_imported": 15,
-    "ledger_lines": 17
+    "ledger_lines": 18
   },
-  "last_goal": "CONTADOR-HUB-IDENTIDADE-CONVITE-014",
+  "last_goal": "CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015",
   "last_result": "DONE",
-  "last_ratified_at": "2026-08-01T11:54:56.745Z"
+  "last_ratified_at": "2026-08-19T02:20:36.206Z"
 }
