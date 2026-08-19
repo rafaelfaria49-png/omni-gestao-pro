@@ -299,6 +299,118 @@ describe("adapter Prisma da fila fiscal", () => {
     expect(goal012).toHaveBeenCalledTimes(1)
     expect(legacyEmit).not.toHaveBeenCalled()
   })
+
+  it("SEFAZ_DIRETO sem executor GOAL-012 é bloqueado e não cai no legado", async () => {
+    const state = casClient(jobRow())
+    state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue({
+      provider: "SEFAZ_DIRETO",
+      ambiente: "HOMOLOGACAO",
+      modeloFiscal: "NFCE",
+      fiscalEnabled: true,
+    })
+    const emit = vi.fn()
+    const ports = createPrismaFiscalQueueWorkerPorts(
+      state.client as never,
+      emit as never,
+    )
+
+    const result = await ports.execute(state.current())
+
+    expect(result).toMatchObject({
+      kind: "terminal",
+      code: "goal012_executor_nao_configurado",
+      simulado: true,
+      externalTransmissionAttempted: false,
+    })
+    expect(emit).not.toHaveBeenCalled()
+    expect(state.client.notaFiscal.findFirst).not.toHaveBeenCalled()
+  })
+
+  it("SEFAZ_DIRETO com executor alcança GOAL-012 mesmo em payload v1 e nunca chama o legado", async () => {
+    const state = casClient(
+      jobRow({
+        status: "PROCESSANDO",
+        lockOwner: "worker-a",
+        lockExpiresAt: new Date("2026-07-23T00:01:00.000Z"),
+        payload: { version: 1, operation: "EMISSAO" },
+      }),
+    )
+    state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue({
+      provider: "SEFAZ_DIRETO",
+      ambiente: "HOMOLOGACAO",
+      modeloFiscal: "NFCE",
+      fiscalEnabled: true,
+    })
+    state.client.notaFiscal.findFirst.mockResolvedValue({
+      id: "nota-1",
+      modelo: "NFCE",
+      ambiente: "HOMOLOGACAO",
+    })
+    const emit = vi.fn()
+    const goal012 = vi.fn(async () => ({
+      kind: "terminal" as const,
+      code: "external_execution_not_authorized",
+      mensagem: "capability negada",
+      simulado: true as const,
+      externalTransmissionAttempted: false,
+      providerInvoked: false,
+    }))
+    const ports = createPrismaFiscalQueueWorkerPorts(
+      state.client as never,
+      emit as never,
+      goal012,
+    )
+
+    await expect(ports.execute(state.current())).resolves.toMatchObject({
+      kind: "terminal",
+      code: "external_execution_not_authorized",
+      providerInvoked: false,
+      externalTransmissionAttempted: false,
+    })
+    expect(goal012).toHaveBeenCalledTimes(1)
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it("configuração inválida continua bloqueada (ambiente, modelo, flag)", async () => {
+    const emit = vi.fn()
+    const goal012 = vi.fn()
+    const cases = [
+      {
+        provider: "SEFAZ_DIRETO",
+        ambiente: "PRODUCAO",
+        modeloFiscal: "NFCE",
+        fiscalEnabled: true,
+      },
+      {
+        provider: "SEFAZ_DIRETO",
+        ambiente: "HOMOLOGACAO",
+        modeloFiscal: "NFE",
+        fiscalEnabled: true,
+      },
+      {
+        provider: "STUB_HOMOLOGACAO",
+        ambiente: "HOMOLOGACAO",
+        modeloFiscal: "NFCE",
+        fiscalEnabled: false,
+      },
+    ]
+    for (const config of cases) {
+      const state = casClient(jobRow())
+      state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue(config)
+      const ports = createPrismaFiscalQueueWorkerPorts(
+        state.client as never,
+        emit as never,
+        goal012,
+      )
+      await expect(ports.execute(state.current())).resolves.toMatchObject({
+        kind: "terminal",
+        code: "contexto_simulado_obrigatorio",
+        externalTransmissionAttempted: false,
+      })
+    }
+    expect(emit).not.toHaveBeenCalled()
+    expect(goal012).not.toHaveBeenCalled()
+  })
 })
 
 describe("leitura de pausa persistida", () => {

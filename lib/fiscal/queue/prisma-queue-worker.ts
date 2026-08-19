@@ -309,16 +309,40 @@ async function executeFiscalJob(
       fiscalEnabled: true,
     },
   }))
-  if (
-    config.provider !== "STUB_HOMOLOGACAO" ||
-    config.ambiente !== "HOMOLOGACAO" ||
-    config.modeloFiscal !== "NFCE" ||
-    config.fiscalEnabled !== true
-  ) {
+  const homologacaoNfceHabilitada =
+    config.ambiente === "HOMOLOGACAO" &&
+    config.modeloFiscal === "NFCE" &&
+    config.fiscalEnabled === true
+  if (!homologacaoNfceHabilitada) {
+    return {
+      kind: "terminal",
+      code: "contexto_simulado_obrigatorio",
+      mensagem: "Job bloqueado: somente NFCE/HOMOLOGACAO habilitado é permitido.",
+      simulado: true,
+      externalTransmissionAttempted: false,
+    }
+  }
+  if (config.provider !== "STUB_HOMOLOGACAO" && config.provider !== "SEFAZ_DIRETO") {
     return {
       kind: "terminal",
       code: "contexto_simulado_obrigatorio",
       mensagem: "Job bloqueado: somente STUB_HOMOLOGACAO/NFCE/HOMOLOGACAO habilitado é permitido.",
+      simulado: true,
+      externalTransmissionAttempted: false,
+    }
+  }
+  /**
+   * SEFAZ_DIRETO nunca cai no pipeline legado (`emitirNotaFiscalVenda`).
+   * Sem executor GOAL-012 o job termina bloqueado. Com executor, a capability
+   * default do piloto permanece negada e a execução para em
+   * `EXTERNAL_EXECUTION_NOT_AUTHORIZED` — sem prepare, A1, persistência ou rede.
+   */
+  if (config.provider === "SEFAZ_DIRETO" && !executeGoal012) {
+    return {
+      kind: "terminal",
+      code: "goal012_executor_nao_configurado",
+      mensagem:
+        "Executor seguro do GOAL-012 não configurado; transmissão SEFAZ_DIRETO bloqueada.",
       simulado: true,
       externalTransmissionAttempted: false,
     }
@@ -344,7 +368,8 @@ async function executeFiscalJob(
   }
 
   const payloadVersion = Number(record(job.payload).version ?? 1)
-  if (job.tipo === "CONSULTA" || payloadVersion >= 2) {
+  const sefazDireto = config.provider === "SEFAZ_DIRETO"
+  if (sefazDireto || job.tipo === "CONSULTA" || payloadVersion >= 2) {
     if (!executeGoal012) {
       return {
         kind: "terminal",
@@ -665,8 +690,9 @@ export function createPrismaFiscalQueueWorkerPorts(
 }
 
 /**
- * Wiring explícito do GOAL-012. Exige preparer, persistência e provider stub
+ * Wiring explícito do GOAL-012. Exige preparer, persistência e provider
  * injetados; a factory legada continua fail-closed para payload v2 sem wiring.
+ * SEFAZ_DIRETO só alcança este executor — nunca o pipeline legado.
  */
 export function createPrismaGoal012FiscalQueueWorkerPorts(
   dependencies: UncertainStateJobExecutorDependencies,

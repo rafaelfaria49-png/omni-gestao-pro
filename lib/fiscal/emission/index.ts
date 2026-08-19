@@ -19,7 +19,13 @@ export {
   NfceQrConfigMissingError,
 } from "./finalized-nfce-preparer"
 export type {
+  FinalizedNfceCertificateResolver,
   FinalizedNfcePreparerDependencies,
   NfceFinalizationSource,
   NfceQrUrlConfig,
 } from "./finalized-nfce-preparer"
+export {
+  createPersistedNfceFinalizationSourceResolver,
+  NfceFinalizationSourceError,
+} from "./nfce-finalization-source-resolver"
+export type { NfceFinalizationSourceErrorCode } from "./nfce-finalization-source-resolver"
