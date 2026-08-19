@@ -18,6 +18,7 @@
 import { createQrV3OfflinePemSigner } from "@/lib/fiscal/danfce/qr-v3"
 import {
   signNfceXmlDetailed,
+  NfceSignError,
   type FiscalCertificateMaterial,
   type SignNfceOptions,
 } from "@/lib/fiscal/signing"
@@ -56,9 +57,21 @@ export type NfceFinalizationSource = {
   correlationId?: string
 }
 
+export type FinalizedNfceCertificateResolver = () => Promise<FiscalCertificateMaterial>
+
 export type FinalizedNfcePreparerDependencies = {
   resolveSource: (locator: FiscalDocumentLocator) => Promise<NfceFinalizationSource>
-  certificado: FiscalCertificateMaterial
+  /**
+   * Material A1 já em memória. Contrato atual: testes isolados e dry-run
+   * passam fixture. Quando presente, o resolver lazy não é chamado.
+   */
+  certificado?: FiscalCertificateMaterial
+  /**
+   * Resolver lazy do material A1. Chamado somente dentro de `prepare()`,
+   * depois de validar QR e fonte. Ausência de `certificado` e de resolver
+   * falha fechado — nada é assinado, persistido ou transmitido.
+   */
+  resolveCertificate?: FinalizedNfceCertificateResolver
   senha?: string
   /**
    * Obrigatório no caminho SEFAZ-ready. Ausência falha fechado **antes** de
@@ -102,6 +115,29 @@ function sameLocator(locator: FiscalDocumentLocator, source: NfceFinalizationSou
   )
 }
 
+function isCertificateMaterial(
+  value: FiscalCertificateMaterial | undefined,
+): value is FiscalCertificateMaterial {
+  return Boolean(
+    value &&
+      typeof value.privateKeyPem === "string" &&
+      value.privateKeyPem.length > 0 &&
+      typeof value.certificatePem === "string" &&
+      value.certificatePem.length > 0,
+  )
+}
+
+async function resolveCertificateMaterial(
+  deps: FinalizedNfcePreparerDependencies,
+): Promise<FiscalCertificateMaterial> {
+  if (isCertificateMaterial(deps.certificado)) return deps.certificado
+  if (deps.resolveCertificate) return deps.resolveCertificate()
+  throw new NfceSignError(
+    "material_ausente",
+    "Material de certificado A1 ausente; finalização recusada antes da assinatura.",
+  )
+}
+
 /**
  * Fábrica do preparer canônico da NFC-e. Um único pipeline: o coordenador
  * `transmitWithUncertainStateSafety` já chama `prepare` → `persistBeforeTransmission`
@@ -121,6 +157,7 @@ export function createFinalizedNfcePreparer(
         )
       }
 
+      const certificado = await resolveCertificateMaterial(deps)
       const tpEmis = source.tpEmis ?? 1
       const qrOnlineV3: NfceQrOnlineV3Config | undefined =
         tpEmis === 9 ? undefined : { qrCodeBaseUrl: urls.qrCodeBaseUrl, urlChave: urls.urlChave }
@@ -129,7 +166,7 @@ export function createFinalizedNfcePreparer(
           ? {
               qrCodeBaseUrl: urls.qrCodeBaseUrl,
               urlChave: urls.urlChave,
-              sign: createQrV3OfflinePemSigner(deps.certificado.privateKeyPem),
+              sign: createQrV3OfflinePemSigner(certificado.privateKeyPem),
             }
           : undefined
 
@@ -149,7 +186,7 @@ export function createFinalizedNfcePreparer(
 
       const signed = signNfceXmlDetailed(
         built.xml,
-        deps.certificado,
+        certificado,
         deps.senha ?? "",
         deps.signOptions,
       )

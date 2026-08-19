@@ -391,4 +391,34 @@ describe("executor — bloqueio antes do transporte registra false", () => {
     ]
     for (const r of resultados) expect(r.externalTransmissionAttempted).toBe(false)
   })
+
+  it("capability omitida no executor = EXTERNAL_EXECUTION_DENIED; preparer não roda", async () => {
+    const persistencia = persistenciaQuePermiteTransmitir()
+    const prepare = vi.fn()
+    const provider = providerFalso({ simulado: false })
+    const semCapability = createUncertainStateJobExecutor({
+      persistence: persistencia,
+      preparer: { prepare } as unknown as FinalizedDocumentPreparer,
+      provider,
+    })
+    const negada = createUncertainStateJobExecutor({
+      persistence: persistencia,
+      preparer: { prepare } as unknown as FinalizedDocumentPreparer,
+      provider,
+      capability: EXTERNAL_EXECUTION_DENIED,
+    })
+    for (const executor of [semCapability, negada]) {
+      const resultado = await executor(job())
+      expect(resultado).toMatchObject({
+        kind: "terminal",
+        code: "external_execution_not_authorized",
+        providerInvoked: false,
+        externalTransmissionAttempted: false,
+      })
+    }
+    expect(prepare).not.toHaveBeenCalled()
+    expect(persistencia.load).not.toHaveBeenCalled()
+    expect(persistencia.persistBeforeTransmission).not.toHaveBeenCalled()
+    expect(provider.transmit).not.toHaveBeenCalled()
+  })
 })
