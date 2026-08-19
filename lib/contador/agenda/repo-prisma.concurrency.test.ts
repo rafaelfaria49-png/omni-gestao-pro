@@ -8,6 +8,7 @@
  * na mesma tx da linha-filha + evento (primitive do GOAL 012).
  */
 import { describe, expect, it } from "vitest"
+import { readFileSync } from "node:fs"
 import { CompetenciaFechadaError } from "@/lib/contador/documentos/service"
 import {
   criarRepoAgenda,
@@ -69,6 +70,11 @@ type FakeDb = AgendaDbClient & {
   antesDeTravar: (() => void) | null
   /** Marca a guia paga DEPOIS da trava e ANTES do updateMany da guia. */
   antesDeUpdateGuia: (() => void) | null
+  /** Semântica PG: unique violation aborta a tx; comandos seguintes falham. */
+  txAbortada: boolean
+  consultasAposAborto: number
+  p2002Count: number
+  forcarP2002NoCreate: boolean
 }
 
 function clone(e: Estado): Estado {
@@ -116,9 +122,27 @@ function fakeDb(seed: Partial<Estado> = {}): FakeDb {
     transacoes: 0,
     antesDeTravar: null,
     antesDeUpdateGuia: null,
+    txAbortada: false,
+    consultasAposAborto: 0,
+    p2002Count: 0,
+    forcarP2002NoCreate: false,
   } as FakeDb
 
   const agora = () => new Date("2026-07-16T12:00:00.000Z")
+
+  function assertTxViva(): void {
+    if (!db.txAbortada) return
+    db.consultasAposAborto += 1
+    throw new Error("current transaction is aborted, commands ignored until end of transaction block")
+  }
+
+  function abortarP2002(): never {
+    db.p2002Count += 1
+    db.txAbortada = true
+    const err = new Error("unique") as Error & { code: string }
+    err.code = "P2002"
+    throw err
+  }
 
   const ops: AgendaTxClient = {
     contadorCompetencia: {
@@ -175,6 +199,7 @@ function fakeDb(seed: Partial<Estado> = {}): FakeDb {
           .map((o) => hidratarObg(db.estado, o)) as never
       },
       async findFirst({ where }) {
+        assertTxViva()
         const w = where as {
           id?: string
           storeId?: string
@@ -191,16 +216,14 @@ function fakeDb(seed: Partial<Estado> = {}): FakeDb {
         return o ? (hidratarObg(db.estado, o) as never) : null
       },
       async create({ data }) {
+        assertTxViva()
+        if (db.forcarP2002NoCreate) abortarP2002()
         const d = data as ObgRow
         if (d.templateId) {
           const dup = db.estado.obrigacoes.find(
             (x) => x.templateId === d.templateId && x.competenciaId === d.competenciaId && x.storeId === d.storeId,
           )
-          if (dup) {
-            const err = new Error("unique") as Error & { code: string }
-            err.code = "P2002"
-            throw err
-          }
+          if (dup) abortarP2002()
         }
         const row: ObgRow = {
           ...d,
@@ -269,6 +292,7 @@ function fakeDb(seed: Partial<Estado> = {}): FakeDb {
     },
     contadorEvento: {
       async create({ data }) {
+        assertTxViva()
         db.estado.eventos.push({ ...data })
         return { id: `ev-${db.estado.eventos.length}` }
       },
@@ -281,11 +305,13 @@ function fakeDb(seed: Partial<Estado> = {}): FakeDb {
   db.$transaction = <T,>(fn: (tx: AgendaTxClient) => Promise<T>): Promise<T> => {
     const executar = async (): Promise<T> => {
       db.transacoes += 1
+      db.txAbortada = false
       const snapshot = clone(db.estado)
       try {
         return await fn(ops)
       } catch (e) {
         db.estado = snapshot
+        db.txAbortada = false
         throw e
       }
     }
@@ -513,7 +539,7 @@ describe("adapter Prisma · corrida de freeze", () => {
     expect(db.estado.eventos[0]?.tipo).toBe("guia_paga")
   })
 
-  it("G: unique template+competência — segunda create no lote devolve a existente, sem duplicar", async () => {
+  it("G: unique template+competência — recheck pós-lock devolve a existente, sem INSERT/evento", async () => {
     const db = fakeDb({
       competencias: [{ ...COMP }],
       obrigacoes: [seedObg({ id: "obg-existente", templateId: "tpl-1", titulo: "já" })],
@@ -529,5 +555,59 @@ describe("adapter Prisma · corrida de freeze", () => {
     expect(rows[0]?.id).toBe("obg-existente")
     expect(db.estado.obrigacoes.filter((o) => o.templateId === "tpl-1")).toHaveLength(1)
     expect(db.estado.eventos).toHaveLength(0)
+    expect(db.p2002Count).toBe(0)
+  })
+
+  it("stale precheck: concorrente grava antes do lock; recheck evita INSERT e P2002", async () => {
+    const db = fakeDb({ competencias: [{ ...COMP }] })
+    db.antesDeTravar = () => {
+      db.estado.obrigacoes.push(seedObg({ id: "obg-concorrente", templateId: "tpl-1", titulo: "já" }))
+      db.estado.eventos.push({ tipo: "obrigacao_criada", entidadeId: "obg-concorrente" })
+    }
+    const repo = criarRepoAgenda(db)
+    const rows = await repo.criarObrigacoesEmLote([
+      {
+        row: obgInput({ id: "obg-novo", templateId: "tpl-1", titulo: "novo" }),
+        evento: ev({ entidadeId: "obg-novo" }),
+      },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.id).toBe("obg-concorrente")
+    expect(db.estado.obrigacoes).toHaveLength(1)
+    expect(db.estado.eventos.filter((e) => e.tipo === "obrigacao_criada")).toHaveLength(1)
+    expect(db.p2002Count).toBe(0)
+    expect(db.consultasAposAborto).toBe(0)
+  })
+
+  it("P2002 inesperado aborta a tx inteira — sem findFirst de recuperação", async () => {
+    const db = fakeDb({ competencias: [{ ...COMP }] })
+    db.forcarP2002NoCreate = true
+    const repo = criarRepoAgenda(db)
+    await expect(
+      repo.criarObrigacoesEmLote([
+        {
+          row: obgInput({ id: "obg-1", templateId: "tpl-x", titulo: "X" }),
+          evento: ev({ entidadeId: "obg-1" }),
+        },
+      ]),
+    ).rejects.toMatchObject({ code: "P2002" })
+    expect(db.estado.obrigacoes).toHaveLength(0)
+    expect(db.estado.eventos).toHaveLength(0)
+    expect(db.p2002Count).toBe(1)
+    expect(db.consultasAposAborto).toBe(0)
+  })
+})
+
+describe("criarObrigacoesEmLote · fonte", () => {
+  it("não captura P2002 nem consulta após unique dentro da mesma transaction", () => {
+    const src = readFileSync(new URL("./repo-prisma.ts", import.meta.url), "utf8")
+    const inicio = src.indexOf("async criarObrigacoesEmLote")
+    const fim = src.indexOf("async atualizarObrigacao")
+    const corpo = src.slice(inicio, fim)
+    expect(corpo).toContain("travarCompetenciaNaoFechada")
+    expect(corpo).toContain("templateId")
+    expect(corpo).not.toMatch(/codigoP2002/)
+    expect(corpo).not.toMatch(/catch\s*\(/)
+    expect(corpo).not.toMatch(/code\s*===\s*["']P2002["']/)
   })
 })

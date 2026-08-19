@@ -214,42 +214,27 @@ function fakeRepo(): Fake {
         assertCompNaoFechada(itens[0]!.row.competenciaId)
         const out: ObrigacaoRow[] = []
         for (const item of itens) {
-          try {
-            if (item.row.templateId) {
-              const dup = [...obgs.values()].find(
-                (x) => x.templateId === item.row.templateId && x.competenciaId === item.row.competenciaId,
-              )
-              if (dup) {
-                const err = new Error("unique") as Error & { code: string }
-                err.code = "P2002"
-                throw err
-              }
-            }
-            assertCompNaoFechada(item.row.competenciaId)
-            const full: ObrigacaoRow = {
-              ...item.row,
-              createdAt: agora(),
-              updatedAt: agora(),
-              ...attachComp(item.row),
-            }
-            obgs.set(item.row.id, full)
-            eventos.push(item.evento)
-            out.push({ ...full })
-          } catch (e) {
-            const code = typeof e === "object" && e && "code" in e ? String((e as { code: unknown }).code) : ""
-            if (code === "P2002" && item.row.templateId) {
-              const deNovo = [...obgs.values()].find(
-                (x) =>
-                  x.templateId === item.row.templateId &&
-                  x.competenciaId === item.row.competenciaId &&
-                  x.storeId === item.row.storeId,
-              )
-              if (!deNovo) throw e
-              out.push({ ...deNovo, ...attachComp(deNovo) })
+          if (item.row.templateId) {
+            const existente = [...obgs.values()].find(
+              (x) =>
+                x.templateId === item.row.templateId &&
+                x.competenciaId === item.row.competenciaId &&
+                x.storeId === item.row.storeId,
+            )
+            if (existente) {
+              out.push({ ...existente, ...attachComp(existente) })
               continue
             }
-            throw e
           }
+          const full: ObrigacaoRow = {
+            ...item.row,
+            createdAt: agora(),
+            updatedAt: agora(),
+            ...attachComp(item.row),
+          }
+          obgs.set(item.row.id, full)
+          eventos.push(item.evento)
+          out.push({ ...full })
         }
         return out
       } catch (e) {
@@ -785,5 +770,26 @@ describe("concorrência — freeze da competência e guia paga", () => {
     const lote = await instanciarLoteMensal(ESCOPO, COMP, CAP, d, AGORA)
     expect(lote.criadas).toBe(0)
     expect(lote.existentes).toBe(1)
+  })
+
+  it("stale precheck: lote recheck pós-lock reusa obrigação concorrente, sem P2002", async () => {
+    const d = deps()
+    const t = await criarTemplate(
+      ESCOPO,
+      { titulo: "INSS", tipo: "pagamento_guia", diaVencimento: 20, recorrencia: "mensal" },
+      CAP,
+      d,
+    )
+    d.repo._antesDeMutar = async () => {
+      d.repo._antesDeMutar = null
+      await criarObrigacao(ESCOPO, { competencia: COMP, templateId: t.id }, CAP, d, AGORA)
+    }
+    const lote = await instanciarLoteMensal(ESCOPO, COMP, CAP, d, AGORA)
+    expect(lote.criadas).toBe(0)
+    expect(lote.existentes).toBe(1)
+    expect([...d.repo._obrigacoes.values()].filter((o) => o.templateId === t.id)).toHaveLength(1)
+    expect(d.repo._eventos.filter((e) => e.tipo === "obrigacao_criada")).toHaveLength(1)
+    expect(lote.obrigacoes).toHaveLength(1)
+    expect(lote.obrigacoes[0]?.templateId).toBe(t.id)
   })
 })

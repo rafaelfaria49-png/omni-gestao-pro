@@ -224,10 +224,6 @@ function asStatus(v: string): ContadorItemStatus {
   return v as ContadorItemStatus
 }
 
-function codigoP2002(e: unknown): boolean {
-  return typeof e === "object" && e !== null && "code" in e && String((e as { code: unknown }).code) === "P2002"
-}
-
 /**
  * Trava de linha da competência — mesmo primitive do fechamento (GOAL 012):
  * `updateMany` com o estado esperado no `where`. Serializa com
@@ -441,12 +437,10 @@ export function criarRepoAgenda(client?: AgendaDbClient): AgendaRepo {
         await travarCompetenciaNaoFechada(tx, primeiro.row.storeId, primeiro.row.competenciaId)
         const out: ObrigacaoRow[] = []
         for (const item of itens) {
-          try {
-            const o = await criarObrigacaoNaTx(tx, item.row, item.evento)
-            out.push(mapObg(o))
-          } catch (e) {
-            if (!codigoP2002(e) || !item.row.templateId) throw e
-            const deNovo = await tx.contadorObrigacao.findFirst({
+          // Recheck pós-lock: já existente → skip (sem INSERT/evento). Unique
+          // inesperado aborta o bloco inteiro — sem recuperação nesta tx.
+          if (item.row.templateId) {
+            const existente = await tx.contadorObrigacao.findFirst({
               where: {
                 templateId: item.row.templateId,
                 competenciaId: item.row.competenciaId,
@@ -454,9 +448,13 @@ export function criarRepoAgenda(client?: AgendaDbClient): AgendaRepo {
               },
               select: OBG_SELECT,
             })
-            if (!deNovo) throw e
-            out.push(mapObg(deNovo))
+            if (existente) {
+              out.push(mapObg(existente))
+              continue
+            }
           }
+          const o = await criarObrigacaoNaTx(tx, item.row, item.evento)
+          out.push(mapObg(o))
         }
         return out
       })
