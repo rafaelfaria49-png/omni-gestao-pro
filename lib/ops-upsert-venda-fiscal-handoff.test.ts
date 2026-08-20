@@ -241,8 +241,38 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
       status: "ok",
     })
     expect(payload.pixQrKind).toBe("estatico")
+    expect(linhas[0]!.tpIntegra).toBeUndefined()
     expect(financeiro).toHaveLength(1)
     expect(financeiro[0]!.valor).toBe(50)
+  })
+
+  it("PIX dinâmico persiste tPag 17 + tpIntegra 2 e ignora YA04 do cliente", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({
+        paymentBreakdown: { pix: 50 },
+        pixQrKind: "dinamico",
+        tpIntegra: "1",
+        card: { tpIntegra: "1", cAut: "E2EIDFAKE" },
+      } as SalePayload & { tpIntegra?: string; card?: unknown }),
+    )
+    const payload = vendas[0]!.payload
+    expect(payload.tpIntegra).toBeUndefined()
+    expect(payload.card).toBeUndefined()
+    const linhasPix = (payload.fiscalPaymentHandoff as { linhas: Array<Record<string, unknown>> }).linhas
+    expect(linhasPix[0]).toEqual({
+      formaOrigem: "pix",
+      valor: 50,
+      pixQrKind: "dinamico",
+      tPag: "17",
+      tpIntegra: "2",
+      capability: "supported",
+      status: "ok",
+    })
+    expect(JSON.stringify(payload.fiscalPaymentHandoff)).not.toMatch(/E2EIDFAKE|"tpIntegra":"1"/)
+    expect(financeiro).toHaveLength(1)
   })
 
   it("PIX com pixQrKind inválido bloqueia fiscal e a venda comercial ainda persiste", async () => {
@@ -258,6 +288,35 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
     expect(financeiro).toHaveLength(1)
   })
 
+  it("PIX dinâmico persiste tPag 17 + tpIntegra 2 e ignora YA04 do cliente", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({
+        paymentBreakdown: { pix: 50 },
+        pixQrKind: "dinamico",
+        tpIntegra: "1",
+        card: { tpIntegra: "1", cAut: "E2EIDFAKE" },
+      } as SalePayload & { tpIntegra?: string; card?: unknown }),
+    )
+    const payload = vendas[0]!.payload
+    expect(payload.tpIntegra).toBeUndefined()
+    expect(payload.card).toBeUndefined()
+    const linhas = (payload.fiscalPaymentHandoff as { linhas: Array<Record<string, unknown>> }).linhas
+    expect(linhas[0]).toEqual({
+      formaOrigem: "pix",
+      valor: 50,
+      pixQrKind: "dinamico",
+      tPag: "17",
+      tpIntegra: "2",
+      capability: "supported",
+      status: "ok",
+    })
+    expect(JSON.stringify(payload.fiscalPaymentHandoff)).not.toMatch(/E2EIDFAKE|"tpIntegra":"1"/)
+    expect(financeiro).toHaveLength(1)
+  })
+
   it("split PIX + dinheiro com pixQrKind dinâmico", async () => {
     const { tx, vendas } = makeFakeTx()
     await upsertVendaInTransaction(
@@ -265,9 +324,10 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
       STORE,
       avulsoSale({ total: 100, paymentBreakdown: { pix: 40, dinheiro: 60 }, pixQrKind: "dinamico" }),
     )
-    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ formaOrigem: string; tPag?: string }> }).linhas
-    expect(linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("17")
-    expect(linhas.find((l) => l.formaOrigem === "dinheiro")?.tPag).toBe("01")
+    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ formaOrigem: string; tPag?: string; tpIntegra?: string }> }).linhas
+    expect(linhas.find((l) => l.formaOrigem === "pix")).toMatchObject({ tPag: "17", tpIntegra: "2" })
+    expect(linhas.find((l) => l.formaOrigem === "dinheiro")).toMatchObject({ tPag: "01" })
+    expect(linhas.find((l) => l.formaOrigem === "dinheiro")?.tpIntegra).toBeUndefined()
   })
 
   it("split PIX + cartão com pixQrKind automático", async () => {
@@ -277,8 +337,11 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
       STORE,
       avulsoSale({ total: 90, paymentBreakdown: { pix: 30, cartaoDebito: 60 }, pixQrKind: "automatico" }),
     )
-    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ formaOrigem: string; tPag?: string }> }).linhas
+    const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as {
+      linhas: Array<{ formaOrigem: string; tPag?: string; tpIntegra?: string }>
+    }).linhas
     expect(linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("23")
+    expect(linhas.find((l) => l.formaOrigem === "pix")?.tpIntegra).toBeUndefined()
     expect(linhas.find((l) => l.formaOrigem === "cartaoDebito")?.tPag).toBe("04")
   })
 

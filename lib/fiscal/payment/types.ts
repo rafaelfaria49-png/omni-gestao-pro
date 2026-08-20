@@ -51,6 +51,9 @@ export const PAGAMENTO_FISCAL_ERRO_CODES = [
   "PAGAMENTO_FORMA_DESCONHECIDA",
   "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL",
   "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA",
+  "PAGAMENTO_PIX_TPINTEGRA_AUSENTE",
+  "PAGAMENTO_PIX_TPINTEGRA_INVALIDO",
+  "PAGAMENTO_PIX_INTEGRADO_NAO_SUPORTADO",
   "PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE",
   "PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO",
   "PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO",
@@ -66,8 +69,9 @@ export type PagamentoFiscalErroCode = (typeof PAGAMENTO_FISCAL_ERRO_CODES)[numbe
 
 /**
  * YA04a `tpIntegra` (XSD PL_010e_v1.02):
- * 1 = pagamento integrado (TEF / e-commerce / POS integrado) — capacidade ausente neste slice;
- * 2 = pagamento não integrado (POS simples) — única capacidade suportada para tPag 03/04.
+ * 1 = pagamento integrado (TEF / e-commerce / POS integrado / PSP) — capacidade ausente;
+ * 2 = pagamento não integrado (POS simples / PIX dinâmico manual) — única capacidade
+ *     suportada para tPag 03/04 e 17.
  */
 export const TPINTEGRA_VALORES = ["1", "2"] as const
 export type TpIntegraFiscal = (typeof TPINTEGRA_VALORES)[number]
@@ -87,16 +91,16 @@ export type PagamentoFiscalErro = {
 /**
  * Uma parcela de `detPag`.
  *
- * Cartão 03/04 (contrato novo): `tpIntegra` obrigatório. Única capacidade = `"2"`
- * (POS não integrado). Sem CNPJ / tBand / cAut / CNPJReceb / idTermPag / NSU.
- * PIX 17 + YA04 permanece residual — este detalhe NÃO carrega tpIntegra por analogia.
+ * Cartão 03/04 e PIX dinâmico 17 (contrato novo): `tpIntegra` obrigatório.
+ * Única capacidade = `"2"` (não integrado). Sem CNPJ / tBand / cAut / CNPJReceb /
+ * idTermPag / NSU / e2eid. tPag 20/23 não carregam tpIntegra (YA04-10 não os lista).
  * Sem `xPag`. Sem `indPag` inventado.
  */
 export type PagamentoFiscalDetalhe = {
   readonly formaInterna: FormaInternaComTPag
   readonly tPag: TPagOficial
   readonly vPag: number
-  /** Presente só em tPag 03/04 com evidência. Valor suportado neste slice: `"2"`. */
+  /** Presente em tPag 03/04 e 17 com evidência. Valor suportado neste slice: `"2"`. */
   readonly tpIntegra?: TpIntegraFiscal
 }
 

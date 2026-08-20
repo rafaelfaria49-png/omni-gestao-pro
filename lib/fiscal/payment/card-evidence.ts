@@ -3,7 +3,7 @@
  *
  * Capacidade deste slice: somente `tpIntegra="2"` (POS não integrado).
  * TEF (`tpIntegra="1"`) e filhos YA05–YA11 / NSU são fail-closed.
- * PIX 17 + YA04 NÃO é tratado aqui — residual de GOAL separado.
+ * PIX 17 + YA04 NÃO é tratado aqui — ver `pix-ya04-evidence.ts`.
  *
  * PURO. Sem Prisma, Caixa, Financeiro, PDV vivo, adquirente ou SEFAZ.
  */

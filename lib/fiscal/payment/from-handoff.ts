@@ -33,6 +33,7 @@ import {
   isTPagCartao,
   MSG_CARTAO_DADOS_NAO_SUPORTADOS,
 } from "./card-evidence"
+import { erroTpIntegraPixDinamico, isTPagPixDinamico } from "./pix-ya04-evidence"
 
 const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 
@@ -105,7 +106,8 @@ function asLinha(raw: unknown, index: number): FiscalPaymentHandoffLinha | Pagam
   }
   const tpIntegraRaw = raw.tpIntegra
   if (tpIntegraRaw !== undefined && tpIntegraRaw !== null && typeof tpIntegraRaw !== "string") {
-    return erro("PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO", `Linha ${index} com tpIntegra em formato inválido.`, `${campoLinha}.tpIntegra`)
+    const code = formaOrigem === "pix" ? "PAGAMENTO_PIX_TPINTEGRA_INVALIDO" : "PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO"
+    return erro(code, `Linha ${index} com tpIntegra em formato inválido.`, `${campoLinha}.tpIntegra`)
   }
   const linha: FiscalPaymentHandoffLinha = {
     formaOrigem,
@@ -256,13 +258,17 @@ export function derivePagamentoFiscalFromHandoff(
 
     const tPagLinha = linha.tPag
     const cartao = isFormaCartao(linha.formaOrigem) || isTPagCartao(tPagLinha)
+    const pixDinamico = isTPagPixDinamico(tPagLinha)
     if (cartao) {
       const errCard = erroTpIntegraCartao(linha.tpIntegra, "venda.fiscalPaymentHandoff.linhas")
       if (errCard) return { ok: false, erro: errCard }
+    } else if (pixDinamico) {
+      const errPix = erroTpIntegraPixDinamico(linha.tpIntegra, "venda.fiscalPaymentHandoff.linhas")
+      if (errPix) return { ok: false, erro: errPix }
     } else if (linha.tpIntegra !== undefined) {
       return erro(
         "PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS",
-        `tpIntegra não se aplica à forma "${linha.formaOrigem}" (tPag ${tPagLinha}). PIX 17 + YA04 permanece residual; não analogizar POS simples.`,
+        `tpIntegra não se aplica à forma "${linha.formaOrigem}" (tPag ${tPagLinha}). YA04-10 exige card só para tPag 03, 04 e 17; tPag 20/23 não emitem grupo card.`,
         "venda.fiscalPaymentHandoff.linhas",
       )
     }
@@ -271,7 +277,7 @@ export function derivePagamentoFiscalFromHandoff(
       formaInterna: linha.formaOrigem as FormaInternaComTPag,
       tPag: tPagLinha,
       vPag: round2(linha.valor),
-      ...(cartao ? { tpIntegra: TPINTEGRA_POS_NAO_INTEGRADO } : {}),
+      ...(cartao || pixDinamico ? { tpIntegra: TPINTEGRA_POS_NAO_INTEGRADO } : {}),
     })
   }
 

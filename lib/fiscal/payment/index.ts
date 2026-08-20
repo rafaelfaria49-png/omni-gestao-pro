@@ -45,6 +45,7 @@ export type {
 } from "./types"
 
 export { CAMPOS_CARTAO_PROIBIDOS, isTPagCartao, isFormaCartao } from "./card-evidence"
+export { isTPagPixDinamico } from "./pix-ya04-evidence"
 
 export { derivePagamentoFiscalFromBreakdown, assertPagamentoFiscalCanonico } from "./from-venda-breakdown"
 export {
