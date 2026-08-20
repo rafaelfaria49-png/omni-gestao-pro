@@ -23,6 +23,10 @@ import {
   TransicaoConcorrenteError,
   TransicaoInvalidaError,
 } from "@/lib/contador/status/matriz"
+import {
+  StorageConfigError,
+  StorageProviderError,
+} from "@/lib/contador/documentos/config"
 import { StorageError } from "@/lib/contador/documentos/storage-types"
 import type { RespostaHttp } from "@/lib/contador/auth-externa/http"
 
@@ -70,7 +74,19 @@ export function respostaErroPortal(e: unknown): RespostaHttp {
   if (e instanceof StatusInvalidoError) {
     return resposta(422, { ok: false, mensagem: e.message })
   }
-  if (e instanceof StorageError) {
+  // Storage indisponível — MESMO contrato operacional para as três causas:
+  //   `StorageProviderError`  provider não declarado ou não produtivo;
+  //   `StorageConfigError`    configuração R2 ausente/incompleta;
+  //   `StorageError`          falha externa do provider já convertida.
+  // A causa exata fica no log server-side; o corpo é fixo e não distingue as três.
+  // Distinguir vazaria estado de configuração do servidor para o contador externo, e o
+  // `message` de cada erro carrega detalhe (provider declarado, nomes de variáveis) que
+  // não pertence a uma resposta pública — por isso NUNCA se usa `e.message` aqui.
+  if (
+    e instanceof StorageProviderError ||
+    e instanceof StorageConfigError ||
+    e instanceof StorageError
+  ) {
     return resposta(503, {
       ok: false,
       mensagem: "Storage indisponível no momento. Tente novamente em instantes.",
