@@ -347,7 +347,7 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
-    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "2" }])
   })
 
   it("handoff de PIX automático por payload válido emite tPag 23", () => {
@@ -391,6 +391,28 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     if (!r.ok) return
     expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
     expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+  })
+
+  it("handoff de crédito congela tpIntegra 2", () => {
+    const handoff = buildFiscalPaymentHandoff({ cartaoCredito: 50 }, 50)
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoCredito: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([
+      { formaInterna: "cartaoCredito", tPag: "03", vPag: 50, tpIntegra: "2" },
+    ])
+  })
+
+  it("venda histórica sem handoff + cartão permanece bloqueada", () => {
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoDebito: 50 } } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
   })
 
   it("handoff de aPrazo permanece bloqueado", () => {

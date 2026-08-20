@@ -9,8 +9,9 @@
  * Troco só entra via `fiscalPaymentHandoff.cashTendered` (GOAL 083).
  *
  * PIX no breakdown legado (sem handoff) NÃO vira tPag 17 — exige evidência
- * explícita de subtipo. Não inventa forma, não converte desconhecido em 99,
- * não corrige soma.
+ * explícita de subtipo. Cartão 03/04 no breakdown legado NÃO presume POS simples
+ * (`tpIntegra=2`); exige handoff com evidência explícita. Não inventa forma,
+ * não converte desconhecido em 99, não corrige soma.
  */
 
 import {
@@ -26,19 +27,23 @@ import {
 } from "./types"
 import { isTPagOficial } from "./tpag-catalog"
 import { TPAG_PIX_QR_KIND } from "./pix-qr-kind"
+import {
+  MSG_CARTAO_DADOS_NAO_SUPORTADOS,
+  MSG_CARTAO_LEGADO,
+  erroTpIntegraCartao,
+  isTPagCartao,
+} from "./card-evidence"
+import { erroTpIntegraPixDinamico, isTPagPixDinamico } from "./pix-ya04-evidence"
 
 const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 const FORMAS_PERSISTIDAS: ReadonlySet<string> = new Set(FORMAS_INTERNAS_PERSISTIDAS)
 
 /**
- * Mapeamento unívoco do breakdown legado (sem handoff). PIX e creditoVale NÃO entram:
- * `pix` numérico não prova subtipo 17/20/23 (GOAL 079);
- * `creditoVale` numérico em venda histórica sem handoff permanece fail-closed (GOAL 081).
+ * Mapeamento unívoco do breakdown legado (sem handoff). PIX, creditoVale e cartão
+ * NÃO entram: exigem evidência no handoff (GOAL 079 / 081 / 087).
  */
-const FORMA_PARA_TPAG: Record<Exclude<FormaInternaComTPag, "pix" | "creditoVale">, string> = {
+const FORMA_PARA_TPAG: Record<Exclude<FormaInternaComTPag, "pix" | "creditoVale" | "cartaoDebito" | "cartaoCredito">, string> = {
   dinheiro: "01",
-  cartaoCredito: "03",
-  cartaoDebito: "04",
 }
 
 const MSG_PIX_LEGADO =
@@ -50,6 +55,8 @@ const MSG_CREDITO_VALE_LEGADO =
 function tPagCompativelComFormaInterna(forma: FormaInternaComTPag, tPag: string): boolean {
   if (forma === "pix") return tPag in TPAG_PIX_QR_KIND
   if (forma === "creditoVale") return tPag === "21"
+  if (forma === "cartaoCredito") return tPag === "03"
+  if (forma === "cartaoDebito") return tPag === "04"
   return FORMA_PARA_TPAG[forma] === tPag
 }
 
@@ -119,6 +126,9 @@ export function derivePagamentoFiscalFromBreakdown(
       }
       if (formaInterna === "creditoVale") {
         return erro("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL", MSG_CREDITO_VALE_LEGADO, `venda.paymentBreakdown.${key}`)
+      }
+      if (formaInterna === "cartaoDebito" || formaInterna === "cartaoCredito") {
+        return erro("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA", MSG_CARTAO_LEGADO, `venda.paymentBreakdown.${key}`)
       }
       const tPag = FORMA_PARA_TPAG[formaInterna]
       if (!isTPagOficial(tPag)) {
@@ -230,6 +240,18 @@ export function assertPagamentoFiscalCanonico(
         "Contrato canônico com creditoVale derivado de paymentBreakdown. Emissão futura exige fiscalPaymentHandoff. Sem reclassificar venda histórica.",
         "venda.pagamentoFiscal.det",
       )
+    }
+    if (isTPagCartao(d.tPag) || d.formaInterna === "cartaoDebito" || d.formaInterna === "cartaoCredito") {
+      if (pagamento.fonte === "venda.payload.paymentBreakdown") {
+        return erro("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA", MSG_CARTAO_LEGADO, "venda.pagamentoFiscal.det")
+      }
+      const errCard = erroTpIntegraCartao(d.tpIntegra, "venda.pagamentoFiscal.det")
+      if (errCard) return { ok: false, erro: errCard }
+    } else if (isTPagPixDinamico(d.tPag)) {
+      const errPix = erroTpIntegraPixDinamico(d.tpIntegra, "venda.pagamentoFiscal.det")
+      if (errPix) return { ok: false, erro: errPix }
+    } else if (d.tpIntegra !== undefined) {
+      return erro("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS", MSG_CARTAO_DADOS_NAO_SUPORTADOS, "venda.pagamentoFiscal.det")
     }
     if (!Number.isFinite(d.vPag) || d.vPag <= 0) {
       return erro("PAGAMENTO_VALOR_INVALIDO", `vPag inválido no detPag ${d.tPag}.`, "venda.pagamentoFiscal.det")

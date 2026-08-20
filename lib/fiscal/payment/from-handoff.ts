@@ -17,6 +17,7 @@ import { isPixQrKind, tPagFromPixQrKind } from "./pix-qr-kind"
 import {
   FORMAS_INTERNAS_COM_TPAG,
   PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+  TPINTEGRA_POS_NAO_INTEGRADO,
   type FormaInternaComTPag,
   type PagamentoFiscalCanonico,
   type PagamentoFiscalDetalhe,
@@ -25,6 +26,14 @@ import {
 } from "./types"
 import { isTPagOficial } from "./tpag-catalog"
 import { derivePagamentoFiscalFromBreakdown } from "./from-venda-breakdown"
+import {
+  campoCartaoProibidoPresente,
+  erroTpIntegraCartao,
+  isFormaCartao,
+  isTPagCartao,
+  MSG_CARTAO_DADOS_NAO_SUPORTADOS,
+} from "./card-evidence"
+import { erroTpIntegraPixDinamico, isTPagPixDinamico } from "./pix-ya04-evidence"
 
 const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 
@@ -68,18 +77,23 @@ function asLinha(raw: unknown, index: number): FiscalPaymentHandoffLinha | Pagam
   if (!isPlainObject(raw)) {
     return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} do handoff não é um objeto.`, `venda.fiscalPaymentHandoff.linhas[${index}]`)
   }
+  const campoLinha = `venda.fiscalPaymentHandoff.linhas[${index}]`
+  const proibido = campoCartaoProibidoPresente(raw)
+  if (proibido) {
+    return erro("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS", MSG_CARTAO_DADOS_NAO_SUPORTADOS, `${campoLinha}.${proibido}`)
+  }
   const formaOrigem = typeof raw.formaOrigem === "string" ? raw.formaOrigem : ""
   if (!formaOrigem) {
-    return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} sem formaOrigem.`, `venda.fiscalPaymentHandoff.linhas[${index}].formaOrigem`)
+    return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} sem formaOrigem.`, `${campoLinha}.formaOrigem`)
   }
   const valor = typeof raw.valor === "number" ? raw.valor : Number(raw.valor)
   const capability = raw.capability
   const status = raw.status
   if (capability !== "supported" && capability !== "blocked") {
-    return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} com capability inválida.`, `venda.fiscalPaymentHandoff.linhas[${index}].capability`)
+    return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} com capability inválida.`, `${campoLinha}.capability`)
   }
   if (status !== "ok" && status !== "blocked") {
-    return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} com status inválido.`, `venda.fiscalPaymentHandoff.linhas[${index}].status`)
+    return erro("PAGAMENTO_HANDOFF_INVALIDO", `Linha ${index} com status inválido.`, `${campoLinha}.status`)
   }
   const tPag = typeof raw.tPag === "string" ? raw.tPag : undefined
   const pixQrKindRaw = raw.pixQrKind
@@ -87,8 +101,13 @@ function asLinha(raw: unknown, index: number): FiscalPaymentHandoffLinha | Pagam
     return erro(
       "PAGAMENTO_HANDOFF_INVALIDO",
       `Linha ${index} com pixQrKind desconhecido.`,
-      `venda.fiscalPaymentHandoff.linhas[${index}].pixQrKind`,
+      `${campoLinha}.pixQrKind`,
     )
+  }
+  const tpIntegraRaw = raw.tpIntegra
+  if (tpIntegraRaw !== undefined && tpIntegraRaw !== null && typeof tpIntegraRaw !== "string") {
+    const code = formaOrigem === "pix" ? "PAGAMENTO_PIX_TPINTEGRA_INVALIDO" : "PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO"
+    return erro(code, `Linha ${index} com tpIntegra em formato inválido.`, `${campoLinha}.tpIntegra`)
   }
   const linha: FiscalPaymentHandoffLinha = {
     formaOrigem,
@@ -97,6 +116,7 @@ function asLinha(raw: unknown, index: number): FiscalPaymentHandoffLinha | Pagam
     status,
     ...(tPag !== undefined ? { tPag } : {}),
     ...(isPixQrKind(pixQrKindRaw) ? { pixQrKind: pixQrKindRaw } : {}),
+    ...(typeof tpIntegraRaw === "string" ? { tpIntegra: tpIntegraRaw as FiscalPaymentHandoffLinha["tpIntegra"] } : {}),
     ...(typeof raw.motivo === "string" ? { motivo: raw.motivo } : {}),
     ...(typeof raw.dadoAdicionalNecessario === "string"
       ? { dadoAdicionalNecessario: raw.dadoAdicionalNecessario }
@@ -130,6 +150,14 @@ export function derivePagamentoFiscalFromHandoff(
   }
   if (!Array.isArray(handoff.linhas)) {
     return erro("PAGAMENTO_HANDOFF_INVALIDO", "Handoff sem array de linhas.", "venda.fiscalPaymentHandoff.linhas")
+  }
+  const proibidoHandoff = campoCartaoProibidoPresente(handoff)
+  if (proibidoHandoff) {
+    return erro(
+      "PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS",
+      MSG_CARTAO_DADOS_NAO_SUPORTADOS,
+      `venda.fiscalPaymentHandoff.${proibidoHandoff}`,
+    )
   }
 
   const parsed: FiscalPaymentHandoffLinha[] = []
@@ -228,10 +256,28 @@ export function derivePagamentoFiscalFromHandoff(
       )
     }
 
+    const tPagLinha = linha.tPag
+    const cartao = isFormaCartao(linha.formaOrigem) || isTPagCartao(tPagLinha)
+    const pixDinamico = isTPagPixDinamico(tPagLinha)
+    if (cartao) {
+      const errCard = erroTpIntegraCartao(linha.tpIntegra, "venda.fiscalPaymentHandoff.linhas")
+      if (errCard) return { ok: false, erro: errCard }
+    } else if (pixDinamico) {
+      const errPix = erroTpIntegraPixDinamico(linha.tpIntegra, "venda.fiscalPaymentHandoff.linhas")
+      if (errPix) return { ok: false, erro: errPix }
+    } else if (linha.tpIntegra !== undefined) {
+      return erro(
+        "PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS",
+        `tpIntegra não se aplica à forma "${linha.formaOrigem}" (tPag ${tPagLinha}). YA04-10 exige card só para tPag 03, 04 e 17; tPag 20/23 não emitem grupo card.`,
+        "venda.fiscalPaymentHandoff.linhas",
+      )
+    }
+
     dets.push({
       formaInterna: linha.formaOrigem as FormaInternaComTPag,
-      tPag: linha.tPag,
+      tPag: tPagLinha,
       vPag: round2(linha.valor),
+      ...(cartao || pixDinamico ? { tpIntegra: TPINTEGRA_POS_NAO_INTEGRADO } : {}),
     })
   }
 

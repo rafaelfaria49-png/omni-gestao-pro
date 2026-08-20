@@ -27,19 +27,19 @@ describe("derivePagamentoFiscalFromHandoff · formas suportadas", () => {
     expect(r.pagamento.vTroco).toBeNull()
   })
 
-  it("débito sem grupo card", () => {
+  it("débito com tpIntegra 2", () => {
     const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ cartaoDebito: 25.5 }, 25.5), 25.5)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoDebito", tPag: "04", vPag: 25.5 })
-    expect(JSON.stringify(r.pagamento)).not.toMatch(/tpIntegra|tBand|cAut/)
+    expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoDebito", tPag: "04", vPag: 25.5, tpIntegra: "2" })
+    expect(JSON.stringify(r.pagamento)).not.toMatch(/tBand|cAut|"tpIntegra":"1"/)
   })
 
-  it("crédito", () => {
+  it("crédito com tpIntegra 2", () => {
     const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ cartaoCredito: 100 }, 100), 100)
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoCredito", tPag: "03", vPag: 100 })
+    expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoCredito", tPag: "03", vPag: 100, tpIntegra: "2" })
   })
 
   it("split dinheiro + débito + crédito", () => {
@@ -50,6 +50,9 @@ describe("derivePagamentoFiscalFromHandoff · formas suportadas", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "03", "04"])
+    expect(r.pagamento.det.find((d) => d.tPag === "03")).toMatchObject({ tpIntegra: "2" })
+    expect(r.pagamento.det.find((d) => d.tPag === "04")).toMatchObject({ tpIntegra: "2" })
+    expect(r.pagamento.det.find((d) => d.tPag === "01")?.tpIntegra).toBeUndefined()
     expect(r.pagamento.soma).toBe(100)
     expect(r.pagamento.vTroco).toBeNull()
   })
@@ -132,8 +135,17 @@ describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.pagamento.fonte).toBe("venda.payload.fiscalPaymentHandoff")
-    expect(r.pagamento.det).toEqual([{ formaInterna: "pix", tPag, vPag: 80 }])
-    expect(JSON.stringify(r.pagamento)).not.toMatch(/tpIntegra|tBand|cAut|"01"|"99"/)
+    expect(r.pagamento.det).toEqual([
+      kind === "dinamico"
+        ? { formaInterna: "pix", tPag, vPag: 80, tpIntegra: "2" }
+        : { formaInterna: "pix", tPag, vPag: 80 },
+    ])
+    expect(JSON.stringify(r.pagamento)).not.toMatch(/tBand|cAut|"01"|"99"/)
+    if (kind === "dinamico") {
+      expect(r.pagamento.det[0]!.tpIntegra).toBe("2")
+    } else {
+      expect(r.pagamento.det[0]!.tpIntegra).toBeUndefined()
+    }
   })
 
   it("split PIX estático + dinheiro", () => {
@@ -146,6 +158,17 @@ describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "20"])
   })
 
+  it("split PIX dinâmico + dinheiro: 17 com tpIntegra 2; 01 sem", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ dinheiro: 20, pix: 80 }, 100, { pixQrKind: "dinamico" }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.find((d) => d.tPag === "17")).toMatchObject({ tpIntegra: "2" })
+    expect(r.pagamento.det.find((d) => d.tPag === "01")?.tpIntegra).toBeUndefined()
+  })
+
   it("split PIX dinâmico + crédito", () => {
     const r = derivePagamentoFiscalFromHandoff(
       buildFiscalPaymentHandoff({ pix: 40, cartaoCredito: 60 }, 100, { pixQrKind: "dinamico" }),
@@ -154,6 +177,8 @@ describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["03", "17"])
+    expect(r.pagamento.det.find((d) => d.tPag === "03")).toMatchObject({ tpIntegra: "2" })
+    expect(r.pagamento.det.find((d) => d.tPag === "17")).toMatchObject({ tpIntegra: "2" })
   })
 
   it("split creditoVale + dinheiro", () => {
@@ -181,6 +206,8 @@ describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["03", "21"])
+    expect(r.pagamento.det.find((d) => d.tPag === "03")).toMatchObject({ tpIntegra: "2" })
+    expect(r.pagamento.det.find((d) => d.tPag === "21")?.tpIntegra).toBeUndefined()
   })
 
   it("tPag 19 injetado em creditoVale é rejeitado (esperado 21)", () => {
@@ -294,9 +321,9 @@ describe("derivePagamentoFiscalFromHandoff · cashTendered / vTroco (GOAL 083)",
     )
     expect(r.ok).toBe(true)
     if (!r.ok) return
-    expect(r.pagamento.det.map((d) => [d.tPag, d.vPag])).toEqual([
-      ["01", 70],
-      ["03", 40],
+    expect(r.pagamento.det.map((d) => [d.tPag, d.vPag, d.tpIntegra ?? null])).toEqual([
+      ["01", 70, null],
+      ["03", 40, "2"],
     ])
     expect(r.pagamento.vTroco).toBe(10)
     expect(r.pagamento.soma - 10).toBe(100)
@@ -431,6 +458,204 @@ describe("derivePagamentoFiscalFromHandoff · inconsistente sem fallback", () =>
   })
 })
 
+describe("derivePagamentoFiscalFromHandoff · cartão YA04 (GOAL 087)", () => {
+  const base = { version: 1 as const, catalogoTPag: "IT-2024.002-v1.11" as const }
+
+  it("handoff 03/04 sem tpIntegra fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [{ formaOrigem: "cartaoCredito", valor: 50, tPag: "03", capability: "supported", status: "ok" }],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE")
+  })
+
+  it("tpIntegra inválido fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [
+          {
+            formaOrigem: "cartaoDebito",
+            valor: 50,
+            tPag: "04",
+            tpIntegra: "3",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO")
+  })
+
+  it("tpIntegra=1 sem capacidade TEF fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [
+          {
+            formaOrigem: "cartaoCredito",
+            valor: 50,
+            tPag: "03",
+            tpIntegra: "1",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO")
+      expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
+    }
+  })
+
+  it("CNPJ / tBand / cAut / NSU no handoff fail-closed — não emite", () => {
+    for (const extra of [{ CNPJ: "11222333000181" }, { tBand: "01" }, { cAut: "XYZ" }, { NSU: "1" }]) {
+      const r = derivePagamentoFiscalFromHandoff(
+        {
+          ...base,
+          linhas: [
+            {
+              formaOrigem: "cartaoCredito",
+              valor: 50,
+              tPag: "03",
+              tpIntegra: "2",
+              capability: "supported",
+              status: "ok",
+              ...extra,
+            },
+          ],
+        },
+        50,
+      )
+      expect(r.ok).toBe(false)
+      if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS")
+    }
+  })
+
+  it("PIX 17 novo com tpIntegra=2 é válido — não é analogia de cartão", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [
+          {
+            formaOrigem: "pix",
+            valor: 50,
+            pixQrKind: "dinamico",
+            tPag: "17",
+            tpIntegra: "2",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det[0]).toEqual({ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "2" })
+  })
+
+  it("handoff histórico tPag 17 sem tpIntegra fail-closed — não presume 2", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [
+          {
+            formaOrigem: "pix",
+            valor: 50,
+            pixQrKind: "dinamico",
+            tPag: "17",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_PIX_TPINTEGRA_AUSENTE")
+  })
+
+  it("PIX dinâmico tpIntegra=1 fail-closed — sem fabricar PSP", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [
+          {
+            formaOrigem: "pix",
+            valor: 50,
+            pixQrKind: "dinamico",
+            tPag: "17",
+            tpIntegra: "1",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_PIX_INTEGRADO_NAO_SUPORTADO")
+  })
+
+  it("PIX dinâmico tpIntegra inválido fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        ...base,
+        linhas: [
+          {
+            formaOrigem: "pix",
+            valor: 50,
+            pixQrKind: "dinamico",
+            tPag: "17",
+            tpIntegra: "3",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_PIX_TPINTEGRA_INVALIDO")
+  })
+
+  it("PIX estático 20 e automático 23 rejeitam tpIntegra (sem card)", () => {
+    for (const kind of ["estatico", "automatico"] as const) {
+      const tPag = kind === "estatico" ? "20" : "23"
+      const r = derivePagamentoFiscalFromHandoff(
+        {
+          ...base,
+          linhas: [
+            {
+              formaOrigem: "pix",
+              valor: 50,
+              pixQrKind: kind,
+              tPag,
+              tpIntegra: "2",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+        50,
+      )
+      expect(r.ok, kind).toBe(false)
+      if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS")
+    }
+  })
+})
+
 describe("derivePagamentoFiscal · venda histórica sem handoff", () => {
   it("PIX legado sem evidência de subtipo é bloqueado (não infere 17)", () => {
     const r = derivePagamentoFiscal({ pix: 80 }, 80)
@@ -455,6 +680,15 @@ describe("derivePagamentoFiscal · venda histórica sem handoff", () => {
       expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
       expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
     }
+  })
+
+  it("venda histórica sem handoff + cartão 03/04 não presume POS simples", () => {
+    const credito = derivePagamentoFiscal({ cartaoCredito: 50 }, 50)
+    const debito = derivePagamentoFiscal({ cartaoDebito: 50 }, 50)
+    expect(credito.ok).toBe(false)
+    expect(debito.ok).toBe(false)
+    if (!credito.ok) expect(credito.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+    if (!debito.ok) expect(debito.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
   })
 
   it("nunca cai para tPag=01 quando o handoff bloqueia PIX", () => {

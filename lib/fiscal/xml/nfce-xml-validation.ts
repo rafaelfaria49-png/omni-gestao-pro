@@ -37,6 +37,22 @@ function pagamentoErroToXml(code: PagamentoFiscalErroCode): NfceXmlErrorCode {
       return "pagamento_forma_sem_capacidade"
     case "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA":
       return "pagamento_pix_legado_sem_evidencia"
+    case "PAGAMENTO_PIX_TPINTEGRA_AUSENTE":
+      return "pagamento_pix_tpintegra_ausente"
+    case "PAGAMENTO_PIX_TPINTEGRA_INVALIDO":
+      return "pagamento_pix_tpintegra_invalido"
+    case "PAGAMENTO_PIX_INTEGRADO_NAO_SUPORTADO":
+      return "pagamento_pix_integrado_nao_suportado"
+    case "PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE":
+      return "pagamento_cartao_tpintegra_ausente"
+    case "PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO":
+      return "pagamento_cartao_tpintegra_invalido"
+    case "PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO":
+      return "pagamento_cartao_integrado_nao_suportado"
+    case "PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA":
+      return "pagamento_cartao_legado_sem_evidencia"
+    case "PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS":
+      return "pagamento_cartao_dados_nao_suportados"
     case "PAGAMENTO_SOMA_DIVERGENTE":
       return "pagamento_soma_divergente"
     case "PAGAMENTO_CANONICO_AUSENTE":

@@ -27,6 +27,10 @@ export {
   FORMAS_INTERNAS_PERSISTIDAS,
   FORMAS_INTERNAS_COM_TPAG,
   PAGAMENTO_FISCAL_ERRO_CODES,
+  TPINTEGRA_VALORES,
+  TPINTEGRA_POS_NAO_INTEGRADO,
+  TPINTEGRA_INTEGRADO,
+  isTpIntegra,
 } from "./types"
 export type {
   FormaInternaPersistida,
@@ -37,7 +41,11 @@ export type {
   PagamentoFiscalFonte,
   PagamentoFiscalCanonico,
   PagamentoFiscalDeriveResult,
+  TpIntegraFiscal,
 } from "./types"
+
+export { CAMPOS_CARTAO_PROIBIDOS, isTPagCartao, isFormaCartao } from "./card-evidence"
+export { isTPagPixDinamico } from "./pix-ya04-evidence"
 
 export { derivePagamentoFiscalFromBreakdown, assertPagamentoFiscalCanonico } from "./from-venda-breakdown"
 export {

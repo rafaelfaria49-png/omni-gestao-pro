@@ -51,6 +51,14 @@ export const PAGAMENTO_FISCAL_ERRO_CODES = [
   "PAGAMENTO_FORMA_DESCONHECIDA",
   "PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL",
   "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA",
+  "PAGAMENTO_PIX_TPINTEGRA_AUSENTE",
+  "PAGAMENTO_PIX_TPINTEGRA_INVALIDO",
+  "PAGAMENTO_PIX_INTEGRADO_NAO_SUPORTADO",
+  "PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE",
+  "PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO",
+  "PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO",
+  "PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA",
+  "PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS",
   "PAGAMENTO_SOMA_DIVERGENTE",
   "PAGAMENTO_CANONICO_AUSENTE",
   "PAGAMENTO_HANDOFF_INVALIDO",
@@ -59,6 +67,21 @@ export const PAGAMENTO_FISCAL_ERRO_CODES = [
 
 export type PagamentoFiscalErroCode = (typeof PAGAMENTO_FISCAL_ERRO_CODES)[number]
 
+/**
+ * YA04a `tpIntegra` (XSD PL_010e_v1.02):
+ * 1 = pagamento integrado (TEF / e-commerce / POS integrado / PSP) — capacidade ausente;
+ * 2 = pagamento não integrado (POS simples / PIX dinâmico manual) — única capacidade
+ *     suportada para tPag 03/04 e 17.
+ */
+export const TPINTEGRA_VALORES = ["1", "2"] as const
+export type TpIntegraFiscal = (typeof TPINTEGRA_VALORES)[number]
+export const TPINTEGRA_POS_NAO_INTEGRADO: TpIntegraFiscal = "2"
+export const TPINTEGRA_INTEGRADO: TpIntegraFiscal = "1"
+
+export function isTpIntegra(value: unknown): value is TpIntegraFiscal {
+  return value === "1" || value === "2"
+}
+
 export type PagamentoFiscalErro = {
   readonly code: PagamentoFiscalErroCode
   readonly mensagem: string
@@ -66,13 +89,19 @@ export type PagamentoFiscalErro = {
 }
 
 /**
- * Uma parcela de `detPag`. Sem grupo `card` (tpIntegra/CNPJ/tBand/cAut) — a venda
- * persistida não carrega esses campos. Sem `xPag`. Sem `indPag` inventado.
+ * Uma parcela de `detPag`.
+ *
+ * Cartão 03/04 e PIX dinâmico 17 (contrato novo): `tpIntegra` obrigatório.
+ * Única capacidade = `"2"` (não integrado). Sem CNPJ / tBand / cAut / CNPJReceb /
+ * idTermPag / NSU / e2eid. tPag 20/23 não carregam tpIntegra (YA04-10 não os lista).
+ * Sem `xPag`. Sem `indPag` inventado.
  */
 export type PagamentoFiscalDetalhe = {
   readonly formaInterna: FormaInternaComTPag
   readonly tPag: TPagOficial
   readonly vPag: number
+  /** Presente em tPag 03/04 e 17 com evidência. Valor suportado neste slice: `"2"`. */
+  readonly tpIntegra?: TpIntegraFiscal
 }
 
 /**

@@ -5,7 +5,9 @@
  * que a venda é persistida. Congelado em `Venda.payload.fiscalPaymentHandoff`.
  *
  * Fiscal é somente consumidor. Este módulo é PURO: sem Prisma, Caixa, Financeiro,
- * PaymentModal ou SEFAZ. Não inventa tPag, grupo `card` nem vTroco do cliente.
+ * PaymentModal ou SEFAZ. Não inventa tPag, CNPJ/tBand/cAut nem vTroco do cliente.
+ * Cartão 03/04 e PIX dinâmico (tPag 17): o servidor grava `tpIntegra="2"`
+ * (não integrado). Nunca `"1"`. tPag 20/23 não recebem grupo card.
  *
  * PIX: tPag 17/20/23 só quando `pixQrKind` conhecido é observado. Sem default.
  * creditoVale: tPag 21 unívoco (crédito em loja de devolução/troca). Carne e aPrazo
@@ -20,6 +22,7 @@ import {
   tPagFromPixQrKind,
   type PixQrKind,
 } from "@/lib/fiscal/payment/pix-qr-kind"
+import { TPINTEGRA_POS_NAO_INTEGRADO, type TpIntegraFiscal } from "@/lib/fiscal/payment/types"
 
 export const FISCAL_PAYMENT_HANDOFF_VERSION = 1 as const
 
@@ -73,6 +76,12 @@ export type FiscalPaymentHandoffLinha = {
   readonly tPag?: string
   /** Discriminador observado de PIX. Ausente = subtipo não informado. */
   readonly pixQrKind?: PixQrKind
+  /**
+   * YA04a. Em cartaoDebito/cartaoCredito e em PIX `dinamico` (tPag 17).
+   * Servidor deriva `"2"` (não integrado). `"1"` não é capacidade deste slice.
+   * Ausente em tPag 20/23.
+   */
+  readonly tpIntegra?: TpIntegraFiscal
   readonly capability: FiscalPaymentHandoffCapability
   readonly status: FiscalPaymentHandoffStatus
   readonly motivo?: string
@@ -120,11 +129,13 @@ function bloqueioPixQrKindDesconhecido(): Pick<FiscalPaymentHandoffLinha, "motiv
 }
 
 function linhaPixComprovada(valor: number, pixQrKind: PixQrKind): FiscalPaymentHandoffLinha {
+  const tPag = tPagFromPixQrKind(pixQrKind)
   return {
     formaOrigem: "pix",
     valor,
     pixQrKind,
-    tPag: tPagFromPixQrKind(pixQrKind),
+    tPag,
+    ...(tPag === "17" ? { tpIntegra: TPINTEGRA_POS_NAO_INTEGRADO } : {}),
     capability: "supported",
     status: "ok",
   }
@@ -147,10 +158,13 @@ function bloqueioAPrazo(): Pick<FiscalPaymentHandoffLinha, "motivo" | "dadoAdici
 }
 
 function linhaComprovada(formaOrigem: HandoffFormaComTPagComprovado, valor: number): FiscalPaymentHandoffLinha {
+  const tPag = HANDOFF_TPAG_COMPROVADO[formaOrigem]
+  const cartao = formaOrigem === "cartaoDebito" || formaOrigem === "cartaoCredito"
   return {
     formaOrigem,
     valor,
-    tPag: HANDOFF_TPAG_COMPROVADO[formaOrigem],
+    tPag,
+    ...(cartao ? { tpIntegra: TPINTEGRA_POS_NAO_INTEGRADO } : {}),
     capability: "supported",
     status: "ok",
   }
@@ -228,9 +242,10 @@ function dinheiroAplicadoFromBreakdown(breakdown: unknown): number {
 /**
  * Constrói o handoff a partir do `paymentBreakdown` já persistido.
  * Nunca lança — a venda continua fechando; o Fiscal decide se emite.
- * Não lê PaymentMethod[], maquininha, Caixa, nem tPag/vTroco do cliente.
+ * Não lê PaymentMethod[], maquininha, Caixa, nem tPag/vTroco/tpIntegra do cliente.
  * `hints.pixQrKind` é o discriminador observado; tPag é derivado só pelo catálogo.
  * `hints.cashTendered` só entra quando passa em `resolveCashTenderedEvidence`.
+ * Cartão 03/04 e PIX dinâmico recebem `tpIntegra="2"` — não deriva de PSP/cliente.
  */
 export function buildFiscalPaymentHandoff(
   breakdown: unknown,
