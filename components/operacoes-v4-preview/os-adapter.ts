@@ -24,6 +24,7 @@ import type {
 } from "@/types/os";
 import type { V4Status, V4Stage } from "./types";
 import { destinoOperacionalPorStatusV4 } from "@/lib/operacoes-v4/pipeline-operacional";
+import { projetarConsumoEstoqueV4, type PecaConsumoV4 } from "@/lib/operacoes-v4/estoque-execucao-v4";
 import { C, fmt } from "./tokens";
 // Reuso PURO (read-only) dos readers da V3: identificação rica da prova de entrada
 // e dados básicos da recepção (recebido por / localização / origem / observações).
@@ -1247,6 +1248,9 @@ export interface V4ExecucaoView {
   estoqueConsumido: boolean;
   /** Data/hora da baixa, "dd/mm HH:MM"; vazio quando ausente. */
   estoqueConsumidoEm: string;
+  /** Peças da fonte única (orçamento ou payload) que a baixa vai consumir. */
+  pecasPendentes: PecaConsumoV4[];
+  podeBaixarEstoque: boolean;
   anexos: V4Anexo[];
 }
 
@@ -1260,6 +1264,8 @@ export const EMPTY_EXECUCAO_VIEW: V4ExecucaoView = {
   estoque: [],
   estoqueConsumido: false,
   estoqueConsumidoEm: "",
+  pecasPendentes: [],
+  podeBaixarEstoque: false,
   anexos: [],
 };
 
@@ -1310,12 +1316,15 @@ export function adaptExecucao(os: OrdemServico): V4ExecucaoView {
       name: txt(a.nome) || "Anexo",
     }));
 
+  const consumo = projetarConsumoEstoqueV4(os);
+
   return {
     temExecucao:
       !!tecnicoNome ||
       checklist.length > 0 ||
       apontamentos.length > 0 ||
       estoque.length > 0 ||
+      consumo.pecas.length > 0 ||
       anexos.length > 0,
     tecnico: tecnicoNome || NI,
     temTecnico: !!tecnicoNome,
@@ -1323,8 +1332,10 @@ export function adaptExecucao(os: OrdemServico): V4ExecucaoView {
     checklistOk: checklist.filter((c) => c.ok).length,
     apontamentos,
     estoque,
-    estoqueConsumido: !!os.estoqueConsumido,
+    estoqueConsumido: consumo.jaConsumido,
     estoqueConsumidoEm: os.estoqueConsumidoEm ? fmtDataHora(os.estoqueConsumidoEm) : "",
+    pecasPendentes: consumo.pecas,
+    podeBaixarEstoque: consumo.podeBaixar,
     anexos,
   };
 }

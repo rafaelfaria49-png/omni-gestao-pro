@@ -36,7 +36,7 @@ export function TecnicoPickerV4({
       <div className={styles.popoverTitle}>Atribuir técnico</div>
       {conhecidos.length === 0 ? (
         <p className={styles.err} style={{ color: "var(--muted-foreground)", margin: "0 8px 8px" }}>
-          Nenhum técnico disponível para atribuição. Digite o nome para registrar o primeiro.
+          Nenhum técnico cadastrado nesta loja. Cadastre em Cadastros ou digite o nome para atribuir nesta OS.
         </p>
       ) : (
         conhecidos.map((t, i) => (

@@ -316,7 +316,7 @@ export async function consumeEstoqueFromOS(params: { storeId: string; osId: stri
 
       const timeline = Array.isArray((nextPayload as any).timeline) ? ((nextPayload as any).timeline as EventoTimeline[]) : [];
       const evs: EventoTimeline[] = [
-        makeEv("estoque_consumido", "Estoque consumido (baixa real) ao finalizar a OS.", { count: movimentos.length, ignored: ignored.length }),
+        makeEv("estoque_consumido", "Estoque consumido (baixa real) da OS.", { count: movimentos.length, ignored: ignored.length, origem: "os" }),
         ...movimentos.map((m) => makeEv("estoque_item_consumido", `Item consumido: ${m.quantidade}× ${m.nome}.`, { produtoId: m.produtoId, quantidade: m.quantidade })),
       ];
       (nextPayload as any).timeline = [...timeline, ...evs];

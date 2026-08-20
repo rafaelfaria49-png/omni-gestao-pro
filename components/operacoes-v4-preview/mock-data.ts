@@ -82,7 +82,7 @@ export const RAIL_DEF: Array<[string, string]> = [
   ["workspace", "OS"],
   ["bancada", "Bancada"],
   ["sla", "SLA"],
-  ["pdv", "PDV"],
+  ["pdv", "Receber"],
   ["garantias", "Garantias"],
 ];
 
@@ -119,7 +119,7 @@ export const MODULE_META: Record<string, { icon: string; title: string }> = {
   fila: { icon: "📋", title: "Fila de OS" },
   bancada: { icon: "🔧", title: "Bancada" },
   sla: { icon: "⏱", title: "SLA & atrasos" },
-  pdv: { icon: "💳", title: "PDV de serviço" },
+  pdv: { icon: "💳", title: "Recebimento da OS" },
   garantias: { icon: "🛡", title: "Garantias" },
 };
 
@@ -146,7 +146,7 @@ export const RESOLVED_RAW: Array<[string, string]> = [
 export const PENDING = [
   { title: "Ações ainda sem contrato", text: "WhatsApp, portal e documentos residuais permanecem sem persistência quando não existe action V3 segura." },
   { title: "Catálogo / ProductPicker", text: "Os botões + Serviço / + Peça abrem o catálogo real do estoque na integração final." },
-  { title: "Módulos completos", text: "Visão geral, SLA e PDV seguem somente leitura. Fila, Bancada e Pós-venda são operacionais sobre a máquina V3; Garantias é uma visão de carteira que abre o cockpit." },
+  { title: "Cadastro de técnicos livres", text: "O seletor usa o cadastro real da loja e os técnicos já atribuídos nas OS. Não há cadastro paralelo de equipe na V4." },
   { title: "Responsivo < 1280px", text: "Colunas dos painéis de etapa já colapsam 3→2→1 automaticamente (auto-fit); breakpoints finos do shell (largura das gavetas/rail) ficam para a próxima fase." },
 ];
 

@@ -58,6 +58,15 @@ vi.mock("@/lib/operacoes-v3/producao-actions", () => ({
   adicionarObservacaoInternaV3: vi.fn(async () => ({})),
   salvarChecklistTecnicoV3: vi.fn(async () => ({})),
 }))
+vi.mock("@/lib/operacoes-v3/estoque-actions", () => ({
+  consumirEstoqueOSActionV3: vi.fn(async () => ({ status: "consumed", itens: 0 })),
+}))
+vi.mock("@/app/actions/cadastros", () => ({
+  listTecnicos: vi.fn(async () => []),
+}))
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn() }),
+}))
 // Assinatura de retirada + auditoria de impressão (GOAL OPS-V4-DOCS-ASSINATURA-
 // TERMOS-ANEXOS-012): mesma razão dos mocks acima — ambas são "use server" (→ @/auth).
 vi.mock("@/lib/operacoes-v3/entrega-actions", () => ({
@@ -214,6 +223,9 @@ const ctx: V4DataCtx = {
   iniciarServico: async () => false,
   marcarAguardandoPeca: async () => false,
   marcarPronta: async () => false,
+  baixarEstoqueOS: async () => false,
+  tecnicosCadastro: [],
+  irParaConfiguracoes: () => {},
   confirmarEntrega: async () => false,
   salvarAssinaturaRetirada: async () => false,
   adicionarFotoSaida: async () => false,
@@ -392,21 +404,24 @@ describe("Operações V4 Preview — Modo foco e Segurança (preview/no-op)", ()
     expect(patches.at(-1)).toMatchObject({ focus: true, left: false, right: false })
   })
 
-  it("goSeguranca leva à superfície seguranca; backFromSeguranca volta à Execução", () => {
-    const patches: Array<Record<string, unknown>> = []
-    const v = buildVals(makeState({ novaOS: false }), (p) => patches.push(p as Record<string, unknown>), () => {}, ctx)
+  it("goSeguranca e Configurações abrem o módulo real — sem PIN paralelo", () => {
+    const calls: string[] = []
+    const v = buildVals(
+      makeState({ novaOS: false }),
+      () => {},
+      () => {},
+      { ...ctx, irParaConfiguracoes: () => calls.push("config") },
+    )
     v.goSeguranca()
-    expect(patches.at(-1)).toMatchObject({ stage: "seguranca" })
-    v.backFromSeguranca()
-    expect(patches.at(-1)).toMatchObject({ stage: "execucao" })
+    v.railSettings()
+    expect(calls).toEqual(["config", "config"])
   })
 
-  it("Autorizar é no-op honesto: avisa que nada é autenticado nem salvo", () => {
+  it("superfície residual de segurança não autentica: Autorizar continua no-op honesto", () => {
     const msgs: string[] = []
     const v = buildVals(makeState({ stage: "seguranca", novaOS: false }), () => {}, (m) => msgs.push(m), ctx)
     v.seg.onAutorizar()
     expect(msgs.some((m) => /demonstra|preview/i.test(m))).toBe(true)
-    // isSeg reflete a superfície ativa
     expect(v.isSeg).toBe(true)
   })
 })
@@ -1729,8 +1744,10 @@ describe("OPS-V4-EXECUCAO-REAL-007 — handlers reais (runWrite) e wiring do Exe
     }
   })
 
-  it("consumo de estoque continua read-only (sem handler de baixa neste stage)", () => {
-    expect(execStage).not.toMatch(/consumirPeca|baixarEstoque/i)
+  it("consumo de estoque chama o handler real da OS (adapter oficial, sem motor paralelo)", () => {
+    expect(execStage).toContain("v.baixarEstoqueOS")
+    expect(execStage).toContain("Baixar peças do estoque")
+    expect(execStage).not.toMatch(/consumirPecaV4|baixarEstoqueV4/i)
   })
 })
 
@@ -3670,5 +3687,67 @@ describe("OPS-V4-DASHBOARD-HISTORICO-FINAL-017 — Visão geral e histórico tra
     expect(orquestrador).not.toMatch(/exportHist: \(\) => notify\(PREVIEW_NOOP\)/)
     expect(orquestrador).not.toMatch(/ligar: \(\) => notify\(PREVIEW_NOOP\)/)
     expect(orquestrador).not.toMatch(/toHistCliente: \(\) => notify\(PREVIEW_NOOP\)/)
+  })
+})
+
+describe("OPS-V4-BLOCKERS-FINAL-CLOSEOUT-018 — estoque, recebimento, técnicos, config, auditoria UX", () => {
+  const orquestrador = readFileSync(join(DIR, "use-v4-preview.ts"), "utf8")
+  const execStage = readFileSync(join(DIR, "parts", "stages", "ExecucaoStage.tsx"), "utf8")
+  const moduleView = readFileSync(join(DIR, "parts", "ModuleView.tsx"), "utf8")
+  const shell = readFileSync(join(DIR, "OperacoesV4Preview.tsx"), "utf8")
+  const seguranca = readFileSync(join(DIR, "parts", "stages", "SegurancaStage.tsx"), "utf8")
+  const mockData = readFileSync(join(DIR, "mock-data.ts"), "utf8")
+
+  it("baixa de estoque reusa o adapter oficial, sem motor paralelo", () => {
+    expect(orquestrador).toContain("consumirEstoqueOSActionV3")
+    expect(orquestrador).toContain("baixarEstoqueOS")
+    expect(orquestrador).not.toContain("consumeEstoqueFromOS(")
+    expect(execStage).toContain("v.baixarEstoqueOS")
+    expect(execStage).toContain("Baixar peças do estoque")
+  })
+
+  it("replay de estoque é honesto (already_consumed)", () => {
+    expect(orquestrador).toContain("already_consumed")
+    expect(execStage).toContain("Replay não baixa de novo")
+  })
+
+  it("rail Receber abre o Financeiro real — não é segundo PDV nem só leitura disfarçada", () => {
+    expect(mockData).toContain('["pdv", "Receber"]')
+    expect(mockData).toContain("Recebimento da OS")
+    expect(moduleView).toContain("openOSFromRail(it.id, true)")
+    expect(moduleView).toContain("it.ctaLabel")
+    expect(moduleView).toContain("mesmo motor V3")
+    expect(moduleView).not.toContain("somente leitura — não vende nem recebe")
+    expect(moduleView).not.toContain("Somente leitura · OS a receber")
+  })
+
+  it("seletor de técnico une cadastro real da loja com os já conhecidos nas OS", () => {
+    const hookTecnicos = readFileSync(join(DIR, "use-tecnicos-v4.ts"), "utf8")
+    expect(orquestrador).toContain("useTecnicosCadastroV4")
+    expect(orquestrador).toContain("mergeTecnicosSeletorV4")
+    expect(hookTecnicos).toContain("listTecnicos")
+  })
+
+  it("configurações da V4 abrem o módulo real; sem PIN paralelo", () => {
+    expect(orquestrador).toContain('router.push("/dashboard/configuracoes")')
+    expect(orquestrador).toContain("irParaConfiguracoes")
+    expect(seguranca).toContain("Abrir configurações")
+    expect(seguranca).not.toContain("PIN de 4 dígitos")
+    expect(seguranca).not.toContain("Autorizar (preview)")
+  })
+
+  it("Auditoria de UX sai da navegação operacional", () => {
+    expect(shell).not.toContain("AuditoriaPage")
+    expect(orquestrador).toContain("Auditoria de UX não faz parte do fluxo operacional")
+    expect(orquestrador).not.toContain('setView("auditoria")')
+  })
+
+  it("cadastro de técnicos entra no seletor mesmo sem OS atribuída", () => {
+    const v = buildVals(makeState({ novaOS: false }), () => {}, () => {}, {
+      ...ctx,
+      tecnicosCadastro: [{ id: "t1", nome: "Bruno" }],
+    })
+    expect(v.producaoBancada.tecnicosConhecidos).toEqual([{ id: "t1", nome: "Bruno" }])
+    expect(v.filaOperacional.tecnicosConhecidos).toEqual([{ id: "t1", nome: "Bruno" }])
   })
 })

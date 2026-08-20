@@ -7,7 +7,7 @@
  * recebimento operacional da OS, Nova OS, produção da Bancada, Fila/Kanban, SLA)
  * persistem de verdade via actions V3 reusadas. Bancada, Fila e SLA são operacionais.
  * O Financeiro transversal da OS recebe de verdade (`receberOSV3`) — não é
- * preview/read-only. Visão geral e o rail PDV de serviço continuam somente leitura. O estado é local (`useV4Preview`); handlers
+ * preview/read-only. O rail Receber abre o Financeiro real da OS. O estado é local (`useV4Preview`); handlers
  * residuais sem persistência avisam via toast honesto no momento do clique.
  *
  * `height:100%` (e não 100vh) mantém o AppShell como dono do scroll — este
@@ -26,7 +26,6 @@ import { BancadaV4 } from "./parts/BancadaV4";
 import { FilaV4 } from "./parts/FilaV4";
 import { SlaV4 } from "./parts/SlaV4";
 import { DashboardV4 } from "./parts/DashboardV4";
-import { AuditoriaPage } from "./parts/AuditoriaPage";
 import { NovaOSModal } from "./parts/NovaOSModal";
 import { NovoAtendimentoLauncher } from "./parts/NovoAtendimentoLauncher";
 import { AtendimentoRapidoModal } from "./parts/AtendimentoRapidoModal";
@@ -72,7 +71,6 @@ export function OperacoesV4Preview() {
         {v.isModule && v.moduleId === "fila" && <FilaV4 v={v} />}
         {v.isModule && v.moduleId === "sla" && <SlaV4 v={v} />}
         {v.isModule && v.moduleId !== "dashboard" && v.moduleId !== "bancada" && v.moduleId !== "fila" && v.moduleId !== "sla" && <ModuleView v={v} />}
-        {v.isAuditoria && <AuditoriaPage v={v} />}
       </div>
 
       <NovoAtendimentoLauncher v={v} />

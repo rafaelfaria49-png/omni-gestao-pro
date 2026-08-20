@@ -160,6 +160,8 @@ describe("rails-adapter — PDV de serviço", () => {
     const view = buildPdvView([os], projections(projection("1", "OPEN", 470, 470)));
     expect(view.itens[0]!.statusFaturamento).toBe("A receber");
     expect(view.itens[0]!.saldoLinha).toBe("Saldo: R$ 470,00");
+    expect(view.itens[0]!.ctaLabel).toBe("Receber");
+    expect(view.itens[0]!.podeReceber).toBe(true);
     expect(view.aReceberCount).toBe(1);
   });
 
@@ -170,6 +172,8 @@ describe("rails-adapter — PDV de serviço", () => {
     );
     expect(view.itens[0]!.statusFaturamento).toBe("Quitado");
     expect(view.itens[0]!.saldoLinha).toBe("Saldo: R$ 0,00");
+    expect(view.itens[0]!.ctaLabel).toBe("Abrir financeiro");
+    expect(view.itens[0]!.podeReceber).toBe(false);
     expect(view.aReceberCount).toBe(0);
   });
 

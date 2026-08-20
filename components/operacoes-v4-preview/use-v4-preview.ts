@@ -7,12 +7,13 @@
  * REAL via actions V3 reusadas (cancelar, diagnóstico, orçamento, execução,
  * entrega, assinatura, garantia, recebimento — ver blocos "REAL" abaixo). As
  * telas de rail e o modal Nova OS de fato criam/leem dados reais da loja. Só
- * os handlers marcados `PREVIEW_NOOP` continuam sem efeito (ex.: configurações do módulo,
- * histórico/portal do cliente — sem contrato) e disparam um toast honesto.
+ * os handlers sem contrato (portal do cliente) disparam um toast honesto.
+ * Configurações da V4 abrem o módulo real `/dashboard/configuracoes`.
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   HIST_FILTER_DEF,
   MODE_DEF,
@@ -49,7 +50,10 @@ import {
   salvarChecklistTecnicoV3,
   type ChecklistTecnicoItemV3,
 } from "@/lib/operacoes-v3/producao-actions";
-import { PRIORIDADE_META_V3, type PrioridadeV3 } from "@/lib/operacoes-v3/producao-model";
+import { PRIORIDADE_META_V3, type PrioridadeV3, type TecnicoRefV3 } from "@/lib/operacoes-v3/producao-model";
+import { consumirEstoqueOSActionV3 } from "@/lib/operacoes-v3/estoque-actions";
+import { mergeTecnicosSeletorV4 } from "@/lib/operacoes-v4/tecnicos-cadastro-v4";
+import { useTecnicosCadastroV4 } from "./use-tecnicos-v4";
 import {
   buildProducaoBancadaV4,
   destinoSaidaBancadaV4,
@@ -234,6 +238,12 @@ export interface V4DataCtx {
   // OU aguardando_peca (mesmo destino "em_execucao"; o rótulo muda na UI).
   marcarAguardandoPeca: () => Promise<boolean>;
   marcarPronta: () => Promise<boolean>;
+  /** Baixa real das peças da OS via adapter oficial (idempotente). */
+  baixarEstoqueOS: () => Promise<boolean>;
+  /** Cadastro real de técnicos da loja (Cadastros). Vazio = só os já conhecidos nas OS. */
+  tecnicosCadastro: TecnicoRefV3[];
+  /** Abre as configurações reais da loja — sem PIN/auth paralelo na V4. */
+  irParaConfiguracoes: () => void;
   // ---- Entrega (slice OPS-V4-ENTREGA-REAL-E-CTA-QUITADO-008) ----
   // Confirma pela action canônica `registrarEntregaV3`; o servidor sempre revalida
   // financeiro, mesmo quando o cliente chama fora do gate visual.
@@ -918,6 +928,10 @@ export function buildVals(
   const producaoAtual = ctx.realOS ? projetarOsProducaoV4(ctx.realOS) : null;
   const slaView = buildSlaView(ctx.ordens);
   const slaOperacional = buildSlaOperacionalV4(ctx.ordens);
+  const tecnicosSeletor = mergeTecnicosSeletorV4(ctx.tecnicosCadastro, producaoBancada.tecnicosConhecidos);
+  const producaoBancadaComCadastro = { ...producaoBancada, tecnicosConhecidos: tecnicosSeletor };
+  const filaOperacionalComCadastro = { ...filaOperacional, tecnicosConhecidos: tecnicosSeletor };
+  const slaOperacionalComCadastro = { ...slaOperacional, tecnicosConhecidos: tecnicosSeletor };
   const pdvView = buildPdvView(ctx.ordens, ctx.financialProjectionsByOsId);
 
   // Seleciona a OS REAL (identidade/financeiro reais no workspace). Único caminho de
@@ -1174,11 +1188,11 @@ export function buildVals(
     isWorkspace: st.view === "cockpit" && st.module === "workspace",
     isModule: st.view === "cockpit" && st.module !== "workspace",
     goCockpit: () => setModule("workspace"),
-    goAuditoria: () => setView("auditoria"),
+    goAuditoria: () => notify("Auditoria de UX não faz parte do fluxo operacional."),
     railWorkspace: () => setModule("workspace"),
     railFila: () => setModule("fila"),
     setModule: (m: V4State["module"]) => setModule(m),
-    railSettings: () => notify("Configurações do módulo Operações ainda não estão nesta versão — nada foi alterado."),
+    railSettings: () => ctx.irParaConfiguracoes(),
 
     rail, modeBtns,
     mod,
@@ -1214,9 +1228,9 @@ export function buildVals(
     focoLabel: st.focus && st.selectedOsId ? "Sair do foco" : "Modo foco",
     onFoco: toggleFocus,
 
-    // ---- Segurança (preview) ----
+    // ---- Segurança: não há PIN/auth paralelo na V4; vai às configurações reais ----
     seg,
-    goSeguranca: () => update({ stage: "seguranca", module: "workspace", view: "cockpit", menu: null }),
+    goSeguranca: () => ctx.irParaConfiguracoes(),
     // GOAL OPS-V4-ENTREGA-REAL-E-CTA-QUITADO-008: usado pelo aviso "quitada, falta
     // entregar" do FinanceiroStage — só navega (a ação real vive no botão da Entrega).
     goEntrega: () => update({ stage: "entrega", module: "workspace", view: "cockpit", menu: null }),
@@ -1354,11 +1368,12 @@ export function buildVals(
     // Transições reais via `aplicarTransicaoStatusV3` (reuso, sem editar V3).
     // "iniciarServico" é o MESMO handler usado pelo avanço aprovado→em_execucao
     // (ação primária); aqui também serve a aguardando_peca→em_execucao ("retomar") —
-    // o rótulo certo vem de `execAcoes.iniciarLabel`. Peças/estoque/observação
-    // técnica seguem read-only (sem action V3 segura para isso ainda).
+    // o rótulo certo vem de `execAcoes.iniciarLabel`. Peças baixam pelo adapter
+    // oficial (`consumirEstoqueOSActionV3` → `consumeEstoqueFromOS`).
     iniciarServico: ctx.iniciarServico,
     marcarAguardandoPeca: ctx.marcarAguardandoPeca,
     marcarPronta: ctx.marcarPronta,
+    baixarEstoqueOS: ctx.baixarEstoqueOS,
     execAcoes,
 
     // ---- Entrega REAL (GOAL OPS-V4-ENTREGA-REAL-E-CTA-QUITADO-008) ----
@@ -1461,9 +1476,9 @@ export function buildVals(
     dashboardOperacional,
     historicoTransversal,
     filaItens,
-    filaOperacional,
+    filaOperacional: filaOperacionalComCadastro,
     bancadaView,
-    producaoBancada,
+    producaoBancada: producaoBancadaComCadastro,
     producaoAtual,
     atribuirTecnico: ctx.atribuirTecnico,
     removerTecnico: ctx.removerTecnico,
@@ -1477,7 +1492,7 @@ export function buildVals(
     modoFila: ctx.modoFila,
     setModoFila: ctx.setModoFila,
     slaView,
-    slaOperacional,
+    slaOperacional: slaOperacionalComCadastro,
     pdvView,
     pdvFinancialLoading: ctx.financialRailLoading,
     pdvFinancialError: ctx.financialRailError,
@@ -1492,7 +1507,12 @@ export function useV4Preview(): V4Vals {
   const [modoFila, setModoFilaState] = useState<ModoFilaV4>("kanban");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const router = useRouter();
   const { lojaAtivaId } = useLojaAtiva();
+  const tecnicosCadastro = useTecnicosCadastroV4(lojaAtivaId);
+  const irParaConfiguracoes = useCallback(() => {
+    router.push("/dashboard/configuracoes");
+  }, [router]);
   const {
     ordens,
     loading: ordensLoading,
@@ -1792,6 +1812,35 @@ export function useV4Preview(): V4Vals {
         () => update({ status: "aguardando_peca" }),
       ),
     [runWrite, update],
+  );
+  const baixarEstoqueOS = useCallback(
+    async () => {
+      const sid = (lojaAtivaId ?? "").trim();
+      const osId = (selectedOsId ?? "").trim();
+      if (!sid || !osId) {
+        notify("Selecione uma OS na loja ativa para concluir a ação.");
+        return false;
+      }
+      try {
+        const r = await consumirEstoqueOSActionV3(sid, osId);
+        reloadOrdens();
+        reloadDetail();
+        notify(
+          r.status === "already_consumed"
+            ? "Estoque já baixado nesta OS."
+            : r.itens > 0
+              ? `Peças baixadas do estoque (${r.itens}).`
+              : "Peças baixadas do estoque.",
+        );
+        return true;
+      } catch (e) {
+        reloadOrdens();
+        reloadDetail();
+        notify(e instanceof Error ? e.message : "Não foi possível baixar o estoque desta OS.");
+        return false;
+      }
+    },
+    [lojaAtivaId, selectedOsId, reloadOrdens, reloadDetail, notify],
   );
   const marcarPronta = useCallback(
     () =>
@@ -2176,6 +2225,9 @@ export function useV4Preview(): V4Vals {
       iniciarServico,
       marcarAguardandoPeca,
       marcarPronta,
+      baixarEstoqueOS,
+      tecnicosCadastro,
+      irParaConfiguracoes,
       confirmarEntrega,
       salvarAssinaturaRetirada,
       adicionarFotoSaida,
@@ -2237,6 +2289,9 @@ export function useV4Preview(): V4Vals {
       iniciarServico,
       marcarAguardandoPeca,
       marcarPronta,
+      baixarEstoqueOS,
+      tecnicosCadastro,
+      irParaConfiguracoes,
       confirmarEntrega,
       salvarAssinaturaRetirada,
       adicionarFotoSaida,
