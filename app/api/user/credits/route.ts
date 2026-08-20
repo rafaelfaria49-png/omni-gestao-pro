@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { requireCreditsUserIdForApi } from "@/lib/credits/api-auth"
+import { creditsLedgerUserCreateData } from "@/lib/credits/ledger-user"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -15,12 +16,7 @@ export async function GET() {
   const user = await prisma.user.upsert({
     where: { id: userId },
     update: {},
-    create: {
-      id: userId,
-      name: "Administrador",
-      pin: `mock-${userId}`,
-      role: "ADMIN",
-    },
+    create: creditsLedgerUserCreateData(userId),
     select: { credits: true },
   })
 

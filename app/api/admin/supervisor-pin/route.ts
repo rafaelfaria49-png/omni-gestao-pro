@@ -10,7 +10,8 @@
  *
  * Importante:
  *  - O PIN NUNCA é retornado pelo GET (apenas a flag `isDefault`).
- *  - O default detectado é o seed inicial ("1234") — ver scripts/seed-supervisor-pin.ts.
+ *  - `isDefault` usa o verificador central (hash ou legado plaintext).
+ *  - Rotação grava somente `pinHash`; o PIN novo nunca é persistido em `User.pin`.
  *  - Após troca bem-sucedida, o cookie `assistec_admin_session` antigo
  *    permanece válido (não logamos o admin de novo no PDV); o próximo login
  *    via PDV terá que usar o novo PIN.
@@ -19,7 +20,13 @@
 import { NextResponse } from "next/server"
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { auth } from "@/auth"
-import { isBlockedLegacySupervisorPin, LEGACY_DEFAULT_SUPERVISOR_PIN } from "@/lib/auth/pin-authorization"
+import { isBlockedLegacySupervisorPin } from "@/lib/auth/pin-authorization"
+import { hashSupervisorPin, PinHashMisconfiguredError } from "@/lib/auth/pin-hash"
+import {
+  isDefaultSupervisorPinRecord,
+  SUPERVISOR_ROLE_FILTER,
+  verifySupervisorPinRecord,
+} from "@/lib/auth/verify-supervisor-pin"
 import { z } from "zod"
 
 export const runtime = "nodejs"
@@ -32,7 +39,6 @@ export const revalidate = 0
  * com um PIN que nunca autentica. A constante vive no helper de autorização para que os
  * dois lados não possam divergir.
  */
-const DEFAULT_PIN = LEGACY_DEFAULT_SUPERVISOR_PIN
 const PIN_REGEX = /^\d{4,12}$/
 
 const trocarSchema = z.object({
@@ -65,8 +71,8 @@ export async function GET(): Promise<NextResponse> {
   try {
     await prismaEnsureConnected()
     const supervisor = await prisma.user.findFirst({
-      where: { OR: [{ role: "ADMIN" }, { role: "admin" }] },
-      select: { id: true, name: true, pin: true },
+      where: SUPERVISOR_ROLE_FILTER,
+      select: { id: true, name: true, pin: true, pinHash: true },
       orderBy: { createdAt: "asc" },
     })
 
@@ -76,7 +82,7 @@ export async function GET(): Promise<NextResponse> {
 
     return NextResponse.json({
       exists: true,
-      isDefault: supervisor.pin === DEFAULT_PIN,
+      isDefault: await isDefaultSupervisorPinRecord(supervisor),
       name: supervisor.name || null,
     })
   } catch (e) {
@@ -124,8 +130,8 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     await prismaEnsureConnected()
     const supervisor = await prisma.user.findFirst({
-      where: { OR: [{ role: "ADMIN" }, { role: "admin" }] },
-      select: { id: true, pin: true },
+      where: SUPERVISOR_ROLE_FILTER,
+      select: { id: true, pin: true, pinHash: true },
       orderBy: { createdAt: "asc" },
     })
 
@@ -136,29 +142,24 @@ export async function POST(req: Request): Promise<NextResponse> {
       )
     }
 
-    if (supervisor.pin !== currentPin) {
+    const currentOk = await verifySupervisorPinRecord(currentPin, supervisor)
+    if (!currentOk) {
       return NextResponse.json({ error: "PIN atual incorreto." }, { status: 401 })
     }
 
-    // Bloqueia colisão com outro User (campo @unique).
-    const collision = await prisma.user.findFirst({
-      where: { pin: newPin, NOT: { id: supervisor.id } },
-      select: { id: true },
-    })
-    if (collision) {
-      return NextResponse.json(
-        { error: "Este PIN já está em uso por outro usuário. Escolha outro." },
-        { status: 409 },
-      )
-    }
-
+    // Rotação grava SOMENTE pinHash. User.pin legado permanece intacto (rollback)
+    // e nunca recebe o PIN novo em claro.
+    const pinHash = await hashSupervisorPin(newPin)
     await prisma.user.update({
       where: { id: supervisor.id },
-      data: { pin: newPin },
+      data: { pinHash },
     })
 
-    return NextResponse.json({ ok: true, isDefault: newPin === DEFAULT_PIN })
+    return NextResponse.json({ ok: true, isDefault: false })
   } catch (e) {
+    if (e instanceof PinHashMisconfiguredError) {
+      return NextResponse.json({ error: "Falha ao atualizar o PIN." }, { status: 503 })
+    }
     const msg = e instanceof Error ? e.message : String(e)
     console.error("[admin/supervisor-pin POST]", msg)
     return NextResponse.json({ error: "Falha ao atualizar o PIN." }, { status: 503 })

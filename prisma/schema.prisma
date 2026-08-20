@@ -1630,8 +1630,15 @@ model User {
   name            String           @default("") @map("name")
   /**
    * PIN numérico/curto usado para autorização rápida no PDV.
+   * Mantido nesta fase para rollback — autenticação nova lê `pinHash`.
    */
   pin             String           @unique @map("pin")
+  /**
+   * Hash autenticável do PIN de supervisor (HMAC-SHA256 + bcrypt custo 12).
+   * Null = registro legado ainda comparado via `pin` em processo (nunca via SQL).
+   * Migration somente aditiva; não converter nem apagar `pin` in-place.
+   */
+  pinHash         String?          @map("pinHash")
   /**
    * "ADMIN" | "CAIXA" (mantido string para compatibilidade simples).
    */

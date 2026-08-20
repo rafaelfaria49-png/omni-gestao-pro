@@ -159,6 +159,8 @@ describe("Wiring — cada rota corrigir* reforça sessão/loja/permissão (anti-
       const src = read(f)
       expect(src).toContain("opsLojaIdFromRequest(")
       expect(src).toContain("supervisorPin")
+      expect(src).toContain("authenticateSupervisorPin")
+      expect(src).not.toMatch(/where:\s*\{\s*pin:/)
     })
 
     it(`[${f}] registra auditoria com storeId + rota`, () => {

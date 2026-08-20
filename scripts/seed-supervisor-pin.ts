@@ -3,40 +3,53 @@
  *
  * Uso: npx tsx scripts/seed-supervisor-pin.ts
  *
- * Variáveis de ambiente (opcionais):
- *   SUPERVISOR_DEFAULT_PIN  — PIN padrão (4–12 dígitos). Default: "1234".
+ * Variáveis de ambiente:
+ *   SUPERVISOR_DEFAULT_PIN  — obrigatório. 4–12 dígitos, fora da lista bloqueada
+ *                             (nunca "1234").
  *   SUPERVISOR_DEFAULT_NAME — Nome exibido. Default: "Supervisor Padrão".
  *
  * Comportamento idempotente:
  *  - Se já existir QUALQUER usuário com role ADMIN/admin, o seed NÃO faz nada.
- *  - Se NÃO existir, cria um User { role: "ADMIN", pin: <SUPERVISOR_DEFAULT_PIN> }.
- *  - Nunca sobrescreve um PIN existente — alterações posteriores são feitas
- *    via Master Console (UI) ou diretamente no banco.
+ *  - Se NÃO existir, cria um User { role: "ADMIN", pinHash: hash(PIN), pin: marcador opaco }.
+ *  - O PIN real NUNCA é gravado em User.pin nem impresso nos logs.
  *
- * IMPORTANTE: Após rodar este seed, o usuário DEVE trocar o PIN padrão no
- * Master Console (`/dashboard/master-console`). O aviso é exibido na UI
- * enquanto o PIN ativo for o padrão.
+ * Alterações posteriores: Master Console (`/dashboard/master-console`).
  */
 
 import { PrismaClient } from "../generated/prisma"
 import * as dotenv from "dotenv"
 import { resolve } from "path"
+import { isBlockedLegacySupervisorPin } from "../lib/auth/pin-authorization"
+import { hashSupervisorPin, newOpaqueUnusablePin } from "../lib/auth/pin-hash"
 
 dotenv.config({ path: resolve(__dirname, "../.env") })
 
-const db = new PrismaClient()
-
 const PIN_REGEX = /^\d{4,12}$/
 
-async function main() {
-  const pin = (process.env.SUPERVISOR_DEFAULT_PIN ?? "1234").trim()
-  const name = (process.env.SUPERVISOR_DEFAULT_NAME ?? "Supervisor Padrão").trim()
-
-  if (!PIN_REGEX.test(pin)) {
+export function resolveSupervisorSeedPin(raw: string | undefined): string {
+  const pin = (raw ?? "").trim()
+  if (!pin) {
     throw new Error(
-      "SUPERVISOR_DEFAULT_PIN deve ter entre 4 e 12 dígitos numéricos.",
+      "Defina SUPERVISOR_DEFAULT_PIN (4–12 dígitos) antes de rodar o seed. O valor legado 1234 é bloqueado.",
     )
   }
+  if (!PIN_REGEX.test(pin)) {
+    throw new Error("SUPERVISOR_DEFAULT_PIN deve ter entre 4 e 12 dígitos numéricos.")
+  }
+  if (isBlockedLegacySupervisorPin(pin)) {
+    throw new Error("SUPERVISOR_DEFAULT_PIN usa um valor padrão bloqueado. Escolha outro PIN.")
+  }
+  return pin
+}
+
+type SeedEnv = Record<string, string | undefined>
+
+export async function seedSupervisorPin(db: PrismaClient, env: SeedEnv = process.env): Promise<{
+  action: "skipped" | "created"
+  id?: string
+}> {
+  const pin = resolveSupervisorSeedPin(env.SUPERVISOR_DEFAULT_PIN)
+  const name = (env.SUPERVISOR_DEFAULT_NAME ?? "Supervisor Padrão").trim()
 
   const existing = await db.user.findFirst({
     where: { OR: [{ role: "ADMIN" }, { role: "admin" }] },
@@ -47,37 +60,39 @@ async function main() {
     console.log(
       `✓ Já existe um usuário supervisor (id=${existing.id}, role=${existing.role}). Nada a fazer.`,
     )
-    return
+    return { action: "skipped", id: existing.id }
   }
 
-  // Verifica colisão de PIN (campo @unique no schema)
-  const pinTaken = await db.user.findFirst({ where: { pin }, select: { id: true } })
-  if (pinTaken) {
-    throw new Error(
-      `O PIN solicitado já está em uso por outro usuário (id=${pinTaken.id}). Defina SUPERVISOR_DEFAULT_PIN diferente.`,
-    )
-  }
+  const pinHash = await hashSupervisorPin(pin, env)
+  const opaquePin = newOpaqueUnusablePin()
 
   const created = await db.user.create({
     data: {
       name,
-      pin,
+      pin: opaquePin,
+      pinHash,
       role: "ADMIN",
     },
     select: { id: true, name: true, role: true },
   })
 
   console.log(
-    `✓ Supervisor criado: ${created.name} (id=${created.id}, role=${created.role}).`,
+    `✓ Supervisor criado: ${created.name} (id=${created.id}, role=${created.role}). Autenticação somente via pinHash.`,
   )
-  console.log(
-    "⚠ Lembre-se: troque o PIN padrão no Master Console (/dashboard/master-console).",
-  )
+  return { action: "created", id: created.id }
 }
 
-main()
-  .catch((err) => {
-    console.error("✗ Erro no seed do supervisor:", err)
-    process.exit(1)
-  })
-  .finally(() => db.$disconnect())
+function isDirectRun(): boolean {
+  const entry = process.argv[1]?.replace(/\\/g, "/") ?? ""
+  return /seed-supervisor-pin\.(ts|js|mts|cjs|mjs)$/.test(entry) && !entry.includes(".test.")
+}
+
+if (isDirectRun()) {
+  const db = new PrismaClient()
+  seedSupervisorPin(db)
+    .catch((err) => {
+      console.error("✗ Erro no seed do supervisor:", err instanceof Error ? err.message : err)
+      process.exit(1)
+    })
+    .finally(() => db.$disconnect())
+}

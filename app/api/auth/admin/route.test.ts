@@ -12,7 +12,9 @@
  * O valor do PIN bloqueado NUNCA é escrito neste ficheiro — vem da constante
  * exportada. Há um teste explícito de que nem a resposta nem o log o contêm.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+
+vi.setConfig({ testTimeout: 20_000 })
 import { ASSISTEC_LOJA_HEADER } from "@/lib/assistec-headers"
 import { ASSISTEC_ACTIVE_STORE_COOKIE } from "@/lib/store-defaults"
 import {
@@ -20,6 +22,7 @@ import {
   BLOCKED_LEGACY_SUPERVISOR_PINS,
   PIN_AUTHORIZATION_MAX_AGE_SECONDS,
 } from "@/lib/auth/pin-authorization"
+import { hashSupervisorPin } from "@/lib/auth/pin-hash"
 import { __resetContadorRateLimitForTests } from "@/lib/contador/auth/rate-limit"
 
 const LOJA_A = "loja-A"
@@ -54,6 +57,8 @@ const h = vi.hoisted(() => ({
   entitlement: vi.fn(async (): Promise<unknown> => ({ ok: true })),
   ensureConnected: vi.fn(async (): Promise<void> => undefined),
   userFindFirst: vi.fn(async (_args: unknown): Promise<unknown> => null),
+  userFindMany: vi.fn(async (_args: unknown): Promise<unknown[]> => []),
+  userUpdate: vi.fn(async (_args: unknown): Promise<unknown> => ({})),
   /** R1-bis: prova canónica de existência da loja. Só `LOJAS_REAIS` têm linha. */
   storeFindUnique: vi.fn(async (_args: unknown): Promise<unknown> => null),
   auditCreate: vi.fn(async (_args: unknown): Promise<unknown> => ({})),
@@ -67,7 +72,7 @@ vi.mock("@/auth", () => ({ auth: h.auth }))
 vi.mock("@/lib/auth/session-entitlement", () => ({ getSessionEntitlement: h.entitlement }))
 vi.mock("@/lib/prisma", () => ({
   prisma: {
-    user: { findFirst: h.userFindFirst },
+    user: { findFirst: h.userFindFirst, findMany: h.userFindMany, update: h.userUpdate },
     store: { findUnique: h.storeFindUnique },
     logsAuditoria: { create: h.auditCreate },
   },
@@ -123,6 +128,25 @@ function adoptIssuedCookie(res: Response): string {
 }
 
 let logSpy: ReturnType<typeof vi.spyOn>
+let pinCorretoHash = ""
+
+function hashedSupervisor() {
+  return {
+    id: SUPERVISOR_ID,
+    name: "Supervisora",
+    pin: "x:opaque-test-supervisor",
+    pinHash: pinCorretoHash,
+  }
+}
+
+function expectPinCandidatesNotLoaded(): void {
+  expect(h.userFindMany).not.toHaveBeenCalled()
+}
+
+beforeAll(async () => {
+  process.env.AUTH_SECRET = "segredo-de-teste-pin-containment-001a"
+  pinCorretoHash = await hashSupervisorPin(PIN_CORRETO)
+})
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -135,10 +159,14 @@ beforeEach(() => {
   h.auditCreate.mockResolvedValue({})
   h.userFindFirst.mockImplementation(async (args: unknown) => {
     const where = (args as { where?: Record<string, unknown> }).where ?? {}
-    if (where.pin === PIN_CORRETO) return { id: SUPERVISOR_ID, name: "Supervisora" }
+    if ("pin" in where) {
+      throw new Error("plaintext SQL PIN lookup is forbidden")
+    }
     if (where.id === SUPERVISOR_ID) return { id: SUPERVISOR_ID, name: "Supervisora" }
     return null
   })
+  h.userFindMany.mockImplementation(async () => [hashedSupervisor()])
+  h.userUpdate.mockResolvedValue({ id: SUPERVISOR_ID })
   h.storeFindUnique.mockImplementation(async (args: unknown) => {
     const id = (args as { where?: { id?: string } }).where?.id
     return id && LOJAS_REAIS.includes(id) ? { id } : null
@@ -166,7 +194,7 @@ describe("POST /api/auth/admin — sessão obrigatória", () => {
 
   it("[20] anónimo NÃO consulta PIN — nem conecta ao banco", async () => {
     await POST(postReq(PIN_CORRETO))
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
     expect(h.ensureConnected).not.toHaveBeenCalled()
     expect(h.entitlement).not.toHaveBeenCalled()
   })
@@ -180,7 +208,7 @@ describe("POST /api/auth/admin — sessão obrigatória", () => {
     h.auth.mockResolvedValue({ user: {} })
     const res = await POST(postReq(PIN_CORRETO))
     expect(res.status).toBe(401)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("[3] utilizador desativado → 401, sem consultar PIN", async () => {
@@ -188,7 +216,7 @@ describe("POST /api/auth/admin — sessão obrigatória", () => {
     h.entitlement.mockResolvedValue({ ok: false, reason: "user_inactive" })
     const res = await POST(postReq(PIN_CORRETO))
     expect(res.status).toBe(401)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("[3b] utilizador inexistente → 401", async () => {
@@ -203,14 +231,14 @@ describe("POST /api/auth/admin — escopo de loja", () => {
     h.auth.mockResolvedValue(sessionOf(restrictedTo(USER_A, [LOJA_B])))
     const res = await POST(postReq(PIN_CORRETO, LOJA_A))
     expect(res.status).toBe(403)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("loja não resolvível (sem header, query nem cookie) → 400, falha fechado", async () => {
     h.auth.mockResolvedValue(sessionOf(unrestricted(USER_A)))
     const res = await POST(postReq(PIN_CORRETO, null))
     expect(res.status).toBe(400)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("loja resolvida por cookie também é validada e aceite", async () => {
@@ -241,20 +269,20 @@ describe("POST /api/auth/admin — PIN", () => {
   it("[6] PIN padrão legado é SEMPRE recusado — e nunca chega ao banco", async () => {
     const res = await POST(postReq(PIN_BLOQUEADO))
     expect(res.status).toBe(401)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("[6b] PIN padrão legado permanece recusado mesmo se existir no banco", async () => {
-    h.userFindFirst.mockResolvedValue({ id: SUPERVISOR_ID, name: "Supervisora" })
+    h.userFindMany.mockResolvedValue([{ id: SUPERVISOR_ID, name: "Supervisora", pin: PIN_BLOQUEADO, pinHash: null }])
     const res = await POST(postReq(PIN_BLOQUEADO))
     expect(res.status).toBe(401)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("PIN vazio → 401 sem consultar o banco", async () => {
     const res = await POST(postReq("   "))
     expect(res.status).toBe(401)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("[7] PIN correto + sessão + loja válida → 200 com autorização temporária", async () => {
@@ -314,6 +342,36 @@ describe("POST /api/auth/admin — PIN", () => {
     expect(written).toContain(USER_A)
     expect(written).toContain(LOJA_A)
   })
+
+  it("pinHash autentica e não usa where: { pin }", async () => {
+    const res = await POST(postReq(PIN_CORRETO))
+    expect(res.status).toBe(200)
+    expect(h.userFindMany).toHaveBeenCalled()
+    const firstWhere = (h.userFindFirst.mock.calls[0]?.[0] as { where?: Record<string, unknown> } | undefined)?.where
+    expect(firstWhere?.pin).toBeUndefined()
+    expect(h.userUpdate).not.toHaveBeenCalled()
+  })
+
+  it("plaintext legado autentica e faz upgrade para pinHash sem alterar pin", async () => {
+    h.userFindMany.mockResolvedValue([
+      { id: SUPERVISOR_ID, name: "Supervisora", pin: PIN_CORRETO, pinHash: null },
+    ])
+    const res = await POST(postReq(PIN_CORRETO))
+    expect(res.status).toBe(200)
+    expect(h.userUpdate).toHaveBeenCalledTimes(1)
+    const args = (h.userUpdate.mock.calls[0] as unknown as [{ data: { pinHash?: string; pin?: string } }])[0]
+    expect(args.data.pin).toBeUndefined()
+    expect(args.data.pinHash?.startsWith("$2")).toBe(true)
+    expect(JSON.stringify(args)).not.toContain(PIN_CORRETO)
+  })
+
+  it("PIN inválido não grava upgrade", async () => {
+    h.userFindMany.mockResolvedValue([
+      { id: SUPERVISOR_ID, name: "Supervisora", pin: PIN_CORRETO, pinHash: null },
+    ])
+    expect((await POST(postReq(PIN_ERRADO))).status).toBe(401)
+    expect(h.userUpdate).not.toHaveBeenCalled()
+  })
 })
 
 describe("POST /api/auth/admin — rate limit", () => {
@@ -336,9 +394,9 @@ describe("POST /api/auth/admin — rate limit", () => {
 
   it("durante o bloqueio nem o PIN correto passa, e o banco não é consultado", async () => {
     for (let i = 0; i < 5; i++) await POST(postReq(PIN_ERRADO))
-    h.userFindFirst.mockClear()
+    h.userFindMany.mockClear()
     expect((await POST(postReq(PIN_CORRETO))).status).toBe(429)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("[16] após a janela de 15 min o mesmo contexto volta a poder tentar", async () => {
@@ -527,9 +585,9 @@ describe("POST /api/auth/admin — R1-bis: evasão do rate limit por loja (ataqu
     for (const loja of [LOJA_A, LOJA_B, LOJA_C, LOJA_D, LOJA_E]) {
       await POST(postReq(PIN_ERRADO, loja))
     }
-    h.userFindFirst.mockClear()
+    h.userFindMany.mockClear()
     expect((await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))).status).toBe(429)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("alternar lojas reais e inventadas dá exatamente 5 tentativas no total", async () => {
@@ -587,7 +645,7 @@ describe("POST /api/auth/admin — R1-bis: validação canónica da loja", () =>
   it("storeId inexistente → 403 ANTES de qualquer consulta de PIN", async () => {
     const res = await POST(postReq(PIN_CORRETO, LOJA_INVENTADA))
     expect(res.status).toBe(403)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("storeId inexistente NUNCA emite token, mesmo com o PIN correto", async () => {
@@ -625,7 +683,7 @@ describe("POST /api/auth/admin — R1-bis: validação canónica da loja", () =>
     const res = await POST(postReq(PIN_CORRETO, LOJA_A))
     expect(res.status).toBe(503)
     expect(res.headers.get("set-cookie")).toBeNull()
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 
   it("a auditoria da recusa distingue o motivo, mesmo a resposta não distinguindo", async () => {
@@ -660,7 +718,7 @@ describe("POST /api/auth/admin — configuração", () => {
     delete process.env.PIN_AUTHORIZATION_SECRET
     const res = await POST(postReq(PIN_CORRETO))
     expect(res.status).toBe(503)
-    expect(h.userFindFirst).not.toHaveBeenCalled()
+    expectPinCandidatesNotLoaded()
   })
 })
 
