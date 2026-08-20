@@ -130,7 +130,7 @@ Outra família (read-only) após a implementação. Ver PR / seção de revisão
 
 ## 16–21. Git / schema / #73 / #97 / SEFAZ
 
-PR Draft contra `main`. Schema = **zero**. #73 e #97 apenas observadas. Zero adquirente. Zero SEFAZ. Zero TEF.
+PR Draft **#98** contra `main`. Schema = **zero**. #73 e #97 apenas observadas (`OPEN`). Zero adquirente. Zero SEFAZ. Zero TEF.
 
 ## 22. Classificação
 
