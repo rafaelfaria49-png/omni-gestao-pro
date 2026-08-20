@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import { describe, it, expect } from "vitest"
 import { encodeNfceQrV3OfflineUrl, encodeNfceQrV3OnlineUrl, createQrV3OfflinePemSigner } from "@/lib/fiscal/danfce/qr-v3"
 import { sanitizeProdutoFiscal, PRODUTO_FISCAL_VAZIO } from "@/lib/produto-fiscal"
@@ -1049,6 +1050,119 @@ function extractXsdPattern(source: string, marker: string): string {
   return match[1]
 }
 
+const XMLLINT_SCHEMA_ARGS = ["--noout", "--nonet", "--schema"] as const
+
+function localFileSchemaLocation(filePath: string): string {
+  return pathToFileURL(filePath).href
+}
+
+function infNfeSuplElementDef(leiauteSource: string): string {
+  const start = leiauteSource.indexOf('<xs:element name="infNFeSupl" minOccurs="0">')
+  const end = leiauteSource.indexOf('<xs:element ref="ds:Signature"/>')
+  if (start < 0 || end <= start) throw new Error("recorte infNFeSupl ausente no XSD oficial")
+  return leiauteSource.slice(start, end).replace(' minOccurs="0"', "")
+}
+
+function writeTempInfNfeSuplSchema(
+  dir: string,
+  elementDef: string,
+  schemaLocation = localFileSchemaLocation(TIPOS_XSD),
+): string {
+  const xsdPath = join(dir, "infnfesupl.xsd")
+  writeFileSync(
+    xsdPath,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns="http://www.portalfiscal.inf.br/nfe" xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.portalfiscal.inf.br/nfe" elementFormDefault="qualified" attributeFormDefault="unqualified">
+  <xs:include schemaLocation="${schemaLocation}"/>
+  ${elementDef}
+</xs:schema>`,
+  )
+  return xsdPath
+}
+
+function writeInfNfeSuplInstance(dir: string, name: string, innerXml: string): string {
+  const xmlPath = join(dir, name)
+  writeFileSync(
+    xmlPath,
+    `<?xml version="1.0" encoding="UTF-8"?>\n<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">${innerXml}</infNFeSupl>\n`,
+  )
+  return xmlPath
+}
+
+type XmllintSchemaResult =
+  | { kind: "ok"; stdout: string }
+  | { kind: "missing"; bin: string }
+  | { kind: "failed"; status: number | null; stdout: string; stderr: string }
+
+function runXmllintSchema(xsdPath: string, xmlPath: string, bin = "xmllint"): XmllintSchemaResult {
+  try {
+    const stdout = execFileSync(bin, [...XMLLINT_SCHEMA_ARGS, xsdPath, xmlPath], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    return { kind: "ok", stdout }
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException & { status?: number | null; stdout?: string; stderr?: string }
+    if (err.code === "ENOENT") return { kind: "missing", bin }
+    return {
+      kind: "failed",
+      status: typeof err.status === "number" ? err.status : null,
+      stdout: String(err.stdout ?? ""),
+      stderr: String(err.stderr ?? err.message ?? ""),
+    }
+  }
+}
+
+function requireXmllintResult(result: XmllintSchemaResult): Exclude<XmllintSchemaResult, { kind: "missing" }> {
+  if (result.kind === "missing") {
+    throw new Error(
+      `xmllint ausente no PATH (${result.bin}). No Ubuntu instale o pacote oficial libxml2-utils; a validação XSD B2 não pode ser pulada.`,
+    )
+  }
+  return result
+}
+
+function assertXmllintAccepts(xsdPath: string, xmlPath: string): void {
+  const result = requireXmllintResult(runXmllintSchema(xsdPath, xmlPath))
+  expect(result.kind, result.kind === "failed" ? result.stderr : "").toBe("ok")
+}
+
+function assertXmllintRejects(xsdPath: string, xmlPath: string): void {
+  const result = requireXmllintResult(runXmllintSchema(xsdPath, xmlPath))
+  expect(result.kind, "xmllint deve reprovar o artefato sem skip").toBe("failed")
+  if (result.kind !== "failed") return
+  expect(result.status, "reprovação XSD exige exit code não-zero do xmllint").not.toBe(0)
+  expect(result.status).not.toBeNull()
+}
+
+function assertInfNfeSuplXmllint(opts: {
+  nfeXml: string
+  infNFeSupl: { qrCode: string } | undefined
+  leiaute: string
+}): void {
+  const supl = opts.nfeXml.match(/<infNFeSupl>[\s\S]*?<\/infNFeSupl>/)?.[0]
+  expect(supl).toBeTruthy()
+  const dir = mkdtempSync(join(tmpdir(), "nfce-infnfesupl-"))
+  try {
+    const xsdPath = writeTempInfNfeSuplSchema(dir, infNfeSuplElementDef(opts.leiaute))
+    const xmlPath = join(dir, "infnfesupl.xml")
+    writeFileSync(
+      xmlPath,
+      `<?xml version="1.0" encoding="UTF-8"?>\n${supl!.replace("<infNFeSupl>", '<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">')}\n`,
+    )
+    assertXmllintAccepts(xsdPath, xmlPath)
+
+    const invalidPath = writeInfNfeSuplInstance(
+      dir,
+      "infnfesupl-sem-url.xml",
+      opts.infNFeSupl ? `<qrCode>${opts.infNFeSupl.qrCode}</qrCode>` : "",
+    )
+    assertXmllintRejects(xsdPath, invalidPath)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
 describe("buildNfceXml · QR v3 online opt-in (infNFeSupl)", () => {
   const leiaute = readFileSync(LEIAUTE_XSD, "utf8")
   const tipos = readFileSync(TIPOS_XSD, "utf8")
@@ -1174,46 +1288,7 @@ describe("buildNfceXml · QR v3 online opt-in (infNFeSupl)", () => {
 
   it("xmllint --nonet valida infNFeSupl extraído contra o recorte oficial do XSD", () => {
     const r = buildNfceXmlResult(snap(), ctx)
-    const supl = r.xml.match(/<infNFeSupl>[\s\S]*?<\/infNFeSupl>/)?.[0]
-    expect(supl).toBeTruthy()
-    const start = leiaute.indexOf('<xs:element name="infNFeSupl" minOccurs="0">')
-    const end = leiaute.indexOf('<xs:element ref="ds:Signature"/>')
-    const elementDef = leiaute.slice(start, end).replace(' minOccurs="0"', "")
-    const schema = `<?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns="http://www.portalfiscal.inf.br/nfe" xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.portalfiscal.inf.br/nfe" elementFormDefault="qualified" attributeFormDefault="unqualified">
-  <xs:include schemaLocation="${TIPOS_XSD}"/>
-  ${elementDef}
-</xs:schema>`
-    const dir = mkdtempSync(join(tmpdir(), "nfce-infnfesupl-"))
-    try {
-      const xsdPath = join(dir, "infnfesupl.xsd")
-      const xmlPath = join(dir, "infnfesupl.xml")
-      writeFileSync(xsdPath, schema)
-      writeFileSync(
-        xmlPath,
-        `<?xml version="1.0" encoding="UTF-8"?>\n${supl!.replace("<infNFeSupl>", '<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">')}\n`,
-      )
-      expect(() =>
-        execFileSync("xmllint", ["--noout", "--nonet", "--schema", xsdPath, xmlPath], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }),
-      ).not.toThrow()
-
-      const invalidPath = join(dir, "infnfesupl-sem-url.xml")
-      writeFileSync(
-        invalidPath,
-        `<?xml version="1.0" encoding="UTF-8"?>\n<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">${r.infNFeSupl ? `<qrCode>${r.infNFeSupl.qrCode}</qrCode>` : ""}</infNFeSupl>\n`,
-      )
-      expect(() =>
-        execFileSync("xmllint", ["--noout", "--nonet", "--schema", xsdPath, invalidPath], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }),
-      ).toThrow()
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    assertInfNfeSuplXmllint({ nfeXml: r.xml, infNFeSupl: r.infNFeSupl, leiaute })
   })
 })
 
@@ -1369,33 +1444,46 @@ describe("buildNfceXml · QR v3 offline opt-in (infNFeSupl, tpEmis=9)", () => {
 
   it("xmllint --nonet valida infNFeSupl offline contra o recorte oficial", () => {
     const r = buildNfceXmlResult(snap(), ctxOff)
-    const supl = r.xml.match(/<infNFeSupl>[\s\S]*?<\/infNFeSupl>/)?.[0]
-    expect(supl).toBeTruthy()
-    const start = leiaute.indexOf('<xs:element name="infNFeSupl" minOccurs="0">')
-    const end = leiaute.indexOf('<xs:element ref="ds:Signature"/>')
-    const elementDef = leiaute.slice(start, end).replace(' minOccurs="0"', "")
-    const schema = `<?xml version="1.0" encoding="UTF-8"?>
-<xs:schema xmlns="http://www.portalfiscal.inf.br/nfe" xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.portalfiscal.inf.br/nfe" elementFormDefault="qualified" attributeFormDefault="unqualified">
-  <xs:include schemaLocation="${TIPOS_XSD}"/>
-  ${elementDef}
-</xs:schema>`
-    const dir = mkdtempSync(join(tmpdir(), "nfce-infnfesupl-off-"))
+    assertInfNfeSuplXmllint({ nfeXml: r.xml, infNFeSupl: r.infNFeSupl, leiaute })
+  })
+})
+
+describe("xmllint harness · regressão de infraestrutura (infNFeSupl)", () => {
+  const leiaute = readFileSync(LEIAUTE_XSD, "utf8")
+
+  it("schemaLocation local é URI file: cross-platform e --nonet permanece ativo", () => {
+    const location = localFileSchemaLocation(TIPOS_XSD)
+    expect(XMLLINT_SCHEMA_ARGS).toEqual(["--noout", "--nonet", "--schema"])
+    expect(location.startsWith("file:")).toBe(true)
+    expect(location).not.toContain("\\")
+    expect(location).toContain("tiposBasico_v4.00.xsd")
+  })
+
+  it("recorte XSD inválido e schemaLocation quebrado continuam falhando", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nfce-infnfesupl-reg-"))
     try {
-      const xsdPath = join(dir, "infnfesupl.xsd")
-      const xmlPath = join(dir, "infnfesupl.xml")
-      writeFileSync(xsdPath, schema)
-      writeFileSync(
-        xmlPath,
-        `<?xml version="1.0" encoding="UTF-8"?>\n${supl!.replace("<infNFeSupl>", '<infNFeSupl xmlns="http://www.portalfiscal.inf.br/nfe">')}\n`,
+      const xmlPath = writeInfNfeSuplInstance(
+        dir,
+        "probe.xml",
+        `<qrCode>${"https://qr.example.test/nfce?p=35123456789012345678901234567890123456789012|3|2"}</qrCode><urlChave>https://qr.example.test/consulta</urlChave>`,
       )
-      expect(() =>
-        execFileSync("xmllint", ["--noout", "--nonet", "--schema", xsdPath, xmlPath], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }),
-      ).not.toThrow()
+      assertXmllintRejects(writeTempInfNfeSuplSchema(dir, "<xs:element name=\"infNFeSupl\"><xs:broken"), xmlPath)
+
+      const brokenLocation = writeTempInfNfeSuplSchema(
+        dir,
+        infNfeSuplElementDef(leiaute),
+        "C:\\not-a-valid-uri\\tiposBasico_v4.00.xsd",
+      )
+      const brokenXml = writeInfNfeSuplInstance(dir, "broken-location.xml", "<qrCode>x</qrCode><urlChave>https://qr.example.test/consulta</urlChave>")
+      assertXmllintRejects(brokenLocation, brokenXml)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it("ausência real do validador é ENOENT fail-closed, nunca skip", () => {
+    const result = runXmllintSchema("schema.xsd", "doc.xml", "xmllint-ausente-fiscal-b2-095")
+    expect(result.kind).toBe("missing")
+    expect(() => requireXmllintResult(result)).toThrow(/xmllint ausente no PATH/)
   })
 })
