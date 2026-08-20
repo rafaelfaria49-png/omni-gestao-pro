@@ -126,7 +126,7 @@ Cobertos: dinâmico 17 + `tpIntegra=2`; dinâmico sem `tpIntegra` bloqueado; din
 
 ## 15. Revisão independente
 
-Outra família (read-only) após a implementação. Ver PR / seção de revisão.
+Outra família (read-only) sobre o diff vs `c021e912`. **PASS** nos eixos 1–12. Classificação semântica **A**. Zero correção exigida: `tpIntegra=2` corresponde ao PIX dinâmico atual; códigos PIX específicos (sem analogia indevida com cartão); 20/23 sem card; legado fail-closed; autorizado/reprint preservado; zero PSP/e2eid; zero schema; zero adquirente/SEFAZ.
 
 ## 16–21. Git / schema / #73 / #97 / SEFAZ
 
