@@ -26,6 +26,7 @@ const h = vi.hoisted(() => {
     windowStatus: vi.fn(),
     consumeActivation: vi.fn(),
     resolveActiveCertificate: vi.fn(),
+    loadSecureContext: vi.fn(),
     runBatch: vi.fn(),
     setStore: (value: { id: string } | null) => { store = value },
     setConfig: (value: Record<string, unknown> | null) => { config = value },
@@ -39,6 +40,9 @@ vi.mock("@/lib/store-id-from-request", () => ({
 vi.mock("@/lib/fiscal/guard-fiscal-admin", () => ({ requireFiscalAdmin: h.requireFiscalAdmin }))
 vi.mock("@/lib/fiscal/certificate/resolve-active-certificate", () => ({
   resolveActiveCertificate: h.resolveActiveCertificate,
+}))
+vi.mock("@/lib/fiscal/certificate/a1-mtls-material", () => ({
+  loadA1MtlsSecureContext: h.loadSecureContext,
 }))
 vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window", () => ({
   WSDL_EXECUTION_PILOT_STORE_ID: "loja-1",
@@ -112,6 +116,7 @@ beforeEach(() => {
     senhaRef: "REF_SENHA_SECRETA",
     provider: "env-piloto",
   })
+  h.loadSecureContext.mockResolvedValue({})
   h.consumeActivation.mockResolvedValue({ ok: true, activation: {} })
   h.runBatch.mockResolvedValue({
     ok: true,
@@ -151,6 +156,7 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
     expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
     expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
+    expect(h.loadSecureContext).not.toHaveBeenCalled()
     expect(h.consumeActivation).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
   })
@@ -165,6 +171,7 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
     expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
     expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
+    expect(h.loadSecureContext).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
   })
 
@@ -184,6 +191,7 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
     expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
     expect(h.resolveActiveCertificate).not.toHaveBeenCalled()
+    expect(h.loadSecureContext).not.toHaveBeenCalled()
     expect(h.consumeActivation).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
   })
@@ -355,6 +363,21 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.runBatch).not.toHaveBeenCalled()
   })
 
+  it.each(["not_started", "expired"])(
+    "janela %s bloqueia antes de ACL, A1, ledger e batch",
+    async (reason) => {
+      h.windowStatus.mockReturnValue({ active: false, reason })
+
+      const response = await POST(request())
+
+      expect(response.status).toBe(404)
+      expect(h.requireFiscalAdmin).not.toHaveBeenCalled()
+      expect(h.loadSecureContext).not.toHaveBeenCalled()
+      expect(h.consumeActivation).not.toHaveBeenCalled()
+      expect(h.runBatch).not.toHaveBeenCalled()
+    },
+  )
+
   it("certificado ausente/inativo/refs ausentes colapsa antes do consumo", async () => {
     h.resolveActiveCertificate.mockResolvedValue({
       ok: false,
@@ -364,8 +387,45 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     const response = await POST(request())
     expect(response.status).toBe(409)
     expect(await json(response)).toEqual({ ok: false, code: "preflight_blocked" })
+    expect(h.loadSecureContext).not.toHaveBeenCalled()
     expect(h.consumeActivation).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("PFX ou senha inválidos falham antes de criar job/log/dedupe e antes do batch", async () => {
+    h.loadSecureContext.mockRejectedValue(new Error("OPENSSL PFX SENHA SEGREDO"))
+
+    const response = await POST(request())
+
+    expect(response.status).toBe(500)
+    expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_failed" })
+    expect(h.loadSecureContext).toHaveBeenCalledOnce()
+    // O ledger só é alcançado por consumeActivation; logo não há job, log ou dedupe.
+    expect(h.consumeActivation).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("A1 válido é preparado antes do consume e o batch recebe o mesmo contexto", async () => {
+    const preparedSecureContext = { marker: "opaque-test-context" }
+    const activation = { marker: "one-shot-activation" }
+    h.loadSecureContext.mockResolvedValue(preparedSecureContext)
+    h.consumeActivation.mockResolvedValue({ ok: true, activation })
+
+    const response = await POST(request())
+
+    expect(response.status).toBe(200)
+    expect(h.loadSecureContext).toHaveBeenCalledOnce()
+    expect(h.consumeActivation).toHaveBeenCalledOnce()
+    expect(h.runBatch).toHaveBeenCalledWith(expect.objectContaining({
+      activation,
+      preparedSecureContext,
+    }))
+    expect(h.loadSecureContext.mock.invocationCallOrder[0]).toBeLessThan(
+      h.consumeActivation.mock.invocationCallOrder[0]!,
+    )
+    expect(h.consumeActivation.mock.invocationCallOrder[0]).toBeLessThan(
+      h.runBatch.mock.invocationCallOrder[0]!,
+    )
   })
 
   it("conflito persistente/cold start bloqueia antes do batch", async () => {
@@ -376,7 +436,27 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     const response = await POST(request())
     expect(response.status).toBe(409)
     expect(await json(response)).toEqual({ ok: false, code: "activation_unavailable" })
+    expect(h.loadSecureContext).toHaveBeenCalledOnce()
+    expect(h.loadSecureContext.mock.invocationCallOrder[0]).toBeLessThan(
+      h.consumeActivation.mock.invocationCallOrder[0]!,
+    )
     expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("duas requisições concorrentes com A1 válido deixam somente uma avançar ao batch", async () => {
+    let consumed = false
+    h.consumeActivation.mockImplementation(async () => {
+      if (consumed) return { ok: false, code: "already_consumed_or_persistence_unavailable" }
+      consumed = true
+      return { ok: true, activation: { marker: "winner" } }
+    })
+
+    const responses = await Promise.all([POST(request()), POST(request())])
+
+    expect(responses.map((item) => item.status).sort()).toEqual([200, 409])
+    expect(h.loadSecureContext).toHaveBeenCalledTimes(2)
+    expect(h.consumeActivation).toHaveBeenCalledTimes(2)
+    expect(h.runBatch).toHaveBeenCalledOnce()
   })
 
   it("resposta pública preserva só evidência sanitizada e nunca refs/A1", async () => {
@@ -395,5 +475,8 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     const response = await POST(request())
     expect(response.status).toBe(500)
     expect(await json(response)).toEqual({ ok: false, code: "wsdl_execution_failed" })
+    expect(h.loadSecureContext).toHaveBeenCalledOnce()
+    expect(h.consumeActivation).toHaveBeenCalledOnce()
+    expect(h.runBatch).toHaveBeenCalledOnce()
   })
 })

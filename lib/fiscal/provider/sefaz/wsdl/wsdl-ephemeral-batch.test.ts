@@ -84,6 +84,7 @@ const certificate = {
   blobRef: "SEGREDO_BLOB_REF_NAO_VAZAR",
   senhaRef: "SEGREDO_SENHA_REF_NAO_VAZAR",
 }
+const preparedSecureContext = createSecureContext()
 
 describe("batch efêmero fechado H-9/H-10", () => {
   it("authority externa recusa alvo forjado e opções retargetadas antes de node:https", async () => {
@@ -172,7 +173,7 @@ describe("batch efêmero fechado H-9/H-10", () => {
       correlationId: () => "correlation-test",
     })
 
-    const result = await runner({ activation: token, certificate })
+    const result = await runner({ activation: token, certificate, preparedSecureContext })
 
     expect(result.ok).toBe(true)
     expect(result.services).toHaveLength(6)
@@ -180,7 +181,9 @@ describe("batch efêmero fechado H-9/H-10", () => {
     expect(createAuthority).toHaveBeenCalledTimes(6)
     expect(acquire).toHaveBeenCalledTimes(6)
     for (const target of SEFAZ_WSDL_ACQUISITION_TARGETS) {
-      expect(acquire.mock.calls.filter(([call]) => call.target.servico === target.servico)).toHaveLength(1)
+      const calls = acquire.mock.calls.filter(([call]) => call.target.servico === target.servico)
+      expect(calls).toHaveLength(1)
+      expect(calls[0]![0].preparedSecureContext).toBe(preparedSecureContext)
     }
   })
 
@@ -205,7 +208,7 @@ describe("batch efêmero fechado H-9/H-10", () => {
       correlationId: () => "correlation-test",
     })
 
-    const result = await runner({ activation: token, certificate })
+    const result = await runner({ activation: token, certificate, preparedSecureContext })
 
     expect(result.ok).toBe(false)
     expect([...calls.values()]).toEqual([1, 1, 1, 1, 1, 1])
@@ -229,7 +232,7 @@ describe("batch efêmero fechado H-9/H-10", () => {
       correlationId: () => "correlation-test",
     })
 
-    const result = await runner({ activation: token, certificate })
+    const result = await runner({ activation: token, certificate, preparedSecureContext })
 
     expect(acquire).toHaveBeenCalledOnce()
     expect(result.services).toHaveLength(6)
@@ -254,7 +257,9 @@ describe("batch efêmero fechado H-9/H-10", () => {
     const results = await Promise.all(
       gates.map(async (gate, index) => {
         const consumed = await gate.consume({ storeId: "loja-1", operatorId: `admin-${index}` })
-        return consumed.ok ? runner({ activation: consumed.activation, certificate }) : consumed
+        return consumed.ok
+          ? runner({ activation: consumed.activation, certificate, preparedSecureContext })
+          : consumed
       }),
     )
 
@@ -275,7 +280,7 @@ describe("batch efêmero fechado H-9/H-10", () => {
       correlationId: () => "correlation-test",
     })
 
-    const result = await runner({ activation: token, certificate })
+    const result = await runner({ activation: token, certificate, preparedSecureContext })
     const serialized = JSON.stringify(result)
 
     expect(serialized).not.toContain(rawMarker)

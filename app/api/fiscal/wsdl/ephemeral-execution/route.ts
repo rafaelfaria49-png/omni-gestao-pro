@@ -10,6 +10,7 @@ import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { resolveActiveCertificate } from "@/lib/fiscal/certificate/resolve-active-certificate"
+import { loadA1MtlsSecureContext } from "@/lib/fiscal/certificate/a1-mtls-material"
 import {
   WSDL_EXECUTION_PILOT_STORE_ID,
   configuredWsdlExecutionWindowStatus,
@@ -164,6 +165,14 @@ export async function POST(request: Request) {
       return response(409, { ok: false, code: "preflight_blocked" })
     }
 
+    // Abre e valida PFX/senha em memória antes de tocar no ledger one-shot. Falha local deixa a
+    // activation disponível; o material bruto é descartado dentro da primitiva.
+    const preparedSecureContext = await loadA1MtlsSecureContext({
+      storeId: active.storeId,
+      blobRef: active.blobRef,
+      senhaRef: active.senhaRef,
+    })
+
     const consumed = await consumeConfiguredWsdlExecutionActivation({
       storeId: acl.storeId,
       operatorId: String(acl.session.user.id ?? "admin"),
@@ -179,6 +188,7 @@ export async function POST(request: Request) {
         blobRef: active.blobRef,
         senhaRef: active.senhaRef,
       },
+      preparedSecureContext,
     })
     return response(200, result as unknown as Record<string, unknown>)
   } catch {
