@@ -155,7 +155,7 @@ describe("pacote 05-XML — GOAL 018", () => {
         id: "rej",
         status: "REJEITADA",
         chaveAcesso: "35260700000000000000000000000000000000000002",
-        xmlAutorizado: null,
+        xmlAutorizado: XML_AUTORIZADA_COMPETENCIA,
         protocolo: null,
       }),
       nota({

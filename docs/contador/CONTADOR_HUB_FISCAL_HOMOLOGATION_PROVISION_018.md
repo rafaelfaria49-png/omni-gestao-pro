@@ -121,12 +121,14 @@ Competência de referência: `2026-07`. XML derivado de `VALID_NFCE_XML` (corpus
 | `autorizada_homologacao_vigente_dhemi_ok` | A | AUTORIZADA / HOMOLOGACAO, `dhEmi` 2026-07-14 | **sim** (único entregável) |
 | `autorizada_fora_competencia` | A | AUTORIZADA, `dhEmi` junho | não |
 | `autorizada_dhemi_invalido` | A | AUTORIZADA, `dhEmi` ilegível | não |
-| `rejeitada` | A | REJEITADA, sem `xmlAutorizado` | não |
+| `rejeitada` | A | REJEITADA, XML sintético com 1 `dhEmi` + offset em 2026-07 (sem data fiscal válida o sinal não entra na competência; a prova exige `REJECTED_COUNT=1`) | não |
 | `cancelada_sintetica_politica_negativa` | A | CANCELADA + XML histórico; **sem** `EventoFiscal` | não |
 | `outra_storeId` | B | clone do entregável | não no reader da loja A |
 | `producao_caso_negativo` | A | `ambiente=PRODUCAO` (coluna; XML de fixture `tpAmb=2`) | não nesta fase |
 
 A linha PRODUCAO existe **só** como teste negativo (`PRODUCTION_XML_ELIGIBLE=false`). Não é documento de produção real.
+
+A fixture `rejeitada` passou a carregar XML sintético HOMOLOGACAO com exatamente 1 `dhEmi` `2026-07-14T12:00:00-03:00` porque, após o fail-closed por competência, nota sem data fiscal válida **não** é atribuída ao mês consultado. Sem esse XML a prova `REJECTED_COUNT=1` quebraria. Não é Production; o reader **não** ganhou fallback para `dataAutorizacao`/`createdAt`.
 
 ---
 

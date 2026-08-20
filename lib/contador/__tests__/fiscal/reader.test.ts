@@ -14,6 +14,7 @@ import {
   extractDhEmiFromXml,
   fiscalReaderHabilitado,
   lerNotasFiscais,
+  parseDhEmiInstant,
   parseStoreAllowlist,
   resolverAcessoFiscal,
   storeAllowlisted,
@@ -21,17 +22,28 @@ import {
   type NotaFiscalRow,
 } from "@/lib/contador/readers/fiscal"
 import {
+  DHEMI_COMPETENCIA,
+  DHEMI_COMPETENCIA_Z,
+  DHEMI_SEM_OFFSET,
+  DHEMI_SO_DATA,
   STORE_A,
   STORE_B,
   XML_AUTORIZADA_COMPETENCIA,
   XML_AUTORIZADA_DHEMI_INVALIDO,
+  XML_AUTORIZADA_DHEMI_Z,
   XML_AUTORIZADA_FORA,
+  XML_AUTORIZADA_SEM_OFFSET,
+  XML_AUTORIZADA_SO_DATA,
+  XML_DHEMI_DUPLICADO,
+  XML_DHEMI_VAZIO,
   XML_SEM_DHEMI,
 } from "@/lib/contador/homologation"
 import type { ContadorScopeInterno } from "@/lib/contador/scope-core"
 
 const COMPETENCIA = { ano: 2026, mes: 7 }
 const PERIODO = resolvePeriodoUtc(COMPETENCIA)
+const PERIODO_JUNHO = resolvePeriodoUtc({ ano: 2026, mes: 6 })
+const PERIODO_AGOSTO = resolvePeriodoUtc({ ano: 2026, mes: 8 })
 const CHAVE_OK = "35260700000000000000000000000000000000000001"
 
 const ENV_ON = {
@@ -164,8 +176,39 @@ describe("predicado entregável ADR-007", () => {
     expect(avaliarEntregavel(nota({ xmlAutorizado: "" }), STORE_A, PERIODO).entregavel).toBe(false)
   })
 
+  it("dhEmi com offset -03:00 entra", () => {
+    expect(extractDhEmiFromXml(XML_AUTORIZADA_COMPETENCIA)).toBe(DHEMI_COMPETENCIA)
+    expect(parseDhEmiInstant(DHEMI_COMPETENCIA)).not.toBeNull()
+    expect(avaliarEntregavel(nota(), STORE_A, PERIODO).entregavel).toBe(true)
+  })
+
+  it("dhEmi com Z entra", () => {
+    expect(extractDhEmiFromXml(XML_AUTORIZADA_DHEMI_Z)).toBe(DHEMI_COMPETENCIA_Z)
+    expect(parseDhEmiInstant(DHEMI_COMPETENCIA_Z)).not.toBeNull()
+    expect(avaliarEntregavel(nota({ xmlAutorizado: XML_AUTORIZADA_DHEMI_Z }), STORE_A, PERIODO).entregavel).toBe(true)
+  })
+
+  it("dhEmi sem offset é rejeitado (não completa timezone)", () => {
+    expect(extractDhEmiFromXml(XML_AUTORIZADA_SEM_OFFSET)).toBe(DHEMI_SEM_OFFSET)
+    expect(parseDhEmiInstant(DHEMI_SEM_OFFSET)).toBeNull()
+    expect(parseDhEmiInstant(DHEMI_SO_DATA)).toBeNull()
+    expect(avaliarEntregavel(nota({ xmlAutorizado: XML_AUTORIZADA_SEM_OFFSET }), STORE_A, PERIODO).entregavel).toBe(false)
+    expect(avaliarEntregavel(nota({ xmlAutorizado: XML_AUTORIZADA_SO_DATA }), STORE_A, PERIODO).entregavel).toBe(false)
+  })
+
+  it("dhEmi duplicado é rejeitado (não usa primeiro match)", () => {
+    expect(extractDhEmiFromXml(XML_DHEMI_DUPLICADO)).toBeNull()
+    expect(avaliarEntregavel(nota({ xmlAutorizado: XML_DHEMI_DUPLICADO }), STORE_A, PERIODO).entregavel).toBe(false)
+  })
+
+  it("dhEmi vazio é rejeitado", () => {
+    expect(extractDhEmiFromXml(XML_DHEMI_VAZIO)).toBeNull()
+    expect(avaliarEntregavel(nota({ xmlAutorizado: XML_DHEMI_VAZIO }), STORE_A, PERIODO).entregavel).toBe(false)
+  })
+
   it("dhEmi ausente/inválido não entra", () => {
     expect(extractDhEmiFromXml(XML_SEM_DHEMI)).toBeNull()
+    expect(parseDhEmiInstant("nao-e-instante")).toBeNull()
     expect(avaliarEntregavel(nota({ xmlAutorizado: XML_SEM_DHEMI }), STORE_A, PERIODO).entregavel).toBe(false)
     expect(avaliarEntregavel(nota({ xmlAutorizado: XML_AUTORIZADA_DHEMI_INVALIDO }), STORE_A, PERIODO).entregavel).toBe(
       false,
@@ -174,6 +217,12 @@ describe("predicado entregável ADR-007", () => {
 
   it("dhEmi fora da competência não entra", () => {
     expect(avaliarEntregavel(nota({ xmlAutorizado: XML_AUTORIZADA_FORA }), STORE_A, PERIODO).entregavel).toBe(false)
+  })
+
+  it("namespace XML prefixado continua extraível quando há exatamente 1 dhEmi", () => {
+    const xmlNs = XML_AUTORIZADA_COMPETENCIA.replaceAll("<dhEmi>", "<nfe:dhEmi>").replaceAll("</dhEmi>", "</nfe:dhEmi>")
+    expect(extractDhEmiFromXml(xmlNs)).toBe(DHEMI_COMPETENCIA)
+    expect(avaliarEntregavel(nota({ xmlAutorizado: xmlNs }), STORE_A, PERIODO).entregavel).toBe(true)
   })
 
   it("REJEITADA não entra", () => {
@@ -224,6 +273,88 @@ describe("predicado entregável ADR-007", () => {
 
   it("vigente=false não entra", () => {
     expect(avaliarEntregavel(nota({ vigente: false }), STORE_A, PERIODO).entregavel).toBe(false)
+  })
+})
+
+describe("sinais REJEITADA/CANCELADA por competência (fail-closed)", () => {
+  it("REJEITADA sem dhEmi não aparece no mês nem se repete em outras competências", () => {
+    const row = nota({
+      id: "rej-sem-dhemi",
+      status: "REJEITADA",
+      xmlAutorizado: null,
+      protocolo: null,
+    })
+    expect(avaliarEntregavel(row, STORE_A, PERIODO).entregavel).toBe(false)
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO).rejeitadas).toHaveLength(0)
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO_JUNHO).rejeitadas).toHaveLength(0)
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO_AGOSTO).rejeitadas).toHaveLength(0)
+  })
+
+  it("REJEITADA com dhEmi no período aparece", () => {
+    const row = nota({
+      id: "rej-ok",
+      status: "REJEITADA",
+      xmlAutorizado: XML_AUTORIZADA_COMPETENCIA,
+      protocolo: null,
+    })
+    const classif = classificarNotasFiscais([row], STORE_A, PERIODO)
+    expect(classif.entregaveis).toHaveLength(0)
+    expect(classif.rejeitadas).toHaveLength(1)
+  })
+
+  it("REJEITADA fora do período não aparece", () => {
+    const row = nota({
+      id: "rej-fora",
+      status: "REJEITADA",
+      xmlAutorizado: XML_AUTORIZADA_FORA,
+      protocolo: null,
+    })
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO).rejeitadas).toHaveLength(0)
+  })
+
+  it("CANCELADA sem dhEmi não aparece no mês nem se repete em outras competências", () => {
+    const row = nota({
+      id: "canc-sem-dhemi",
+      status: "CANCELADA",
+      xmlAutorizado: XML_SEM_DHEMI,
+    })
+    expect(avaliarEntregavel(row, STORE_A, PERIODO).entregavel).toBe(false)
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO).canceladas).toHaveLength(0)
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO_JUNHO).canceladas).toHaveLength(0)
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO_AGOSTO).canceladas).toHaveLength(0)
+  })
+
+  it("CANCELADA com dhEmi no período aparece", () => {
+    const row = nota({ id: "canc-ok", status: "CANCELADA" })
+    const classif = classificarNotasFiscais([row], STORE_A, PERIODO)
+    expect(classif.entregaveis).toHaveLength(0)
+    expect(classif.canceladas).toHaveLength(1)
+  })
+
+  it("CANCELADA fora do período não aparece", () => {
+    const row = nota({
+      id: "canc-fora",
+      status: "CANCELADA",
+      xmlAutorizado: XML_AUTORIZADA_FORA,
+    })
+    expect(classificarNotasFiscais([row], STORE_A, PERIODO).canceladas).toHaveLength(0)
+  })
+
+  it("REJEITADA/CANCELADA sem offset ou com dhEmi duplicado não entram no sinal", () => {
+    expect(
+      classificarNotasFiscais(
+        [nota({ id: "rej-naive", status: "REJEITADA", xmlAutorizado: XML_AUTORIZADA_SEM_OFFSET, protocolo: null })],
+        STORE_A,
+        PERIODO,
+      ).rejeitadas,
+    ).toHaveLength(0)
+    expect(
+      classificarNotasFiscais(
+        [nota({ id: "canc-dup", status: "CANCELADA", xmlAutorizado: XML_DHEMI_DUPLICADO })],
+        STORE_A,
+        PERIODO,
+      ).canceladas,
+    ).toHaveLength(0)
   })
 })
 

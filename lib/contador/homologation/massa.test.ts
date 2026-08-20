@@ -44,7 +44,7 @@ describe("massa HOMOLOGACAO mínima", () => {
     expect(dhemi?.xmlAutorizado).toContain("<dhEmi>nao-e-instante</dhEmi>")
 
     const rej = LINHAS_MASSA.find((l) => l.caso === "rejeitada")
-    expect(rej?.xmlAutorizado).toBeNull()
+    expect(rej?.xmlAutorizado).toContain(`<dhEmi>${DHEMI_COMPETENCIA}</dhEmi>`)
     expect(rej?.status).toBe("REJEITADA")
 
     const canc = LINHAS_MASSA.find((l) => l.caso === "cancelada_sintetica_politica_negativa")

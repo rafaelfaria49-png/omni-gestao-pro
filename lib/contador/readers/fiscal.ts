@@ -114,7 +114,13 @@ const SELECT_NOTA = {
   cStat: true,
 } as const
 
-const DH_EMI_RE = /<(?:[\w.]+:)?dhEmi\s*>([^<]*)<\/(?:[\w.]+:)?dhEmi\s*>/i
+/** Tag `dhEmi` com namespace opcional. Sem flag `g` no módulo — `lastIndex` vaza entre chamadas. */
+const DH_EMI_TAG_SOURCE = "<(?:[\\w.]+:)?dhEmi\\s*>([^<]*)</(?:[\\w.]+:)?dhEmi\\s*>"
+/**
+ * Instante fiscal fail-closed: data+hora com timezone explícito `Z` ou `±HH:MM`.
+ * Não completa offset, não assume fuso local, não assume UTC.
+ */
+const DH_EMI_INSTANT_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)(Z|[+-]\d{2}:\d{2})$/
 const CHAVE_ARQUIVO_RE = /^[0-9A-Za-z]+$/
 
 function envDe(env: Record<string, string | undefined> = process.env): Record<string, string | undefined> {
@@ -154,19 +160,27 @@ export function textoPresente(v: string | null | undefined): v is string {
   return typeof v === "string" && v.trim().length > 0
 }
 
-/** Extrai `dhEmi` de `xmlAutorizado`. Sem fallback para outros campos. */
+/**
+ * Extrai `dhEmi` de `xmlAutorizado` por cardinalidade. Sem fallback.
+ * 0 ocorrência → null; 1 ocorrência não vazia → valor; 2+ → null.
+ */
 export function extractDhEmiFromXml(xml: string): string | null {
   if (typeof xml !== "string" || xml.length === 0) return null
-  const m = DH_EMI_RE.exec(xml)
-  if (!m) return null
-  const raw = m[1]?.trim() ?? ""
+  const matches = [...xml.matchAll(new RegExp(DH_EMI_TAG_SOURCE, "gi"))]
+  if (matches.length !== 1) return null
+  const raw = matches[0]?.[1]?.trim() ?? ""
   return raw.length > 0 ? raw : null
 }
 
-/** Instante parseável. Inválido → `null` (não entregável). */
+/**
+ * Instante fiscal. Exige timezone explícito (`Z` ou `±HH:MM`).
+ * Datetime sem offset, data nua e texto inválido → `null`.
+ */
 export function parseDhEmiInstant(raw: string): Date | null {
   if (!textoPresente(raw)) return null
-  const d = new Date(raw)
+  const trimmed = raw.trim()
+  if (!DH_EMI_INSTANT_RE.test(trimmed)) return null
+  const d = new Date(trimmed)
   if (Number.isNaN(d.getTime())) return null
   return d
 }
@@ -235,15 +249,16 @@ export function avaliarEntregavel(
 }
 
 /**
- * Sinal de rejeitada/cancelada na competência: com dhEmi parseável, filtra pelo
- * período; sem dhEmi (típico de REJEITADA) o sinal permanece visível — não há
- * fallback de data, e ocultar seria tratar ausência como “zero”.
+ * Sinal de rejeitada/cancelada na competência: somente com exatamente um
+ * `dhEmi` válido (offset explícito) dentro do período. Sem data fiscal válida
+ * o documento não é atribuído ao mês consultado — não há fallback para
+ * `dataAutorizacao`, `createdAt` ou outra coluna.
  */
 export function visivelComoSinalNaCompetencia(row: NotaFiscalRow, periodo: PeriodoUtc): boolean {
-  if (!textoPresente(row.xmlAutorizado)) return true
+  if (!textoPresente(row.xmlAutorizado)) return false
   const dh = extractDhEmiFromXml(row.xmlAutorizado)
   const d = dh ? parseDhEmiInstant(dh) : null
-  if (!d) return true
+  if (!d) return false
   return dhEmiNoPeriodo(d, periodo)
 }
 
