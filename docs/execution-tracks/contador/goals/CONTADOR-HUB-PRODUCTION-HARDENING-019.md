@@ -1,0 +1,153 @@
+<!-- AEP:META
+{
+  "aep": "1.0-R2",
+  "id": "CONTADOR-HUB-PRODUCTION-HARDENING-019",
+  "track": "contador",
+  "title": "Hardening de produção do Contador — retenção, observabilidade, carga e encerramento do legado (G4)",
+  "status": "READY",
+  "class": "C2",
+  "risk_tier": "MEDIO",
+  "branch": "goal/contador-019-production-hardening",
+  "worktree": "C:/Projetos/omni-gestao-contador-019",
+  "test_command": "npm run typecheck",
+  "allowlist": [
+    "lib/contador/retencao/**",
+    "lib/contador/observabilidade.ts",
+    "lib/contador/observabilidade.test.ts",
+    "lib/contador/legado/**",
+    "lib/contador/auth/legacy-session.ts",
+    "lib/contador/auth/legacy-session.test.ts",
+    "app/api/auth/contador/route.test.ts",
+    "app/api/contador/pacote/route.ts",
+    "app/contador-externo/_portal-pagina.ts",
+    "proxy.ts",
+    ".env.example",
+    "scripts/contador/carga-sintetica-pacote.mjs",
+    "scripts/contador/retencao-dry-run.ts",
+    "docs/contador/OPERACAO_CONTADOR_019.md",
+    "docs/contador/CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md",
+    "docs/status/MOCKS_TRACKING.md",
+    "docs/ai/CURRENT_STATUS.md",
+    "docs/ai-execution/_evidence/**",
+    "docs/execution-tracks/contador/goals/CONTADOR-HUB-PRODUCTION-HARDENING-019.md"
+  ],
+  "gates_liberados": [
+    "G-AUTH",
+    "G-CONFIG-DEPLOY"
+  ],
+  "read_budget": 60,
+  "plan_ref": "CONTADOR-HUB-FABLE5-MASTERPLAN-001",
+  "plan_rev": 1,
+  "familia_executor": null,
+  "revisao_independente": false,
+  "reversibilidade": null,
+  "gates_extra": [
+    {
+      "id": "main",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "schema",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "migration",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "auth_externa",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "storage_r2_preview",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "storage_r2_production",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "portal_legado",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "dados_destrutivos",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "secrets",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "deploy",
+      "status": "pendente",
+      "dependencias": []
+    },
+    {
+      "id": "retencao_apply",
+      "status": "pendente",
+      "dependencias": []
+    }
+  ],
+  "gate_humano": {
+    "requerido": true,
+    "pendente": false,
+    "aprovacao": {
+      "aprovado": true,
+      "autorizacao": "G4 APROVADO por Rafael em 2026-08-20 e publicado em origin/main (6aa470a, docs/contador/CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md): legado encerrado por REDIRECT /contador -> portal v2, sem remocao fisica; destrava explicitamente o trecho contador do proxy.ts (G-AUTH). G-CONFIG-DEPLOY liberado SOMENTE para .env.example (default do kill-switch CONTADOR_LEGACY_PORTAL e flag CONTADOR_RETENCAO_APPLY), conforme a lista de arquivos do GOAL 019 no mesmo roadmap. Numeros de retencao aprovados: FISCAL/JURIDICO/FOLHA sem purga automatica; FINANCEIRO/OUTRO 5 anos; pacote ZIP 12 meses; blob soft-deletado 90 dias apos excluidoEm. LGPD: manter minimizacao atual, sem PII de cliente nos CSVs. Restricoes: dry-run primeiro; nunca apagar registro, evento ou trilha de auditoria; nenhuma operacao destrutiva em Production nesta execucao; APPLY nao habilitado em nenhum ambiente. SEM schema, SEM migration.",
+      "registrado_por": "Rafael (decisoes G4/LGPD/retencao publicadas em 6aa470a) + prompt de execucao do GOAL 019 nesta sessao",
+      "em": "2026-08-20T15:26:52Z"
+    }
+  }
+}
+-->
+
+# CONTADOR-HUB-PRODUCTION-HARDENING-019 — Hardening de produção do Contador — retenção, observabilidade, carga e encerramento do legado (G4)
+
+- trilha: `contador`
+- classe: C2 · status: READY
+- plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
+- branch: `goal/contador-019-production-hardening`
+- teste: `npm run typecheck`
+
+## Fontes (documentos de origem — o importador NÃO reimplementa nada)
+
+- `auditoria`: `docs/contador/CONTADOR_HUB_PORTAL_EXTERNO_AUDIT_013.md`
+- `comandos`: `docs/contador/CONTADOR_HUB_COMMANDS_001.md`
+- `masterplan`: `docs/contador/CONTADOR_HUB_FABLE5_MASTERPLAN_001.md`
+- `roadmap`: `docs/contador/CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md`
+
+## Allowlist
+
+- `lib/contador/retencao/**`
+- `lib/contador/observabilidade.ts`
+- `lib/contador/observabilidade.test.ts`
+- `lib/contador/legado/**`
+- `lib/contador/auth/legacy-session.ts`
+- `lib/contador/auth/legacy-session.test.ts`
+- `app/api/auth/contador/route.test.ts`
+- `app/api/contador/pacote/route.ts`
+- `app/contador-externo/_portal-pagina.ts`
+- `proxy.ts`
+- `.env.example`
+- `scripts/contador/carga-sintetica-pacote.mjs`
+- `scripts/contador/retencao-dry-run.ts`
+- `docs/contador/OPERACAO_CONTADOR_019.md`
+- `docs/contador/CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md`
+- `docs/status/MOCKS_TRACKING.md`
+- `docs/ai/CURRENT_STATUS.md`
+- `docs/ai-execution/_evidence/**`
+- `docs/execution-tracks/contador/goals/CONTADOR-HUB-PRODUCTION-HARDENING-019.md`
+
+## Critério de pronto
+
+- <PREENCHER>
