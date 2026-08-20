@@ -9,6 +9,60 @@
 
 ---
 
+## Contador HUB — GOAL 019 hardening de produção · 20/08/2026
+
+```
+RETENTION_POLICY_IMPLEMENTED=true
+RETENTION_DRY_RUN_PASS=true
+PRODUCTION_RETENTION_APPLY_EXECUTED=false
+FISCAL_AUTO_PURGE=false
+JURIDICO_AUTO_PURGE=false
+FOLHA_AUTO_PURGE=false
+FINANCEIRO_RETENTION_YEARS=5
+OUTRO_RETENTION_YEARS=5
+PACKAGE_RETENTION_MONTHS=12
+SOFT_DELETED_BLOB_RETENTION_DAYS=90
+AUDIT_TRAIL_PRESERVED=true
+PII_IN_CSV=false
+OBSERVABILITY_READY=true
+LOAD_TEST_COMPLETED=true
+LEGACY_REDIRECT_ACTIVE=true
+PORTAL_V2_PRESERVED=true
+SCHEMA_CHANGED=false
+CONTADOR_RETENCAO_APPLY=off (não definida em nenhum ambiente)
+CONTADOR_LEGACY_PORTAL=off (default INVERTIDO no 019; só "on" reabre o legado)
+```
+
+Política de retenção centralizada em `lib/contador/retencao/politica.ts` (calendário
+civil UTC, não múltiplo de dias). Job idempotente em `lib/contador/retencao/job.ts`:
+**dry-run é o modo padrão** e não recebe sequer a porta de escrita; `apply` exige
+`CONTADOR_RETENCAO_APPLY=on` e falha fechado sem ela. O descarte atinge **apenas o
+blob** — nenhum `DELETE` de `ContadorDocumento`, `ContadorPacote`, `ContadorPacoteItem`
+ou `ContadorEvento`, e o snapshot congelado é intocável (pacote segue regenerável).
+Idempotência ancorada na existência do objeto no storage.
+
+Observabilidade em `lib/contador/observabilidade.ts` — 8 métricas nomeadas sobre o log
+estruturado que já existia; labels com allowlist de chave **e** formato de valor
+(slug iniciado por letra), que exclui `storageRef`, URL assinada, e-mail e
+CPF/CNPJ/telefone com ou sem máscara.
+
+**G4 executado (redirect, não remoção):** `/contador` e `/login-contador` redirecionam
+para `/contador-externo/login`; `POST /api/auth/contador` responde 503. Nada foi
+removido do repositório e o gate de sessão legado do `proxy.ts` ficou intacto como
+caminho de rollback (`CONTADOR_LEGACY_PORTAL=on`). Portal v2 e `/dashboard/contador`
+inalterados.
+
+Carga sintética (sem banco): 20 000 vendas / 40 091 itens → pacote em **635 ms**, ZIP
+de 1,21 MB, heap 62,3 MB, 0 falhas. **Não há SLA canônico** — resultado registrado, sem
+threshold inventado. Runbook: [`docs/contador/OPERACAO_CONTADOR_019.md`](../contador/OPERACAO_CONTADOR_019.md).
+
+**Pendências que bloqueiam o APPLY real** (não bloqueiam dry-run): decidir processo
+pendente para `FINANCEIRO`/`OUTRO` e o soft-delete de blob `FISCAL` aos 90 dias.
+`CONTADOR_PORTAL_V2` continua `off` por padrão — ligar junto com a comunicação do
+encerramento do legado, senão as páginas de dados do v2 respondem 404.
+
+---
+
 ## Contador HUB — GOAL 018 FECHADO NA MAIN (PR #97) · 20/08/2026
 
 ```
@@ -78,7 +132,7 @@ Central de avisos **REAL** na Visão geral. Sem botão Enviar. Canal classifica�
 - [`CONTADOR_HUB_DADOS_REAIS_READONLY_006.md`](../contador/CONTADOR_HUB_DADOS_REAIS_READONLY_006.md) — closure do GOAL 006.
 - [`CONTADOR_HUB_STATUS_COMENTARIOS_011.md`](../contador/CONTADOR_HUB_STATUS_COMENTARIOS_011.md) — closure do GOAL 011 (inclui **Pendências da revisão**).
 
-**Próximo:** GOAL 012 já entregue (fechamento com snapshot). Gates seguintes: **G3** realizado (portal v2 + ADRs 002/008); **G4** antes do GOAL 019 (retirada do legado). **ADR-007 Accepted** — `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`.
+**Próximo:** GOALs 012–018 entregues. Gates: **G3** realizado (portal v2 + ADRs 002/008); **G4 APROVADO em 2026-08-20** — legado encerrado por redirect `/contador` → portal v2, a executar no GOAL 019. **ADR-007 Accepted** · GOAL 018 **DONE**. Decisões pré-019 (G4, LGPD e números de retenção) registradas em [`CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md`](../contador/CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md). GOAL 019 **não aberto**.
 
 > **Ressalva de revisão (GOAL 011):** antes de integrar o portal externo (GOAL 015) é obrigatório filtrar também os **eventos** da timeline no contexto `compartilhado` — hoje só os comentários são cortados. Detalhe e demais pendências no documento de closure do GOAL 011.
 

@@ -14,6 +14,7 @@ import {
   verifyContadorSessionToken,
 } from "@/lib/contador/auth/legacy-session"
 import { isSegmentoContadorExterno } from "@/lib/contador/auth-externa/proxy-publico"
+import { isRotaLegadaContador, PORTAL_V2_LOGIN } from "@/lib/contador/legado/rota-legada"
 import { isPublicPath, resolveProxyEntry } from "@/lib/auth/proxy-session-gate"
 
 const { auth } = NextAuth(authConfig)
@@ -52,6 +53,27 @@ export const proxy = auth(async (req) => {
     const res = NextResponse.next()
     res.headers.set("Referrer-Policy", "no-referrer")
     return res
+  }
+
+  // GOAL 019 (gate G4): portal legado ENCERRADO por redirect para o portal v2.
+  //
+  // Precisa vir ANTES de `resolveProxyEntry`, porque `/login-contador` é rota aberta
+  // (`isLoginContadorPath`) e seria liberada antes de chegar ao trecho do legado lá
+  // embaixo. `isSegmentoContadorExterno` já retornou acima, então `/contador-externo`
+  // nunca alcança esta linha — e `isRotaLegadaContador` recusa esse segmento de novo,
+  // para o redirect não depender da ordem dos blocos.
+  //
+  // Com o kill-switch na posição padrão (off) NENHUMA sessão legada é consultada: o
+  // cookie `assistec_contador_session` deixa de abrir qualquer porta. Reabrir o
+  // legado é ato deliberado (`CONTADOR_LEGACY_PORTAL=on`) e devolve exatamente o
+  // comportamento anterior, incluindo o gate de sessão original.
+  if (isRotaLegadaContador(pathname)) {
+    if (!resolveLegacyPortalEnabled()) {
+      const u = req.nextUrl.clone()
+      u.pathname = PORTAL_V2_LOGIN
+      u.search = ""
+      return NextResponse.redirect(u)
+    }
   }
 
   const pageParam = req.nextUrl.searchParams.get("page")
@@ -101,6 +123,9 @@ export const proxy = auth(async (req) => {
     }
   }
 
+  // GOAL 019: só é alcançável com `CONTADOR_LEGACY_PORTAL=on` — com o kill-switch na
+  // posição padrão o bloco G4 acima já redirecionou para o portal v2. Preservado
+  // INTACTO de propósito: é o comportamento exato para onde o rollback do G4 volta.
   if (pathname === "/contador" || pathname.startsWith("/contador/")) {
     const redirectToLogin = () => {
       const u = req.nextUrl.clone()

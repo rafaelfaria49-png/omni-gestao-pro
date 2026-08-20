@@ -60,6 +60,28 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx prisma generate
       - run: npm run fiscal:xsd:verify-hashes
+      - name: Instalar xmllint (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          if ! command -v xmllint >/dev/null 2>&1; then
+            echo "::error::Falha ao provisionar xmllint via libxml2-utils no Ubuntu."
+            exit 1
+          fi
+          xmllint --version
+      - name: Verificar xmllint no PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xmllint >/dev/null 2>&1; then
+            echo "::error::xmllint ausente no PATH (${{ runner.os }}). Ubuntu exige libxml2-utils; Windows exige xmllint resolvível. A validação XSD B2 não pode ser pulada."
+            exit 1
+          fi
+          echo "xmllint=$(command -v xmllint)"
+          xmllint --version
       - run: npm run test:fiscal-xsd:unit
       - name: Testes provider SEFAZ
         run: npx vitest run lib/fiscal/provider/sefaz --testTimeout=30000
@@ -96,6 +118,26 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx prisma generate
       - run: npm run fiscal:xsd:verify-hashes
+      - name: Instalar xmllint (Ubuntu)
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libxml2-utils
+          if ! command -v xmllint >/dev/null 2>&1; then
+            echo "::error::Falha ao provisionar xmllint via libxml2-utils no Ubuntu."
+            exit 1
+          fi
+          xmllint --version
+      - name: Verificar xmllint no PATH
+        run: |
+          set -euo pipefail
+          if ! command -v xmllint >/dev/null 2>&1; then
+            echo "::error::xmllint ausente no PATH do job container. Ubuntu exige libxml2-utils. A validação XSD B2 não pode ser pulada."
+            exit 1
+          fi
+          echo "xmllint=$(command -v xmllint)"
+          xmllint --version
       - name: Build imutável do worker
         run: docker build --pull --file workers/fiscal-xsd/Dockerfile --tag "$IMAGE" .
       - name: Criar rede sem egress e executar com limites externos

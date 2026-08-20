@@ -101,12 +101,14 @@ describe("cookie de sessão", () => {
 })
 
 describe("resolveLegacyPortalEnabled", () => {
-  it("default (env ausente) mantém o portal ligado", () => {
+  // GOAL 019 (gate G4): o default INVERTEU — de "on" para "off". Só o valor exato
+  // "on" reabre o legado; qualquer outra coisa mantém desligado (fail closed).
+  it("default (env ausente) mantém o portal DESLIGADO", () => {
     delete process.env.CONTADOR_LEGACY_PORTAL
-    expect(resolveLegacyPortalEnabled()).toBe(true)
+    expect(resolveLegacyPortalEnabled()).toBe(false)
   })
 
-  it("\"on\" mantém o portal ligado", () => {
+  it("\"on\" reabre o portal legado (rollback operacional do G4)", () => {
     process.env.CONTADOR_LEGACY_PORTAL = "on"
     expect(resolveLegacyPortalEnabled()).toBe(true)
     delete process.env.CONTADOR_LEGACY_PORTAL
@@ -119,8 +121,18 @@ describe("resolveLegacyPortalEnabled", () => {
   })
 
   it("é case-insensitive e tolera espaços", () => {
+    process.env.CONTADOR_LEGACY_PORTAL = "  ON  "
+    expect(resolveLegacyPortalEnabled()).toBe(true)
     process.env.CONTADOR_LEGACY_PORTAL = "  OFF  "
     expect(resolveLegacyPortalEnabled()).toBe(false)
+    delete process.env.CONTADOR_LEGACY_PORTAL
+  })
+
+  it("valor ambíguo NUNCA reabre o legado", () => {
+    for (const valor of ["true", "1", "yes", "enabled", "", "onn"]) {
+      process.env.CONTADOR_LEGACY_PORTAL = valor
+      expect(resolveLegacyPortalEnabled(), `valor="${valor}"`).toBe(false)
+    }
     delete process.env.CONTADOR_LEGACY_PORTAL
   })
 })

@@ -24,11 +24,15 @@ import {
   PacoteLimiteExcedidoError,
   PacoteTimeoutError,
 } from "@/lib/contador/pacote"
+import { METRICAS, registrarMetrica } from "@/lib/contador/observabilidade"
 
 // jszip + Prisma exigem Node; o download é dinâmico e nunca cacheado.
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
+
+/** Rótulo curto e estável do emissor, para a label `origem` das métricas (GOAL 019). */
+const ORIGEM_METRICA = "pacote_sob_demanda"
 
 const MOTIVO_STATUS: Record<FalhaEscopoContador["motivo"], number> = {
   nao_autenticado: 401,
@@ -104,6 +108,13 @@ export async function GET(req: Request) {
       fontesParciais: pacote.metricas.fontesParciais,
       fontesIndisponiveis: pacote.metricas.fontesIndisponiveis,
     })
+    // GOAL 019 — métrica nomeada, ao lado do log estruturado que já existia.
+    // Labels passam pelo saneador: `loja` é escopo de tenant, nunca PII de cliente.
+    registrarMetrica(METRICAS.pacoteGeracaoDuracaoMs, Date.now() - inicio, {
+      origem: ORIGEM_METRICA,
+      loja: escopo.storeId,
+      resultado: "ok",
+    })
     return new NextResponse(Buffer.from(pacote.bytes), {
       status: 200,
       headers: {
@@ -123,6 +134,11 @@ export async function GET(req: Request) {
         limite: e.limite,
         duracaoMs: Date.now() - inicio,
       })
+      registrarMetrica(METRICAS.pacoteGeracaoFalhasTotal, 1, {
+        origem: ORIGEM_METRICA,
+        loja: escopo.storeId,
+        motivo: "limite_excedido",
+      })
       return NextResponse.json(
         { ok: false, mensagem: "O pacote desta competência é grande demais para geração sob demanda." },
         { status: 413 },
@@ -136,6 +152,11 @@ export async function GET(req: Request) {
         limiteMs: e.limiteMs,
         duracaoMs: Date.now() - inicio,
       })
+      registrarMetrica(METRICAS.pacoteGeracaoFalhasTotal, 1, {
+        origem: ORIGEM_METRICA,
+        loja: escopo.storeId,
+        motivo: "timeout",
+      })
       return NextResponse.json(
         { ok: false, mensagem: "A geração do pacote desta competência demorou mais que o tempo limite. Tente novamente em instantes." },
         { status: 503 },
@@ -147,6 +168,11 @@ export async function GET(req: Request) {
       competencia: compCodigo,
       erro: e instanceof Error ? e.name : "erro",
       duracaoMs: Date.now() - inicio,
+    })
+    registrarMetrica(METRICAS.pacoteGeracaoFalhasTotal, 1, {
+      origem: ORIGEM_METRICA,
+      loja: escopo.storeId,
+      motivo: "erro_interno",
     })
     return NextResponse.json(
       { ok: false, mensagem: "Não foi possível gerar o pacote desta competência agora. Tente novamente em instantes." },

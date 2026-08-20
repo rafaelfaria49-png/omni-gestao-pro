@@ -22,6 +22,10 @@ import {
 import { criarRepoAuthExterna } from "@/lib/contador/auth-externa/repo-prisma"
 import { CONTADOR_EXTERNO_COOKIE } from "@/lib/contador/auth-externa/sessao"
 import { portalExternoV2Habilitado } from "@/lib/contador/portal/flag"
+import { METRICAS, registrarMetrica } from "@/lib/contador/observabilidade"
+
+/** Rótulo curto e estável do emissor, para a label `origem` das métricas (GOAL 019). */
+const ORIGEM_METRICA = "portal_pagina"
 
 /**
  * Resolve o escopo da página ou encerra o render (404/redirect). Só retorna com
@@ -31,14 +35,31 @@ import { portalExternoV2Habilitado } from "@/lib/contador/portal/flag"
  * a página renderizar a tela honesta de indisponibilidade, igual ao GOAL 014.
  */
 export async function escopoDaPaginaPortal(loja: string): Promise<ContadorScopeExterno | null> {
-  if (!portalExternoV2Habilitado()) notFound()
+  if (!portalExternoV2Habilitado()) {
+    negado("flag_off")
+    notFound()
+  }
 
   const token = (await cookies()).get(CONTADOR_EXTERNO_COOKIE)?.value ?? null
   const escopo = await resolverEscopoExterno(criarRepoAuthExterna(), { token, storeId: loja })
 
   if (escopo.ok) return escopo
+  negado(escopo.motivo)
   if (escopo.motivo === "indisponivel") return null
   if (escopo.motivo === "acesso_negado") notFound()
   if (escopo.motivo === "sessao_invalida") redirect("/contador-externo/sessao-expirada")
   redirect("/contador-externo/login")
+}
+
+/**
+ * GOAL 019 — métrica de acesso negado do portal.
+ *
+ * O `motivo` é um rótulo técnico de união fechada (`flag_off`, `nao_autenticado`,
+ * `sessao_invalida`, `acesso_negado`, `indisponivel`), nunca texto livre. A LOJA
+ * pedida NÃO entra na métrica de propósito: o portal é anti-enumeração (§9 da
+ * auditoria 013) e publicar o segmento pedido devolveria, pelo painel, exatamente a
+ * confirmação de existência que o `notFound()` recusa a dar.
+ */
+function negado(motivo: string): void {
+  registrarMetrica(METRICAS.portalAcessoNegadoTotal, 1, { origem: ORIGEM_METRICA, motivo })
 }
