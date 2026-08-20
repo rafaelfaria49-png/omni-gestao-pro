@@ -404,3 +404,27 @@ GOAL_018_OPENED=false
 ```
 
 **Fim da auditoria. GOAL 018 permanece não importado / não aberto. PARE.**
+
+---
+
+## Addendum — ratificação humana + provisionamento B (2026-08-20)
+
+Rafael ratificou **homologação B** e **reader A**, autorizou o merge do PR **#92** e o Postgres efêmero/local com seed HOMOLOGACAO. **Não** autorizou Production, SEFAZ nem `import`/`open` do GOAL 018.
+
+Provisionamento: [`CONTADOR_HUB_FISCAL_HOMOLOGATION_PROVISION_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_PROVISION_018.md).
+
+```
+HOMOLOGATION_STRATEGY_SELECTED=B
+PURE_READER_STRATEGY_SELECTED=A
+NON_PRODUCTION_RUNTIME_AVAILABLE=true
+FISCAL_RUNTIME_VALIDATABLE=false
+GOAL_018_OPENED=false
+GOAL_018_CAN_BE_OPENED_AFTER_THIS_AUDIT=false
+SEFAZ_NETWORK_REQUIRED=false
+PRODUCTION_REQUIRED=false
+REMAINING_BLOCKERS=AEP_import_open_ainda_negado; teto_15_arquivos_antes_do_slice_N_xml_ou_relacao_csv; reader_predicado_checklist_05xml_sao_GOAL_018
+```
+
+`FISCAL_RUNTIME_VALIDATABLE` segue **false** até o 018 implementar o caminho §3.1 (reader A → predicado → checklist → pacote/`05-XML`) sobre esta massa, sem mock no caminho. O teto de 15 arquivos **não** foi aumentado.
+
+**GOAL 018 permanece não importado / não aberto.**

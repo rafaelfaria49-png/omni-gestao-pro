@@ -1,0 +1,27 @@
+# Postgres efêmero só para a massa HOMOLOGACAO do Contador (estratégia B).
+# Bind em 127.0.0.1 — não publica na rede. Dados em tmpfs (somem com `down -v`).
+# Nunca apontar este compose para Production / SEFAZ.
+#
+#   docker compose -f docker-compose.contador-fiscal-homolog.yml up -d
+#   npm run contador:fiscal-homolog:provision
+#
+name: omni-contador-fiscal-homolog
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: omni-contador-fiscal-homolog
+    restart: "no"
+    ports:
+      - "127.0.0.1:54329:5432"
+    environment:
+      POSTGRES_USER: omni_homolog
+      POSTGRES_PASSWORD: omni_homolog_local_only
+      POSTGRES_DB: omni_contador_fiscal_homolog
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omni_homolog -d omni_contador_fiscal_homolog"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
