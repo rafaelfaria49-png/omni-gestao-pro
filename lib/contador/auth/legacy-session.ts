@@ -130,10 +130,20 @@ export function buildContadorLogoutCookieOptions(): CookieOptions {
   }
 }
 
-/** `"off"` desativa o portal legado; qualquer outro valor (inclusive ausente) mantém o comportamento atual. */
+/**
+ * Kill-switch do portal legado — DEFAULT OFF a partir do GOAL 019 (gate G4).
+ *
+ * Até o 018 o default era `on`: o legado seguia vivo enquanto o portal v2 não
+ * estivesse pronto. Com o G4 aprovado (redirect `/contador` → portal v2), a posição
+ * padrão inverteu — só o valor EXATO `"on"` reabre o legado. Ausente, vazia ou
+ * qualquer outro valor mantém desligado, que é o estado seguro: um endpoint de PIN
+ * global emitindo sessão para uma página que já não atende é passivo puro.
+ *
+ * Reabrir é ato deliberado e reversível (`CONTADOR_LEGACY_PORTAL=on`), documentado
+ * no runbook como o rollback operacional do G4.
+ */
 export function resolveLegacyPortalEnabled(): boolean {
-  const raw = (process.env.CONTADOR_LEGACY_PORTAL ?? "on").trim().toLowerCase()
-  return raw !== "off"
+  return (process.env.CONTADOR_LEGACY_PORTAL ?? "off").trim().toLowerCase() === "on"
 }
 
 /** Hash não-reversível do IP para correlação em log — nunca logar o IP bruto. */
