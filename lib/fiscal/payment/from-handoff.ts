@@ -44,6 +44,16 @@ function detSortKey(d: PagamentoFiscalDetalhe): string {
   return `${d.tPag}:${d.formaInterna}`
 }
 
+/** `undefined` = ausente; `"invalid"` = presente mas não é evidência. */
+function parseHandoffCashTendered(handoff: Record<string, unknown>): number | undefined | "invalid" {
+  if (!("cashTendered" in handoff) || handoff.cashTendered === undefined || handoff.cashTendered === null) {
+    return undefined
+  }
+  const raw = handoff.cashTendered
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return "invalid"
+  return round2(raw)
+}
+
 function tPagComprovadoDaLinha(linha: FiscalPaymentHandoffLinha): string | null {
   if (linha.formaOrigem === "dinheiro" || linha.formaOrigem === "cartaoDebito" || linha.formaOrigem === "cartaoCredito" || linha.formaOrigem === "creditoVale") {
     return HANDOFF_TPAG_COMPROVADO[linha.formaOrigem as HandoffFormaComTPagComprovado]
@@ -231,13 +241,44 @@ export function derivePagamentoFiscalFromHandoff(
 
   dets.sort((a, b) => (detSortKey(a) < detSortKey(b) ? -1 : detSortKey(a) > detSortKey(b) ? 1 : 0))
 
-  const soma = round2(dets.reduce((s, d) => s + d.vPag, 0))
+  const applied = dets.map((d) => ({ ...d }))
+  const dinheiroIdx = applied.findIndex((d) => d.formaInterna === "dinheiro")
+  const dinheiroAplicado = dinheiroIdx >= 0 ? applied[dinheiroIdx]!.vPag : 0
+  const cashParsed = parseHandoffCashTendered(handoff)
+
+  if (cashParsed === "invalid") {
+    return erro(
+      "PAGAMENTO_VALOR_INVALIDO",
+      "cashTendered inválido (NaN/negativo/não-finito). Não é aceito como evidência fiscal e não gera vTroco.",
+      "venda.fiscalPaymentHandoff.cashTendered",
+    )
+  }
+
+  let vTroco: number | null = null
+  if (cashParsed != null) {
+    if (dinheiroAplicado <= 0) {
+      // só relevante quando dinheiro > 0 — ignora o campo, não inventa troco
+    } else if (cashParsed < dinheiroAplicado) {
+      return erro(
+        "PAGAMENTO_VALOR_INVALIDO",
+        `cashTendered (${cashParsed.toFixed(2)}) menor que o dinheiro aplicado (${dinheiroAplicado.toFixed(2)}). Não é evidência fiscal.`,
+        "venda.fiscalPaymentHandoff.cashTendered",
+      )
+    } else if (cashParsed > dinheiroAplicado) {
+      applied[dinheiroIdx] = { ...applied[dinheiroIdx]!, vPag: cashParsed }
+      vTroco = round2(cashParsed - dinheiroAplicado)
+    }
+  }
+
+  const soma = round2(applied.reduce((s, d) => s + d.vPag, 0))
   const totalR = round2(totalReferencia)
-  if (soma !== totalR) {
-    const lado = soma < totalR ? "abaixo" : "acima"
+  const troco = vTroco == null ? 0 : vTroco
+  const liquido = round2(soma - troco)
+  if (liquido !== totalR) {
+    const lado = liquido < totalR ? "abaixo" : "acima"
     return erro(
       "PAGAMENTO_SOMA_DIVERGENTE",
-      `Soma do handoff (${soma.toFixed(2)}) está ${lado} do total da venda (${totalR.toFixed(2)}). Sem correção automática.`,
+      `Σ(vPag) − vTroco (${soma.toFixed(2)} − ${troco.toFixed(2)}) está ${lado} do total da venda (${totalR.toFixed(2)}). NT 2016.002 YA09-10. Sem correção automática.`,
       "venda.fiscalPaymentHandoff",
     )
   }
@@ -246,9 +287,9 @@ export function derivePagamentoFiscalFromHandoff(
     versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
     fonte: "venda.payload.fiscalPaymentHandoff",
     catalogoTPag: "IT-2024.002-v1.11",
-    det: dets,
+    det: applied,
     soma,
-    vTroco: null,
+    vTroco,
   }
   return { ok: true, pagamento }
 }

@@ -76,8 +76,12 @@ export type PagamentoFiscalDetalhe = {
 }
 
 /**
- * Pagamento fiscal congelado. `vTroco` é sempre `null` neste contrato: o PDV
- * normaliza o dinheiro ao total antes de persistir e não grava valor entregue/troco.
+ * Pagamento fiscal congelado.
+ *
+ * `soma` = Σ detPag.vPag (valores informados no XML, não o líquido da venda).
+ * `vTroco` = null quando não há evidência de dinheiro entregue acima do aplicado;
+ * caso contrário é Σ(vPag) − vNF, derivado no servidor a partir de `cashTendered`.
+ * Invariância oficial (NT 2016.002 YA09-10): soma − (vTroco ?? 0) === total da venda.
  */
 export type PagamentoFiscalFonte =
   | "venda.payload.paymentBreakdown"
@@ -89,7 +93,7 @@ export type PagamentoFiscalCanonico = {
   readonly catalogoTPag: "IT-2024.002-v1.11"
   readonly det: readonly PagamentoFiscalDetalhe[]
   readonly soma: number
-  readonly vTroco: null
+  readonly vTroco: number | null
 }
 
 export type PagamentoFiscalDeriveOk = {

@@ -5,7 +5,7 @@
  * que a venda é persistida. Congelado em `Venda.payload.fiscalPaymentHandoff`.
  *
  * Fiscal é somente consumidor. Este módulo é PURO: sem Prisma, Caixa, Financeiro,
- * PaymentModal ou SEFAZ. Não inventa tPag, grupo `card` nem troco.
+ * PaymentModal ou SEFAZ. Não inventa tPag, grupo `card` nem vTroco do cliente.
  *
  * PIX: tPag 17/20/23 só quando `pixQrKind` conhecido é observado. Sem default.
  * creditoVale: tPag 21 unívoco (crédito em loja de devolução/troca). Carne e aPrazo
@@ -81,13 +81,15 @@ export type FiscalPaymentHandoffLinha = {
 
 /**
  * Contrato mínimo congelado no payload da Venda.
- * `vTroco` / `valorEntregue` são omitidos: o PDV descarta o valor entregue
- * (`normalizePaymentsToMatchTotal`) e só persiste o líquido aplicado à venda.
+ * `vTroco` NÃO é persistido — o cliente não é autoridade; o Fiscal deriva.
+ * `cashTendered` é o dinheiro fisicamente entregue (evidência), não receita.
  */
 export type FiscalPaymentHandoff = {
   readonly version: typeof FISCAL_PAYMENT_HANDOFF_VERSION
   readonly catalogoTPag: typeof FISCAL_PAYMENT_HANDOFF_CATALOGO_TPAG
   readonly linhas: readonly FiscalPaymentHandoffLinha[]
+  /** Presente só quando válido: finito, ≥ 0 e ≥ dinheiro aplicado. */
+  readonly cashTendered?: number
 }
 
 const FORMAS_ORIGEM: ReadonlySet<string> = new Set(HANDOFF_FORMAS_ORIGEM)
@@ -197,13 +199,38 @@ function linhaDeForma(key: string, valor: number, pixQrKindHint: unknown): Fisca
 
 export type FiscalPaymentHandoffHints = {
   readonly pixQrKind?: unknown
+  /** Dinheiro fisicamente entregue. O cliente NÃO envia vTroco. */
+  readonly cashTendered?: unknown
+}
+
+/**
+ * Aceita `cashTendered` só como evidência fiscal válida:
+ * número finito ≥ 0 e ≥ dinheiro aplicado; irrelevante quando dinheiro = 0.
+ * Valor inválido / menor que o aplicado NÃO vira evidência (não gera troco).
+ */
+export function resolveCashTenderedEvidence(hint: unknown, dinheiroAplicado: number): number | undefined {
+  if (!(dinheiroAplicado > 0)) return undefined
+  if (typeof hint !== "number" || !Number.isFinite(hint) || hint < 0) return undefined
+  const n = round2(hint)
+  if (n < round2(dinheiroAplicado)) return undefined
+  return n
+}
+
+function dinheiroAplicadoFromBreakdown(breakdown: unknown): number {
+  if (!isPlainObject(breakdown)) return 0
+  const raw = breakdown.dinheiro
+  if (raw == null) return 0
+  const n = typeof raw === "number" ? raw : Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return round2(n)
 }
 
 /**
  * Constrói o handoff a partir do `paymentBreakdown` já persistido.
  * Nunca lança — a venda continua fechando; o Fiscal decide se emite.
- * Não lê PaymentMethod[], maquininha, Caixa, valor entregue nem tPag do cliente.
+ * Não lê PaymentMethod[], maquininha, Caixa, nem tPag/vTroco do cliente.
  * `hints.pixQrKind` é o discriminador observado; tPag é derivado só pelo catálogo.
+ * `hints.cashTendered` só entra quando passa em `resolveCashTenderedEvidence`.
  */
 export function buildFiscalPaymentHandoff(
   breakdown: unknown,
@@ -212,6 +239,7 @@ export function buildFiscalPaymentHandoff(
 ): FiscalPaymentHandoff {
   const linhas: FiscalPaymentHandoffLinha[] = []
   const pixQrKindHint = hints?.pixQrKind
+  const cashTendered = resolveCashTenderedEvidence(hints?.cashTendered, dinheiroAplicadoFromBreakdown(breakdown))
 
   if (breakdown == null) {
     return { version: FISCAL_PAYMENT_HANDOFF_VERSION, catalogoTPag: FISCAL_PAYMENT_HANDOFF_CATALOGO_TPAG, linhas }
@@ -256,5 +284,6 @@ export function buildFiscalPaymentHandoff(
     version: FISCAL_PAYMENT_HANDOFF_VERSION,
     catalogoTPag: FISCAL_PAYMENT_HANDOFF_CATALOGO_TPAG,
     linhas,
+    ...(cashTendered != null ? { cashTendered } : {}),
   }
 }

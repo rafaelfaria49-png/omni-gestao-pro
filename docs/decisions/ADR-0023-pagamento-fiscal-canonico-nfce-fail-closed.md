@@ -200,3 +200,23 @@ semântica fiscal comprovável de **crédito/vale** e manteve carnê/a prazo fai
 - Pagamento comercial (caixa, Contas a Receber, crédito do cliente) intocado.
 
 Relatório: [`FISCAL_PAYMENT_DEFERRED_SEMANTICS_081_REPORT.md`](../fiscal/FISCAL_PAYMENT_DEFERRED_SEMANTICS_081_REPORT.md).
+
+---
+
+## 13. Adendo — GOAL 083 (dinheiro entregue e vTroco)
+
+Em 20/08/2026 o GOAL `FISCAL-030-CASH-TENDERED-CHANGE-083` passou a persistir
+`cashTendered` (dinheiro fisicamente entregue) no payload da Venda e no handoff,
+sem alterar o valor comercial aplicado nem o Caixa.
+
+- `detPag.vPag` de dinheiro, quando há evidência válida de excesso, é o valor
+  **recebido** (YA03). Demais formas continuam com o valor aplicado.
+- `pag.vTroco` (YA09) é derivado no servidor: `cashTendered − dinheiroAplicado`.
+- Invariância oficial (NT 2016.002 v1.61 YA09-10; W16-70 excluída):
+  `Σ(vPag) − vTroco = vNF`. O cliente **não** envia `vTroco`.
+- Ausência de `cashTendered` (legado) → `vTroco` null; emissão com
+  `Σ(vPag) = vNF` permanece válida. Valor inválido ou menor que o aplicado
+  não é evidência.
+- Versão do handoff permanece **1** (campo aditivo). Sem schema.
+
+Relatório: [`FISCAL_PAYMENT_CASH_TENDERED_CHANGE_083_REPORT.md`](../fiscal/FISCAL_PAYMENT_CASH_TENDERED_CHANGE_083_REPORT.md).

@@ -51,6 +51,7 @@ describe("derivePagamentoFiscalFromHandoff · formas suportadas", () => {
     if (!r.ok) return
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "03", "04"])
     expect(r.pagamento.soma).toBe(100)
+    expect(r.pagamento.vTroco).toBeNull()
   })
 
   it("creditoVale → tPag 21", () => {
@@ -241,6 +242,120 @@ describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
     )
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
+  })
+})
+
+describe("derivePagamentoFiscalFromHandoff · cashTendered / vTroco (GOAL 083)", () => {
+  it("dinheiro exato: vPag = aplicado, vTroco null", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ dinheiro: 100 }, 100, { cashTendered: 100 }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det).toEqual([{ formaInterna: "dinheiro", tPag: "01", vPag: 100 }])
+    expect(r.pagamento.soma).toBe(100)
+    expect(r.pagamento.vTroco).toBeNull()
+  })
+
+  it("dinheiro acima do total: vPag = entregue, vTroco = diferença, Σ − vTroco = vNF", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ dinheiro: 100 }, 100, { cashTendered: 150 }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det).toEqual([{ formaInterna: "dinheiro", tPag: "01", vPag: 150 }])
+    expect(r.pagamento.soma).toBe(150)
+    expect(r.pagamento.vTroco).toBe(50)
+    expect(r.pagamento.soma - r.pagamento.vTroco!).toBe(100)
+  })
+
+  it("split dinheiro + PIX com troco (total 100, PIX 40, aplicado 60, entregue 70)", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ dinheiro: 60, pix: 40 }, 100, { pixQrKind: "estatico", cashTendered: 70 }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det).toEqual([
+      { formaInterna: "dinheiro", tPag: "01", vPag: 70 },
+      { formaInterna: "pix", tPag: "20", vPag: 40 },
+    ])
+    expect(r.pagamento.soma).toBe(110)
+    expect(r.pagamento.vTroco).toBe(10)
+    expect(r.pagamento.soma - r.pagamento.vTroco!).toBe(100)
+  })
+
+  it("split dinheiro + cartão com troco", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ dinheiro: 60, cartaoCredito: 40 }, 100, { cashTendered: 70 }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.map((d) => [d.tPag, d.vPag])).toEqual([
+      ["01", 70],
+      ["03", 40],
+    ])
+    expect(r.pagamento.vTroco).toBe(10)
+    expect(r.pagamento.soma - 10).toBe(100)
+  })
+
+  it("cashTendered ausente não gera troco", () => {
+    const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ dinheiro: 50 }, 50), 50)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.vTroco).toBeNull()
+    expect(r.pagamento.det[0]?.vPag).toBe(50)
+  })
+
+  it("cashTendered menor que o aplicado no handoff persistido é fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "dinheiro", valor: 60, tPag: "01", capability: "supported", status: "ok" }],
+        cashTendered: 50,
+      },
+      60,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_VALOR_INVALIDO")
+      expect(r.erro.mensagem).not.toMatch(/tPag=01 de fallback/i)
+    }
+  })
+
+  it("cashTendered inválido no handoff é fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported", status: "ok" }],
+        cashTendered: -1,
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_VALOR_INVALIDO")
+  })
+
+  it("vTroco injetado pelo cliente no handoff é ignorado — só cashTendered deriva", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "dinheiro", valor: 100, tPag: "01", capability: "supported", status: "ok" }],
+        cashTendered: 120,
+        vTroco: 99,
+      },
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.vTroco).toBe(20)
+    expect(r.pagamento.det[0]?.vPag).toBe(120)
   })
 })
 

@@ -194,12 +194,43 @@ describe("derivePagamentoFiscalFromBreakdown · fail-closed", () => {
 })
 
 describe("assertPagamentoFiscalCanonico", () => {
-  it("revalida contrato ok contra o total", () => {
-    const d = derivePagamentoFiscalFromBreakdown({ dinheiro: 10, cartaoDebito: 10 }, 20)
+  it("contrato com vTroco oficial (Σ vPag − vTroco = total) é válido", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [
+        { formaInterna: "dinheiro" as const, tPag: "01" as const, vPag: 70 },
+        { formaInterna: "pix" as const, tPag: "20" as const, vPag: 40 },
+      ],
+      soma: 110,
+      vTroco: 10,
+    }
+    const a = assertPagamentoFiscalCanonico(frozen, 100)
+    expect(a.ok).toBe(true)
+  })
+
+  it("vTroco que não fecha Σ − vNF é recusado (YA09-10)", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "dinheiro" as const, tPag: "01" as const, vPag: 150 }],
+      soma: 150,
+      vTroco: 10,
+    }
+    const a = assertPagamentoFiscalCanonico(frozen, 100)
+    expect(a.ok).toBe(false)
+    if (!a.ok) expect(a.erro.code).toBe("PAGAMENTO_SOMA_DIVERGENTE")
+  })
+
+  it("breakdown legado continua sem fabricar troco", () => {
+    const d = derivePagamentoFiscalFromBreakdown({ dinheiro: 50 }, 50)
     expect(d.ok).toBe(true)
     if (!d.ok) return
-    const a = assertPagamentoFiscalCanonico(d.pagamento, 20)
-    expect(a.ok).toBe(true)
+    expect(d.pagamento.vTroco).toBeNull()
+    const a = assertPagamentoFiscalCanonico({ ...d.pagamento, vTroco: 5 }, 50)
+    expect(a.ok).toBe(false)
   })
 
   it("fonte paymentBreakdown + PIX tPag 17 bloqueia emissão futura", () => {

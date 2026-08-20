@@ -215,7 +215,11 @@ function buildPagNode(snapshot: VendaFiscalSnapshot, vNF: number): XmlNode {
   const detNodes = checked.pagamento.det.map((p) =>
     group("detPag", [leafRequired("tPag", p.tPag), leafRequired("vPag", dec2(p.vPag))]),
   )
-  return group("pag", detNodes)
+  const vTroco = checked.pagamento.vTroco
+  return group("pag", [
+    ...detNodes,
+    vTroco != null && vTroco > 0 ? leafRequired("vTroco", dec2(vTroco)) : null,
+  ])
 }
 
 function mapPagamentoErro(
