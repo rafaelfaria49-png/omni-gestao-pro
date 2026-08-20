@@ -6,7 +6,8 @@
  *
  * Fiscal é somente consumidor. Este módulo é PURO: sem Prisma, Caixa, Financeiro,
  * PaymentModal ou SEFAZ. Não inventa tPag, CNPJ/tBand/cAut nem vTroco do cliente.
- * Cartão 03/04: o servidor grava `tpIntegra="2"` (POS não integrado). Nunca `"1"`.
+ * Cartão 03/04 e PIX dinâmico (tPag 17): o servidor grava `tpIntegra="2"`
+ * (não integrado). Nunca `"1"`. tPag 20/23 não recebem grupo card.
  *
  * PIX: tPag 17/20/23 só quando `pixQrKind` conhecido é observado. Sem default.
  * creditoVale: tPag 21 unívoco (crédito em loja de devolução/troca). Carne e aPrazo
@@ -76,8 +77,9 @@ export type FiscalPaymentHandoffLinha = {
   /** Discriminador observado de PIX. Ausente = subtipo não informado. */
   readonly pixQrKind?: PixQrKind
   /**
-   * YA04a. Só em cartaoDebito/cartaoCredito. Servidor deriva `"2"` (POS simples).
-   * `"1"` não é capacidade deste slice — o consumidor fail-close.
+   * YA04a. Em cartaoDebito/cartaoCredito e em PIX `dinamico` (tPag 17).
+   * Servidor deriva `"2"` (não integrado). `"1"` não é capacidade deste slice.
+   * Ausente em tPag 20/23.
    */
   readonly tpIntegra?: TpIntegraFiscal
   readonly capability: FiscalPaymentHandoffCapability
@@ -127,11 +129,13 @@ function bloqueioPixQrKindDesconhecido(): Pick<FiscalPaymentHandoffLinha, "motiv
 }
 
 function linhaPixComprovada(valor: number, pixQrKind: PixQrKind): FiscalPaymentHandoffLinha {
+  const tPag = tPagFromPixQrKind(pixQrKind)
   return {
     formaOrigem: "pix",
     valor,
     pixQrKind,
-    tPag: tPagFromPixQrKind(pixQrKind),
+    tPag,
+    ...(tPag === "17" ? { tpIntegra: TPINTEGRA_POS_NAO_INTEGRADO } : {}),
     capability: "supported",
     status: "ok",
   }
@@ -241,7 +245,7 @@ function dinheiroAplicadoFromBreakdown(breakdown: unknown): number {
  * Não lê PaymentMethod[], maquininha, Caixa, nem tPag/vTroco/tpIntegra do cliente.
  * `hints.pixQrKind` é o discriminador observado; tPag é derivado só pelo catálogo.
  * `hints.cashTendered` só entra quando passa em `resolveCashTenderedEvidence`.
- * Cartão 03/04 recebe `tpIntegra="2"` sempre — não deriva de terminal local.
+ * Cartão 03/04 e PIX dinâmico recebem `tpIntegra="2"` — não deriva de PSP/cliente.
  */
 export function buildFiscalPaymentHandoff(
   breakdown: unknown,

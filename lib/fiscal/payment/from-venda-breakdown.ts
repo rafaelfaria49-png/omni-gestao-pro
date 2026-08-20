@@ -33,6 +33,7 @@ import {
   erroTpIntegraCartao,
   isTPagCartao,
 } from "./card-evidence"
+import { erroTpIntegraPixDinamico, isTPagPixDinamico } from "./pix-ya04-evidence"
 
 const FORMAS_COM_TPAG: ReadonlySet<string> = new Set(FORMAS_INTERNAS_COM_TPAG)
 const FORMAS_PERSISTIDAS: ReadonlySet<string> = new Set(FORMAS_INTERNAS_PERSISTIDAS)
@@ -246,6 +247,9 @@ export function assertPagamentoFiscalCanonico(
       }
       const errCard = erroTpIntegraCartao(d.tpIntegra, "venda.pagamentoFiscal.det")
       if (errCard) return { ok: false, erro: errCard }
+    } else if (isTPagPixDinamico(d.tPag)) {
+      const errPix = erroTpIntegraPixDinamico(d.tpIntegra, "venda.pagamentoFiscal.det")
+      if (errPix) return { ok: false, erro: errPix }
     } else if (d.tpIntegra !== undefined) {
       return erro("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS", MSG_CARTAO_DADOS_NAO_SUPORTADOS, "venda.pagamentoFiscal.det")
     }

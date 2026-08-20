@@ -136,6 +136,7 @@ describe("buildFiscalPaymentHandoff · pixQrKind (GOAL 077)", () => {
         valor: 80,
         pixQrKind: kind,
         tPag,
+        ...(tPag === "17" ? { tpIntegra: "2" as const } : {}),
         capability: "supported",
         status: "ok",
       },
@@ -190,17 +191,24 @@ describe("buildFiscalPaymentHandoff · pixQrKind (GOAL 077)", () => {
     expect(JSON.stringify(h)).not.toMatch(/"tpIntegra":"1"|tBand|cAut|11222333000181|maq-pagbank/)
   })
 
-  it("PIX não recebe tpIntegra por analogia", () => {
-    const h = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "dinamico" })
-    expect(h.linhas[0]!.tPag).toBe("17")
-    expect(h.linhas[0]!.tpIntegra).toBeUndefined()
-    expect(JSON.stringify(h)).not.toMatch(/tpIntegra/)
+  it("PIX dinâmico recebe tpIntegra 2 (YA04-10); estático/automático não", () => {
+    const din = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "dinamico" })
+    expect(din.linhas[0]).toMatchObject({ tPag: "17", pixQrKind: "dinamico", tpIntegra: "2" })
+    const est = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "estatico" })
+    expect(est.linhas[0]).toMatchObject({ tPag: "20", pixQrKind: "estatico" })
+    expect(est.linhas[0]!.tpIntegra).toBeUndefined()
+    const aut = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "automatico" })
+    expect(aut.linhas[0]).toMatchObject({ tPag: "23", pixQrKind: "automatico" })
+    expect(aut.linhas[0]!.tpIntegra).toBeUndefined()
   })
 
-  it("split PIX + cartão com pixQrKind dinâmico: 17 sem card; 03 com tpIntegra 2", () => {
+  it("split PIX + cartão com pixQrKind dinâmico: 17 e 03 com tpIntegra 2 independentes", () => {
     const h = buildFiscalPaymentHandoff({ pix: 40, cartaoCredito: 60 }, 100, { pixQrKind: "dinamico" })
-    expect(h.linhas.find((l) => l.formaOrigem === "pix")).toMatchObject({ tPag: "17", pixQrKind: "dinamico" })
-    expect(h.linhas.find((l) => l.formaOrigem === "pix")?.tpIntegra).toBeUndefined()
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")).toMatchObject({
+      tPag: "17",
+      pixQrKind: "dinamico",
+      tpIntegra: "2",
+    })
     expect(h.linhas.find((l) => l.formaOrigem === "cartaoCredito")).toMatchObject({ tPag: "03", tpIntegra: "2" })
     expect(h.linhas.every((l) => l.capability === "supported")).toBe(true)
   })

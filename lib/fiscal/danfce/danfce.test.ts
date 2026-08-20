@@ -202,6 +202,33 @@ describe("DANFC-e · reimpressão determinística", () => {
     expect(document.xmlAutorizado).toContain("<vTroco>10.00</vTroco>")
   })
 
+  it("NFC-e AUTORIZADA com tPag 17 sem card (XML legado) reimprime o XML persistido", () => {
+    const { document } = buildPersistedDanfceFixture("autorizado_simples")
+    const xmlLegado = String(document.xmlAutorizado).replace(
+      /<tPag>01<\/tPag>\s*<vPag>50\.00<\/vPag>/,
+      "<tPag>17</tPag><vPag>50.00</vPag>",
+    )
+    const legado = { ...document, xmlAutorizado: xmlLegado, xmlAssinado: xmlLegado }
+    expect(legado.xmlAutorizado).toMatch(/<tPag>17<\/tPag>/)
+    expect(legado.xmlAutorizado).not.toContain("<card>")
+    const model = parseDanfceFromPersisted(legado)
+    expect(model.pagamentos.map((p) => p.tPag)).toEqual(["17"])
+    expect(renderDanfceHtml(model)).not.toContain("tpIntegra")
+  })
+
+  it("NFC-e AUTORIZADA com PIX 17 + card/tpIntegra=2 reimprime sem reconstruir YA04", () => {
+    const { document } = buildPersistedDanfceFixture("autorizado_simples")
+    const xmlCard = String(document.xmlAutorizado).replace(
+      /<tPag>01<\/tPag>\s*<vPag>50\.00<\/vPag>/,
+      "<tPag>17</tPag><vPag>50.00</vPag><card><tpIntegra>2</tpIntegra></card>",
+    )
+    const withCard = { ...document, xmlAutorizado: xmlCard, xmlAssinado: xmlCard }
+    expect(withCard.xmlAutorizado).toContain("<tpIntegra>2</tpIntegra>")
+    const model = parseDanfceFromPersisted(withCard)
+    expect(model.pagamentos.map((p) => p.tPag)).toEqual(["17"])
+    expect(renderDanfceHtml(model)).not.toContain("tpIntegra")
+  })
+
   it("NFC-e AUTORIZADA com tPag 03 sem card (XML legado) reimprime o XML persistido", () => {
     const { document } = buildPersistedDanfceFixture("autorizado_simples")
     const xmlLegado = String(document.xmlAutorizado).replace(

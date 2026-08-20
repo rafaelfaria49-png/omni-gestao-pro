@@ -274,3 +274,37 @@ contrato mínimo da auditoria 085: novas emissões NFC-e com tPag 03/04 emitem
 - PaymentModal / Caixa / Financeiro / TEF / schema / SEFAZ intocados.
 
 Relatório: [`FISCAL_PAYMENT_CARD_POS_SIMPLE_TPINTEGRA_087_REPORT.md`](../fiscal/FISCAL_PAYMENT_CARD_POS_SIMPLE_TPINTEGRA_087_REPORT.md).
+
+---
+
+## 16. Adendo — GOAL 089 (PIX dinâmico não integrado · tPag 17 + YA04)
+
+Em 20/08/2026 o GOAL `FISCAL-030-PIX17-YA04-NONINTEGRATED-089` materializou o
+residual YA04-10 para PIX dinâmico. Novas emissões NFC-e com tPag 17 emitem
+
+```xml
+<card>
+  <tpIntegra>2</tpIntegra>
+</card>
+```
+
+- Auditoria operacional: OmniGestão não gera cobrança PIX, não gera QR via PSP,
+  não consulta PSP, não recebe e2eid; o operador confirma manualmente. O QR
+  dinâmico é externo. Isso corresponde a `tpIntegra=2` no XSD (não integrado),
+  **não** a `1`.
+- Autoridade: NT 2025.001 v1.02 YA04-10 (msg 391) — NFC-e 65 com tPag 03, 04
+  **ou 17** deve informar o grupo `card`. YA05-10 (CNPJ + `cAut`) só quando
+  `tpIntegra=1`. v1.03 não altera YA04-10 (só YA03 e E16a; modelo 55 permanece
+  implementação futura). Portaria 219/2019-PB (`tpIntegra=1` + e2eid) **não** é
+  regra nacional e **não** é adotada.
+- Origem: servidor (`buildFiscalPaymentHandoff`). `pixQrKind=dinamico` → tPag 17
+  + `tpIntegra=2`. Cliente não é autoridade de `tpIntegra` / `card` / e2eid.
+- tPag 20 (estático) e 23 (automático): **sem** grupo `card` (YA04-10 não os
+  lista; sem obrigação nova).
+- Capacidade única: `"2"`. `tpIntegra=1` → `PAGAMENTO_PIX_INTEGRADO_NAO_SUPORTADO`.
+  Ausente / inválido → códigos PIX específicos. Handoff histórico 17 sem
+  `tpIntegra` → fail-closed (não presume `2`).
+- NFC-e AUTORIZADA: XML persistido; reprint/DANFC-e não reconstrói YA04.
+- PaymentModal / Caixa / Financeiro / TEF / schema / SEFAZ intocados.
+
+Relatório: [`FISCAL_PAYMENT_PIX17_YA04_NONINTEGRATED_089_REPORT.md`](../fiscal/FISCAL_PAYMENT_PIX17_YA04_NONINTEGRATED_089_REPORT.md).

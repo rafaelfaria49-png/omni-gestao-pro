@@ -215,6 +215,7 @@ function notaAssinada(over: Row = {}): Row {
 function snapPixCanonico(
   fonte: "venda.payload.paymentBreakdown" | "venda.payload.fiscalPaymentHandoff",
   tPag: "17" | "20" | "23",
+  tpIntegra?: "1" | "2",
 ): VendaFiscalSnapshot {
   const base = dryRunSnapshot("simples")
   return {
@@ -225,7 +226,14 @@ function snapPixCanonico(
         versao: 1,
         fonte,
         catalogoTPag: "IT-2024.002-v1.11",
-        det: [{ formaInterna: "pix", tPag, vPag: base.venda.total }],
+        det: [
+          {
+            formaInterna: "pix",
+            tPag,
+            vPag: base.venda.total,
+            ...(tpIntegra != null ? { tpIntegra } : {}),
+          },
+        ],
         soma: base.venda.total,
         vTroco: null,
       },
@@ -277,16 +285,39 @@ describe("createFinalizedNfcePreparer · PIX legado fail-closed (GOAL 079)", () 
     })
   })
 
-  it("canonical fonte fiscalPaymentHandoff + PIX17 permanece válido", async () => {
+  it("canonical fonte fiscalPaymentHandoff + PIX17 + tpIntegra 2 emite card mínimo", async () => {
     const doc = await createFinalizedNfcePreparer({
-      resolveSource: async () => source({ snapshot: snapPixCanonico("venda.payload.fiscalPaymentHandoff", "17") }),
+      resolveSource: async () => source({ snapshot: snapPixCanonico("venda.payload.fiscalPaymentHandoff", "17", "2") }),
       certificado: DRY_RUN_TEST_CERT,
       qrUrls: QR_URLS,
     }).prepare(LOCATOR)
-    expect(doc.xmlAssinado).toMatch(/<tPag>17<\/tPag>/)
+    expect(doc.xmlAssinado).toMatch(/<tPag>17<\/tPag>[\s\S]*<tpIntegra>2<\/tpIntegra>/)
     expect(doc.xmlAssinado).not.toMatch(/<tPag>01<\/tPag>/)
     expect(doc.xmlAssinado).not.toMatch(/<tPag>99<\/tPag>/)
-    expect(doc.xmlAssinado).not.toContain("<card>")
+    expect(doc.xmlAssinado).not.toContain("<tBand>")
+    expect(doc.xmlAssinado).not.toContain("<cAut>")
+  })
+
+  it("handoff histórico PIX17 sem tpIntegra bloqueia preparação", async () => {
+    const preparer = createFinalizedNfcePreparer({
+      resolveSource: async () => source({ snapshot: snapPixCanonico("venda.payload.fiscalPaymentHandoff", "17") }),
+      certificado: DRY_RUN_TEST_CERT,
+      qrUrls: QR_URLS,
+    })
+    await expect(preparer.prepare(LOCATOR)).rejects.toMatchObject({
+      code: "pagamento_pix_tpintegra_ausente",
+    })
+  })
+
+  it("PIX17 tpIntegra=1 bloqueia como integração não suportada", async () => {
+    const preparer = createFinalizedNfcePreparer({
+      resolveSource: async () => source({ snapshot: snapPixCanonico("venda.payload.fiscalPaymentHandoff", "17", "1") }),
+      certificado: DRY_RUN_TEST_CERT,
+      qrUrls: QR_URLS,
+    })
+    await expect(preparer.prepare(LOCATOR)).rejects.toMatchObject({
+      code: "pagamento_pix_integrado_nao_suportado",
+    })
   })
 })
 

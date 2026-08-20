@@ -254,12 +254,12 @@ describe("assertPagamentoFiscalCanonico", () => {
     }
   })
 
-  it("fonte fiscalPaymentHandoff + PIX tPag 17 permanece válido", () => {
+  it("fonte fiscalPaymentHandoff + PIX tPag 17 exige tpIntegra 2", () => {
     const frozen = {
       versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
       fonte: "venda.payload.fiscalPaymentHandoff" as const,
       catalogoTPag: "IT-2024.002-v1.11" as const,
-      det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+      det: [{ formaInterna: "pix" as const, tPag: "17" as const, vPag: 50, tpIntegra: "2" as const }],
       soma: 50,
       vTroco: null,
     }
@@ -285,7 +285,10 @@ describe("assertPagamentoFiscalCanonico", () => {
     }
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "20", vPag: 50 }] }, 50).ok).toBe(true)
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "23", vPag: 50 }] }, 50).ok).toBe(true)
-    expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "17", vPag: 50 }] }, 50).ok).toBe(true)
+    expect(
+      assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "2" }] }, 50)
+        .ok,
+    ).toBe(true)
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "01", vPag: 50 }] }, 50).ok).toBe(false)
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "99", vPag: 50 }] }, 50).ok).toBe(false)
   })
@@ -367,29 +370,42 @@ describe("assertPagamentoFiscalCanonico", () => {
     if (!integrado.ok) expect(integrado.erro.code).toBe("PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO")
   })
 
-  it("PIX 17 do handoff continua sem tpIntegra (YA04 residual)", () => {
+  it("PIX 17 do handoff exige tpIntegra 2; 20/23 continuam sem card", () => {
     const frozen = {
       versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
       fonte: "venda.payload.fiscalPaymentHandoff" as const,
       catalogoTPag: "IT-2024.002-v1.11" as const,
-      det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+      det: [{ formaInterna: "pix" as const, tPag: "17" as const, vPag: 50 }],
       soma: 50,
       vTroco: null,
     }
-    expect(assertPagamentoFiscalCanonico(frozen, 50).ok).toBe(true)
-    const analogia = assertPagamentoFiscalCanonico(
+    const ausente = assertPagamentoFiscalCanonico(frozen, 50)
+    expect(ausente.ok).toBe(false)
+    if (!ausente.ok) expect(ausente.erro.code).toBe("PAGAMENTO_PIX_TPINTEGRA_AUSENTE")
+    const valido = assertPagamentoFiscalCanonico(
       { ...frozen, det: [{ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "2" }] },
       50,
     )
-    expect(analogia.ok).toBe(false)
-    if (!analogia.ok) expect(analogia.erro.code).toBe("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS")
+    expect(valido.ok).toBe(true)
+    const integrado = assertPagamentoFiscalCanonico(
+      { ...frozen, det: [{ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "1" }] },
+      50,
+    )
+    expect(integrado.ok).toBe(false)
+    if (!integrado.ok) expect(integrado.erro.code).toBe("PAGAMENTO_PIX_INTEGRADO_NAO_SUPORTADO")
+    const analogia20 = assertPagamentoFiscalCanonico(
+      { ...frozen, det: [{ formaInterna: "pix", tPag: "20", vPag: 50, tpIntegra: "2" }] },
+      50,
+    )
+    expect(analogia20.ok).toBe(false)
+    if (!analogia20.ok) expect(analogia20.erro.code).toBe("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS")
   })
 })
 
 describe("fronteira — zero Caixa/Financeiro/PDV vivo no módulo", () => {
   it("sources de payment/** não importam Prisma, Caixa, Financeiro nem PDV", () => {
     const dir = resolve(process.cwd(), "lib/fiscal/payment")
-    for (const file of ["index.ts", "types.ts", "tpag-catalog.ts", "from-venda-breakdown.ts", "from-handoff.ts", "card-evidence.ts"]) {
+    for (const file of ["index.ts", "types.ts", "tpag-catalog.ts", "from-venda-breakdown.ts", "from-handoff.ts", "card-evidence.ts", "pix-ya04-evidence.ts"]) {
       const src = readFileSync(resolve(dir, file), "utf8")
       expect(src).not.toMatch(/from ["']@\/lib\/prisma/)
       expect(src).not.toMatch(/from ["']@\/lib\/caixa/)

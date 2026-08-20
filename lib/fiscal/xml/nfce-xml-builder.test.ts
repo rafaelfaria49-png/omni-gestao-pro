@@ -343,7 +343,7 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
         pagamentoFiscal: {
           ...s.venda.pagamentoFiscal!,
           fonte: "venda.payload.fiscalPaymentHandoff",
-          det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+          det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50, tpIntegra: "2" }],
           soma: 50,
         },
       },
@@ -481,7 +481,39 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     expect(xml).not.toContain("<card>")
   })
 
-  it("handoff de PIX dinâmico emite tPag 17 sem grupo card", () => {
+  it("handoff de PIX dinâmico emite tPag 17 + card/tpIntegra=2", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "pix",
+              valor: 50,
+              pixQrKind: "dinamico",
+              tPag: "17",
+              tpIntegra: "2",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(
+      /<detPag>\s*<tPag>17<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>\s*<\/detPag>/,
+    )
+    expect(xml).not.toContain("<tBand>")
+    expect(xml).not.toContain("<cAut>")
+    expect(xml).not.toContain("<CNPJReceb>")
+    expect(xml).not.toContain("<tpIntegra>1</tpIntegra>")
+  })
+
+  it("handoff histórico tPag 17 sem tpIntegra não gera XML sem card", () => {
     const s = snap({
       venda: {
         ...baseInput().venda,
@@ -502,9 +534,14 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
         },
       },
     })
-    const xml = buildNfceXml(s)
-    expect(xml).toMatch(/<tPag>17<\/tPag>\s*<vPag>50\.00<\/vPag>/)
-    expect(xml).not.toContain("<card>")
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_PIX_TPINTEGRA_AUSENTE")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_pix_tpintegra_ausente" })
+    }
   })
 
   it("handoff de PIX automático emite tPag 23", () => {
@@ -529,6 +566,7 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
       },
     })
     expect(buildNfceXml(s)).toMatch(/<tPag>23<\/tPag>/)
+    expect(buildNfceXml(s)).not.toContain("<card>")
   })
 
   it("split PIX + dinheiro no XML não cai para um único tPag=01", () => {
@@ -556,6 +594,36 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     const xml = buildNfceXml(s)
     expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>20\.00<\/vPag>/)
     expect(xml).toMatch(/<tPag>20<\/tPag>\s*<vPag>30\.00<\/vPag>/)
+  })
+
+  it("split PIX dinâmico + dinheiro: 17 com card; 01 sem card", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 30, dinheiro: 20 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            { formaOrigem: "dinheiro", valor: 20, tPag: "01", capability: "supported", status: "ok" },
+            {
+              formaOrigem: "pix",
+              valor: 30,
+              pixQrKind: "dinamico",
+              tPag: "17",
+              tpIntegra: "2",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>20\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).toMatch(
+      /<tPag>17<\/tPag>\s*<vPag>30\.00<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>/,
+    )
   })
 
   it("handoff de creditoVale emite tPag 21 sem card e sem fallback 01/12/19/99", () => {
@@ -755,7 +823,7 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     )
   })
 
-  it("splits: cada 03/04 tem o próprio card; PIX 17 permanece sem card", () => {
+  it("splits: cada 03/04 tem o próprio card; PIX 17 também tem YA04 próprio; 20 sem card", () => {
     const cases: Array<{
       name: string
       breakdown: Record<string, number>
@@ -792,6 +860,7 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
             valor: 20,
             pixQrKind: "dinamico",
             tPag: "17",
+            tpIntegra: "2",
             capability: "supported",
             status: "ok",
           },
@@ -857,8 +926,13 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
       if (c.expectTPag.includes("03")) expect(card03, c.name).toBeTruthy()
       if (c.expectTPag.includes("04")) expect(card04, c.name).toBeTruthy()
       if (c.expectTPag.includes("17")) {
-        expect(xml, c.name).toMatch(/<tPag>17<\/tPag>\s*<vPag>[^<]+<\/vPag>\s*<\/detPag>/)
-        expect(xml, c.name).not.toMatch(/<tPag>17<\/tPag>[\s\S]*?<card>/)
+        expect(xml, c.name).toMatch(
+          /<tPag>17<\/tPag>\s*<vPag>[^<]+<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>/,
+        )
+      }
+      if (c.expectTPag.includes("20")) {
+        expect(xml, c.name).toMatch(/<tPag>20<\/tPag>\s*<vPag>[^<]+<\/vPag>\s*<\/detPag>/)
+        expect(xml, c.name).not.toMatch(/<tPag>20<\/tPag>[\s\S]*?<card>/)
       }
       if (c.expectTroco) expect(xml, c.name).toContain(`<vTroco>${c.expectTroco}</vTroco>`)
       expect(xml, c.name).not.toContain("<tBand>")

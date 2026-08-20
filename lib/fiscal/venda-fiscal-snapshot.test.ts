@@ -347,7 +347,7 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
-    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50 }])
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "2" }])
   })
 
   it("handoff de PIX automático por payload válido emite tPag 23", () => {
