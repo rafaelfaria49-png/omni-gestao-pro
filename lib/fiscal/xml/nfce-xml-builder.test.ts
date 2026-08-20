@@ -555,6 +555,72 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>20\.00<\/vPag>/)
     expect(xml).toMatch(/<tPag>20<\/tPag>\s*<vPag>30\.00<\/vPag>/)
   })
+
+  it("handoff de creditoVale emite tPag 21 sem card e sem fallback 01/12/19/99", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { creditoVale: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [{ formaOrigem: "creditoVale", valor: 50, tPag: "21", capability: "supported", status: "ok" }],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<detPag>\s*<tPag>21<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toMatch(/<tPag>01<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>12<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>19<\/tPag>/)
+    expect(xml).not.toMatch(/<tPag>99<\/tPag>/)
+    expect(xml).not.toContain("<card>")
+  })
+
+  it("split creditoVale + dinheiro no XML", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { dinheiro: 20, creditoVale: 30 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            { formaOrigem: "creditoVale", valor: 30, tPag: "21", capability: "supported", status: "ok" },
+            { formaOrigem: "dinheiro", valor: 20, tPag: "01", capability: "supported", status: "ok" },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>20\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>21<\/tPag>\s*<vPag>30\.00<\/vPag>/)
+  })
+
+  it("handoff legado de creditoVale bloqueado não emite XML", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { creditoVale: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "creditoVale",
+              valor: 50,
+              capability: "blocked",
+              status: "blocked",
+              motivo: "credito_vale_tpag_ambiguo",
+            },
+          ],
+        },
+      },
+    })
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+  })
 })
 
 describe("buildNfceXmlResult · compatibilidade com o snapshot atual + numeração por contexto", () => {

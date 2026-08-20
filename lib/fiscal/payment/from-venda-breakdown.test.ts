@@ -21,9 +21,14 @@ describe("catálogo tPag oficial", () => {
     expect(isTPagOficial("01")).toBe(true)
     expect(isTPagOficial("03")).toBe(true)
     expect(isTPagOficial("04")).toBe(true)
+    expect(isTPagOficial("05")).toBe(true)
+    expect(isTPagOficial("15")).toBe(true)
     expect(isTPagOficial("17")).toBe(true)
+    expect(isTPagOficial("19")).toBe(true)
     expect(isTPagOficial("20")).toBe(true)
+    expect(isTPagOficial("21")).toBe(true)
     expect(isTPagOficial("23")).toBe(true)
+    expect(isTPagOficial("91")).toBe(true)
     expect(isTPagOficial("99")).toBe(true)
     expect(isTPagOficial("00")).toBe(false)
     expect(isTPagOficial("1")).toBe(false)
@@ -170,10 +175,13 @@ describe("derivePagamentoFiscalFromBreakdown · fail-closed", () => {
     if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
   })
 
-  it("crédito-vale persistido sem capacidade fiscal", () => {
+  it("crédito-vale no breakdown legado permanece sem capacidade fiscal (não infere 21)", () => {
     const r = derivePagamentoFiscalFromBreakdown({ creditoVale: 50 }, 50)
     expect(r.ok).toBe(false)
-    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+      expect(r.erro.mensagem).not.toMatch(/tPag=21|"21"|"19"|"12"/)
+    }
   })
 
   it("não fabrica troco", () => {
@@ -245,6 +253,35 @@ describe("assertPagamentoFiscalCanonico", () => {
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "17", vPag: 50 }] }, 50).ok).toBe(true)
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "01", vPag: 50 }] }, 50).ok).toBe(false)
     expect(assertPagamentoFiscalCanonico({ ...base, det: [{ formaInterna: "pix", tPag: "99", vPag: 50 }] }, 50).ok).toBe(false)
+  })
+
+  it("fonte paymentBreakdown + creditoVale tPag 21 bloqueia emissão futura", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.paymentBreakdown" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "creditoVale" as const, tPag: "21", vPag: 40 }],
+      soma: 40,
+      vTroco: null,
+    }
+    const a = assertPagamentoFiscalCanonico(frozen, 40)
+    expect(a.ok).toBe(false)
+    if (!a.ok) expect(a.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+  })
+
+  it("fonte fiscalPaymentHandoff + creditoVale tPag 21 permanece válido", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "creditoVale" as const, tPag: "21", vPag: 40 }],
+      soma: 40,
+      vTroco: null,
+    }
+    expect(assertPagamentoFiscalCanonico(frozen, 40).ok).toBe(true)
+    expect(
+      assertPagamentoFiscalCanonico({ ...frozen, det: [{ formaInterna: "creditoVale", tPag: "19", vPag: 40 }] }, 40).ok,
+    ).toBe(false)
   })
 })
 

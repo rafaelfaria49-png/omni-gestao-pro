@@ -178,3 +178,25 @@ Em 19/08/2026 o GOAL `FISCAL-030-PIX-LEGACY-FAIL-CLOSED-079` eliminou a inferên
   continuam no documento persistido; sem reconstrução de pagamento e sem retransmissão.
 
 Relatório: [`FISCAL_PAYMENT_PIX_LEGACY_FAIL_CLOSED_079_REPORT.md`](../fiscal/FISCAL_PAYMENT_PIX_LEGACY_FAIL_CLOSED_079_REPORT.md).
+
+---
+
+## 12. Adendo — GOAL 081 (semântica de pagamentos diferidos)
+
+Em 19/08/2026 o GOAL `FISCAL-030-DEFERRED-PAYMENT-SEMANTICS-081` capturou a
+semântica fiscal comprovável de **crédito/vale** e manteve carnê/a prazo fail-closed.
+
+- `creditoVale` (handoff novo) → tPag **21** (Crédito em Loja). Evidência: único
+  originador de `ClienteCredito` é devolução/troca; o PDV apenas abate o saldo.
+  Não é vale-presente (12) nem programa de fidelidade (19). Sem picker: a chave
+  persistida já é unívoca. Venda histórica sem handoff, ou handoff legado
+  `capability=blocked`, permanece fail-closed.
+- `carne`: config `boleto` colapsa em `carne` (`toPaymentMethodType`). Mesmo
+  mecanismo (recebimento imediato no caixa; carnê HTML local; sem boleto bancário
+  nem Conta a Receber). 05 vs 15 não unívoco. Sem discriminator/picker.
+- `aPrazo`: cria `ContaReceberTitulo`. Não é boleto (15) nem duplicata (14).
+  Resta 05 vs 91. Sem discriminator/picker.
+- Cliente não envia tPag. `upsertVendaInTransaction` continua autoridade.
+- Pagamento comercial (caixa, Contas a Receber, crédito do cliente) intocado.
+
+Relatório: [`FISCAL_PAYMENT_DEFERRED_SEMANTICS_081_REPORT.md`](../fiscal/FISCAL_PAYMENT_DEFERRED_SEMANTICS_081_REPORT.md).

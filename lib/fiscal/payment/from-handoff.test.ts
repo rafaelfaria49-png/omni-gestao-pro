@@ -1,7 +1,7 @@
 /**
  * GOAL 075 — Fiscal consome `fiscalPaymentHandoff` quando presente.
  *
- * Cobre: dinheiro/débito/crédito/split via handoff; PIX/carnê/aPrazo/vale bloqueados;
+ * Cobre: dinheiro/débito/crédito/creditoVale/split via handoff; PIX/carnê/aPrazo bloqueados;
  * forma desconhecida; handoff inconsistente sem fallback; venda histórica sem handoff;
  * zero tPag=01 de fallback; zero consulta a módulos vivos.
  */
@@ -52,6 +52,15 @@ describe("derivePagamentoFiscalFromHandoff · formas suportadas", () => {
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "03", "04"])
     expect(r.pagamento.soma).toBe(100)
   })
+
+  it("creditoVale → tPag 21", () => {
+    const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ creditoVale: 40 }, 40), 40)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.fonte).toBe("venda.payload.fiscalPaymentHandoff")
+    expect(r.pagamento.det).toEqual([{ formaInterna: "creditoVale", tPag: "21", vPag: 40 }])
+    expect(JSON.stringify(r.pagamento)).not.toMatch(/"12"|"19"|"99"/)
+  })
 })
 
 describe("derivePagamentoFiscalFromHandoff · bloqueios explícitos", () => {
@@ -75,8 +84,23 @@ describe("derivePagamentoFiscalFromHandoff · bloqueios explícitos", () => {
     if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
   })
 
-  it("creditoVale", () => {
-    const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ creditoVale: 40 }, 40), 40)
+  it("creditoVale legado no handoff (capability blocked, sem tPag) permanece fail-closed", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [
+          {
+            formaOrigem: "creditoVale",
+            valor: 40,
+            capability: "blocked",
+            status: "blocked",
+            motivo: "credito_vale_tpag_ambiguo",
+          },
+        ],
+      },
+      40,
+    )
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
   })
@@ -129,6 +153,59 @@ describe("derivePagamentoFiscalFromHandoff · pixQrKind (GOAL 077)", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["03", "17"])
+  })
+
+  it("split creditoVale + dinheiro", () => {
+    const r = derivePagamentoFiscalFromHandoff(buildFiscalPaymentHandoff({ dinheiro: 60, creditoVale: 40 }, 100), 100)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "21"])
+  })
+
+  it("split creditoVale + PIX estático", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ pix: 30, creditoVale: 70 }, 100, { pixQrKind: "estatico" }),
+      100,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["20", "21"])
+  })
+
+  it("split creditoVale + cartão", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      buildFiscalPaymentHandoff({ cartaoCredito: 25, creditoVale: 25 }, 50),
+      50,
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["03", "21"])
+  })
+
+  it("tPag 19 injetado em creditoVale é rejeitado (esperado 21)", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "creditoVale", valor: 40, tPag: "19", capability: "supported", status: "ok" }],
+      },
+      40,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
+  })
+
+  it("tPag 12 injetado em creditoVale é rejeitado", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "creditoVale", valor: 40, tPag: "12", capability: "supported", status: "ok" }],
+      },
+      40,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
   })
 
   it("tPag 17 injetado no handoff sem pixQrKind continua rejeitado", () => {
@@ -213,6 +290,19 @@ describe("derivePagamentoFiscalFromHandoff · inconsistente sem fallback", () =>
     if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
   })
 
+  it("aPrazo com tPag 91 inventado é rejeitado", () => {
+    const r = derivePagamentoFiscalFromHandoff(
+      {
+        version: 1,
+        catalogoTPag: "IT-2024.002-v1.11",
+        linhas: [{ formaOrigem: "aPrazo", valor: 50, tPag: "91", capability: "supported", status: "ok" }],
+      },
+      50,
+    )
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_HANDOFF_INVALIDO")
+  })
+
   it("handoff presente e breakdown dinheiro válido → não usa o breakdown", () => {
     const r = derivePagamentoFiscal({ dinheiro: 50 }, 50, { version: 2, linhas: [] })
     expect(r.ok).toBe(false)
@@ -241,6 +331,15 @@ describe("derivePagamentoFiscal · venda histórica sem handoff", () => {
     expect(r.ok).toBe(true)
     if (!r.ok) return
     expect(r.pagamento.fonte).toBe("venda.payload.paymentBreakdown")
+  })
+
+  it("venda histórica sem handoff + creditoVale permanece fail-closed", () => {
+    const r = derivePagamentoFiscal({ creditoVale: 40 }, 40)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
+      expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
+    }
   })
 
   it("nunca cai para tPag=01 quando o handoff bloqueia PIX", () => {
