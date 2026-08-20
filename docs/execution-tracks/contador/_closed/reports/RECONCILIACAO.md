@@ -1,16 +1,16 @@
 # Reconciliação de importação — trilha `contador`
 
-- importação nº 11 · 2026-08-20T04:14:04.531Z
+- importação nº 12 · 2026-08-20T16:27:53.062Z
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
 - bootstrap_commit declarado: `d4817244c8d1f4fdabb2773e419e2910ac62658a`
-- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-11-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/contador/_closed/reports/IMPORT-12-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
 
 - delta: 1 NOVO · 0 ALTERADO · 0 INALTERADO
 - linhas anexadas ao LEDGER.jsonl: 0 (o ledger é append-only; nada foi reescrito)
-- `CONTADOR-HUB-FISCAL-INTEGRATION-018` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
+- `CONTADOR-HUB-PRODUCTION-HARDENING-019` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
 
 ### Deltas sensíveis
 
@@ -36,6 +36,7 @@ _(nenhum)_
 - `CONTADOR-HUB-PORTAL-EXTERNO-READONLY-015` — mantém `DONE`; a importação NÃO remove estado em silêncio.
 - `CONTADOR-HUB-OBRIGACOES-GUIAS-016` — mantém `DONE`; a importação NÃO remove estado em silêncio.
 - `CONTADOR-HUB-OMNI-AGENT-INTEGRATION-017` — mantém `DONE`; a importação NÃO remove estado em silêncio.
+- `CONTADOR-HUB-FISCAL-INTEGRATION-018` — mantém `DONE`; a importação NÃO remove estado em silêncio.
 
 ## 1. Confirmados (DONE com prova no Git)
 
@@ -59,4 +60,4 @@ _(nenhum)_
 
 ## 6. Caminho quente após a importação
 
-- `CONTADOR-HUB-FISCAL-INTEGRATION-018` → `docs/execution-tracks/contador/goals/CONTADOR-HUB-FISCAL-INTEGRATION-018.md` (READY)
+- `CONTADOR-HUB-PRODUCTION-HARDENING-019` → `docs/execution-tracks/contador/goals/CONTADOR-HUB-PRODUCTION-HARDENING-019.md` (READY)

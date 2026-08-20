@@ -45,7 +45,10 @@ beforeEach(() => {
   mockCookieStore.clear()
   mockRequestHeaders = new Headers({ "x-forwarded-for": "203.0.113.5" })
   __resetContadorRateLimitForTests()
-  setEnv({ pin: "test-pin-123", secret: "test-secret-abc-xyz" })
+  // GOAL 019: o kill-switch passou a ter DEFAULT OFF. Os testes de PIN abaixo
+  // exercitam o comportamento LEGADO, então precisam reabri-lo explicitamente —
+  // exatamente como o rollback operacional do G4 faria em produção.
+  setEnv({ pin: "test-pin-123", secret: "test-secret-abc-xyz", legacyPortal: "on" })
 })
 
 describe("configuração — fail closed", () => {
@@ -59,6 +62,21 @@ describe("configuração — fail closed", () => {
     setEnv({ pin: "test-pin-123", secret: undefined })
     const res = await POST(postRequest({ pin: "test-pin-123" }))
     expect(res.status).toBe(503)
+  })
+
+  it("GOAL 019 — flag AUSENTE → default OFF → 503 (a API legada não abre sozinha)", async () => {
+    setEnv({ pin: "test-pin-123", secret: "test-secret-abc-xyz" })
+    const res = await POST(postRequest({ pin: "test-pin-123" }))
+    expect(res.status).toBe(503)
+    expect(((await res.json()) as { error?: string }).error).toBe("portal_disabled")
+  })
+
+  it("GOAL 019 — valor diferente de \"on\" não reabre o legado (fail closed)", async () => {
+    for (const valor of ["true", "1", "yes", "ON-ish", ""]) {
+      setEnv({ pin: "test-pin-123", secret: "test-secret-abc-xyz", legacyPortal: valor })
+      const res = await POST(postRequest({ pin: "test-pin-123" }))
+      expect(res.status, `valor="${valor}"`).toBe(503)
+    }
   })
 
   it("flag CONTADOR_LEGACY_PORTAL=off → 503", async () => {
