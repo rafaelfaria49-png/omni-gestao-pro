@@ -55,38 +55,42 @@ describe("derivePagamentoFiscalFromBreakdown · formas válidas", () => {
     expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
   })
 
-  it("débito válido (tPag 04, sem grupo card)", () => {
+  it("débito no breakdown legado não presume POS simples", () => {
     const r = derivePagamentoFiscalFromBreakdown({ cartaoDebito: 25.5 }, 25.5)
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoDebito", tPag: "04", vPag: 25.5 })
-    expect(JSON.stringify(r.pagamento)).not.toMatch(/tpIntegra|tBand|cAut/)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+      expect(JSON.stringify(r)).not.toMatch(/tPag=01|"01"|"99"/)
+    }
   })
 
-  it("crédito válido (tPag 03, sem grupo card)", () => {
+  it("crédito no breakdown legado não presume POS simples", () => {
     const r = derivePagamentoFiscalFromBreakdown({ cartaoCredito: 100 }, 100)
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    expect(r.pagamento.det[0]).toEqual({ formaInterna: "cartaoCredito", tPag: "03", vPag: 100 })
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
   })
 
-  it("split/misto válido (dinheiro + débito + crédito, sem PIX)", () => {
+  it("split legado dinheiro + débito + crédito bloqueia o conjunto (não emite só o dinheiro)", () => {
     const r = derivePagamentoFiscalFromBreakdown(
       { dinheiro: 10, pix: 0, cartaoDebito: 30, cartaoCredito: 60 },
       100,
     )
-    expect(r.ok).toBe(true)
-    if (!r.ok) return
-    expect(r.pagamento.det.map((d) => d.tPag)).toEqual(["01", "03", "04"])
-    expect(r.pagamento.soma).toBe(100)
+    expect(r.ok).toBe(false)
+    if (!r.ok) {
+      expect(r.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+      expect(r.erro.mensagem).not.toMatch(/tPag=01|"01"|"99"/)
+    }
   })
 
-  it("ordem de chaves do breakdown não altera det canônico", () => {
+  it("ordem de chaves do breakdown não altera o fail-closed de cartão", () => {
     const a = derivePagamentoFiscalFromBreakdown({ cartaoDebito: 50, dinheiro: 50 }, 100)
     const b = derivePagamentoFiscalFromBreakdown({ dinheiro: 50, cartaoDebito: 50 }, 100)
-    expect(a.ok && b.ok).toBe(true)
-    if (!a.ok || !b.ok) return
-    expect(a.pagamento.det).toEqual(b.pagamento.det)
+    expect(a.ok).toBe(false)
+    expect(b.ok).toBe(false)
+    if (!a.ok && !b.ok) {
+      expect(a.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+      expect(b.erro.code).toBe(a.erro.code)
+    }
   })
 
   it("split legado com PIX bloqueia o conjunto (não emite só o dinheiro)", () => {
@@ -310,16 +314,82 @@ describe("assertPagamentoFiscalCanonico", () => {
       vTroco: null,
     }
     expect(assertPagamentoFiscalCanonico(frozen, 40).ok).toBe(true)
+    expect(assertPagamentoFiscalCanonico({ ...frozen, det: [{ formaInterna: "creditoVale", tPag: "19", vPag: 40 }] }, 40).ok).toBe(false)
+  })
+
+  it("fonte paymentBreakdown + cartão 03/04 bloqueia emissão futura", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.paymentBreakdown" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "cartaoCredito" as const, tPag: "03", vPag: 50 }],
+      soma: 50,
+      vTroco: null,
+    }
+    const a = assertPagamentoFiscalCanonico(frozen, 50)
+    expect(a.ok).toBe(false)
+    if (!a.ok) expect(a.erro.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+  })
+
+  it("fonte fiscalPaymentHandoff + 03/04 sem tpIntegra bloqueia XML", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "cartaoDebito" as const, tPag: "04", vPag: 50 }],
+      soma: 50,
+      vTroco: null,
+    }
+    const a = assertPagamentoFiscalCanonico(frozen, 50)
+    expect(a.ok).toBe(false)
+    if (!a.ok) expect(a.erro.code).toBe("PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE")
+  })
+
+  it("fonte fiscalPaymentHandoff + 03 + tpIntegra 2 é válido; 1 não", () => {
+    const base = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      soma: 50,
+      vTroco: null,
+    }
     expect(
-      assertPagamentoFiscalCanonico({ ...frozen, det: [{ formaInterna: "creditoVale", tPag: "19", vPag: 40 }] }, 40).ok,
-    ).toBe(false)
+      assertPagamentoFiscalCanonico(
+        { ...base, det: [{ formaInterna: "cartaoCredito", tPag: "03", vPag: 50, tpIntegra: "2" }] },
+        50,
+      ).ok,
+    ).toBe(true)
+    const integrado = assertPagamentoFiscalCanonico(
+      { ...base, det: [{ formaInterna: "cartaoCredito", tPag: "03", vPag: 50, tpIntegra: "1" }] },
+      50,
+    )
+    expect(integrado.ok).toBe(false)
+    if (!integrado.ok) expect(integrado.erro.code).toBe("PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO")
+  })
+
+  it("PIX 17 do handoff continua sem tpIntegra (YA04 residual)", () => {
+    const frozen = {
+      versao: PAGAMENTO_FISCAL_CONTRATO_VERSAO,
+      fonte: "venda.payload.fiscalPaymentHandoff" as const,
+      catalogoTPag: "IT-2024.002-v1.11" as const,
+      det: [{ formaInterna: "pix" as const, tPag: "17", vPag: 50 }],
+      soma: 50,
+      vTroco: null,
+    }
+    expect(assertPagamentoFiscalCanonico(frozen, 50).ok).toBe(true)
+    const analogia = assertPagamentoFiscalCanonico(
+      { ...frozen, det: [{ formaInterna: "pix", tPag: "17", vPag: 50, tpIntegra: "2" }] },
+      50,
+    )
+    expect(analogia.ok).toBe(false)
+    if (!analogia.ok) expect(analogia.erro.code).toBe("PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS")
   })
 })
 
 describe("fronteira — zero Caixa/Financeiro/PDV vivo no módulo", () => {
   it("sources de payment/** não importam Prisma, Caixa, Financeiro nem PDV", () => {
     const dir = resolve(process.cwd(), "lib/fiscal/payment")
-    for (const file of ["index.ts", "types.ts", "tpag-catalog.ts", "from-venda-breakdown.ts", "from-handoff.ts"]) {
+    for (const file of ["index.ts", "types.ts", "tpag-catalog.ts", "from-venda-breakdown.ts", "from-handoff.ts", "card-evidence.ts"]) {
       const src = readFileSync(resolve(dir, file), "utf8")
       expect(src).not.toMatch(/from ["']@\/lib\/prisma/)
       expect(src).not.toMatch(/from ["']@\/lib\/caixa/)
