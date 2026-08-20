@@ -42,4 +42,11 @@ Caso feliz: 1 AUTORIZADA/HOMOLOGACAO entregável (`nota-homolog-ok`). XML do ZIP
 - `git diff --check` — exit 0
 - `npm run build` — exit 0 (rota `/dashboard/contador` + UI)
 
-GOAL **não fechado**. PR draft. Revisão independente pendente.
+## Fechamento
+
+- revisão independente: **A (aprovada)** — `dhEmi` fail-closed, reader A, homologação B.
+- PR **#97** mergeado em `main` (merge commit, sem squash/rebase/force): `870ed54841f42f42dbabe37268c3dd6e9e6708e7`.
+- gate final na main reconciliada (`5e8331f`): testes focados 9 arquivos / 283 testes verdes · `npm run typecheck` exit 0 · `git diff --check` exit 0 · CI Vercel 3/3 verdes.
+- `npm run contador:fiscal-homolog:test` nesta máquina: 18 passed, 4 skipped — a suíte de integração exige `CONTADOR_FISCAL_HOMOLOGATION_DATABASE_URL`, ausente aqui. A prova runtime (3 arquivos / 22 testes) permanece a registrada acima, no mesmo HEAD homologado; nenhum arquivo funcional mudou depois dela.
+- ratificação AEP: GOAL 018 → **DONE** · trilha `contador` **PAUSED** · `current_goal=null` · `last_result=DONE`.
+- GOAL 019 **não aberto** (`GOAL_019_OPENED=false`).
