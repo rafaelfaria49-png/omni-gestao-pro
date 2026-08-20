@@ -1465,6 +1465,7 @@ export function PdvSupermercado({
             },
             aPrazoConfig,
             pixQrKind: meta?.pixQrKind,
+            cashTendered: meta?.cashTendered,
           })
 
           if (!result.ok) {

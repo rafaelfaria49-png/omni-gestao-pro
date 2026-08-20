@@ -612,7 +612,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
   // ── Confirmação e finalização ─────────────────────────────────────────────
   async function handleConfirmPayment(
     payments: PaymentMethod[],
-    meta?: { pixQrKind?: string },
+    meta?: { pixQrKind?: string; cashTendered?: number },
   ): Promise<boolean> {
     if (!selectedCliente || cart.length === 0 || total <= 0) return false
     if (payments.length === 0) {
@@ -669,6 +669,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
         clienteId: selectedCliente.id || undefined,
         aPrazoConfig,
         pixQrKind: meta?.pixQrKind,
+        cashTendered: meta?.cashTendered,
       })
 
       if (!result.ok) {

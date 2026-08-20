@@ -457,6 +457,7 @@ export function PdvVendaCompletaEnterprise({
       discountReais?: number
       discountPercent?: number
       pixQrKind?: string
+      cashTendered?: number
     }
   ) {
     const saleLines = cart
@@ -519,6 +520,7 @@ export function PdvVendaCompletaEnterprise({
       clienteId: selectedCliente?.id || undefined,
       aPrazoConfig,
       pixQrKind: meta?.pixQrKind,
+      cashTendered: meta?.cashTendered,
     })
 
     if (!result.ok) {

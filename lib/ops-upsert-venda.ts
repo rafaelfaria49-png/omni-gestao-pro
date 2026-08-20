@@ -2,7 +2,7 @@ import type { Prisma } from "@/generated/prisma"
 import { isVirtualSaleLine } from "@/lib/os-pdv-virtual-lines"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
 import type { PixQrKind } from "@/lib/fiscal/payment/pix-qr-kind"
-import { buildFiscalPaymentHandoff, type FiscalPaymentHandoff } from "@/lib/vendas/fiscal-payment-handoff"
+import { buildFiscalPaymentHandoff, resolveCashTenderedEvidence, type FiscalPaymentHandoff } from "@/lib/vendas/fiscal-payment-handoff"
 import type { SaleLineItemType } from "@/lib/sale-line-classification"
 import { valorAVistaVenda } from "@/lib/financeiro/correcao-pagamento-plan"
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
@@ -289,6 +289,11 @@ export type SalePayload = {
    * `pixQrKind`; o servidor deriva tPag. Ausente com PIX > 0 → handoff bloqueado.
    */
   pixQrKind?: PixQrKind | string
+  /**
+   * Dinheiro fisicamente entregue (GOAL 083). Evidência fiscal; não infla o Caixa.
+   * O cliente NÃO envia vTroco — o servidor deriva.
+   */
+  cashTendered?: number
   /**
    * Handoff fiscal versionado (GOAL 075). Gravado pelo SERVIDOR no create.
    * Cliente que enviar este campo é ignorado — o motor reconstrói a partir do breakdown.
@@ -665,10 +670,24 @@ export async function upsertVendaInTransaction(
   // em qualquer outro navegador (pendência fantasma). Blacklist, não whitelist: campos
   // legítimos ainda não tipados continuam sendo persistidos.
   const salePersistivel = stripClientSyncFlags(sale)
-  const saleSemAutoridadeFiscalCliente = salePersistivel as SalePayload & { tPag?: unknown }
-  // tPag e fiscalPaymentHandoff do cliente nunca são autoridade.
-  const { tPag: _tPagClienteIgnorado, fiscalPaymentHandoff: _handoffClienteIgnorado, ...saleSemTPagCliente } =
-    saleSemAutoridadeFiscalCliente
+  const saleSemAutoridadeFiscalCliente = salePersistivel as SalePayload & {
+    tPag?: unknown
+    vTroco?: unknown
+  }
+  // tPag, vTroco e fiscalPaymentHandoff do cliente nunca são autoridade.
+  const {
+    tPag: _tPagClienteIgnorado,
+    fiscalPaymentHandoff: _handoffClienteIgnorado,
+    vTroco: _vTrocoClienteIgnorado,
+    cashTendered: cashTenderedCliente,
+    ...saleSemTPagCliente
+  } = saleSemAutoridadeFiscalCliente
+
+  const dinheiroAplicado =
+    typeof saleSemTPagCliente.paymentBreakdown?.dinheiro === "number"
+      ? saleSemTPagCliente.paymentBreakdown.dinheiro
+      : Number(saleSemTPagCliente.paymentBreakdown?.dinheiro ?? 0)
+  const cashTendered = resolveCashTenderedEvidence(cashTenderedCliente, dinheiroAplicado)
 
   // `lines` são as linhas já resaneadas por `sanitizeSaleLinesPayload` (acessórios) —
   // sobrescrevem as linhas cruas do cliente. Quando o sync foi retroativo (sessão original
@@ -679,6 +698,7 @@ export async function upsertVendaInTransaction(
     id: pedidoId,
     ...(clientSaleId ? { clientSaleId } : {}),
     lines,
+    ...(cashTendered != null ? { cashTendered } : {}),
     ...(isRetroactiveSync
       ? {
           retroactiveSync: true,
@@ -691,7 +711,7 @@ export async function upsertVendaInTransaction(
     fiscalPaymentHandoff: buildFiscalPaymentHandoff(
       saleSemTPagCliente.paymentBreakdown,
       total,
-      { pixQrKind: saleSemTPagCliente.pixQrKind },
+      { pixQrKind: saleSemTPagCliente.pixQrKind, cashTendered },
     ),
   }
 

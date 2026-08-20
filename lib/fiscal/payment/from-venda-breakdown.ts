@@ -5,7 +5,8 @@
  * Formato comprovado pelos PDVs ativos: objeto plano `PaymentBreakdownFull`
  * `{ dinheiro, pix, cartaoDebito, cartaoCredito, carne, aPrazo, creditoVale }`
  * com números. Não há array `{forma, valor}`, não há tPag na origem, não há
- * metadata de cartão/TEF, não há valor entregue/troco persistidos.
+ * metadata de cartão/TEF, não há valor entregue/troco persistidos no breakdown.
+ * Troco só entra via `fiscalPaymentHandoff.cashTendered` (GOAL 083).
  *
  * PIX no breakdown legado (sem handoff) NÃO vira tPag 17 — exige evidência
  * explícita de subtipo. Não inventa forma, não converte desconhecido em 99,
@@ -163,7 +164,7 @@ export function derivePagamentoFiscalFromBreakdown(
     const lado = soma < totalR ? "abaixo" : "acima"
     return erro(
       "PAGAMENTO_SOMA_DIVERGENTE",
-      `Soma do pagamento (${soma.toFixed(2)}) está ${lado} do total da venda (${totalR.toFixed(2)}). Sem correção automática.`,
+      `Soma do pagamento (${soma.toFixed(2)}) está ${lado} do total da venda (${totalR.toFixed(2)}). Sem correção automática. Sem vTroco no breakdown legado.`,
       "venda.paymentBreakdown",
     )
   }
@@ -188,7 +189,19 @@ export function assertPagamentoFiscalCanonico(
     return erro("PAGAMENTO_CANONICO_AUSENTE", "Contrato de pagamento fiscal ausente ou de versão desconhecida.", "venda.pagamentoFiscal")
   }
   if (pagamento.vTroco !== null) {
-    return erro("PAGAMENTO_FORMATO_INVALIDO", "vTroco não pode ser fabricado: a venda persistida não grava troco.", "venda.pagamentoFiscal.vTroco")
+    if (typeof pagamento.vTroco !== "number" || !Number.isFinite(pagamento.vTroco) || pagamento.vTroco < 0) {
+      return erro("PAGAMENTO_VALOR_INVALIDO", "vTroco inválido (NaN/negativo/não-finito).", "venda.pagamentoFiscal.vTroco")
+    }
+    if (round2(pagamento.vTroco) === 0) {
+      return erro("PAGAMENTO_FORMATO_INVALIDO", "vTroco zero deve ser omitido (null).", "venda.pagamentoFiscal.vTroco")
+    }
+    if (!pagamento.det.some((d) => d.tPag === "01")) {
+      return erro(
+        "PAGAMENTO_FORMATO_INVALIDO",
+        "vTroco exige detPag de dinheiro (tPag 01). Sem fabricar troco de outra forma.",
+        "venda.pagamentoFiscal.vTroco",
+      )
+    }
   }
   if (!Array.isArray(pagamento.det) || pagamento.det.length === 0) {
     return erro("PAGAMENTO_AUSENTE", "Contrato canônico sem detPag.", "venda.pagamentoFiscal.det")
@@ -227,13 +240,24 @@ export function assertPagamentoFiscalCanonico(
     return erro("PAGAMENTO_SOMA_DIVERGENTE", "soma do contrato não confere com os detPag.", "venda.pagamentoFiscal.soma")
   }
   const totalR = round2(totalReferencia)
-  if (soma !== totalR) {
-    const lado = soma < totalR ? "abaixo" : "acima"
+  const troco = pagamento.vTroco == null ? 0 : round2(pagamento.vTroco)
+  const liquido = round2(soma - troco)
+  if (liquido !== totalR) {
     return erro(
       "PAGAMENTO_SOMA_DIVERGENTE",
-      `Soma do pagamento canônico (${soma.toFixed(2)}) está ${lado} do total (${totalR.toFixed(2)}).`,
+      `Σ(vPag) − vTroco (${soma.toFixed(2)} − ${troco.toFixed(2)} = ${liquido.toFixed(2)}) diverge do total (${totalR.toFixed(2)}). NT 2016.002 YA09-10.`,
       "venda.pagamentoFiscal.soma",
     )
+  }
+  if (troco > 0) {
+    const vPagDinheiro = round2(pagamento.det.filter((d) => d.tPag === "01").reduce((s, d) => s + d.vPag, 0))
+    if (troco - vPagDinheiro > 0.001) {
+      return erro(
+        "PAGAMENTO_VALOR_INVALIDO",
+        "vTroco maior que o dinheiro informado em detPag (tPag 01).",
+        "venda.pagamentoFiscal.vTroco",
+      )
+    }
   }
   return { ok: true, pagamento }
 }

@@ -289,6 +289,19 @@ describe("snapshot · fiscalPaymentHandoff (GOAL 075)", () => {
     expect(r.snapshot.venda.pagamentoFiscal?.fonte).toBe("venda.payload.fiscalPaymentHandoff")
     expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "dinheiro", tPag: "01", vPag: 50 }])
     expect(r.snapshot.venda.pagamentoFiscalErro).toBeNull()
+    expect(r.snapshot.venda.pagamentoFiscal?.vTroco).toBeNull()
+  })
+
+  it("handoff com cashTendered acima do aplicado congela vTroco oficial", () => {
+    const handoff = buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, { cashTendered: 70 })
+    const r = buildVendaFiscalSnapshot(
+      baseInput({ venda: { ...baseInput().venda, paymentBreakdown: { dinheiro: 50 }, fiscalPaymentHandoff: handoff } }),
+    )
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.snapshot.venda.pagamentoFiscal?.det).toEqual([{ formaInterna: "dinheiro", tPag: "01", vPag: 70 }])
+    expect(r.snapshot.venda.pagamentoFiscal?.vTroco).toBe(20)
+    expect(r.snapshot.venda.pagamentoFiscal?.soma).toBe(70)
   })
 
   it("handoff inconsistente não cai para o breakdown", () => {

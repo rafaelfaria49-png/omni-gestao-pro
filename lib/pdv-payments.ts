@@ -2,6 +2,15 @@ import type { PaymentMethod } from "@/components/dashboard/vendas/payment-modal"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
 
 /**
+ * Soma o dinheiro fisicamente informado pelo operador, ANTES de
+ * `normalizePaymentsToMatchTotal` cortar o excedente ao total da venda.
+ * Não é receita nem valor aplicado — é a evidência do entregue em espécie.
+ */
+export function sumCashTendered(payments: ReadonlyArray<{ type: string; value: number }>): number {
+  return Math.round(payments.reduce((s, p) => (p.type === "dinheiro" ? s + p.value : s), 0) * 100) / 100
+}
+
+/**
  * Redução canônica `PaymentMethod[]` → `PaymentBreakdownFull`.
  *
  * Mesma lógica que estava duplicada inline em vários PDVs (clássico, supermercado,

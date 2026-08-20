@@ -386,6 +386,11 @@ interface OperationsContextType {
      * Ausente com PIX > 0: a venda comercial fecha; o handoff Fiscal permanece bloqueado.
      */
     pixQrKind?: unknown
+    /**
+     * Dinheiro fisicamente entregue. Não altera o valor comercial nem o Caixa.
+     * Ausente: sem troco fiscal.
+     */
+    cashTendered?: unknown
     customerCpf?: string
     customerName?: string
     /** FK real para o cliente cadastrado (cuid de Cliente). Nulo em consumidor final. */
@@ -1970,6 +1975,7 @@ export function OperationsProvider({
       auditMeta,
       aPrazoConfig,
       pixQrKind,
+      cashTendered,
     }) => {
       const current = stateRef.current
       const next: OpsState = {
@@ -2095,6 +2101,13 @@ export function OperationsProvider({
         clienteId: clienteId?.trim() || undefined,
         paymentBreakdown: pb,
         ...(pb.pix > 0.02 && typeof pixQrKind === "string" && pixQrKind !== "" ? { pixQrKind } : {}),
+        ...(pb.dinheiro > 0.02 &&
+        typeof cashTendered === "number" &&
+        Number.isFinite(cashTendered) &&
+        cashTendered >= 0 &&
+        cashTendered + 0.001 >= pb.dinheiro
+          ? { cashTendered: Math.round(cashTendered * 100) / 100 }
+          : {}),
         cashierId: auditMeta?.cashierId,
         sessaoId: current.caixaSessaoId ?? undefined,
         terminalId: readSelectedTerminal(opsLojaIdFromStorageKey(storageKey))?.id || undefined,
