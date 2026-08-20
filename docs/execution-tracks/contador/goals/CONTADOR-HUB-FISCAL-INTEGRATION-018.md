@@ -139,4 +139,14 @@
 
 ## Critério de pronto
 
-- <PREENCHER>
+Implementação read-only do GOAL 018 no runtime local HOMOLOGACAO (estratégia B + reader A). **Não ratificar/fechar** se `FISCAL_RUNTIME_VALIDATABLE != true`.
+
+- [x] `lib/contador/readers/fiscal.ts` — SELECT Prisma side-effect-free; não chama `fiscalXmlReader.readAuthorizedDocument`; não grava FiscalLog/EventoFiscal/NotaFiscal.
+- [x] Flag `CONTADOR_FISCAL_READER` default off; liga só com valor exato `"on"`; allowlist env-only `CONTADOR_FISCAL_READER_STORE_ALLOWLIST` (sem schema). Flag off / loja fora / config inválida → `nao_disponivel` (nunca “zero notas”).
+- [x] Predicado ADR-007: `storeId` do scope + allowlisted + vigente + AUTORIZADA + HOMOLOGACAO + protocolo/chave/`xmlAutorizado` não vazios + `dhEmi` extraído do XML parseável no período canônico. Sem fallback para `dataAutorizacao`/`createdAt`/snapshot/`dataEmissao`.
+- [x] REJEITADA/CANCELADA/PRODUCAO nunca entram em `05-XML`; rejeitadas e canceladas geram sinal no checklist.
+- [x] Pacote: XML = texto UTF-8 persistido; nome `05-XML/{chaveAcesso}.xml`; sha256 do manifesto; placeholder quando flag off; `MAX_ARQUIVOS_PACOTE=15` sem truncar.
+- [x] Relatório fiscal mínimo somente leitura (sem emissão/cancelamento/inutilização/correção/reprocessamento).
+- [x] Prova runtime: Prisma → reader A → predicado → checklist → builder → manifest/hash → `05-XML` na massa homolog (1 AUTORIZADA/HOMOLOGACAO entregável). FiscalLog=0 · EventoFiscal=0.
+- [x] `HOMOLOGATION_STRATEGY_SELECTED=B` · `PURE_READER_STRATEGY_SELECTED=A` · `FISCAL_RUNTIME_VALIDATABLE=true` · `PRODUCTION_XML_ELIGIBLE=false` · `SCHEMA_CHANGED=false` · `SEFAZ_NETWORK_USED=false`.
+- [ ] Revisão independente (não mergear / não `track close` nesta entrega).

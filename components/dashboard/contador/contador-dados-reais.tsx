@@ -15,6 +15,10 @@ import type {
   DadoNumerico,
   DisponibilidadeDado,
 } from "@/lib/contador/readers/tipos"
+import {
+  mensagemFiscalIndisponivel,
+  type LeituraFiscalContador,
+} from "@/lib/contador/readers/fiscal"
 
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
 
@@ -341,6 +345,54 @@ export function RelatoriosReal({ dados }: { dados: ContadorDadosReais }) {
         <LinhaKv label="Sangrias" value={`${fmtMoney(caixa.sangriasTotal)} · ${fmtNum(caixa.sangriasQuantidade)}`} disp={caixa.sangriasTotal.disponibilidade} />
         <LinhaKv label="Suprimentos" value={`${fmtMoney(caixa.suprimentosTotal)} · ${fmtNum(caixa.suprimentosQuantidade)}`} disp={caixa.suprimentosTotal.disponibilidade} />
         <LinhaKv label="Diferenças" value={fmtMoney(caixa.diferencas)} disp={caixa.diferencas.disponibilidade} />
+      </Bloco>
+    </div>
+  )
+}
+
+/* ─────────────────────────── Relatório fiscal (GOAL 018 · somente leitura) ─────────────────────────── */
+
+/**
+ * Relatório mínimo da fonte fiscal. Sem botão de emissão, cancelamento,
+ * inutilização, correção ou reprocessamento.
+ */
+export function RelatorioFiscalReal({
+  leitura,
+  compacto = false,
+}: {
+  leitura: LeituraFiscalContador
+  compacto?: boolean
+}) {
+  const disp: DisponibilidadeDado = leitura.disponivel ? "real" : "indisponivel"
+  const estadoFonte = leitura.disponivel
+    ? "disponível"
+    : leitura.motivo === "leitura_falhou"
+      ? "erro de leitura"
+      : "não disponível"
+
+  return (
+    <div className={cn("min-w-0", compacto ? "mb-4" : "mb-4 grid gap-4 lg:col-span-2")}>
+      <Bloco title={compacto ? "Notas fiscais (leitura)" : "Notas fiscais da competência"}>
+        <p className="mb-2 text-[12px] text-muted-foreground">
+          Somente leitura. Sem emissão, cancelamento, inutilização, correção ou reprocessamento fiscal.
+        </p>
+        <LinhaKv label="Estado da fonte" value={estadoFonte} disp={disp} />
+        {leitura.disponivel ? (
+          <>
+            <LinhaKv label="Entregáveis (05-XML)" value={String(leitura.entregaveis.length)} disp="real" />
+            <LinhaKv label="Rejeitadas" value={String(leitura.rejeitadas.length)} disp="real" />
+            <LinhaKv label="Canceladas" value={String(leitura.canceladas.length)} disp="real" />
+          </>
+        ) : (
+          <>
+            <LinhaKv label="Entregáveis (05-XML)" value="—" disp="indisponivel" />
+            <LinhaKv label="Rejeitadas" value="—" disp="indisponivel" />
+            <LinhaKv label="Canceladas" value="—" disp="indisponivel" />
+            <p className="min-w-0 pt-2 text-[12.5px] text-muted-foreground">
+              {mensagemFiscalIndisponivel(leitura.motivo)}
+            </p>
+          </>
+        )}
       </Bloco>
     </div>
   )

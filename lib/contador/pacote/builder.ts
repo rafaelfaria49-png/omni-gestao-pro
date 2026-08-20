@@ -18,6 +18,7 @@ import { montarChecklistFechamento } from "@/lib/contador/fechamento"
 import type { ChecklistFechamento } from "@/lib/contador/fechamento"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
 import type { ContadorScopeInterno } from "@/lib/contador/scope-core"
+import type { EvidenciaFiscalPacote } from "@/lib/contador/readers/fiscal"
 import type { FontesDetalhadasPacote } from "./carregar-fontes"
 import {
   montarArquivosConteudo,
@@ -39,6 +40,8 @@ import {
   executarComTimeoutLogico,
   sanitizarStoreIdParaArquivo,
   TIMEOUT_LOGICO_MS,
+  MAX_ARQUIVOS_PACOTE,
+  PacoteLimiteExcedidoError,
 } from "./seguranca"
 import { ziparArquivos } from "./zip"
 import type { ArquivoPacote, ConteudoPacote, EstadoFonte, PacoteContador } from "./tipos"
@@ -59,20 +62,22 @@ export type MontarConteudoPacoteInput = Readonly<{
   arquivosExtra?: readonly ArquivoPacote[]
   /** Referência opcional de integridade citada no manifesto (ex.: `snapshotHash`). */
   snapshotHash?: string
+  /** GOAL 018 — XML só substitui o placeholder quando a fonte está ativa e há entregáveis. */
+  fiscal?: EvidenciaFiscalPacote | null
 }>
 
 /** Monta o conteúdo completo (14 arquivos) com hashes e guardas. Puro/determinístico. */
 export function montarConteudoPacote(input: MontarConteudoPacoteInput): ConteudoPacote {
   const { detalhadas, dados, checklist, competencia, agora, storeId, userId } = input
   const periodo = resolvePeriodoUtc(competencia)
-  const entrada = { detalhadas, dados, checklist, competencia, periodo, agora }
+  const entrada = { detalhadas, dados, checklist, competencia, periodo, agora, fiscal: input.fiscal }
 
   // Extras entram junto do conteúdo: aparecem no índice e no manifesto como qualquer
   // outro arquivo, e o manifesto passa a ser a raiz de integridade também deles.
   const conteudo = [...montarArquivosConteudo(entrada), ...(input.arquivosExtra ?? [])]
   const descritoresConteudo = descreverArquivos(conteudo)
 
-  const fontes = montarFontesManifesto(detalhadas)
+  const fontes = montarFontesManifesto(detalhadas, input.fiscal)
   const estadoPorFonte = new Map<string, EstadoFonte>(fontes.map((f) => [f.nome, f.estado]))
 
   const indice: ArquivoPacote = {
@@ -96,7 +101,7 @@ export function montarConteudoPacote(input: MontarConteudoPacoteInput): Conteudo
     userId,
     pendencias: montarPendencias(entrada),
     itensNaoDisponiveis: montarItensNaoDisponiveis(entrada),
-    avisos: montarAvisos(),
+    avisos: montarAvisos(input.fiscal),
     ...(input.snapshotHash ? { snapshotHash: input.snapshotHash } : {}),
   })
 
@@ -109,6 +114,12 @@ export function montarConteudoPacote(input: MontarConteudoPacoteInput): Conteudo
   }
 
   const arquivos = [...arquivosComIndice, manifestoArquivo]
+  if (arquivos.length > MAX_ARQUIVOS_PACOTE) {
+    throw new PacoteLimiteExcedidoError(
+      "arquivos_pacote",
+      `Pacote excedeu MAX_ARQUIVOS_PACOTE=${MAX_ARQUIVOS_PACOTE} (${arquivos.length} arquivos). A lista de XML não foi truncada.`,
+    )
+  }
   assertBytesDescompactados(arquivos)
   assertPacoteSeguro(arquivos, { storeId })
 
@@ -153,13 +164,18 @@ async function gerarPacoteContadorInterno(
   // Imports dinâmicos: só aqui o grafo toca Prisma (mantém o módulo testável sem banco).
   const { carregarFontesPacote } = await import("./carregar-fontes")
   const { montarDados } = await import("@/lib/contador/readers")
+  const { lerNotasFiscais, toEvidenciaPacote, toEvidenciaChecklist } = await import(
+    "@/lib/contador/readers/fiscal"
+  )
 
   const detalhadas = await carregarFontesPacote({ scope: input.scope, competencia: input.competencia })
   const dados = montarDados(detalhadas.agregado, input.competencia)
+  const fiscalLeitura = await lerNotasFiscais(input.scope, input.competencia)
   const checklist = montarChecklistFechamento({
     dados,
     competencia: input.competencia,
     agora: input.agora,
+    evidenciaFiscal: toEvidenciaChecklist(fiscalLeitura),
   })
 
   const extras = input.montarExtras?.({ dados, checklist })
@@ -172,6 +188,7 @@ async function gerarPacoteContadorInterno(
     agora: input.agora,
     storeId: input.scope.storeId,
     userId: input.scope.userId,
+    fiscal: toEvidenciaPacote(fiscalLeitura),
     ...(extras ? { arquivosExtra: extras.arquivos, snapshotHash: extras.snapshotHash } : {}),
   })
 
@@ -182,7 +199,7 @@ async function gerarPacoteContadorInterno(
   const bytes = await ziparArquivos(conteudo.arquivos, input.agora)
   assertBytesZip(bytes.byteLength)
 
-  const fontes = montarFontesManifesto(detalhadas)
+  const fontes = montarFontesManifesto(detalhadas, toEvidenciaPacote(fiscalLeitura))
   const contagens: Record<string, number> = {}
   for (const f of fontes) contagens[f.nome] = f.registros
   const fontesParciais = fontes.filter((f) => f.estado === "parcial").map((f) => f.nome)

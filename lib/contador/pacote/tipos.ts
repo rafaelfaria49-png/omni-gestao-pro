@@ -5,7 +5,9 @@
  * - sem storage, sem upload, sem registro em banco, sem snapshot, sem versão persistida;
  * - reflete os dados vivos da competência no instante do download;
  * - não é fechamento oficial nem apuração fiscal/contábil;
- * - não inclui XML nesta fase (fonte fiscal atrás de CONTADOR_FISCAL_READER).
+ * - XML autorizado só entra em `05-XML` quando a leitura fiscal (GOAL 018) está
+ *   ativa, a loja está na allowlist e o predicado ADR-007 é cumprido; caso contrário
+ *   permanece o placeholder honesto.
  *
  * 008B: estrutura de pastas fixa, CSVs detalhados por fonte (linha a linha, sem PII),
  * manifesto canônico `omni.contador.pacote.manifest/v1` e estados por fonte.
@@ -20,6 +22,8 @@ export type CategoriaArquivoPacote =
   | "pendencias"
   | "manifesto"
   | "placeholder"
+  /** GOAL 018 — XML autorizado persistido (UTF-8 da coluna, sem reconstrução). */
+  | "xml"
   /** GOAL 012A — snapshot canônico do fechamento embutido no pacote versionado. */
   | "snapshot"
 
@@ -39,8 +43,8 @@ export type FonteResultado<T> = Readonly<{
 }>
 
 /**
- * Um arquivo do pacote, sempre textual (UTF-8) nesta fase — CSV, Markdown ou JSON.
- * MVP não embute binários (sem XML, sem PDF, sem anexos).
+ * Um arquivo do pacote, sempre textual (UTF-8) nesta fase — CSV, Markdown, JSON ou XML.
+ * XML empacotado é o texto persistido em `NotaFiscal.xmlAutorizado` (sem reconstrução).
  */
 export type ArquivoPacote = Readonly<{
   /** Caminho relativo dentro do ZIP (ex.: "01-VENDAS/vendas.csv"). Sem barra inicial. */

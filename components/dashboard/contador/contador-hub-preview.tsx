@@ -44,10 +44,12 @@ import {
   type Competencia,
 } from "@/lib/contador/competencia"
 import type { ChecklistFechamento } from "@/lib/contador/fechamento"
+import type { LeituraFiscalContador } from "@/lib/contador/readers/fiscal"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
 import {
   VisaoGeralReal,
   RelatoriosReal,
+  RelatorioFiscalReal,
   ContadorRealIndisponivel,
 } from "./contador-dados-reais"
 // GOAL 012: `FECHAR_COMPETENCIA_TITLE` (título do CTA desabilitado do GOAL 007) deixou
@@ -245,6 +247,11 @@ export type ContadorHubPreviewProps = {
    * Montado na page em memória — nunca reconsulta readers.
    */
   checklistFechamento: ChecklistFechamento
+  /**
+   * Leitura fiscal read-only (GOAL 018). Sempre um DTO honesto: flag off / loja
+   * fora da allowlist / falha → `disponivel: false` (nunca “zero notas”).
+   */
+  relatorioFiscal?: LeituraFiscalContador | null
 }
 
 export function ContadorHubPreview({
@@ -252,6 +259,7 @@ export function ContadorHubPreview({
   realData,
   realErro,
   checklistFechamento,
+  relatorioFiscal,
 }: ContadorHubPreviewProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -328,6 +336,7 @@ export function ContadorHubPreview({
 
       {realErro ? <ContadorRealIndisponivel motivo={realErro} /> : null}
       {realData ? <VisaoGeralReal dados={realData} /> : null}
+      {relatorioFiscal ? <RelatorioFiscalReal leitura={relatorioFiscal} compacto /> : null}
 
       {realData ? (
         <PreviewBanner
@@ -460,8 +469,10 @@ export function ContadorHubPreview({
             Em vez de mandar arquivos soltos por e-mail e WhatsApp, você gera o pacote e o contador baixa de uma vez.
           </p>
           <p className="text-[12px] text-muted-foreground">
-            Notas fiscais (XML) e documentos anexos entram numa fase futura — por ora seguem como
-            placeholders honestos dentro do pacote.
+            Notas fiscais (XML) entram no pacote somente quando a leitura fiscal está ligada
+            (CONTADOR_FISCAL_READER=on, loja na allowlist) e o predicado ADR-007 é cumprido;
+            caso contrário o placeholder em 05-XML permanece honesto. Documentos anexos seguem
+            no domínio de upload.
           </p>
         </Card>
       </div>
@@ -500,6 +511,7 @@ export function ContadorHubPreview({
 
       {realErro ? <ContadorRealIndisponivel motivo={realErro} /> : null}
       {realData ? <RelatoriosReal dados={realData} /> : null}
+      {relatorioFiscal ? <RelatorioFiscalReal leitura={relatorioFiscal} /> : null}
 
       {realData ? (
         <PreviewBanner

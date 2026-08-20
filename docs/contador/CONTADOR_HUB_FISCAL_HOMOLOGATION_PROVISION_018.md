@@ -2,34 +2,55 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Runtime **não-Production** provisionável — `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED` |
+| Status | GOAL 018 **implementado e aberto** — `GOAL_018_OPENED=true` · `GOAL_018_STATUS=RUNNING` · `FISCAL_RUNTIME_VALIDATABLE=true` |
 | Data | 2026-08-20 |
-| Autorização | Rafael: homologação **B** + reader **A**; merge PR **#92**; **sem** Production, **sem** SEFAZ, **sem** abrir GOAL 018 |
+| Autorização | Rafael: homologação **B** + reader **A**; merge PR **#92**; implementação 018 sem Production, sem SEFAZ, sem schema |
 | Auditoria | [`CONTADOR_HUB_FISCAL_HOMOLOGATION_READINESS_AUDIT_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_READINESS_AUDIT_018.md) |
 | ADR | ADR-CONTADOR-007 **Accepted** |
 | Schema Prisma | **não alterado** (`prisma db push` só no DSN local) |
 
-Este documento descreve o provisionamento da estratégia **B**. Não implementa `lib/contador/readers/fiscal.ts`, predicado, checklist, `05-XML` nem AEP `import`/`open`.
+## Addendum — prova runtime do GOAL 018
+
+O provisionamento B permanece. O GOAL 018 implementou o reader A e o fluxo completo no runtime local:
 
 ```
 HOMOLOGATION_STRATEGY_SELECTED=B
 PURE_READER_STRATEGY_SELECTED=A
-GOAL_018_OPENED=false
+GOAL_018_OPENED=true
 SEFAZ_NETWORK_REQUIRED=false
 PRODUCTION_REQUIRED=false
 PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true
 NON_PRODUCTION_RUNTIME_AVAILABLE=true
+FISCAL_RUNTIME_VALIDATABLE=true
+FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
+PRODUCTION_XML_ELIGIBLE=false
+SCHEMA_CHANGED=false
+```
+
+Fluxo comprovado (massa `homolog-contador-a` / competência `2026-07`):
+
+Prisma → `lerNotasFiscais` (Opção A) → predicado ADR-007 → checklist (sinal fiscal) → `montarConteudoPacote` → `manifest.json` sha256 → `05-XML/{chave}.xml` (UTF-8 = `xmlAutorizado` persistido).
+
+Resultado feliz: 1 AUTORIZADA/HOMOLOGACAO entregável; 1 REJEITADA (sinal); 1 CANCELADA (sinal, fora de 05-XML); PRODUCAO não entregável; loja B não vaza. FiscalLog=0. EventoFiscal=0. `MAX_ARQUIVOS_PACOTE=15` preservado (1 XML cabe; 3 XMLs falham sem truncar).
+
+Flag `CONTADOR_FISCAL_READER` default off; allowlist `CONTADOR_FISCAL_READER_STORE_ALLOWLIST` env-only.
+
+**Não fechar/ratificar o GOAL nesta entrega** — revisão independente pendente.
+
+---
+
+Este documento descreve o provisionamento da estratégia **B**. O reader A, o predicado, o checklist, o `05-XML` e o AEP `import`/`open` do 018 estão nesta mesma entrega (GOAL 018).
+
+O bloco abaixo é o **estado histórico do provisionamento pré-018** (mantido para auditoria). O estado vigente está no addendum.
+
+```
+# histórico pré-018
+GOAL_018_OPENED=false
 FISCAL_RUNTIME_VALIDATABLE=false
 FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
 ```
 
-`FISCAL_RUNTIME_VALIDATABLE=false` é o **estado esperado antes da implementação** do GOAL 018. Não é blocker de `import`/`open`.
-
-`FISCAL_RUNTIME_VALIDATABLE=true` é **critério de aceite do GOAL 018**, obtido somente quando o fluxo Prisma → reader A → predicado → checklist → pacote → manifest/hash → `05-XML` passar no runtime local HOMOLOGACAO, sem mock no caminho. Esse código **pertence ao 018** — não pode ser exigido para abrir o 018.
-
-`PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true`: o pre-open exige runtime não-Production **já provisionado** (`NON_PRODUCTION_RUNTIME_AVAILABLE=true`), sem Production e sem SEFAZ.
-
-O reader A **não** é criado aqui. Continuam proibidos: `fiscalXmlReader.readAuthorizedDocument` as-is, alterações em `lib/fiscal/**` só para servir o Contador, e qualquer `FiscalLog` gerado pelo futuro reader.
+`FISCAL_RUNTIME_VALIDATABLE=true` passou a ser o aceite do GOAL 018 após a prova runtime (addendum). Continuam proibidos: `fiscalXmlReader.readAuthorizedDocument` as-is, alterações em `lib/fiscal/**` só para servir o Contador, e qualquer `FiscalLog` gerado pelo reader A.
 
 ---
 
