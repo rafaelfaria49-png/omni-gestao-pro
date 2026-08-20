@@ -346,7 +346,7 @@ export function PdvBlackEdition() {
   }, [handleShortcutAction, selectedLineId, removeSelectedLine])
 
   // ── Confirmar pagamento ────────────────────────────────────────────────────
-  const handlePaymentConfirm = useCallback(async (payments: PaymentMethod[], meta?: { pixQrKind?: string }) => {
+  const handlePaymentConfirm = useCallback(async (payments: PaymentMethod[], meta?: { pixQrKind?: string; cashTendered?: number }) => {
     // Persistência REAL alinhada ao core (Black continua GATED por env).
     // Elimina o "ghost sale": grava Venda + estoque + financeiro via
     // finalizeSaleTransaction (mesmo motor dos demais PDVs, idempotente + retry).
@@ -389,6 +389,7 @@ export function PdvBlackEdition() {
       auditMeta: { cashierId: operadorNome },
       aPrazoConfig: aPrazoPayment?.aPrazoConfig,
       pixQrKind: meta?.pixQrKind,
+      cashTendered: meta?.cashTendered,
     })
     if (!result.ok) {
       toast({ variant: "destructive", title: "Falha ao registrar venda", description: result.reason })

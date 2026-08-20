@@ -71,6 +71,7 @@ import {
   isPixQrKind,
   type PixQrKind,
 } from "@/lib/fiscal/payment/pix-qr-kind"
+import { sumCashTendered } from "@/lib/pdv-payments"
 
 function formatMoneyInput(value: string): string {
   const clean = value.replace(/\D/g, "")
@@ -171,6 +172,7 @@ interface PaymentModalProps {
       discountReais?: number
       discountPercent?: number
       pixQrKind?: PixQrKind
+      cashTendered?: number
     }
   ) => boolean | void | Promise<boolean | void>
   /** Quando definido ao abrir, adiciona automaticamente uma linha quitando o total restante com essa forma (pagamento “full” em um toque). */
@@ -493,6 +495,7 @@ export function PaymentModal({
     setTimeout(() => {
       void (async () => {
         try {
+          const cashTendered = sumCashTendered(payments)
           const normalized = normalizePaymentsToMatchTotal(payments, total)
           const adminIdForAudit = descontoManualAtivo ? (authorizedAdmin?.id || undefined) : undefined
           const success = await onConfirm?.(normalized, {
@@ -501,6 +504,7 @@ export function PaymentModal({
             discountReais: Number(discountReais) || 0,
             discountPercent: Number(discountPercent) || 0,
             ...(pixTotal > 0.02 && isPixQrKind(pixQrKind) ? { pixQrKind } : {}),
+            ...(cashTendered > 0.02 ? { cashTendered } : {}),
           })
           if (success === false) {
             finalConfirmBusyRef.current = false

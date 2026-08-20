@@ -211,11 +211,55 @@ describe("buildFiscalPaymentHandoff · pixQrKind (GOAL 077)", () => {
 })
 
 describe("buildFiscalPaymentHandoff · troco e formato", () => {
-  it("não persiste vTroco nem valorEntregue mesmo com dinheiro", () => {
+  it("sem cashTendered não persiste vTroco nem valorEntregue mesmo com dinheiro", () => {
     const h = buildFiscalPaymentHandoff({ dinheiro: 50 }, 50)
     expect("vTroco" in h).toBe(false)
     expect("valorEntregue" in h).toBe(false)
+    expect("cashTendered" in h).toBe(false)
     expect(JSON.stringify(h)).not.toMatch(/vTroco|valorEntregue|valorRecebido/)
+  })
+
+  it("cashTendered exato (= aplicado) persiste evidência e não gera vTroco no handoff", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 100 }, 100, { cashTendered: 100 })
+    expect(h.cashTendered).toBe(100)
+    expect(h.linhas.find((l) => l.formaOrigem === "dinheiro")?.valor).toBe(100)
+    expect("vTroco" in h).toBe(false)
+  })
+
+  it("cashTendered acima do aplicado persiste evidência; linhas.valor continuam aplicadas", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 60, pix: 40 }, 100, { cashTendered: 70 })
+    expect(h.cashTendered).toBe(70)
+    expect(h.linhas.find((l) => l.formaOrigem === "dinheiro")?.valor).toBe(60)
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")?.valor).toBe(40)
+    expect("vTroco" in h).toBe(false)
+  })
+
+  it("cashTendered ausente não gera evidência", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, {})
+    expect(h.cashTendered).toBeUndefined()
+  })
+
+  it("cashTendered menor que o aplicado não é evidência", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 60 }, 60, { cashTendered: 50 })
+    expect(h.cashTendered).toBeUndefined()
+    expect("vTroco" in h).toBe(false)
+  })
+
+  it("cashTendered inválido (NaN/negativo) não é evidência", () => {
+    expect(buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, { cashTendered: Number.NaN }).cashTendered).toBeUndefined()
+    expect(buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, { cashTendered: -1 }).cashTendered).toBeUndefined()
+    expect(buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, { cashTendered: "70" }).cashTendered).toBeUndefined()
+  })
+
+  it("cashTendered é irrelevante quando não há dinheiro aplicado", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 50 }, 50, { cashTendered: 70 })
+    expect(h.cashTendered).toBeUndefined()
+  })
+
+  it("hints.vTroco do cliente é ignorado", () => {
+    const h = buildFiscalPaymentHandoff({ dinheiro: 50 }, 50, { cashTendered: 70, ...( { vTroco: 20 } as object ) })
+    expect(h.cashTendered).toBe(70)
+    expect("vTroco" in h).toBe(false)
   })
 
   it("zeros são omitidos", () => {

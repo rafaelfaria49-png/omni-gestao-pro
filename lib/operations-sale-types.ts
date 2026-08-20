@@ -88,6 +88,11 @@ export interface SaleRecord {
    * e o operador informou o subtipo. Sem default. Não altera o valor do PIX.
    */
   pixQrKind?: PixQrKind | string
+  /**
+   * Dinheiro fisicamente entregue pelo cliente (GOAL 083). Não é receita nem
+   * valor aplicado à venda (`paymentBreakdown.dinheiro`). Ausente = sem troco.
+   */
+  cashTendered?: number
   /** Auditoria: operador do caixa (id local do dispositivo). */
   cashierId?: string
   /** Sessão de caixa ativa no momento da venda (persiste no payload JSON da Venda). */

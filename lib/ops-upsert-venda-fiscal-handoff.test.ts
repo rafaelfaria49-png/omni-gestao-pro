@@ -308,10 +308,58 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
     expect(financeiro).toHaveLength(0)
   })
 
-  it("não persiste vTroco", async () => {
-    const { tx, vendas } = makeFakeTx()
+  it("não persiste vTroco (cliente não é autoridade); cashTendered válido vira evidência", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({ total: 100, paymentBreakdown: { dinheiro: 60, pix: 40 }, cashTendered: 70, pixQrKind: "estatico" }),
+    )
+    const payload = vendas[0]!.payload as {
+      cashTendered?: number
+      fiscalPaymentHandoff: { cashTendered?: number; linhas: Array<{ formaOrigem: string; valor: number }> }
+    }
+    expect(payload.cashTendered).toBe(70)
+    expect(payload.fiscalPaymentHandoff.cashTendered).toBe(70)
+    expect(payload.fiscalPaymentHandoff.linhas.find((l) => l.formaOrigem === "dinheiro")?.valor).toBe(60)
+    expect(JSON.stringify(payload.fiscalPaymentHandoff)).not.toMatch(/vTroco|valorEntregue/)
+    expect(financeiro).toHaveLength(1)
+    expect(financeiro[0]!.valor).toBe(100)
+  })
+
+  it("cashTendered ausente: venda fecha, handoff sem evidência, Caixa = total", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
     await upsertVendaInTransaction(tx, STORE, avulsoSale({ paymentBreakdown: { dinheiro: 50 } }))
+    const handoff = vendas[0]!.payload.fiscalPaymentHandoff as { cashTendered?: number }
+    expect(handoff.cashTendered).toBeUndefined()
+    expect(vendas[0]!.payload.cashTendered).toBeUndefined()
     expect(JSON.stringify(vendas[0]!.payload.fiscalPaymentHandoff)).not.toMatch(/vTroco|valorEntregue/)
+    expect(financeiro[0]!.valor).toBe(50)
+  })
+
+  it("cashTendered inválido ou menor que o aplicado não vira evidência; venda comercial persiste", async () => {
+    const { tx: tx1, vendas: v1, financeiro: f1 } = makeFakeTx()
+    await upsertVendaInTransaction(tx1, STORE, avulsoSale({ paymentBreakdown: { dinheiro: 50 }, cashTendered: -1 }))
+    expect(v1[0]!.payload.cashTendered).toBeUndefined()
+    expect((v1[0]!.payload.fiscalPaymentHandoff as { cashTendered?: number }).cashTendered).toBeUndefined()
+    expect(f1[0]!.valor).toBe(50)
+
+    const { tx: tx2, vendas: v2, financeiro: f2 } = makeFakeTx()
+    await upsertVendaInTransaction(tx2, STORE, avulsoSale({ paymentBreakdown: { dinheiro: 50 }, cashTendered: 10 }))
+    expect(v2[0]!.payload.cashTendered).toBeUndefined()
+    expect((v2[0]!.payload.fiscalPaymentHandoff as { cashTendered?: number }).cashTendered).toBeUndefined()
+    expect(f2[0]!.valor).toBe(50)
+  })
+
+  it("vTroco enviado pelo cliente é ignorado", async () => {
+    const { tx, vendas } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({ paymentBreakdown: { dinheiro: 50 }, cashTendered: 70, vTroco: 99 } as SalePayload & { vTroco: number }),
+    )
+    expect(JSON.stringify(vendas[0]!.payload.fiscalPaymentHandoff)).not.toMatch(/vTroco/)
+    expect((vendas[0]!.payload.fiscalPaymentHandoff as { cashTendered?: number }).cashTendered).toBe(70)
   })
 })
 
@@ -346,11 +394,34 @@ describe("PDVs ativos não produzem o handoff — só o motor central", () => {
     expect(src).not.toContain("creditKind")
   })
 
-  it("finalizeSaleTransaction propaga pixQrKind e não deriva tPag no cliente", () => {
+  it("finalizeSaleTransaction propaga pixQrKind e cashTendered e não deriva tPag/vTroco no cliente", () => {
     const src = readFileSync(resolve(process.cwd(), "lib/operations-store.tsx"), "utf8")
     expect(src).toContain("pixQrKind")
+    expect(src).toContain("cashTendered")
     expect(src).not.toContain("buildFiscalPaymentHandoff")
     expect(src).not.toContain("fiscalPaymentHandoff")
     expect(src).not.toMatch(/tPagFromPixQrKind|tPag:\s*"17"/)
+    expect(src).not.toMatch(/vTroco\s*:/)
+  })
+
+  it("PDVs que usam PaymentModal encaminham cashTendered ao finalizer", () => {
+    const pdvs = [
+      "components/dashboard/vendas/pdv-classic.tsx",
+      "components/dashboard/vendas/pdv-supermercado.tsx",
+      "components/dashboard/vendas/pdv-assistencia-enterprise.tsx",
+      "components/dashboard/vendas/pdv-venda-completa-enterprise.tsx",
+      "components/dashboard/vendas/venda-completa-enterprise.tsx",
+      "components/pdv-next/PdvBlackEdition.tsx",
+    ]
+    for (const rel of pdvs) {
+      const src = readFileSync(resolve(process.cwd(), rel), "utf8")
+      expect(src, rel).toContain("cashTendered: meta?.cashTendered")
+      expect(src, rel).not.toContain("buildFiscalPaymentHandoff")
+      expect(src, rel).not.toMatch(/vTroco\s*:/)
+    }
+    const modal = readFileSync(resolve(process.cwd(), "components/dashboard/vendas/payment-modal.tsx"), "utf8")
+    expect(modal).toContain("sumCashTendered(payments)")
+    expect(modal).toContain("normalizePaymentsToMatchTotal(payments, total)")
+    expect(modal.indexOf("sumCashTendered(payments)")).toBeLessThan(modal.indexOf("normalizePaymentsToMatchTotal(payments, total)"))
   })
 })

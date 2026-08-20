@@ -595,6 +595,77 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     const xml = buildNfceXml(s)
     expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>20\.00<\/vPag>/)
     expect(xml).toMatch(/<tPag>21<\/tPag>\s*<vPag>30\.00<\/vPag>/)
+    expect(xml).not.toContain("<vTroco>")
+  })
+
+  it("dinheiro exato com cashTendered não emite vTroco", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { dinheiro: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [{ formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported", status: "ok" }],
+          cashTendered: 50,
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<detPag>\s*<tPag>01<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
+    expect(xml).not.toContain("<vTroco>")
+    expect(s.venda.pagamentoFiscal?.vTroco).toBeNull()
+  })
+
+  it("dinheiro acima do total emite vPag entregue e vTroco (Σ − vTroco = vNF)", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { dinheiro: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [{ formaOrigem: "dinheiro", valor: 50, tPag: "01", capability: "supported", status: "ok" }],
+          cashTendered: 70,
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>70\.00<\/vPag>/)
+    expect(xml).toMatch(/<vTroco>20\.00<\/vTroco>/)
+    expect(s.venda.pagamentoFiscal?.soma).toBe(70)
+    expect(s.venda.pagamentoFiscal?.vTroco).toBe(20)
+  })
+
+  it("split PIX + dinheiro com troco: vPag do dinheiro é o entregue", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { pix: 20, dinheiro: 30 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            { formaOrigem: "dinheiro", valor: 30, tPag: "01", capability: "supported", status: "ok" },
+            {
+              formaOrigem: "pix",
+              valor: 20,
+              pixQrKind: "estatico",
+              tPag: "20",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+          cashTendered: 40,
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>40\.00<\/vPag>/)
+    expect(xml).toMatch(/<tPag>20<\/tPag>\s*<vPag>20\.00<\/vPag>/)
+    expect(xml).toMatch(/<vTroco>10\.00<\/vTroco>/)
+    expect(s.venda.pagamentoFiscal?.soma).toBe(60)
+    expect(s.venda.pagamentoFiscal?.vTroco).toBe(10)
   })
 
   it("handoff legado de creditoVale bloqueado não emite XML", () => {

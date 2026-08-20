@@ -197,7 +197,9 @@ describe("DANFC-e · reimpressão determinística", () => {
     )
     expect(model.variante).toBe("autorizado")
     expect(model.pagamentos.map((p) => p.tPag).sort()).toEqual(["01", "17"])
+    expect(model.troco).toBe("10.00")
     expect(reader.calls).toBe(1)
+    expect(document.xmlAutorizado).toContain("<vTroco>10.00</vTroco>")
   })
 
   it("QR de reimpressão é o persistido, não recalculado, e aparece no HTML/ESC/POS", () => {
