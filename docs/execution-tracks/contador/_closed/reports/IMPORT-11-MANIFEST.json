@@ -1,0 +1,86 @@
+{
+  "aep": "1.0-R2",
+  "track": "contador",
+  "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
+  "plan_ref": "CONTADOR-HUB-FABLE5-MASTERPLAN-001",
+  "plan_rev": 1,
+  "risk_tier": "MEDIO",
+  "branch_pattern": "cursor/contador-fiscal-integration-<nnn>-47d9",
+  "test_command": "npm run typecheck",
+  "paths_base": [
+    "lib/contador/readers/fiscal.ts",
+    "lib/contador/__tests__/fiscal/**",
+    "lib/contador/fechamento/montar-checklist.ts",
+    "lib/contador/fechamento/montar-checklist.test.ts",
+    "lib/contador/pacote/**",
+    "lib/contador/homologation/**",
+    "app/dashboard/contador/page.tsx",
+    "components/dashboard/contador/**",
+    ".env.example",
+    "docs/status/MOCKS_TRACKING.md",
+    "docs/ai/CURRENT_STATUS.md",
+    "docs/contador/**",
+    "docs/ai-execution/_evidence/**",
+    "docs/execution-tracks/contador/goals/CONTADOR-HUB-FISCAL-INTEGRATION-018.md"
+  ],
+  "gates_extra": [
+    "main",
+    "schema",
+    "migration",
+    "auth_externa",
+    "storage_r2_preview",
+    "storage_r2_production",
+    "fiscal_readonly",
+    "portal_legado",
+    "dados_destrutivos",
+    "secrets",
+    "deploy"
+  ],
+  "fontes": {
+    "resumo_canonico": "docs/contador/CONTADOR_HUB_FISCAL_PASSO0_AUDIT_018.md",
+    "adr": "docs/contador/CONTADOR_HUB_ADRS_PROPOSTOS_001.md",
+    "comandos": "docs/contador/CONTADOR_HUB_COMMANDS_001.md",
+    "homologacao": "docs/contador/CONTADOR_HUB_FISCAL_HOMOLOGATION_PROVISION_018.md"
+  },
+  "goals_declarados": [
+    {
+      "id": "CONTADOR-HUB-FISCAL-INTEGRATION-018",
+      "situacao": "READY",
+      "title": "Integração fiscal read-only do Contador (HOMOLOGACAO)",
+      "branch": "cursor/contador-fiscal-integration-018-47d9",
+      "worktree": "/workspace",
+      "allowlist": [
+        "lib/contador/readers/fiscal.ts",
+        "lib/contador/__tests__/fiscal/**",
+        "lib/contador/fechamento/montar-checklist.ts",
+        "lib/contador/fechamento/montar-checklist.test.ts",
+        "lib/contador/pacote/**",
+        "lib/contador/homologation/**",
+        "app/dashboard/contador/page.tsx",
+        "components/dashboard/contador/**",
+        ".env.example",
+        "docs/status/MOCKS_TRACKING.md",
+        "docs/ai/CURRENT_STATUS.md",
+        "docs/contador/**",
+        "docs/ai-execution/_evidence/**",
+        "docs/execution-tracks/contador/goals/CONTADOR-HUB-FISCAL-INTEGRATION-018.md"
+      ],
+      "gates_liberados": [
+        "G-CONFIG-DEPLOY"
+      ],
+      "read_budget": 60,
+      "gate_humano": {
+        "requerido": true,
+        "aprovacao": {
+          "aprovado": true,
+          "autorizacao": "AUTORIZO O IMPORT/OPEN E A IMPLEMENTACAO DO GOAL CONTADOR-HUB-FISCAL-INTEGRATION-018, INCLUINDO G-CONFIG-DEPLOY SOMENTE PARA .env.example (CONTADOR_FISCAL_READER default off + allowlist env-only). Sem schema, sem Production, sem SEFAZ.",
+          "registrado_por": "humano na sessao Cursor Cloud (GOAL CONTADOR-HUB-FISCAL-INTEGRATION-018)",
+          "em": "2026-08-20T04:07:00Z"
+        }
+      }
+    }
+  ],
+  "plano_ids": [
+    "CONTADOR-HUB-FISCAL-INTEGRATION-018"
+  ]
+}
