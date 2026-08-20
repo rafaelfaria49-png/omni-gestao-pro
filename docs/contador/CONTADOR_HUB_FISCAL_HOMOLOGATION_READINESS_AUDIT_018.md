@@ -416,8 +416,10 @@ Provisionamento: [`CONTADOR_HUB_FISCAL_HOMOLOGATION_PROVISION_018.md`](./CONTADO
 ```
 HOMOLOGATION_STRATEGY_SELECTED=B
 PURE_READER_STRATEGY_SELECTED=A
+PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true
 NON_PRODUCTION_RUNTIME_AVAILABLE=true
 FISCAL_RUNTIME_VALIDATABLE=false
+FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
 GOAL_018_OPENED=false
 GOAL_018_CAN_BE_OPENED_AFTER_THIS_AUDIT=false
 SEFAZ_NETWORK_REQUIRED=false
@@ -425,6 +427,8 @@ PRODUCTION_REQUIRED=false
 REMAINING_BLOCKERS=AEP_import_open_ainda_negado; teto_15_arquivos_antes_do_slice_N_xml_ou_relacao_csv; reader_predicado_checklist_05xml_sao_GOAL_018
 ```
 
-`FISCAL_RUNTIME_VALIDATABLE` segue **false** até o 018 implementar o caminho §3.1 (reader A → predicado → checklist → pacote/`05-XML`) sobre esta massa, sem mock no caminho. O teto de 15 arquivos **não** foi aumentado.
+`FISCAL_RUNTIME_VALIDATABLE=false` é o estado **esperado antes** de implementar o 018. **Não** é condição de `import`/`open` — o fluxo Prisma → reader A → predicado → checklist → pacote → manifest/hash → `05-XML` é o **aceite** do GOAL 018.
+
+O pre-open exige runtime não-Production provisionado (`PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true` · `NON_PRODUCTION_RUNTIME_AVAILABLE=true`), sem Production e sem SEFAZ. O teto de 15 arquivos **não** foi aumentado. Reader A **não** foi criado.
 
 **GOAL 018 permanece não importado / não aberto.**

@@ -46,6 +46,11 @@ integration("provisionamento fiscal homologação (SELECT)", () => {
 
     expect(notas).toHaveLength(7)
 
+    const vendas = await prisma.venda.count({
+      where: { storeId: { in: [...STORE_IDS] } },
+    })
+    expect(vendas).toBe(7)
+
     const porCaso = new Map(LINHAS_MASSA.map((l) => [l.notaId, l]))
     for (const nota of notas) {
       const esperado = porCaso.get(nota.id)
@@ -89,5 +94,10 @@ integration("provisionamento fiscal homologação (SELECT)", () => {
     expect(feliz?.xmlAutorizado).toContain("<dhEmi>2026-07-14T12:00:00-03:00</dhEmi>")
     expect(feliz?.ambiente).toBe("HOMOLOGACAO")
     expect(feliz?.status).toBe("AUTORIZADA")
+
+    const producao = notas.find((n) => n.id === "nota-homolog-prod")
+    expect(producao?.ambiente).toBe("PRODUCAO")
+    expect(producao?.storeId).toBe(STORE_A)
+    expect(producao?.id).not.toBe(feliz?.id)
   })
 })

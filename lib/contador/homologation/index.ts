@@ -1,6 +1,10 @@
 export {
   DEFAULT_HOMOLOGATION_DATABASE_URL,
   ENV_HOMOLOGATION_DATABASE_URL,
+  HOMOLOGATION_DATABASE,
+  HOMOLOGATION_PORT_DOCKER,
+  HOMOLOGATION_PORT_NATIVE,
+  HOMOLOGATION_ROLE,
   HomologationUrlError,
   assertLocalHomologationDatabaseUrl,
   resolveHomologationDatabaseUrl,

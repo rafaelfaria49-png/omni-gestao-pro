@@ -17,12 +17,19 @@ PURE_READER_STRATEGY_SELECTED=A
 GOAL_018_OPENED=false
 SEFAZ_NETWORK_REQUIRED=false
 PRODUCTION_REQUIRED=false
+PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true
+NON_PRODUCTION_RUNTIME_AVAILABLE=true
 FISCAL_RUNTIME_VALIDATABLE=false
+FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
 ```
 
-`FISCAL_RUNTIME_VALIDATABLE` permanece **false**: o caminho Prisma → `NotaFiscal` persistida existe, mas o reader Contador, o predicado ADR-007, o checklist e o slice `05-XML` **ainda não** existem. Fixtures unitárias continuam obrigatórias e **não** contam como validação de runtime.
+`FISCAL_RUNTIME_VALIDATABLE=false` é o **estado esperado antes da implementação** do GOAL 018. Não é blocker de `import`/`open`.
 
-`NON_PRODUCTION_RUNTIME_AVAILABLE=true` depois que o seed das 7 linhas for aplicado num Postgres **local** e o SELECT opt-in passar.
+`FISCAL_RUNTIME_VALIDATABLE=true` é **critério de aceite do GOAL 018**, obtido somente quando o fluxo Prisma → reader A → predicado → checklist → pacote → manifest/hash → `05-XML` passar no runtime local HOMOLOGACAO, sem mock no caminho. Esse código **pertence ao 018** — não pode ser exigido para abrir o 018.
+
+`PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true`: o pre-open exige runtime não-Production **já provisionado** (`NON_PRODUCTION_RUNTIME_AVAILABLE=true`), sem Production e sem SEFAZ.
+
+O reader A **não** é criado aqui. Continuam proibidos: `fiscalXmlReader.readAuthorizedDocument` as-is, alterações em `lib/fiscal/**` só para servir o Contador, e qualquer `FiscalLog` gerado pelo futuro reader.
 
 ---
 
@@ -31,8 +38,11 @@ FISCAL_RUNTIME_VALIDATABLE=false
 | Proibido | Como o provisionamento recusa |
 |---|---|
 | Production / `DATABASE_URL` do app | Fonte **única**: `CONTADOR_FISCAL_HOMOLOGATION_DATABASE_URL` (default loopback). `resolveHomologationDatabaseUrl` **não lê** `DATABASE_URL`. |
-| Host remoto (Supabase, Neon, Vercel, pooler) | `assertLocalHomologationDatabaseUrl` — só `127.0.0.1` / `localhost` / `::1` |
+| Host remoto (Supabase, Neon, Vercel, AWS/Azure/GCP, pooler) | só `127.0.0.1` / `localhost` / `::1` |
 | Porta 6543 | recusada mesmo em localhost |
+| Porta fora de `{54329, 5432}` | 54329 = Docker dedicado; 5432 = fallback nativo |
+| Database local diferente de `omni_contador_fiscal_homolog` | recusado (inclui `postgres` / db de dev) |
+| Role diferente de `omni_homolog` | recusado (inclui `postgres`) |
 | SEFAZ / certificado A1 / emissão | seed grava texto de fixture; zero transporte |
 | `fiscalXmlReader.readAuthorizedDocument` | módulo de homologação **não importa** `xml-storage-reader` |
 | `FiscalLog` | seed não cria; prova SELECT exige `count = 0` |
@@ -72,7 +82,7 @@ A senha `omni_homolog_local_only` é **só localhost**. Não reutilizar em Produ
 
 ## 3. O que o provisionamento faz
 
-1. Recusa DSN remoto.
+1. Recusa DSN remoto, database local que não seja `omni_contador_fiscal_homolog`, role ≠ `omni_homolog` e portas fora de `{54329, 5432}`.
 2. Injeta `DATABASE_URL` **e** `DIRECT_URL` iguais ao DSN homolog **somente no subprocesso** de `prisma db push --skip-generate` (schema do repo inalterado).
 3. Roda `scripts/contador/seed-fiscal-homolog.ts` com o mesmo DSN.
 4. Seed idempotente: apaga notas/vendas/stores `homolog-contador-*` e recria 2 stores + 7 vendas + 7 `NotaFiscal`.
@@ -112,9 +122,24 @@ Testes **sem banco** (`guard-url.test.ts`, `massa.test.ts`) rodam no `npm test` 
 
 ---
 
-## 6. O que ainda falta para `FISCAL_RUNTIME_VALIDATABLE=true`
+## 6. Gate do GOAL 018 — o que falta vs o que já basta para import/open
 
-Caminho da auditoria §3.1, ainda incompleto:
+Pre-open (já satisfeito depois deste provisionamento):
+
+```
+PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true
+NON_PRODUCTION_RUNTIME_AVAILABLE=true
+GOAL_018_OPENED=false
+```
+
+Aceite do 018 (ainda **false**; só o próprio GOAL implementa):
+
+```
+FISCAL_RUNTIME_VALIDATABLE=false
+FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
+```
+
+Caminho ainda incompleto:
 
 1. `lib/contador/readers/fiscal.ts` (Opção **A**, SELECT sem `FiscalLog`) — **GOAL 018**
 2. Predicado ADR-007 no Contador
@@ -134,13 +159,17 @@ REMAINING_BLOCKERS=AEP_import_open_ainda_negado; teto_15_arquivos_antes_do_slice
 ```
 HOMOLOGATION_STRATEGY_SELECTED=B
 PURE_READER_STRATEGY_SELECTED=A
+PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true
 NON_PRODUCTION_RUNTIME_AVAILABLE=true
 FISCAL_RUNTIME_VALIDATABLE=false
+FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
 GOAL_018_OPENED=false
 SEFAZ_NETWORK_REQUIRED=false
 PRODUCTION_REQUIRED=false
 SCHEMA_CHANGED=false
 CODE_CHANGED=true
+HOMOLOG_DB_NAME_GUARD=true
+HOMOLOG_DB_ROLE_GUARD=true
 ```
 
 **Fim do provisionamento. GOAL 018 permanece não importado / não aberto.**
