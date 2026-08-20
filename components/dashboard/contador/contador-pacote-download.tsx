@@ -10,7 +10,7 @@
  * responsável pelo Content-Disposition.
  *
  * Estado local honesto: “Solicitação de download iniciada.” — nunca afirma “pacote gerado
- * com sucesso”. Não é fechamento oficial e não inclui XML nesta fase.
+ * com sucesso”. Não é fechamento oficial. XML autorizado só entra com a leitura fiscal ligada.
  */
 import { useCallback, useState } from "react"
 import { AlertTriangle, Check, Download, FileArchive } from "lucide-react"
@@ -62,7 +62,7 @@ const INCLUIDO: readonly string[] = [
 ]
 
 const NAO_INCLUIDO: readonly string[] = [
-  "Notas fiscais (XML) — placeholder honesto (após GOAL 018)",
+  "Notas fiscais (XML) — placeholder honesto se a leitura fiscal estiver off; XML autorizado/HOMOLOGACAO só com CONTADOR_FISCAL_READER=on e loja na allowlist",
   "Documentos anexos — placeholder honesto (após GOAL 009/010)",
   "Dados pessoais (nome, documento, contato) — minimizados",
 ]

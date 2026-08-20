@@ -257,8 +257,9 @@ describe("Pacote 008B — manifesto v1 canônico", () => {
     expect(man.geradoPor.id).toMatch(/^u_[0-9a-f]{16}$/)
     expect(man.geradoPor.id).not.toContain(USER) // pseudônimo, não o id cru
     expect(man.fontes.map((f: { nome: string }) => f.nome)).toEqual([
-      "vendas", "itens", "devolucoes", "movimentacoes", "contas_receber", "contas_pagar", "sessoes", "operacoes",
+      "vendas", "itens", "devolucoes", "movimentacoes", "contas_receber", "contas_pagar", "sessoes", "operacoes", "xml",
     ])
+    expect(man.fontes.find((f: { nome: string }) => f.nome === "xml").estado).toBe("indisponivel")
     expect(man.fontes.find((f: { nome: string }) => f.nome === "vendas").registros).toBe(1) // v2 cancelada fora (008D)
     const listados = man.arquivos.map((a: { caminho: string }) => a.caminho)
     expect(listados).not.toContain("manifest.json")

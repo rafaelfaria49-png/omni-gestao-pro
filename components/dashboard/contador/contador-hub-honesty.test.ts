@@ -592,3 +592,25 @@ describe("Contador HUB — central de avisos REAL (GOAL 017)", () => {
     expect(avisosSrc).not.toContain("janela de 7 dias informada pelo responsável")
   })
 })
+
+/* ────────── GOAL 018 — relatório fiscal somente leitura ────────── */
+
+describe("Contador HUB — relatório fiscal read-only (GOAL 018)", () => {
+  it("exibe estado da fonte, entregáveis, rejeitadas e canceladas", () => {
+    expect(realSrc).toContain("function RelatorioFiscalReal")
+    expect(realSrc).toContain("Estado da fonte")
+    expect(realSrc).toContain("Entregáveis (05-XML)")
+    expect(realSrc).toContain("Rejeitadas")
+    expect(realSrc).toContain("Canceladas")
+    expect(hubSrc).toContain("<RelatorioFiscalReal")
+  })
+
+  it("não oferece emissão, cancelamento, inutilização, correção ou reprocessamento", () => {
+    const fnStart = realSrc.indexOf("export function RelatorioFiscalReal")
+    const nextExport = realSrc.indexOf("\nexport ", fnStart + 1)
+    const bloco = realSrc.slice(fnStart, nextExport === -1 ? realSrc.length : nextExport)
+    expect(bloco).toContain("Somente leitura")
+    expect(bloco).not.toMatch(/<button/i)
+    expect(bloco).not.toMatch(/\bEmitir\b|\bCancelar NFC|\bInutilizar\b|\bCarta de correção\b|\bReprocessar\b/i)
+  })
+})

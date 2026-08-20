@@ -2,34 +2,55 @@
 
 | Campo | Valor |
 |---|---|
-| Status | Runtime **não-Production** provisionável — `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED` |
+| Status | GOAL 018 **implementado e aberto** — `GOAL_018_OPENED=true` · `GOAL_018_STATUS=RUNNING` · `FISCAL_RUNTIME_VALIDATABLE=true` |
 | Data | 2026-08-20 |
-| Autorização | Rafael: homologação **B** + reader **A**; merge PR **#92**; **sem** Production, **sem** SEFAZ, **sem** abrir GOAL 018 |
+| Autorização | Rafael: homologação **B** + reader **A**; merge PR **#92**; implementação 018 sem Production, sem SEFAZ, sem schema |
 | Auditoria | [`CONTADOR_HUB_FISCAL_HOMOLOGATION_READINESS_AUDIT_018.md`](./CONTADOR_HUB_FISCAL_HOMOLOGATION_READINESS_AUDIT_018.md) |
 | ADR | ADR-CONTADOR-007 **Accepted** |
 | Schema Prisma | **não alterado** (`prisma db push` só no DSN local) |
 
-Este documento descreve o provisionamento da estratégia **B**. Não implementa `lib/contador/readers/fiscal.ts`, predicado, checklist, `05-XML` nem AEP `import`/`open`.
+## Addendum — prova runtime do GOAL 018
+
+O provisionamento B permanece. O GOAL 018 implementou o reader A e o fluxo completo no runtime local:
 
 ```
 HOMOLOGATION_STRATEGY_SELECTED=B
 PURE_READER_STRATEGY_SELECTED=A
-GOAL_018_OPENED=false
+GOAL_018_OPENED=true
 SEFAZ_NETWORK_REQUIRED=false
 PRODUCTION_REQUIRED=false
 PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true
 NON_PRODUCTION_RUNTIME_AVAILABLE=true
+FISCAL_RUNTIME_VALIDATABLE=true
+FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
+PRODUCTION_XML_ELIGIBLE=false
+SCHEMA_CHANGED=false
+```
+
+Fluxo comprovado (massa `homolog-contador-a` / competência `2026-07`):
+
+Prisma → `lerNotasFiscais` (Opção A) → predicado ADR-007 → checklist (sinal fiscal) → `montarConteudoPacote` → `manifest.json` sha256 → `05-XML/{chave}.xml` (UTF-8 = `xmlAutorizado` persistido).
+
+Resultado feliz: 1 AUTORIZADA/HOMOLOGACAO entregável; 1 REJEITADA (sinal); 1 CANCELADA (sinal, fora de 05-XML); PRODUCAO não entregável; loja B não vaza. FiscalLog=0. EventoFiscal=0. `MAX_ARQUIVOS_PACOTE=15` preservado (1 XML cabe; 3 XMLs falham sem truncar).
+
+Flag `CONTADOR_FISCAL_READER` default off; allowlist `CONTADOR_FISCAL_READER_STORE_ALLOWLIST` env-only.
+
+**Não fechar/ratificar o GOAL nesta entrega** — revisão independente pendente.
+
+---
+
+Este documento descreve o provisionamento da estratégia **B**. O reader A, o predicado, o checklist, o `05-XML` e o AEP `import`/`open` do 018 estão nesta mesma entrega (GOAL 018).
+
+O bloco abaixo é o **estado histórico do provisionamento pré-018** (mantido para auditoria). O estado vigente está no addendum.
+
+```
+# histórico pré-018
+GOAL_018_OPENED=false
 FISCAL_RUNTIME_VALIDATABLE=false
 FISCAL_RUNTIME_VALIDATABLE_IS_ACCEPTANCE_GATE=true
 ```
 
-`FISCAL_RUNTIME_VALIDATABLE=false` é o **estado esperado antes da implementação** do GOAL 018. Não é blocker de `import`/`open`.
-
-`FISCAL_RUNTIME_VALIDATABLE=true` é **critério de aceite do GOAL 018**, obtido somente quando o fluxo Prisma → reader A → predicado → checklist → pacote → manifest/hash → `05-XML` passar no runtime local HOMOLOGACAO, sem mock no caminho. Esse código **pertence ao 018** — não pode ser exigido para abrir o 018.
-
-`PRE_OPEN_NON_PRODUCTION_RUNTIME_REQUIRED=true`: o pre-open exige runtime não-Production **já provisionado** (`NON_PRODUCTION_RUNTIME_AVAILABLE=true`), sem Production e sem SEFAZ.
-
-O reader A **não** é criado aqui. Continuam proibidos: `fiscalXmlReader.readAuthorizedDocument` as-is, alterações em `lib/fiscal/**` só para servir o Contador, e qualquer `FiscalLog` gerado pelo futuro reader.
+`FISCAL_RUNTIME_VALIDATABLE=true` passou a ser o aceite do GOAL 018 após a prova runtime (addendum). Continuam proibidos: `fiscalXmlReader.readAuthorizedDocument` as-is, alterações em `lib/fiscal/**` só para servir o Contador, e qualquer `FiscalLog` gerado pelo reader A.
 
 ---
 
@@ -100,12 +121,14 @@ Competência de referência: `2026-07`. XML derivado de `VALID_NFCE_XML` (corpus
 | `autorizada_homologacao_vigente_dhemi_ok` | A | AUTORIZADA / HOMOLOGACAO, `dhEmi` 2026-07-14 | **sim** (único entregável) |
 | `autorizada_fora_competencia` | A | AUTORIZADA, `dhEmi` junho | não |
 | `autorizada_dhemi_invalido` | A | AUTORIZADA, `dhEmi` ilegível | não |
-| `rejeitada` | A | REJEITADA, sem `xmlAutorizado` | não |
+| `rejeitada` | A | REJEITADA, XML sintético com 1 `dhEmi` + offset em 2026-07 (sem data fiscal válida o sinal não entra na competência; a prova exige `REJECTED_COUNT=1`) | não |
 | `cancelada_sintetica_politica_negativa` | A | CANCELADA + XML histórico; **sem** `EventoFiscal` | não |
 | `outra_storeId` | B | clone do entregável | não no reader da loja A |
 | `producao_caso_negativo` | A | `ambiente=PRODUCAO` (coluna; XML de fixture `tpAmb=2`) | não nesta fase |
 
 A linha PRODUCAO existe **só** como teste negativo (`PRODUCTION_XML_ELIGIBLE=false`). Não é documento de produção real.
+
+A fixture `rejeitada` passou a carregar XML sintético HOMOLOGACAO com exatamente 1 `dhEmi` `2026-07-14T12:00:00-03:00` porque, após o fail-closed por competência, nota sem data fiscal válida **não** é atribuída ao mês consultado. Sem esse XML a prova `REJECTED_COUNT=1` quebraria. Não é Production; o reader **não** ganhou fallback para `dataAutorizacao`/`createdAt`.
 
 ---
 

@@ -10,6 +10,10 @@
  * permanece fora de escopo (GOAL 012).
  */
 import { competenciaAtual, type Competencia } from "@/lib/contador/competencia"
+import {
+  mensagemFiscalIndisponivel,
+  type EvidenciaFiscalChecklist,
+} from "@/lib/contador/readers/fiscal"
 import type {
   ContadorDadosReais,
   DadoMonetario,
@@ -68,6 +72,12 @@ export type MontarChecklistFechamentoInput = Readonly<{
    * sinal `guias_informadas_vencendo_vencidas` = `nao_disponivel`.
    */
   evidenciaAgenda?: EvidenciaAgendaGuias | null
+  /**
+   * Leitura fiscal (GOAL 018). Ausência / flag off / loja fora da allowlist /
+   * falha → sinal `fiscal` = `nao_disponivel` (nunca “zero notas”).
+   * Não altera os demais sinais.
+   */
+  evidenciaFiscal?: EvidenciaFiscalChecklist | null
 }>
 
 type PosicaoCompetencia = "passada" | "atual" | "futura"
@@ -140,14 +150,16 @@ export function montarChecklistFechamento(
       motivoIndisponivel?.trim() ||
       "Dados reais da competência não estão disponíveis (escopo ou leitura)."
     const derivados = SINAIS_DERIVADOS_BASE.map((s) =>
-      item({
-        id: s.id,
-        titulo: s.titulo,
-        estado: "nao_disponivel",
-        origem: "ContadorDadosReais (ausente)",
-        explicacao: motivo,
-        evidencia: "sem DTO",
-      }),
+      s.id === "fiscal"
+        ? derivarFiscal(input.evidenciaFiscal)
+        : item({
+            id: s.id,
+            titulo: s.titulo,
+            estado: "nao_disponivel",
+            origem: "ContadorDadosReais (ausente)",
+            explicacao: motivo,
+            evidencia: "sem DTO",
+          }),
     )
     const itens = [...derivados, ...cauda]
     return Object.freeze({
@@ -169,7 +181,7 @@ export function montarChecklistFechamento(
     derivarTitulosVencidosPagar(dados),
     derivarSessoesCaixa(dados, posicao),
     derivarDiferencasCaixa(dados),
-    derivarFiscal(dados),
+    derivarFiscal(input.evidenciaFiscal),
   ]
   const itens = [...derivados, ...cauda]
 
@@ -548,17 +560,68 @@ function derivarDiferencasCaixa(dados: ContadorDadosReais): ChecklistItemFechame
   })
 }
 
-function derivarFiscal(dados: ContadorDadosReais): ChecklistItemFechamento {
-  const f = dados.fiscal
+function derivarFiscal(evidencia: EvidenciaFiscalChecklist | null | undefined): ChecklistItemFechamento {
+  const id = "fiscal"
+  const titulo = "Notas fiscais da competência"
+  const origem = "NotaFiscal (CONTADOR_FISCAL_READER)"
+
+  if (!evidencia || evidencia.disponivel !== true || evidencia.leituraOk !== true) {
+    return item({
+      id,
+      titulo,
+      estado: "nao_disponivel",
+      origem,
+      explicacao: mensagemFiscalIndisponivel(evidencia?.motivo),
+      evidencia: evidencia?.motivo ?? "não consultado",
+    })
+  }
+
+  const ev = `${evidencia.entregaveis} entregável(is) · ${evidencia.rejeitadas} rejeitada(s) · ${evidencia.canceladas} cancelada(s)`
+
+  if (evidencia.rejeitadas > 0) {
+    return item({
+      id,
+      titulo,
+      estado: "atencao",
+      origem,
+      explicacao: `${evidencia.rejeitadas} nota(s) REJEITADA(s) na leitura. Nenhuma rejeitada entra em 05-XML.`,
+      evidencia: ev,
+    })
+  }
+
+  if (evidencia.entregaveis === 0 && evidencia.canceladas > 0) {
+    return item({
+      id,
+      titulo,
+      estado: "atencao",
+      origem,
+      explicacao: `${evidencia.canceladas} nota(s) CANCELADA(s). Canceladas não entram em 05-XML nesta fase.`,
+      evidencia: ev,
+    })
+  }
+
+  if (evidencia.entregaveis === 0) {
+    return item({
+      id,
+      titulo,
+      estado: "pendente",
+      origem,
+      explicacao:
+        "Leitura fiscal ativa e sem XML entregável nesta competência. Zero entregáveis é contagem real da fonte, não ausência dela.",
+      evidencia: ev,
+    })
+  }
+
   return item({
-    id: "fiscal",
-    titulo: "Notas fiscais da competência",
-    estado: "nao_disponivel",
-    origem: f.fonte,
+    id,
+    titulo,
+    estado: "ok",
+    origem,
     explicacao:
-      f.observacao ??
-      "Fonte fiscal permanece atrás de CONTADOR_FISCAL_READER e não é consultada neste módulo.",
-    evidencia: "não consultado",
+      evidencia.canceladas > 0
+        ? `${evidencia.entregaveis} XML entregável(is). ${evidencia.canceladas} cancelada(s) listada(s) e fora de 05-XML.`
+        : `${evidencia.entregaveis} XML autorizado(s) HOMOLOGACAO entregável(is) (ADR-007).`,
+    evidencia: ev,
   })
 }
 

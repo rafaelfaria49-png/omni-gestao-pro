@@ -9,6 +9,7 @@ import type { EvidenciaAgendaGuias } from "@/lib/contador/fechamento/montar-chec
 import { requireContadorScope } from "@/lib/contador/scope"
 import { construirDadosContador } from "@/lib/contador/readers"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
+import { lerNotasFiscais, toEvidenciaChecklist, type LeituraFiscalContador } from "@/lib/contador/readers/fiscal"
 import { carregarResumoGuiasChecklist, criarRepoAgenda } from "@/lib/contador/agenda"
 
 export const metadata: Metadata = {
@@ -41,7 +42,7 @@ const MOTIVO_MSG: Record<string, string> = {
  * A Visão Geral e os relatórios básicos leem DADOS REAIS (read-only) da loja ativa na
  * competência `?c=AAAA-MM`. O checklist de Fechamento (GOAL 007) é **derivado em memória**
  * do mesmo DTO — sem reconsultar readers/Prisma. Escopo por sessão NextAuth + cookie de
- * loja + ACL multi-loja. Fonte fiscal permanece indisponível; fechamento real = GOAL 012.
+ * loja + ACL multi-loja. Fonte fiscal: GOAL 018 (flag off → nao_disponivel). Fechamento real = GOAL 012.
  * Não confundir com o portal EXTERNO `/contador`.
  *
  * Fonte da competência: `searchParams.c` (AAAA-MM). Inválido/ausente → mês atual
@@ -54,6 +55,7 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
   let realData: ContadorDadosReais | null = null
   let realErro: string | null = null
   let evidenciaAgenda: EvidenciaAgendaGuias | null = null
+  let relatorioFiscal: LeituraFiscalContador | null = null
 
   const escopo = await requireContadorScope()
   if (!escopo.ok) {
@@ -77,6 +79,20 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
       console.error("[contador/agenda-resumo]", e instanceof Error ? e.message : String(e))
       evidenciaAgenda = { leituraOk: false, total: 0, vencidas: 0, vencendo: 0, pagas: 0 }
     }
+    // Fiscal (GOAL 018): leitura independente — falha NÃO vira zero notas.
+    try {
+      relatorioFiscal = await lerNotasFiscais(escopo, competencia)
+    } catch (e) {
+      console.error("[contador/fiscal]", e instanceof Error ? e.message : String(e))
+      relatorioFiscal = {
+        disponivel: false,
+        leituraOk: false,
+        motivo: "leitura_falhou",
+        entregaveis: [],
+        rejeitadas: [],
+        canceladas: [],
+      }
+    }
   }
 
   // Derivação pura em memória — zero Prisma no checklist.
@@ -86,6 +102,7 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
     agora: new Date(),
     motivoIndisponivel: realErro,
     evidenciaAgenda,
+    evidenciaFiscal: relatorioFiscal ? toEvidenciaChecklist(relatorioFiscal) : null,
   })
 
   return (
@@ -103,6 +120,7 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
           realData={realData}
           realErro={realErro}
           checklistFechamento={checklistFechamento}
+          relatorioFiscal={relatorioFiscal}
         />
       </Suspense>
     </div>

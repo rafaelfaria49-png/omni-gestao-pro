@@ -6,6 +6,7 @@ import {
   XML_AUTORIZADA_COMPETENCIA,
   XML_AUTORIZADA_DHEMI_INVALIDO,
   XML_AUTORIZADA_FORA,
+  XML_REJEITADA_COMPETENCIA,
 } from "./xml-fixtures"
 
 export const STORE_A = "homolog-contador-a"
@@ -111,7 +112,9 @@ export const LINHAS_MASSA: readonly LinhaMassa[] = Object.freeze([
     ambiente: "HOMOLOGACAO",
     vigente: true,
     protocolo: null,
-    xmlAutorizado: null,
+    // Sem dhEmi válido a nota não entra em nenhuma competência (fail-closed).
+    // XML sintético HOMOLOGACAO com 1 dhEmi + offset em 2026-07 para REJECTED_COUNT=1.
+    xmlAutorizado: XML_REJEITADA_COMPETENCIA,
   },
   {
     caso: "cancelada_sintetica_politica_negativa",
