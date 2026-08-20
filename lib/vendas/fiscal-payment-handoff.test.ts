@@ -25,32 +25,40 @@ describe("buildFiscalPaymentHandoff · formas com tPag comprovado", () => {
     expect("valorEntregue" in h).toBe(false)
   })
 
-  it("débito → tPag 04 sem metadata de cartão", () => {
+  it("débito → tPag 04 + tpIntegra 2; sem CNPJ/tBand/cAut/maquininha", () => {
     const h = buildFiscalPaymentHandoff({ cartaoDebito: 25.5 }, 25.5)
     expect(h.linhas).toEqual([
-      { formaOrigem: "cartaoDebito", valor: 25.5, tPag: "04", capability: "supported", status: "ok" },
+      {
+        formaOrigem: "cartaoDebito",
+        valor: 25.5,
+        tPag: "04",
+        tpIntegra: "2",
+        capability: "supported",
+        status: "ok",
+      },
     ])
-    expect(JSON.stringify(h)).not.toMatch(/tpIntegra|tBand|cAut|maquininha|CNPJ|adquirente/)
+    expect(JSON.stringify(h)).not.toMatch(/tBand|cAut|maquininha|CNPJ|adquirente|"tpIntegra":"1"/)
   })
 
-  it("crédito → tPag 03 sem metadata de cartão", () => {
+  it("crédito → tPag 03 + tpIntegra 2", () => {
     const h = buildFiscalPaymentHandoff({ cartaoCredito: 100 }, 100)
     expect(h.linhas[0]).toEqual({
       formaOrigem: "cartaoCredito",
       valor: 100,
       tPag: "03",
+      tpIntegra: "2",
       capability: "supported",
       status: "ok",
     })
     expect(h.linhas[0]!.tPag).toBe(HANDOFF_TPAG_COMPROVADO.cartaoCredito)
   })
 
-  it("split dinheiro + débito + crédito", () => {
+  it("split dinheiro + débito + crédito: cada 03/04 leva tpIntegra 2; dinheiro não", () => {
     const h = buildFiscalPaymentHandoff({ dinheiro: 10, cartaoDebito: 30, cartaoCredito: 60 }, 100)
-    expect(h.linhas.map((l) => [l.formaOrigem, l.tPag])).toEqual([
-      ["cartaoCredito", "03"],
-      ["cartaoDebito", "04"],
-      ["dinheiro", "01"],
+    expect(h.linhas.map((l) => [l.formaOrigem, l.tPag, l.tpIntegra])).toEqual([
+      ["cartaoCredito", "03", "2"],
+      ["cartaoDebito", "04", "2"],
+      ["dinheiro", "01", undefined],
     ])
     expect(h.linhas.every((l) => l.capability === "supported")).toBe(true)
   })
@@ -174,10 +182,26 @@ describe("buildFiscalPaymentHandoff · pixQrKind (GOAL 077)", () => {
     })
   })
 
-  it("split PIX + cartão com pixQrKind dinâmico", () => {
+  it("hints.tpIntegra=1 / CNPJ / tBand do cliente são ignorados — servidor grava 2", () => {
+    const h = buildFiscalPaymentHandoff({ cartaoCredito: 50 }, 50, {
+      ...( { tpIntegra: "1", CNPJ: "11222333000181", tBand: "01", cAut: "XYZ", maquininhaId: "maq-pagbank" } as object ),
+    })
+    expect(h.linhas[0]).toMatchObject({ formaOrigem: "cartaoCredito", tPag: "03", tpIntegra: "2" })
+    expect(JSON.stringify(h)).not.toMatch(/"tpIntegra":"1"|tBand|cAut|11222333000181|maq-pagbank/)
+  })
+
+  it("PIX não recebe tpIntegra por analogia", () => {
+    const h = buildFiscalPaymentHandoff({ pix: 50 }, 50, { pixQrKind: "dinamico" })
+    expect(h.linhas[0]!.tPag).toBe("17")
+    expect(h.linhas[0]!.tpIntegra).toBeUndefined()
+    expect(JSON.stringify(h)).not.toMatch(/tpIntegra/)
+  })
+
+  it("split PIX + cartão com pixQrKind dinâmico: 17 sem card; 03 com tpIntegra 2", () => {
     const h = buildFiscalPaymentHandoff({ pix: 40, cartaoCredito: 60 }, 100, { pixQrKind: "dinamico" })
-    expect(h.linhas.find((l) => l.formaOrigem === "pix")?.tPag).toBe("17")
-    expect(h.linhas.find((l) => l.formaOrigem === "cartaoCredito")?.tPag).toBe("03")
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")).toMatchObject({ tPag: "17", pixQrKind: "dinamico" })
+    expect(h.linhas.find((l) => l.formaOrigem === "pix")?.tpIntegra).toBeUndefined()
+    expect(h.linhas.find((l) => l.formaOrigem === "cartaoCredito")).toMatchObject({ tPag: "03", tpIntegra: "2" })
     expect(h.linhas.every((l) => l.capability === "supported")).toBe(true)
   })
 

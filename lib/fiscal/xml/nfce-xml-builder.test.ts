@@ -233,33 +233,35 @@ describe("buildNfceXml · pagamento fiscal canônico (GOAL 030)", () => {
     }
   })
 
-  it("débito válido → tPag 04 sem grupo card", () => {
-    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoDebito: 50 } } }))
-    expect(xml).toMatch(/<detPag>\s*<tPag>04<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
-    expect(xml).not.toContain("<tpIntegra>")
-    expect(xml).not.toContain("<tBand>")
-    expect(xml).not.toContain("<cAut>")
+  it("débito legado sem handoff bloqueia XML — não omite card", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoDebito: 50 } } })
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_cartao_legado_sem_evidencia" })
+      expect(String(e)).not.toMatch(/tPag>01|tPag>99/)
+    }
   })
 
-  it("crédito válido → tPag 03 sem grupo card", () => {
-    const xml = buildNfceXml(snap({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoCredito: 50 } } }))
-    expect(xml).toMatch(/<detPag>\s*<tPag>03<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<\/detPag>/)
-    expect(xml).not.toContain("<card>")
+  it("crédito legado sem handoff bloqueia XML — não omite card", () => {
+    const s = snap({ venda: { ...baseInput().venda, paymentBreakdown: { cartaoCredito: 50 } } })
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
   })
 
-  it("split/misto válido sem PIX", () => {
-    const xml = buildNfceXml(
-      snap({
-        venda: {
-          ...baseInput().venda,
-          paymentBreakdown: { dinheiro: 10, pix: 0, cartaoDebito: 15, cartaoCredito: 25 },
-        },
-      }),
-    )
-    expect(xml).toMatch(/<tPag>01<\/tPag>\s*<vPag>10\.00<\/vPag>/)
-    expect(xml).toMatch(/<tPag>03<\/tPag>\s*<vPag>25\.00<\/vPag>/)
-    expect(xml).toMatch(/<tPag>04<\/tPag>\s*<vPag>15\.00<\/vPag>/)
-    expect(xml).not.toMatch(/<tPag>17<\/tPag>/)
+  it("split legado dinheiro+débito+crédito sem handoff bloqueia o conjunto", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { dinheiro: 10, pix: 0, cartaoDebito: 15, cartaoCredito: 25 },
+      },
+    })
+    expect(s.venda.pagamentoFiscal).toBeNull()
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
   })
 
   it("forma desconhecida → erro explícito, XML não é gerado, não vira tPag=99 nem 01", () => {
@@ -691,6 +693,223 @@ describe("buildNfceXml · handoff de origem (GOAL 075)", () => {
     expect(s.venda.pagamentoFiscal).toBeNull()
     expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_FORMA_SEM_CAPACIDADE_FISCAL")
     expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+  })
+
+  it("crédito novo emite card/tpIntegra=2 e nenhum outro filho YA04", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { cartaoCredito: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "cartaoCredito",
+              valor: 50,
+              tPag: "03",
+              tpIntegra: "2",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(
+      /<detPag>\s*<tPag>03<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>\s*<\/detPag>/,
+    )
+    expect(xml).not.toContain("<tBand>")
+    expect(xml).not.toContain("<cAut>")
+    expect(xml).not.toMatch(/<card>[\s\S]*<CNPJ>/)
+    expect(xml).not.toContain("<CNPJReceb>")
+    expect(xml).not.toContain("<idTermPag>")
+    expect(xml).not.toContain("<tpIntegra>1</tpIntegra>")
+  })
+
+  it("débito novo emite tPag 04 + card/tpIntegra=2", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { cartaoDebito: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "cartaoDebito",
+              valor: 50,
+              tPag: "04",
+              tpIntegra: "2",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      },
+    })
+    const xml = buildNfceXml(s)
+    expect(xml).toMatch(
+      /<detPag>\s*<tPag>04<\/tPag>\s*<vPag>50\.00<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>\s*<\/detPag>/,
+    )
+  })
+
+  it("splits: cada 03/04 tem o próprio card; PIX 17 permanece sem card", () => {
+    const cases: Array<{
+      name: string
+      breakdown: Record<string, number>
+      linhas: Array<Record<string, unknown>>
+      cashTendered?: number
+      expectTPag: string[]
+      expectTroco?: string
+    }> = [
+      {
+        name: "crédito + dinheiro",
+        breakdown: { cartaoCredito: 40, dinheiro: 10 },
+        linhas: [
+          { formaOrigem: "cartaoCredito", valor: 40, tPag: "03", tpIntegra: "2", capability: "supported", status: "ok" },
+          { formaOrigem: "dinheiro", valor: 10, tPag: "01", capability: "supported", status: "ok" },
+        ],
+        expectTPag: ["01", "03"],
+      },
+      {
+        name: "débito + dinheiro",
+        breakdown: { cartaoDebito: 40, dinheiro: 10 },
+        linhas: [
+          { formaOrigem: "cartaoDebito", valor: 40, tPag: "04", tpIntegra: "2", capability: "supported", status: "ok" },
+          { formaOrigem: "dinheiro", valor: 10, tPag: "01", capability: "supported", status: "ok" },
+        ],
+        expectTPag: ["01", "04"],
+      },
+      {
+        name: "crédito + PIX",
+        breakdown: { cartaoCredito: 30, pix: 20 },
+        linhas: [
+          { formaOrigem: "cartaoCredito", valor: 30, tPag: "03", tpIntegra: "2", capability: "supported", status: "ok" },
+          {
+            formaOrigem: "pix",
+            valor: 20,
+            pixQrKind: "dinamico",
+            tPag: "17",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+        expectTPag: ["03", "17"],
+      },
+      {
+        name: "débito + PIX",
+        breakdown: { cartaoDebito: 30, pix: 20 },
+        linhas: [
+          { formaOrigem: "cartaoDebito", valor: 30, tPag: "04", tpIntegra: "2", capability: "supported", status: "ok" },
+          {
+            formaOrigem: "pix",
+            valor: 20,
+            pixQrKind: "estatico",
+            tPag: "20",
+            capability: "supported",
+            status: "ok",
+          },
+        ],
+        expectTPag: ["04", "20"],
+      },
+      {
+        name: "crédito + débito",
+        breakdown: { cartaoCredito: 20, cartaoDebito: 30 },
+        linhas: [
+          { formaOrigem: "cartaoCredito", valor: 20, tPag: "03", tpIntegra: "2", capability: "supported", status: "ok" },
+          { formaOrigem: "cartaoDebito", valor: 30, tPag: "04", tpIntegra: "2", capability: "supported", status: "ok" },
+        ],
+        expectTPag: ["03", "04"],
+      },
+      {
+        name: "cartão + dinheiro com vTroco",
+        breakdown: { cartaoCredito: 30, dinheiro: 20 },
+        linhas: [
+          { formaOrigem: "cartaoCredito", valor: 30, tPag: "03", tpIntegra: "2", capability: "supported", status: "ok" },
+          { formaOrigem: "dinheiro", valor: 20, tPag: "01", capability: "supported", status: "ok" },
+        ],
+        cashTendered: 30,
+        expectTPag: ["01", "03"],
+        expectTroco: "10.00",
+      },
+    ]
+    for (const c of cases) {
+      const s = snap({
+        venda: {
+          ...baseInput().venda,
+          paymentBreakdown: c.breakdown,
+          fiscalPaymentHandoff: {
+            version: 1,
+            catalogoTPag: "IT-2024.002-v1.11",
+            linhas: c.linhas,
+            ...(c.cashTendered != null ? { cashTendered: c.cashTendered } : {}),
+          },
+        },
+      })
+      const xml = buildNfceXml(s)
+      for (const tPag of c.expectTPag) {
+        expect(xml, c.name).toMatch(new RegExp(`<tPag>${tPag}</tPag>`))
+      }
+      const card03 = xml.match(/<tPag>03<\/tPag>\s*<vPag>[^<]+<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>/)
+      const card04 = xml.match(/<tPag>04<\/tPag>\s*<vPag>[^<]+<\/vPag>\s*<card>\s*<tpIntegra>2<\/tpIntegra>\s*<\/card>/)
+      if (c.expectTPag.includes("03")) expect(card03, c.name).toBeTruthy()
+      if (c.expectTPag.includes("04")) expect(card04, c.name).toBeTruthy()
+      if (c.expectTPag.includes("17")) {
+        expect(xml, c.name).toMatch(/<tPag>17<\/tPag>\s*<vPag>[^<]+<\/vPag>\s*<\/detPag>/)
+        expect(xml, c.name).not.toMatch(/<tPag>17<\/tPag>[\s\S]*?<card>/)
+      }
+      if (c.expectTroco) expect(xml, c.name).toContain(`<vTroco>${c.expectTroco}</vTroco>`)
+      expect(xml, c.name).not.toContain("<tBand>")
+      expect(xml, c.name).not.toContain("<cAut>")
+    }
+  })
+
+  it("handoff 03 sem tpIntegra não gera XML sem card", () => {
+    const s = snap({
+      venda: {
+        ...baseInput().venda,
+        paymentBreakdown: { cartaoCredito: 50 },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [{ formaOrigem: "cartaoCredito", valor: 50, tPag: "03", capability: "supported", status: "ok" }],
+        },
+      },
+    })
+    expect(s.venda.pagamentoFiscalErro?.code).toBe("PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE")
+    expect(() => buildNfceXml(s)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(s)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_cartao_tpintegra_ausente" })
+    }
+  })
+
+  it("contrato congelado 03/04 sem tpIntegra não reconstruí card e não emite", () => {
+    const s = snap()
+    const frozen = {
+      ...s,
+      venda: {
+        ...s.venda,
+        pagamentoFiscal: {
+          versao: 1 as const,
+          fonte: "venda.payload.fiscalPaymentHandoff" as const,
+          catalogoTPag: "IT-2024.002-v1.11" as const,
+          det: [{ formaInterna: "cartaoCredito" as const, tPag: "03", vPag: 50 }],
+          soma: 50,
+          vTroco: null,
+        },
+        pagamentoFiscalErro: null,
+      },
+    } as VendaFiscalSnapshot
+    expect(() => buildNfceXml(frozen)).toThrow(NfceXmlError)
+    try {
+      buildNfceXml(frozen)
+    } catch (e) {
+      expect(e).toMatchObject({ code: "pagamento_cartao_tpintegra_ausente" })
+    }
   })
 })
 

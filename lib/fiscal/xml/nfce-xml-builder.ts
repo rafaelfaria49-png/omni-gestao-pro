@@ -19,7 +19,7 @@
 
 import { onlyDigits } from "../fiscal-validators"
 import type { QrV3Destinatario } from "../danfce/qr-v3/types"
-import { assertPagamentoFiscalCanonico } from "../payment"
+import { assertPagamentoFiscalCanonico, isTPagCartao, TPINTEGRA_POS_NAO_INTEGRADO } from "../payment"
 import type {
   SnapshotItem,
   SnapshotItemTributos,
@@ -212,9 +212,23 @@ function buildPagNode(snapshot: VendaFiscalSnapshot, vNF: number): XmlNode {
       checked.erro.campo,
     )
   }
-  const detNodes = checked.pagamento.det.map((p) =>
-    group("detPag", [leafRequired("tPag", p.tPag), leafRequired("vPag", dec2(p.vPag))]),
-  )
+  const detNodes = checked.pagamento.det.map((p) => {
+    // Ordem XSD detPag (PL_010e_v1.02 leiauteNFe_v4.00):
+    // indPag? · tPag · xPag? · vPag · dPag? · (CNPJPag+UFPag)? · card? · … ; vTroco fica em `pag`.
+    const card =
+      isTPagCartao(p.tPag) && p.tpIntegra === TPINTEGRA_POS_NAO_INTEGRADO
+        ? group("card", [leafRequired("tpIntegra", TPINTEGRA_POS_NAO_INTEGRADO)])
+        : null
+    if (isTPagCartao(p.tPag) && card == null) {
+      throw new NfceXmlError(
+        "pagamento_cartao_tpintegra_ausente",
+        "tPag 03/04 não pode gerar XML sem grupo card/tpIntegra=2.",
+        null,
+        "venda.pagamentoFiscal.det",
+      )
+    }
+    return group("detPag", [leafRequired("tPag", p.tPag), leafRequired("vPag", dec2(p.vPag)), card])
+  })
   const vTroco = checked.pagamento.vTroco
   return group("pag", [
     ...detNodes,
@@ -238,6 +252,16 @@ function mapPagamentoErro(
       return "pagamento_forma_sem_capacidade"
     case "PAGAMENTO_PIX_LEGADO_SEM_EVIDENCIA":
       return "pagamento_pix_legado_sem_evidencia"
+    case "PAGAMENTO_CARTAO_TPINTEGRA_AUSENTE":
+      return "pagamento_cartao_tpintegra_ausente"
+    case "PAGAMENTO_CARTAO_TPINTEGRA_INVALIDO":
+      return "pagamento_cartao_tpintegra_invalido"
+    case "PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO":
+      return "pagamento_cartao_integrado_nao_suportado"
+    case "PAGAMENTO_CARTAO_LEGADO_SEM_EVIDENCIA":
+      return "pagamento_cartao_legado_sem_evidencia"
+    case "PAGAMENTO_CARTAO_DADOS_NAO_SUPORTADOS":
+      return "pagamento_cartao_dados_nao_suportados"
     case "PAGAMENTO_SOMA_DIVERGENTE":
       return "pagamento_soma_divergente"
     case "PAGAMENTO_CANONICO_AUSENTE":

@@ -108,6 +108,7 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
     )
     const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ formaOrigem: string; tPag?: string }> }).linhas
     expect(linhas.map((l) => l.tPag).sort()).toEqual(["03", "04"])
+    expect(linhas.every((l) => (l as { tpIntegra?: string }).tpIntegra === "2")).toBe(true)
     expect(financeiro[0]!.valor).toBe(100)
   })
 
@@ -153,6 +154,63 @@ describe("upsertVendaInTransaction · fiscalPaymentHandoff persistido", () => {
     )
     const linhas = (vendas[0]!.payload.fiscalPaymentHandoff as { linhas: Array<{ tPag?: string }> }).linhas
     expect(linhas[0]!.tPag).toBeUndefined()
+  })
+
+  it("cliente não persiste tpIntegra=1, CNPJ, tBand, cAut nem card arbitrário — servidor reconstrói 2", async () => {
+    const { tx, vendas, financeiro } = makeFakeTx()
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({
+        paymentBreakdown: { cartaoCredito: 50 },
+        tpIntegra: "1",
+        tBand: "01",
+        cAut: "FAKE",
+        CNPJ: "11222333000181",
+        CNPJReceb: "11222333000181",
+        idTermPag: "TERM-1",
+        NSU: "999",
+        card: { tpIntegra: "1", CNPJ: "11222333000181", tBand: "02", cAut: "XYZ" },
+        fiscalPaymentHandoff: {
+          version: 1,
+          catalogoTPag: "IT-2024.002-v1.11",
+          linhas: [
+            {
+              formaOrigem: "cartaoCredito",
+              valor: 50,
+              tPag: "03",
+              tpIntegra: "1",
+              CNPJ: "11222333000181",
+              tBand: "01",
+              cAut: "FAKE",
+              capability: "supported",
+              status: "ok",
+            },
+          ],
+        },
+      } as unknown as SalePayload),
+    )
+    const payload = vendas[0]!.payload as Record<string, unknown>
+    expect(payload.tpIntegra).toBeUndefined()
+    expect(payload.tBand).toBeUndefined()
+    expect(payload.cAut).toBeUndefined()
+    expect(payload.CNPJ).toBeUndefined()
+    expect(payload.CNPJReceb).toBeUndefined()
+    expect(payload.idTermPag).toBeUndefined()
+    expect(payload.card).toBeUndefined()
+    expect(payload.NSU).toBeUndefined()
+    const linhas = (payload.fiscalPaymentHandoff as { linhas: Array<Record<string, unknown>> }).linhas
+    expect(linhas[0]).toEqual({
+      formaOrigem: "cartaoCredito",
+      valor: 50,
+      tPag: "03",
+      tpIntegra: "2",
+      capability: "supported",
+      status: "ok",
+    })
+    expect(JSON.stringify(payload.fiscalPaymentHandoff)).not.toMatch(/tBand|cAut|CNPJ|"tpIntegra":"1"|NSU/)
+    expect(financeiro).toHaveLength(1)
+    expect(financeiro[0]!.valor).toBe(50)
   })
 
   it("PIX com pixQrKind estático persiste tPag 20 e ignora tPag do cliente", async () => {
@@ -392,6 +450,9 @@ describe("PDVs ativos não produzem o handoff — só o motor central", () => {
     expect(src).not.toContain("buildFiscalPaymentHandoff")
     expect(src).not.toContain("deferredPaymentKind")
     expect(src).not.toContain("creditKind")
+    expect(src).not.toContain("tpIntegra")
+    expect(src).not.toContain("tBand")
+    expect(src).not.toContain("cAut")
   })
 
   it("finalizeSaleTransaction propaga pixQrKind e cashTendered e não deriva tPag/vTroco no cliente", () => {

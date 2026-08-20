@@ -248,3 +248,29 @@ grupo XML `card` (YA04) **sem implementar** TEF, adquirente ou schema.
    a venda comercial.
 
 Relatório: [`FISCAL_PAYMENT_CARD_TEF_BOUNDARY_085_REPORT.md`](../fiscal/FISCAL_PAYMENT_CARD_TEF_BOUNDARY_085_REPORT.md).
+
+---
+
+## 15. Adendo — GOAL 087 (POS não integrado · `tpIntegra=2`)
+
+Em 20/08/2026 o GOAL `FISCAL-030-CARD-POS-SIMPLE-TPINTEGRA-087` materializou o
+contrato mínimo da auditoria 085: novas emissões NFC-e com tPag 03/04 emitem
+
+```xml
+<card>
+  <tpIntegra>2</tpIntegra>
+</card>
+```
+
+- Origem: servidor (`buildFiscalPaymentHandoff` em `upsertVendaInTransaction`).
+  Não deriva de `maquininhaId`. Cliente não persiste `tpIntegra=1`, CNPJ, `tBand`,
+  `cAut`, `card` arbitrário nem handoff fabricado.
+- Contrato v1 **aditivo** (`tpIntegra?: "1" | "2"` na linha / no `detPag`). Sem
+  bump de versão: o campo é opcional; 03/04 sem evidência passam a fail-closed.
+- Capacidade única: `"2"`. `tpIntegra=1` → `PAGAMENTO_CARTAO_INTEGRADO_NAO_SUPORTADO`.
+- Legado sem `tpIntegra` explícito (handoff antigo ou só `paymentBreakdown`) →
+  fail-closed. Não presume POS simples pelo breakdown histórico.
+- PIX 17 + YA04 **não** foi resolvido por analogia.
+- PaymentModal / Caixa / Financeiro / TEF / schema / SEFAZ intocados.
+
+Relatório: [`FISCAL_PAYMENT_CARD_POS_SIMPLE_TPINTEGRA_087_REPORT.md`](../fiscal/FISCAL_PAYMENT_CARD_POS_SIMPLE_TPINTEGRA_087_REPORT.md).

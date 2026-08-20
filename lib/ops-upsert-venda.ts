@@ -670,18 +670,33 @@ export async function upsertVendaInTransaction(
   // em qualquer outro navegador (pendência fantasma). Blacklist, não whitelist: campos
   // legítimos ainda não tipados continuam sendo persistidos.
   const salePersistivel = stripClientSyncFlags(sale)
-  const saleSemAutoridadeFiscalCliente = salePersistivel as SalePayload & {
-    tPag?: unknown
-    vTroco?: unknown
-  }
-  // tPag, vTroco e fiscalPaymentHandoff do cliente nunca são autoridade.
+  // tPag, vTroco, fiscalPaymentHandoff e evidência YA04 do cliente nunca são autoridade.
   const {
     tPag: _tPagClienteIgnorado,
     fiscalPaymentHandoff: _handoffClienteIgnorado,
     vTroco: _vTrocoClienteIgnorado,
     cashTendered: cashTenderedCliente,
+    tpIntegra: _tpIntegraClienteIgnorado,
+    tBand: _tBandClienteIgnorado,
+    cAut: _cAutClienteIgnorado,
+    CNPJ: _cnpjClienteIgnorado,
+    CNPJReceb: _cnpjRecebClienteIgnorado,
+    idTermPag: _idTermPagClienteIgnorado,
+    card: _cardClienteIgnorado,
+    NSU: _nsuClienteIgnorado,
     ...saleSemTPagCliente
-  } = saleSemAutoridadeFiscalCliente
+  } = salePersistivel as SalePayload & {
+    tPag?: unknown
+    vTroco?: unknown
+    tpIntegra?: unknown
+    tBand?: unknown
+    cAut?: unknown
+    CNPJ?: unknown
+    CNPJReceb?: unknown
+    idTermPag?: unknown
+    card?: unknown
+    NSU?: unknown
+  }
 
   const dinheiroAplicado =
     typeof saleSemTPagCliente.paymentBreakdown?.dinheiro === "number"
