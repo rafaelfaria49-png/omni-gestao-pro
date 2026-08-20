@@ -7,8 +7,8 @@
   "status": "READY",
   "class": "C2",
   "risk_tier": "MEDIO",
-  "branch": "cursor/contador-fiscal-integration-018-47d9",
-  "worktree": "/workspace",
+  "branch": "close/contador-018-main",
+  "worktree": "C:/Projetos/omni-gestao",
   "test_command": "npm run typecheck",
   "allowlist": [
     "lib/contador/readers/fiscal.ts",
@@ -110,7 +110,8 @@
 - trilha: `contador`
 - classe: C2 · status: READY
 - plano: `CONTADOR-HUB-FABLE5-MASTERPLAN-001` (plan_rev 1)
-- branch: `cursor/contador-fiscal-integration-018-47d9`
+- branch de implementação: `cursor/contador-fiscal-integration-018-47d9` (PR #97, mergeada em `main`)
+- branch de ratificação: `close/contador-018-main` (worktree `C:/Projetos/omni-gestao`)
 - teste: `npm run typecheck`
 
 ## Fontes (documentos de origem — o importador NÃO reimplementa nada)
@@ -149,4 +150,4 @@ Implementação read-only do GOAL 018 no runtime local HOMOLOGACAO (estratégia 
 - [x] Relatório fiscal mínimo somente leitura (sem emissão/cancelamento/inutilização/correção/reprocessamento).
 - [x] Prova runtime: Prisma → reader A → predicado → checklist → builder → manifest/hash → `05-XML` na massa homolog (1 AUTORIZADA/HOMOLOGACAO entregável). FiscalLog=0 · EventoFiscal=0.
 - [x] `HOMOLOGATION_STRATEGY_SELECTED=B` · `PURE_READER_STRATEGY_SELECTED=A` · `FISCAL_RUNTIME_VALIDATABLE=true` · `PRODUCTION_XML_ELIGIBLE=false` · `SCHEMA_CHANGED=false` · `SEFAZ_NETWORK_USED=false`.
-- [ ] Revisão independente (não mergear / não `track close` nesta entrega).
+- [x] Revisão independente — resultado **A (aprovada)**: `dhEmi` fail-closed aprovado, reader A aprovado, homologação B aprovada. PR #97 mergeada em `main` (merge commit `870ed54841f42f42dbabe37268c3dd6e9e6708e7`); ratificação AEP liberada.
