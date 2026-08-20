@@ -109,6 +109,44 @@ Estado AEP no registro: 014–019 **DRAFT** (fora do caminho quente, fora do led
 - **Dependências:** 015 (portal v2 no ar); idealmente 016–018.
 - **Gate humano:** **G4** explícito para a retirada do legado; aprovação prévia dos números de retenção e das decisões LGPD do runbook.
 
+### Decisões humanas registradas — Rafael, 2026-08-20 (pré-GOAL 019)
+
+Estas decisões fecham as pendências que este documento reservava ao humano. O GOAL 019
+**não está aberto**; isto é insumo de planejamento.
+
+**G4 — APROVADO.** Legado encerrado por **redirect `/contador` → portal v2** (não remoção).
+Destrava, no 019: `app/contador/**`, `app/login-contador/**`, `app/api/auth/contador/route.ts`,
+trecho contador do `proxy.ts` e `lib/contador-aggregates.ts`.
+
+**LGPD — APROVADO.** Manter a minimização atual: **sem PII de cliente nos CSVs**, conforme o
+ajuste G2-05 (já default). Nenhuma inclusão de PII nesta fase.
+
+**Retenção — números aprovados:**
+
+| Alvo | Política aprovada |
+| --- | --- |
+| Documentos · `FISCAL`, `JURIDICO`, `FOLHA` | **Sem purga automática nesta fase** |
+| Documentos · `FINANCEIRO`, `OUTRO` | **5 anos** |
+| Pacotes gerados (ZIP de fechamento) | **12 meses** após a geração |
+| Blob de documento soft-deletado | **90 dias** após `excluidoEm` |
+
+Restrições que acompanham a aprovação:
+
+- o job opera **primeiro em dry-run**;
+- **nunca** apaga registro, evento ou trilha de auditoria — só conteúdo/blob elegível;
+- o pacote é derivado e reconstruível a partir do snapshot congelado da competência, o que
+  sustenta a janela de 12 meses.
+
+Consequência de projeto: como `FISCAL` e `JURIDICO` ficam **sem purga**, a regra de *processo
+pendente* do RICMS/SP art. 202 (ver [`../fiscal/FISCAL_XML_RETENTION_POLICY_001.md`](../fiscal/FISCAL_XML_RETENTION_POLICY_001.md),
+§3) segue **automaticamente satisfeita** — o GOAL 019 **não** precisa construir marcador de
+processo pendente no schema. Isso remove o único bloqueio estrutural que a purga finita traria.
+
+Ponto em aberto para o runbook (não bloqueia o 019): decidir se algum documento
+`FINANCEIRO` pode ser objeto de processo pendente antes de o job sair de dry-run para
+descarte real. O piso legal de 5 anos analisado em `FISCAL_XML_RETENTION_POLICY_001.md`
+trata do XML da NFC-e (coluna Postgres), não do blob `ContadorDocumento`.
+
 ---
 
 ## Grafo e regras finais

@@ -78,7 +78,7 @@ Central de avisos **REAL** na Visão geral. Sem botão Enviar. Canal classifica�
 - [`CONTADOR_HUB_DADOS_REAIS_READONLY_006.md`](../contador/CONTADOR_HUB_DADOS_REAIS_READONLY_006.md) — closure do GOAL 006.
 - [`CONTADOR_HUB_STATUS_COMENTARIOS_011.md`](../contador/CONTADOR_HUB_STATUS_COMENTARIOS_011.md) — closure do GOAL 011 (inclui **Pendências da revisão**).
 
-**Próximo:** GOAL 012 já entregue (fechamento com snapshot). Gates seguintes: **G3** realizado (portal v2 + ADRs 002/008); **G4** antes do GOAL 019 (retirada do legado). **ADR-007 Accepted** — `GOAL_018_OPENED=false` · `GOAL_018_STATUS=DRAFT_NOT_IMPORTED`.
+**Próximo:** GOALs 012–018 entregues. Gates: **G3** realizado (portal v2 + ADRs 002/008); **G4 APROVADO em 2026-08-20** — legado encerrado por redirect `/contador` → portal v2, a executar no GOAL 019. **ADR-007 Accepted** · GOAL 018 **DONE**. Decisões pré-019 (G4, LGPD e números de retenção) registradas em [`CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md`](../contador/CONTADOR_HUB_PORTAL_EXTERNO_ROADMAP_014_019.md). GOAL 019 **não aberto**.
 
 > **Ressalva de revisão (GOAL 011):** antes de integrar o portal externo (GOAL 015) é obrigatório filtrar também os **eventos** da timeline no contexto `compartilhado` — hoje só os comentários são cortados. Detalhe e demais pendências no documento de closure do GOAL 011.
 
