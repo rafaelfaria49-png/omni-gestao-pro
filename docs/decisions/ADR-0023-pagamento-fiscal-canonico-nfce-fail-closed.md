@@ -220,3 +220,31 @@ sem alterar o valor comercial aplicado nem o Caixa.
 - Versão do handoff permanece **1** (campo aditivo). Sem schema.
 
 Relatório: [`FISCAL_PAYMENT_CASH_TENDERED_CHANGE_083_REPORT.md`](../fiscal/FISCAL_PAYMENT_CASH_TENDERED_CHANGE_083_REPORT.md).
+
+---
+
+## 14. Adendo — GOAL 085 (fronteira cartão / TEF)
+
+Em 20/08/2026 o GOAL `FISCAL-030-CARD-GROUP-TEF-BOUNDARY-AUDIT-085` audita o
+grupo XML `card` (YA04) **sem implementar** TEF, adquirente ou schema.
+
+**Decisão nova comprovada** (não altera o runtime):
+
+1. Fiscal, pagamento comercial e futura TEF são camadas distintas. Fiscal não
+   captura cartão nem vira motor de adquirente.
+2. `minOccurs=0` no XSD **não** anula a RV **YA04-10** (NT 2025.001 v1.02):
+   NFC-e modelo 65 com tPag 03/04/17 deve informar o grupo `card` (msg 391).
+   Modelo 55 permanece “implementação futura” nessa NT. YA05-10 (CNPJ + `cAut`)
+   aplica-se quando `tpIntegra=1`, não quando `tpIntegra=2`.
+3. O fluxo atual (operador informa débito/crédito; maquininha local só de taxas;
+   zero TEF/SDK) corresponde à definição oficial de **`tpIntegra=2`** (POS
+   simples). **Não** corresponde a `1`. `maquininhaId` não é evidência fiscal
+   e não vira `idTermPag` / CNPJ / `tBand` / `cAut`.
+4. Inventar `tpIntegra=1`, CNPJ da loja como YA05, bandeira pela maquininha,
+   `cAut` a partir de NSU/id interno, PAN/CVV/token — continua **proibido**.
+5. Comportamento vigente **mantido**: tPag 03/04 sem elemento `card`. O próximo
+   slice mínimo, se autorizado, emite somente
+   `<card><tpIntegra>2</tpIntegra></card>` derivado no servidor. Não fail-close
+   a venda comercial.
+
+Relatório: [`FISCAL_PAYMENT_CARD_TEF_BOUNDARY_085_REPORT.md`](../fiscal/FISCAL_PAYMENT_CARD_TEF_BOUNDARY_085_REPORT.md).
