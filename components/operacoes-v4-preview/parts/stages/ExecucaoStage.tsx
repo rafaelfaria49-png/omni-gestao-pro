@@ -10,7 +10,10 @@
  * GOAL OPS-V4-TECNICO-BANCADA-FILA-016: técnico, bancada, prioridade, checklist
  * técnico e observação interna passam a gravar via actions V3 payload-only
  * (`atribuirTecnicoV3` / `definirLocalFisicoV3` / `salvarChecklistTecnicoV3` /
- * `adicionarObservacaoInternaV3`). Transições de status continuam na máquina V3. */
+ * `adicionarObservacaoInternaV3`). Transições de status continuam na máquina V3.
+ *
+ * GOAL OPS-V4-BLOCKERS-FINAL-CLOSEOUT-018: consumo de estoque deixa de ser
+ * somente leitura — `v.baixarEstoqueOS` chama o adapter oficial (idempotente). */
 import { useState } from "react";
 import { CHECKLIST_TECNICO_PADRAO } from "@/types/os";
 import { C, card, cardTitle, upLabel, HATCH } from "../../tokens";
@@ -262,6 +265,68 @@ function ObservacaoInternaCard({ v }: { v: V4Vals }) {
   );
 }
 
+function ConsumoEstoqueCard({ v }: { v: V4Vals }) {
+  const e = v.execucao;
+  const osId = v.selectedOsId;
+  const [busy, setBusy] = useState(false);
+  const pecas = e.estoque.length > 0
+    ? e.estoque.map((m) => ({ id: m.id, label: m.nome, qty: m.quantidade, extra: m.saldo, ok: true }))
+    : e.pecasPendentes.map((p) => ({
+        id: p.id,
+        label: p.nome,
+        qty: `${p.quantidade}×`,
+        extra: p.vinculada ? "" : "sem vínculo no catálogo",
+        ok: p.vinculada,
+      }));
+
+  const run = async () => {
+    if (!osId || busy || !e.podeBaixarEstoque) return;
+    setBusy(true);
+    try {
+      await v.baixarEstoqueOS();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={card}>
+      <div style={{ ...cardTitle, marginBottom: 11 }}>Consumo de estoque</div>
+      {pecas.length === 0 ? (
+        <div style={emptyText}>Nenhuma peça ou produto lançado nesta OS para baixar do estoque.</div>
+      ) : (
+        pecas.map((m) => (
+          <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12, padding: "6px 0", borderBottom: `1px solid ${C.line4}` }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: m.ok ? C.success : C.warn, flex: "none" }} />
+            <span style={{ flex: 1, color: C.body, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {m.label}{m.qty ? <span style={{ color: C.subtle }}> {m.qty}</span> : null}
+            </span>
+            {m.extra ? <span style={{ color: C.subtle, fontVariantNumeric: "tabular-nums" }}>{m.extra}</span> : null}
+          </div>
+        ))
+      )}
+      {e.estoqueConsumido ? (
+        <div style={{ fontSize: 10, color: C.subtle, marginTop: 9, lineHeight: 1.4 }}>
+          Baixa de estoque confirmada{e.estoqueConsumidoEm ? ` · ${e.estoqueConsumidoEm}` : ""}. Replay não baixa de novo.
+        </div>
+      ) : e.podeBaixarEstoque ? (
+        <button
+          type="button"
+          disabled={!osId || busy}
+          onClick={() => void run()}
+          style={{ ...btnPrimary, marginTop: 10, background: C.primary, cursor: !osId || busy ? "default" : "pointer", opacity: !osId || busy ? 0.7 : 1 }}
+        >
+          {busy ? "Baixando…" : "Baixar peças do estoque"}
+        </button>
+      ) : pecas.length > 0 ? (
+        <div style={{ fontSize: 10, color: C.subtle, marginTop: 9, lineHeight: 1.4 }}>
+          Vincule a peça ao catálogo no orçamento para baixar o estoque real.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ChecklistTecnicoCard({ v }: { v: V4Vals }) {
   const osId = v.selectedOsId;
   const e = v.execucao;
@@ -317,6 +382,7 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
         <ExecAcoesCard v={v} />
         <ChecklistTecnicoCard v={v} />
         <ObservacaoInternaCard v={v} />
+        <ConsumoEstoqueCard v={v} />
         <div style={card}>
           <div style={{ ...cardTitle, marginBottom: 6 }}>Apontamentos</div>
           <div style={emptyText}>Ainda não existe execução registrada para esta Ordem de Serviço.</div>
@@ -355,30 +421,7 @@ export function ExecucaoStage({ v }: { v: V4Vals }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: col2, gap: 12, alignItems: "start" }}>
-        {/* Consumo de estoque — movimentações reais da OS */}
-        <div style={card}>
-          <div style={{ ...cardTitle, marginBottom: 11 }}>Consumo de estoque</div>
-          {e.estoque.length === 0 ? (
-            <div style={emptyText}>Nenhuma movimentação de estoque registrada.</div>
-          ) : (
-            <>
-              {e.estoque.map((m) => (
-                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12, padding: "6px 0", borderBottom: `1px solid ${C.line4}` }}>
-                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.success, flex: "none" }} />
-                  <span style={{ flex: 1, color: C.body, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {m.nome}{m.quantidade ? <span style={{ color: C.subtle }}> {m.quantidade}</span> : null}
-                  </span>
-                  {m.saldo ? <span style={{ color: C.subtle, fontVariantNumeric: "tabular-nums" }}>{m.saldo}</span> : null}
-                </div>
-              ))}
-              {e.estoqueConsumido && (
-                <div style={{ fontSize: 10, color: C.subtle, marginTop: 9, lineHeight: 1.4 }}>
-                  Baixa de estoque confirmada{e.estoqueConsumidoEm ? ` · ${e.estoqueConsumidoEm}` : ""}.
-                </div>
-              )}
-            </>
-          )}
-        </div>
+        <ConsumoEstoqueCard v={v} />
 
         {/* Anexos de execução / bancada — reais da OS */}
         <div style={card}>

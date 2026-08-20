@@ -1,6 +1,6 @@
 /**
  * Operações V4 Preview — adaptadores READ-ONLY das telas de rail (Visão geral,
- * SLA, PDV de serviço). A Fila operacional vive em `lib/operacoes-v4/fila-v4.ts`.
+ * SLA, Recebimento da OS). A Fila operacional vive em `lib/operacoes-v4/fila-v4.ts`.
  * A Bancada operacional vive em `lib/operacoes-v4/producao-v4.ts`.
  * `buildFilaItens` / `buildBancadaView` permanecem como projeções leves de lista.
  *
@@ -202,6 +202,9 @@ export interface PdvRow {
   statusTone: V4Tone;
   /** "Saldo: R$ X" — só quando há cobrança real (aReceber/quitado); "" caso contrário. */
   saldoLinha: string;
+  /** Abre o Financeiro real da OS; "Receber" só com saldo aberto. */
+  ctaLabel: string;
+  podeReceber: boolean;
 }
 
 export interface PdvView {
@@ -255,6 +258,7 @@ export function buildPdvView(
       const toneKey = toneKeyDaProjecao(projection.financialStatus);
       const totalNum = projection.expectedTotal;
       const saldoLinha = projection.balance != null ? `Saldo: ${fmt(projection.balance)}` : "";
+      const podeReceber = toneKey === "aReceber";
       return {
         id: os.id,
         codigo: txt(os.codigo) || "OS",
@@ -264,6 +268,8 @@ export function buildPdvView(
         statusFaturamento: STATUS_FATURAMENTO_LABEL[toneKey],
         statusTone: FATURA_TONE[toneKey],
         saldoLinha,
+        ctaLabel: podeReceber ? "Receber" : "Abrir financeiro",
+        podeReceber,
       };
     });
 

@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Operações V4 Preview — telas de módulo do rail (Visão geral, PDV, Garantias).
+ * Operações V4 Preview — telas de módulo do rail (Recebimento da OS, Garantias).
  * Fila, Bancada e SLA têm superfícies próprias (`FilaV4`, `BancadaV4`, `SlaV4`).
  *
  * Cada módulo lê dados REAIS da lista de OS já carregada da loja ativa. Quando
@@ -171,9 +171,9 @@ function PdvBody({ v }: { v: V4Vals }) {
   if (!p.temDados) {
     return (
       <EmptyBox
-        titulo="PDV de serviço"
+        titulo="Recebimento da OS"
         texto="Nenhuma projeção financeira disponível para as OS desta loja."
-        sub="Esta tela é somente leitura — não vende nem recebe."
+        sub="Esta lista abre o Financeiro real da OS — não é um segundo PDV."
       />
     );
   }
@@ -190,7 +190,7 @@ function PdvBody({ v }: { v: V4Vals }) {
           <span style={{ fontSize: 18, fontWeight: 700, color: p.aReceberCount > 0 ? C.warnFg : C.muted }}>{p.aReceberCount}</span>
         </div>
       </div>
-      <div style={{ fontSize: 11.5, color: C.subtle }}>Somente leitura · OS a receber abrem direto no Financeiro</div>
+      <div style={{ fontSize: 11.5, color: C.subtle }}>Abre o Financeiro/Recebimento real da OS · mesmo motor V3 · sem segundo PDV</div>
       {p.itens.map((it) => (
         <button
           key={it.id}
@@ -207,6 +207,7 @@ function PdvBody({ v }: { v: V4Vals }) {
             {it.saldoLinha && <div style={{ fontSize: 11, color: C.subtle, marginTop: 1 }}>{it.saldoLinha}</div>}
           </div>
           <span style={{ fontSize: 13, fontWeight: 700, color: C.ink, flex: "none" }}>{it.total}</span>
+          <span style={{ fontSize: 11.5, fontWeight: 650, color: it.podeReceber ? C.primary : C.muted, flex: "none" }}>{it.ctaLabel}</span>
         </button>
       ))}
     </div>
