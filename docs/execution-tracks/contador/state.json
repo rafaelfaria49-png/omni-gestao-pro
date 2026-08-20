@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "contador",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "MEDIO",
-  "current_goal": "CONTADOR-HUB-PRODUCTION-HARDENING-019",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": "d4817244c8d1f4fdabb2773e419e2910ac62658a",
   "counters": {
-    "goals_done": 16,
+    "goals_done": 17,
     "goals_blocked": 0,
     "goals_imported": 15,
-    "ledger_lines": 21
+    "ledger_lines": 22
   },
-  "last_goal": "CONTADOR-HUB-FISCAL-INTEGRATION-018",
+  "last_goal": "CONTADOR-HUB-PRODUCTION-HARDENING-019",
   "last_result": "DONE",
-  "last_ratified_at": "2026-08-20T13:56:52.495Z"
+  "last_ratified_at": "2026-08-20T20:16:31.782Z"
 }
