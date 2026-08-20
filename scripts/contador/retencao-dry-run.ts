@@ -20,9 +20,6 @@
  */
 import {
   executarJobRetencao,
-  subtrairAnosUtc,
-  subtrairDiasUtc,
-  subtrairMesesUtc,
   type CandidatoRetencao,
   type ModoRetencao,
   type RelatorioRetencao,
@@ -37,7 +34,7 @@ import {
  * Cobre os dois lados de cada janela — um item claramente dentro e um claramente
  * fora —, então o relatório mostra candidatos E protegidos ao mesmo tempo.
  */
-function leituraSintetica(agora: Date): RetencaoLeituraPort {
+function leituraSintetica(): RetencaoLeituraPort {
   const item = (id: string, bytes: number, over: Partial<CandidatoRetencao> = {}): CandidatoRetencao => ({
     id,
     storeId: "loja-sintetica",
@@ -47,12 +44,8 @@ function leituraSintetica(agora: Date): RetencaoLeituraPort {
     ...over,
   })
 
-  // Datas só para deixar explícito, na leitura do código, de que lado da janela
-  // cada item foi plantado; a seleção real é do repo Prisma, não daqui.
-  void subtrairAnosUtc(agora, 6)
-  void subtrairMesesUtc(agora, 13)
-  void subtrairDiasUtc(agora, 91)
-
+  // A seleção por data é do repo Prisma; aqui o "lado da janela" é encenado —
+  // cada método devolve diretamente o que a política selecionaria.
   return {
     async documentosAlemDaRetencao({ categoria }) {
       if (categoria === "FINANCEIRO") return [item("fin-antigo-1", 2_400_000, { categoria })]
@@ -143,7 +136,7 @@ async function main(): Promise<void> {
   if (sintetico) {
     const agora = new Date()
     const relatorioSintetico = await executarJobRetencao(
-      { leitura: leituraSintetica(agora) },
+      { leitura: leituraSintetica() },
       { storeIds: ["loja-sintetica"], modo: "dry-run", agora },
     )
     process.stdout.write(
