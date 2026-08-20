@@ -21,7 +21,7 @@ process.chdir(root)
 const ENV_KEY = "CONTADOR_FISCAL_HOMOLOGATION_DATABASE_URL"
 const DEFAULT_URL =
   "postgresql://omni_homolog:omni_homolog_local_only@127.0.0.1:54329/omni_contador_fiscal_homolog"
-const HOSTS_LOCAIS = new Set(["127.0.0.1", "localhost", "::1"])
+const HOSTS_LOCAIS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"])
 const HOST_PROIBIDO = /supabase|neon\.tech|vercel|amazonaws|azure|googleusercontent|pooler/i
 
 function fail(message) {
@@ -39,8 +39,12 @@ function assertLocalHomologationDatabaseUrl(url) {
   if (parsed.protocol !== "postgresql:" && parsed.protocol !== "postgres:") {
     fail("A URL de homologação deve ser postgresql:// em host local.")
   }
-  const host = parsed.hostname.toLowerCase()
-  if (!HOSTS_LOCAIS.has(host) || HOST_PROIBIDO.test(host) || HOST_PROIBIDO.test(url)) {
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase()
+  if (
+    (!HOSTS_LOCAIS.has(host) && !HOSTS_LOCAIS.has(parsed.hostname.toLowerCase())) ||
+    HOST_PROIBIDO.test(host) ||
+    HOST_PROIBIDO.test(url)
+  ) {
     fail(`${ENV_KEY} deve apontar para PostgreSQL local (recebido: ${host}).`)
   }
   if (parsed.port === "6543") {

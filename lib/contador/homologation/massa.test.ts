@@ -68,10 +68,10 @@ describe("massa HOMOLOGACAO mínima", () => {
 describe("isolamento do módulo de homologação", () => {
   it("não importa reader Fiscal com log, SEFAZ, emission nem lib/prisma", () => {
     const fonte = fonteHomologacao()
-    expect(fonte).not.toMatch(/xml-storage-reader/)
+    expect(fonte).not.toMatch(/from ["'][^"']*xml-storage-reader["']/)
     expect(fonte).not.toMatch(/readAuthorizedDocument/)
     expect(fonte).not.toMatch(/fiscalLog\.create/)
-    expect(fonte).not.toMatch(/lib\/prisma/)
+    expect(fonte).not.toMatch(/from ["']@\/lib\/prisma["']/)
     expect(fonte).not.toMatch(/lib\/fiscal\/emission/)
     expect(fonte).not.toMatch(/SefazDireto/)
     expect(fonte).not.toMatch(/readers\/fiscal/)

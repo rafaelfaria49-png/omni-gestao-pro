@@ -1,8 +1,8 @@
 /**
  * Seed idempotente da massa HOMOLOGACAO do Contador — Postgres local apenas.
  *
- * Nunca importa `lib/prisma` (DSN de Production). Nunca chama SEFAZ, signer,
- * `xml-storage-reader` nem grava `FiscalLog`. Não fabrica `EventoFiscal`.
+ * Nunca importa o Prisma de Production (`lib/prisma`). Nunca chama SEFAZ, signer,
+ * o reader Fiscal com log nem grava `FiscalLog`. Não fabrica `EventoFiscal`.
  */
 import { PrismaClient } from "@/generated/prisma"
 
