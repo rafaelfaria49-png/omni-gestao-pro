@@ -9,6 +9,7 @@
  */
 import "server-only"
 
+import { createSecureContext, type SecureContext } from "node:tls"
 import type { EnvLike } from "@/lib/fiscal/vault/env-vault"
 import { resolveFiscalSecretProvider } from "@/lib/fiscal/vault/provider-resolver"
 import { zeroBuffer } from "@/lib/fiscal/vault/pkcs12-loader"
@@ -18,6 +19,7 @@ type A1MtlsMaterialErrorCode =
   | "secret_provider_indisponivel"
   | "pfx_indisponivel"
   | "senha_indisponivel"
+  | "secure_context_invalido"
   | "falha_ao_resolver_material"
   | "material_descartado"
 
@@ -136,5 +138,37 @@ export async function loadA1MtlsMaterial(
       "falha_ao_resolver_material",
       "Não foi possível resolver o material A1 de forma segura.",
     )
+  }
+}
+
+/**
+ * Resolve e valida o A1 em memória antes de qualquer capability de rede. O PFX e a senha são
+ * descartados assim que o `SecureContext` TLS 1.2+ é construído; somente o contexto opaco segue
+ * para o consumer interno.
+ */
+export async function loadA1MtlsSecureContext(
+  params: LoadA1MtlsMaterialParams,
+): Promise<SecureContext> {
+  const material = await loadA1MtlsMaterial(params)
+  try {
+    let secureContext: SecureContext | null = null
+    material.withTlsOptions(({ pfx, passphrase }) => {
+      secureContext = createSecureContext({ pfx, passphrase, minVersion: "TLSv1.2" })
+    })
+    if (!secureContext) {
+      throw new A1MtlsMaterialError(
+        "secure_context_invalido",
+        "Contexto TLS do certificado A1 não foi construído.",
+      )
+    }
+    return secureContext
+  } catch (error) {
+    if (error instanceof A1MtlsMaterialError) throw error
+    throw new A1MtlsMaterialError(
+      "secure_context_invalido",
+      "Contexto TLS do certificado A1 não pôde ser construído.",
+    )
+  } finally {
+    material.dispose()
   }
 }

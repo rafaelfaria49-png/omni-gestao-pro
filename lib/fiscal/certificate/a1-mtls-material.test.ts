@@ -5,6 +5,7 @@ import { scanForSecrets } from "@/lib/fiscal/vault/secret-scan"
 import {
   A1MtlsMaterialError,
   loadA1MtlsMaterial,
+  loadA1MtlsSecureContext,
 } from "./a1-mtls-material"
 
 const STORE = "store-mtls-offline"
@@ -127,5 +128,48 @@ describe("A1 mTLS material · somente memória e referências opacas", () => {
     await expect(
       loadA1MtlsMaterial({ storeId: STORE, blobRef: "", senhaRef: SENHA_REF, env: {} }),
     ).rejects.toMatchObject({ code: "referencias_invalidas" })
+  })
+
+  it("abre e valida PFX sintético em SecureContext TLS antes de liberar o consumer", async () => {
+    const fixture = validTestPfx({ senha: "senha-preconsume-valida-sintetica" })
+
+    const secureContext = await loadA1MtlsSecureContext({
+      storeId: STORE,
+      blobRef: PFX_REF,
+      senhaRef: SENHA_REF,
+      env: testEnv(fixture.pfx, fixture.senha),
+    })
+
+    expect(secureContext).toBeDefined()
+    fixture.pfx.fill(0)
+  })
+
+  it("PFX inválido ou senha incorreta falham sanitizados durante o preconsume", async () => {
+    const fixture = validTestPfx({ senha: "senha-preconsume-correta-sintetica" })
+    const wrongPassword = "senha-preconsume-incorreta-sintetica"
+    const invalidPfx = Buffer.from("pkcs12-invalido-somente-teste", "utf8")
+
+    const passwordError = await loadA1MtlsSecureContext({
+      storeId: STORE,
+      blobRef: PFX_REF,
+      senhaRef: SENHA_REF,
+      env: testEnv(fixture.pfx, wrongPassword),
+    }).catch((error: unknown) => error)
+    const pfxError = await loadA1MtlsSecureContext({
+      storeId: STORE,
+      blobRef: PFX_REF,
+      senhaRef: SENHA_REF,
+      env: testEnv(invalidPfx, fixture.senha),
+    }).catch((error: unknown) => error)
+
+    expect(passwordError).toMatchObject({ code: "secure_context_invalido" })
+    expect(pfxError).toMatchObject({ code: "secure_context_invalido" })
+    expect(scanForSecrets([passwordError, pfxError], {
+      senha: wrongPassword,
+      pfxBytes: invalidPfx,
+      extras: [fixture.senha],
+    })).toEqual({ vazou: false, ocorrencias: [] })
+    fixture.pfx.fill(0)
+    invalidPfx.fill(0)
   })
 })

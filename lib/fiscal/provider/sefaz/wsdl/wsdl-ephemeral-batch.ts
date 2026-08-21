@@ -5,6 +5,7 @@
 import "server-only"
 
 import { randomUUID } from "node:crypto"
+import type { SecureContext } from "node:tls"
 import type { SefazServico } from "../sefaz-endpoint-catalog"
 import {
   SefazWsdlAcquisition,
@@ -64,6 +65,7 @@ type BatchDependencies = {
     readonly target: SefazWsdlTarget
     readonly authority: SefazWsdlExecutionAuthority
     readonly certificate: CertificateRefs
+    readonly preparedSecureContext: SecureContext
     readonly correlationId: string
   }) => Promise<SefazWsdlAcquisitionOutcome>
   readonly correlationId: () => string
@@ -71,13 +73,14 @@ type BatchDependencies = {
 
 const DEFAULT_DEPENDENCIES: BatchDependencies = {
   createAuthority: createWsdlEphemeralExternalAuthority,
-  acquire: async ({ target, authority, certificate, correlationId }) =>
+  acquire: async ({ target, authority, certificate, preparedSecureContext, correlationId }) =>
     new SefazWsdlAcquisition({ executionAuthority: authority }).acquire({
       uf: target.uf,
       ambiente: target.ambiente,
       servico: target.servico,
       versao: target.versao,
       certificate,
+      preparedSecureContext,
       correlationId,
     }),
   correlationId: randomUUID,
@@ -120,6 +123,7 @@ async function executeBatch(
   input: {
     readonly activation: WsdlExecutionActivation
     readonly certificate: CertificateRefs
+    readonly preparedSecureContext: SecureContext
   },
   dependencies: BatchDependencies,
 ): Promise<WsdlEphemeralBatchResult> {
@@ -140,6 +144,7 @@ async function executeBatch(
         target,
         authority,
         certificate: input.certificate,
+        preparedSecureContext: input.preparedSecureContext,
         correlationId: `${dependencies.correlationId()}:${target.servico}`,
       })
     } catch {
@@ -199,6 +204,7 @@ async function executeBatch(
 export async function runConfiguredWsdlEphemeralBatch(input: {
   readonly activation: WsdlExecutionActivation
   readonly certificate: CertificateRefs
+  readonly preparedSecureContext: SecureContext
 }): Promise<WsdlEphemeralBatchResult> {
   return executeBatch(input, DEFAULT_DEPENDENCIES)
 }
@@ -207,9 +213,10 @@ export async function runConfiguredWsdlEphemeralBatch(input: {
 export function createWsdlEphemeralBatchTestRunner(
   dependencies: BatchDependencies,
 ): (input: {
-  readonly activation: WsdlExecutionActivation
-  readonly certificate: CertificateRefs
-}) => Promise<WsdlEphemeralBatchResult> {
+    readonly activation: WsdlExecutionActivation
+    readonly certificate: CertificateRefs
+    readonly preparedSecureContext: SecureContext
+  }) => Promise<WsdlEphemeralBatchResult> {
   if (process.env.NODE_ENV !== "test") {
     throw new Error("Runner injetável do batch WSDL disponível somente em testes.")
   }

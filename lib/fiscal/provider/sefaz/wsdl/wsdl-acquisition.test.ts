@@ -1,5 +1,6 @@
 import { createServer as createHttpsServer } from "node:https"
 import { createServer as createTcpServer } from "node:net"
+import { createSecureContext } from "node:tls"
 import type { AddressInfo, Server as NetServer, Socket } from "node:net"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest"
@@ -152,6 +153,7 @@ function autoridade(
     escopo?: typeof ESCOPO_PADRAO
     probe?: SefazWsdlLoopbackTestProbe
     withoutClientCertificate?: boolean
+    throwSynchronouslyBeforeNodeRequest?: boolean
   } = {},
 ): SefazWsdlExecutionAuthority {
   return createWsdlLoopbackTestAuthority({
@@ -160,6 +162,7 @@ function autoridade(
     escopo: options.escopo ?? ESCOPO_PADRAO,
     probe: options.probe,
     withoutClientCertificate: options.withoutClientCertificate,
+    throwSynchronouslyBeforeNodeRequest: options.throwSynchronouslyBeforeNodeRequest,
   })
 }
 
@@ -186,6 +189,29 @@ describe("SefazWsdlAcquisition · sem autoridade a capability é inerte", () => 
       externalTransmissionAttempted: false,
     })
     expect(loadMaterial).not.toHaveBeenCalled()
+  })
+
+  it("usa SecureContext pré-validado sem reabrir A1 e só tenta request após consumir authority", async () => {
+    const probe = novoWsdlLoopbackTestProbe()
+    const loadMaterial = vi.fn(materialLoader())
+    const acquisition = adquiridor(
+      autoridade(4443, { probe, throwSynchronouslyBeforeNodeRequest: true }),
+      loadMaterial,
+    )
+
+    const outcome = await acquisition.acquire(pedido({
+      preparedSecureContext: createSecureContext(),
+    }))
+
+    expect(loadMaterial).not.toHaveBeenCalled()
+    expect(probe.secureContextCalls).toBe(0)
+    expect(probe.runtimeRequestCalls).toBe(1)
+    expect(probe.nodeRequestCalls).toBe(0)
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "wsdl_rede_incerta",
+      externalTransmissionAttempted: false,
+    })
   })
 
   it("informar um runtime explicitamente NÃO autoriza rede — vira conflito fail-closed", async () => {

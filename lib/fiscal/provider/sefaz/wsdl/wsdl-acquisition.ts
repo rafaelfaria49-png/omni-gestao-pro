@@ -34,6 +34,7 @@
 import "server-only"
 
 import { createHash } from "node:crypto"
+import type { SecureContext } from "node:tls"
 import {
   A1MtlsMaterialError,
   loadA1MtlsMaterial,
@@ -88,6 +89,8 @@ export type SefazWsdlAcquisitionRequest = {
     readonly blobRef: string
     readonly senhaRef: string
   }
+  /** Contexto A1 já aberto e validado antes do ledger global da execução efêmera. */
+  readonly preparedSecureContext?: SecureContext
   /** Correlação para auditoria — nunca contém segredo. */
   readonly correlationId: string
   readonly connectionTimeoutMs?: number
@@ -277,42 +280,45 @@ export class SefazWsdlAcquisition {
       )
     }
 
-    let material: A1MtlsMaterial
-    try {
-      material = await this.loadMaterial({
-        storeId: request.certificate.storeId,
-        blobRef: request.certificate.blobRef,
-        senhaRef: request.certificate.senhaRef,
-      })
-    } catch (error) {
-      return failure(
-        "wsdl_certificado_indisponivel",
-        error instanceof A1MtlsMaterialError
-          ? "Material A1 indisponível para a aquisição mTLS."
-          : "Falha sanitizada ao carregar material A1.",
-        "BLOCKED_BEFORE_NETWORK",
-        false,
-      )
-    }
-
-    let secureContext: ReturnType<SefazHttpsRuntimePorts["createSecureContext"]> | null = null
-    try {
-      material.withTlsOptions(({ pfx, passphrase }) => {
-        secureContext = runtime.createSecureContext({
-          pfx,
-          passphrase,
-          minVersion: "TLSv1.2",
+    let secureContext: ReturnType<SefazHttpsRuntimePorts["createSecureContext"]> | null =
+      request.preparedSecureContext ?? null
+    if (!secureContext) {
+      let material: A1MtlsMaterial
+      try {
+        material = await this.loadMaterial({
+          storeId: request.certificate.storeId,
+          blobRef: request.certificate.blobRef,
+          senhaRef: request.certificate.senhaRef,
         })
-      })
-    } catch {
-      return failure(
-        "wsdl_tls_invalido",
-        "Contexto TLS do certificado A1 não pôde ser construído.",
-        "UNKNOWN_UNCERTAIN",
-        false,
-      )
-    } finally {
-      material.dispose()
+      } catch (error) {
+        return failure(
+          "wsdl_certificado_indisponivel",
+          error instanceof A1MtlsMaterialError
+            ? "Material A1 indisponível para a aquisição mTLS."
+            : "Falha sanitizada ao carregar material A1.",
+          "BLOCKED_BEFORE_NETWORK",
+          false,
+        )
+      }
+
+      try {
+        material.withTlsOptions(({ pfx, passphrase }) => {
+          secureContext = runtime.createSecureContext({
+            pfx,
+            passphrase,
+            minVersion: "TLSv1.2",
+          })
+        })
+      } catch {
+        return failure(
+          "wsdl_tls_invalido",
+          "Contexto TLS do certificado A1 não pôde ser construído.",
+          "UNKNOWN_UNCERTAIN",
+          false,
+        )
+      } finally {
+        material.dispose()
+      }
     }
     if (!secureContext) {
       return failure(
