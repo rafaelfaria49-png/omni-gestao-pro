@@ -11,6 +11,8 @@
 - Estado nesta entrega: **retenção implementada e validada em dry-run**.
   Nenhum descarte real foi executado. `CONTADOR_RETENCAO_APPLY` **não está definida
   em nenhum ambiente**.
+- **Atualização 21/08/2026:** o portal v2 foi ativado em Production e o smoke autenticado
+  real foi executado ponta a ponta — ver **§12**. A retenção `APPLY` continua desligada.
 
 ---
 
@@ -424,25 +426,27 @@ ficou em ~2 % dele.
 
 ## 11. Checklist de produção
 
-Marcar em ordem. Nada abaixo foi executado nesta entrega.
+Marcar em ordem. Os itens marcados foram executados e verificados em **21/08/2026** —
+ver §12 para a evidência do smoke.
 
 **Portal e legado**
 
-- [ ] `CONTADOR_PORTAL_V2=on` em Production (senão as páginas de dados do v2 dão 404)
-- [ ] `CONTADOR_EXTERNO_SESSION_SECRET` definida
-- [ ] `/contador` e `/login-contador` redirecionam para `/contador-externo/login`
-- [ ] `POST /api/auth/contador` responde 503
-- [ ] `/dashboard/contador` e demais rotas do ERP intactas
+- [x] `CONTADOR_PORTAL_V2=on` em Production (senão as páginas de dados do v2 dão 404)
+- [x] `CONTADOR_EXTERNO_SESSION_SECRET` definida
+- [x] `/contador` e `/login-contador` redirecionam para `/contador-externo/login`
+- [x] `POST /api/auth/contador` responde 503
+- [x] `/dashboard/contador` e demais rotas do ERP intactas
 - [ ] contadores comunicados da nova URL
 
 **Storage**
 
-- [ ] `CONTADOR_STORAGE_PROVIDER=r2` e as quatro variáveis `R2_*` definidas
-- [ ] bucket privado confirmado (`node --env-file=.env scripts/contador/setup-storage.mjs --check`)
+- [x] `CONTADOR_STORAGE_PROVIDER=r2` e as quatro variáveis `R2_*` definidas
+- [x] bucket privado confirmado (`node --env-file=<arquivo local> scripts/contador/setup-storage.mjs --check`)
+- [x] CORS do bucket restrito ao domínio de Production (§12.2 — sem isso upload e download quebram)
 
 **Retenção**
 
-- [ ] `CONTADOR_RETENCAO_APPLY` **ausente** (estado desejado hoje)
+- [x] `CONTADOR_RETENCAO_APPLY` **ausente** (estado desejado hoje)
 - [ ] dry-run executado por loja e relatório revisado por Rafael
 - [ ] `candidatos` de `FISCAL`/`JURIDICO`/`FOLHA` por idade = 0 no relatório
 - [ ] pendência de processo pendente (§5.1) decidida
@@ -458,3 +462,90 @@ Marcar em ordem. Nada abaixo foi executado nesta entrega.
 **Assinatura**
 
 - [ ] revisado e aprovado por: ______________________  data: ____________
+
+---
+
+## 12. Ativação em produção e smoke real — 21/08/2026
+
+Registro do que foi efetivamente executado e observado em Production. Sem senha, token,
+cookie, URL de convite, e-mail completo, `storageRef` ou PII.
+
+### 12.1 Estado ativado
+
+- Portal v2 **ligado**, portal legado **desligado**, retenção `APPLY` **continua ausente**.
+- Storage real em **Cloudflare R2**, bucket privado dedicado de Production
+  (sem `r2.dev`, sem domínio customizado).
+- Deploy verificado pelo **SHA servido no alias**, não pelo merge: `/api/version` devolve
+  `buildId` = 12 primeiros caracteres do commit. Merge em `main` não garante Production —
+  um deploy pode falhar e o alias permanecer no commit anterior sem alarde.
+
+### 12.2 CORS do bucket — passo de provisionamento que faltava
+
+O upload do Contador é **direto do navegador** para a URL assinada, e o download externo
+também devolve URL assinada. Um bucket R2 nasce **sem CORS**, e nesse estado o `PUT` do
+navegador falha como `TypeError: Failed to fetch` — erro de rede genérico, que não
+distingue CORS de storage fora do ar.
+
+Regra aplicada, restrita ao domínio de Production:
+
+| Campo | Valor |
+|---|---|
+| origens | apenas o domínio de Production |
+| métodos | `GET`, `PUT`, `HEAD` |
+| headers | `content-type`, `if-none-match` |
+| expostos | `etag` |
+| `maxAgeSeconds` | 3600 |
+
+**Nenhum smoke sem sessão detecta a falta de CORS**: as rotas externas param em 401 antes
+de tocar o storage, e o `complete` lê o objeto pelo servidor. Só o `PUT` do navegador expõe.
+
+### 12.3 Smoke autenticado — o que foi provado
+
+Identidade externa dedicada, criada pelo fluxo real de convite (papel **LEITURA**, vínculo
+com **uma única loja**), usada apenas para validação e **revogada ao final**.
+
+| Gate | Resultado |
+|---|---|
+| Convite → aceite → sessão | criado pelo fluxo oficial; aceite humano; sessão externa válida |
+| Escopo de loja | a conta enxerga exatamente a loja vinculada |
+| Competências | listagem e abertura da competência corrente |
+| Documento no portal | aparece na listagem externa |
+| **Escrita no R2** | upload pelo fluxo real; servidor releu o objeto e recalculou o SHA-256 |
+| **Leitura no R2** | download real: **bytes e SHA-256 idênticos** ao original |
+| Pacotes | listagem OK, **sem versão oficial** — a v1 nasce no primeiro fechamento |
+| Cross-store | loja não concedida → **403** genérico, sem vazar nome, competência, documento ou pacote |
+| Isolamento de cookie | nos **dois** sentidos (ver 12.4) |
+| Logout | cookie reusado → **401 sessão inválida**; invalidação no servidor |
+| Revogação | com sessão **ativa**, acesso negado na requisição seguinte |
+| Soft delete | documento sai da listagem ativa; **trilha de auditoria preservada** |
+
+A autorização de download devolve apenas URL assinada e validade — **não expõe `storageRef`**.
+
+### 12.4 Isolamento de cookie — os dois sentidos
+
+- Cookie **externo** contra a área interna: página do ERP redireciona para login e as APIs
+  internas respondem 401. A sessão de contador não vira sessão de ERP.
+- Cookie **interno** contra o portal externo: com sessão administrativa comprovadamente
+  válida (rota admin em 200), as rotas de **dados** do portal respondem 401. A sessão de ERP
+  não vira sessão de contador.
+
+Os cookies de sessão são `httpOnly` — não são legíveis por JavaScript.
+
+### 12.5 Trilha de auditoria observada
+
+O soft delete **não** apaga histórico. Para o documento de smoke permaneceram os três eventos,
+incluindo o download feito pela conta externa:
+
+`documento_enviado` (ator interno) → `documento_download_autorizado` (ator **externo**) →
+`documento_excluido` (ator interno)
+
+### 12.6 Pendências conhecidas
+
+- **Objeto órfão** no bucket, de um `PUT` cujo `complete` foi recusado: existe no storage e
+  **não** tem linha correspondente no acervo. É inerte, mas com a retenção desligada não
+  desaparece sozinho.
+- Contadores ainda **não** foram comunicados da nova URL.
+- Observabilidade (§9) e as pendências de retenção (§5) seguem abertas.
+- `vercel env pull` **não** devolve o valor de variáveis sensíveis deste projeto: o checker
+  precisa de um arquivo local montado à parte, e a conferência de valor em Production é
+  **funcional** (comportamento HTTP), nunca por leitura.
