@@ -31,36 +31,51 @@ const norm = (s: string) => s.replace(/\s+/g, " ").trim()
  * (um "=>" contém um ">" que não é o fim da tag). */
 const JSX_TAG = /<(?:Btn|Switch)\b[\s\S]*?(?<!=)>/g
 
-describe("Contador HUB — banner global e persistente (Passo 1)", () => {
-  it("existe um GlobalPreviewNotice com o contrato híbrido explícito", () => {
-    expect(hubSrc).toContain("function GlobalPreviewNotice()")
-    expect(hubSrc).toContain("Experiência híbrida — blocos reais identificados + preview.")
+/* ────────── GOAL 023 — o aviso global stale foi REMOVIDO ────────── */
+
+describe("Contador HUB — sem aviso global negando funcionalidade real (GOAL 023)", () => {
+  it("o GlobalPreviewNotice deixou de existir — nem função, nem ponto de renderização", () => {
+    expect(hubSrc).not.toContain("function GlobalPreviewNotice()")
+    expect(hubSrc).not.toContain("<GlobalPreviewNotice")
   })
 
-  it("GlobalPreviewNotice é renderizado fora da troca de seção (fora de SECTION_RENDERERS/active)", () => {
-    const renderIdx = hubSrc.indexOf("<GlobalPreviewNotice")
-    const switchIdx = hubSrc.indexOf("SECTION_RENDERERS[active]()")
-    expect(renderIdx, "GlobalPreviewNotice deve ser renderizado no JSX principal").toBeGreaterThan(-1)
-    expect(switchIdx).toBeGreaterThan(-1)
-    // Precisa vir ANTES do bloco que troca de seção, e fora de qualquer render* de seção
-    // individual — por isso é o único <GlobalPreviewNotice em todo o arquivo.
-    expect(renderIdx).toBeLessThan(switchIdx)
-    const occurrences = hubSrc.split("<GlobalPreviewNotice").length - 1
-    expect(occurrences, "deve haver exatamente 1 ponto de renderização (fora do switch por seção)").toBe(1)
+  it("o texto stale que negava envio, fechamento, guia e documento sumiu", () => {
+    // Documentos (010), Fechamento (012) e Obrigações (016) são reais desde antes
+    // do 023 — um banner afirmando o contrário era a mentira mais visível do HUB.
+    expect(norm(hubSrc)).not.toContain(
+      "Nenhum envio, fechamento, guia ou documento é processado",
+    )
+    expect(hubSrc).not.toContain("Experiência híbrida — blocos reais identificados + preview.")
+    expect(norm(hubSrc)).not.toContain("a competência selecionada altera somente os blocos reais.")
   })
 
-  it("não depende de hover/tooltip/clique: é um <div> estático, sem onMouseEnter/onClick", () => {
-    const fnStart = hubSrc.indexOf("function GlobalPreviewNotice()")
-    const fnBody = hubSrc.slice(fnStart, fnStart + 800)
-    expect(fnBody).not.toContain("onMouseEnter")
-    expect(fnBody).not.toContain("onClick")
-    expect(fnBody).not.toContain("hidden ")
+  it("o header não vende o Fechamento como preview", () => {
+    expect(hubSrc).not.toContain("Fechamento · preview")
+    // O selo híbrido do HUB permanece — ele é verdadeiro.
+    expect(hubSrc).toContain("<HybridStatus />")
+  })
+
+  it("o preview restante é identificado NO BLOCO, não globalmente", () => {
+    // PreviewBanner segue existindo (Relatórios e Dossiês ainda têm partes preview)…
+    expect(hubSrc).toContain("function PreviewBanner(")
+    // …mas nenhum deles é renderizado fora do conteúdo trocado por seção.
+    const mainIdx = hubSrc.indexOf("SECTION_RENDERERS[active]()")
+    expect(mainIdx).toBeGreaterThan(-1)
+    const depoisDoMain = hubSrc.slice(mainIdx)
+    expect(depoisDoMain).not.toContain("<PreviewBanner")
   })
 })
 
-describe("Contador HUB — competência em experiência híbrida (GOAL 006B)", () => {
-  it("o aviso limita o efeito da competência aos blocos reais", () => {
-    expect(norm(hubSrc)).toContain("a competência selecionada altera somente os blocos reais.")
+describe("Contador HUB — navegação sem contagem inventada (GOAL 023)", () => {
+  it("a seção Documentos perdeu o count hardcoded 4", () => {
+    expect(dataSrc).not.toMatch(/id:\s*"documentos"[\s\S]{0,120}count:/)
+    expect(dataSrc).not.toMatch(/\bcount\s*[?:]/)
+  })
+
+  it("nenhuma seção do catálogo declara contador numérico", () => {
+    expect(dataSrc).not.toMatch(/count:\s*\d+/)
+    // A nav também não renderiza mais `s.count`.
+    expect(hubSrc).not.toContain("s.count")
   })
 })
 
@@ -76,21 +91,26 @@ describe("Contador HUB — reconciliação direcional de pagamentos (GOAL 006E)"
   })
 })
 
-describe("Contador HUB — CTAs sem efeito real não podem parecer operacionais (Passo 2)", () => {
-  const ctaIndisponivelDecl = /const CTA_INDISPONIVEL_TITLE = ".+"/
-  it("existe um texto único reaproveitado para os CTAs indisponíveis nesta fase", () => {
-    expect(hubSrc).toMatch(ctaIndisponivelDecl)
-    expect(hubSrc).toContain("Disponível na fase de dados reais")
+describe("Contador HUB — CTAs sem efeito real não podem parecer operacionais (Passo 2 · GOAL 023)", () => {
+  it("não existe mais nenhum CTA no-op: o helper `noop` e o toast honesto saíram", () => {
+    // Passo 2 (GOAL 002) exigia que todo CTA sem efeito fosse `disabled` + `title`.
+    // O GOAL 023 fechou a conta pela raiz: os CTAs falsos foram removidos, não
+    // desabilitados. Sem call site, o helper e o texto único perdem função.
+    expect(hubSrc).not.toMatch(/\bnoop\(/)
+    expect(hubSrc).not.toContain("const noop =")
+    expect(hubSrc).not.toContain("CTA_INDISPONIVEL_TITLE")
+    expect(hubSrc).not.toContain("pré-visualização, sem efeito real nesta fase")
   })
 
-  it("todo <Btn>/<Switch> cujo onClick chama noop(...)/onNoop(...) está genuinamente disabled", () => {
+  it("nenhum <Btn>/<Switch> do HUB está desabilitado por ser preview", () => {
     const tags = hubSrc.match(JSX_TAG) ?? []
-    const acaoTags = tags.filter((t) => /\bnoop\(|\bonNoop\(/.test(t))
-    // Confirma que a varredura encontrou algo (evita passar "por vazio").
-    // GOAL 010 removeu CTAs noop de Documentos; GOAL 016 removeu os de Obrigações.
-    expect(acaoTags.length).toBeGreaterThanOrEqual(7)
-    const semDisabled = acaoTags.filter((t) => !/\bdisabled\b/.test(t))
-    expect(semDisabled, `CTA(s) sem "disabled": ${semDisabled.join(" | ")}`).toEqual([])
+    const desabilitados = tags.filter((t) => /\bdisabled\b/.test(t))
+    // O único `disabled` legítimo é o do Pacote — condicionado a dado real, não a fase.
+    const semJustificativa = desabilitados.filter((t) => !/disabled=\{!realData\}/.test(t))
+    expect(
+      semJustificativa,
+      `CTA(s) desabilitado(s) sem motivo de dado real: ${semJustificativa.join(" | ")}`,
+    ).toEqual([])
   })
 
   it("o Pacote do Contador deixou de ser um CTA de preview desabilitado (GOAL 008)", () => {
@@ -102,38 +122,60 @@ describe("Contador HUB — CTAs sem efeito real não podem parecer operacionais 
     expect(hubSrc).toContain("<ContadorPacoteDownload")
   })
 
-  it("nenhum CTA sem efeito real depende só do toast pós-clique: todos têm title/aux text acessível", () => {
-    const tags = hubSrc.match(JSX_TAG) ?? []
-    const acaoTags = tags.filter((t) => /\bnoop\(|\bonNoop\(/.test(t))
-    // GOAL 007: «Fechar competência» usa FECHAR_COMPETENCIA_TITLE (GOAL 012); demais usam CTA_INDISPONIVEL_TITLE.
-    const semTitle = acaoTags.filter(
-      (t) => !t.includes("CTA_INDISPONIVEL_TITLE") && !t.includes("FECHAR_COMPETENCIA_TITLE"),
-    )
-    expect(semTitle, `CTA(s) sem title acessível: ${semTitle.join(" | ")}`).toEqual([])
-  })
-
   it("'Ver exemplo' saiu da seção Obrigações (GOAL 016 realificou a aba)", () => {
     expect(hubSrc).not.toContain("Ver exemplo")
   })
+
+  it("as ações falsas de Dossiês e Folha saíram (GOAL 023)", () => {
+    expect(hubSrc).not.toContain("Montar dossiê")
+    expect(hubSrc).not.toContain("Baixar pacote do dossiê")
+    expect(hubSrc).not.toContain("Adicionar funcionário")
+    expect(hubSrc).not.toContain("Ver holerite")
+    expect(hubSrc).not.toContain("Salvar · preview")
+  })
 })
 
-describe("Contador HUB — valores sensíveis do preview seguem marcados como ilustrativos (Passo 4)", () => {
-  it("as notas fiscais de exemplo em Documentos usam o pill de preview", () => {
-    expect(dataSrc).toMatch(/name: "NF-e de venda 001234"[\s\S]*?preview: true/)
-    expect(dataSrc).toMatch(/name: "NF-e de compra 5678"[\s\S]*?preview: true/)
+describe("Contador HUB — catálogos não podem afirmar estado da empresa (Passo 4 · GOAL 023)", () => {
+  it("as linhas ilustrativas de Documentos e Obrigações foram removidas do catálogo", () => {
+    // Eram fixtures mortas desde os GOALs 010/016 — o 023 apagou o código.
+    expect(dataSrc).not.toContain("DOCUMENTOS_ROWS")
+    expect(dataSrc).not.toContain("OBRIGACOES_ROWS")
+    expect(dataSrc).not.toContain("NF-e de venda 001234")
+    expect(dataSrc).not.toContain("Honorários do contador")
   })
 
-  it("o honorário do contador em Obrigações usa o pill de preview", () => {
-    expect(dataSrc).toMatch(/name: "Honorários do contador"[\s\S]*?preview: true/)
+  it("as fixtures mortas da Visão geral, do fechamento e de permissões saíram", () => {
+    for (const morta of [
+      "VISAO_KPIS",
+      "VISAO_ALERTAS",
+      "VISAO_DOSSIE_PROGRESS",
+      "RESUMO_FINANCEIRO",
+      "FECHAMENTO_CHECKLIST",
+      "PERMISSOES_ROWS",
+      "COMPETENCIA_INICIAL",
+    ]) {
+      expect(dataSrc, `fixture morta ainda presente: ${morta}`).not.toContain(morta)
+      expect(hubSrc, `fixture morta ainda consumida: ${morta}`).not.toContain(morta)
+    }
   })
 
-  it("Visão geral segue preview; Documentos (010), Fechamento (012) e Obrigações (016) são REAIS", () => {
+  it("nenhum valor monetário/contagem fixa sobrou no catálogo", () => {
+    expect(dataSrc).not.toMatch(/R\$\s?\d/)
+    expect(dataSrc).not.toContain("48,2k")
+  })
+
+  it("Visão geral, Documentos (010), Fechamento (012) e Obrigações (016) leem dados reais", () => {
     const renderVisaoIdx = hubSrc.indexOf("const renderVisao = ()")
     const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
     const renderDocumentosIdx = hubSrc.indexOf("const renderDocumentos = ()")
     const renderObrigacoesIdx = hubSrc.indexOf("const renderObrigacoes = ()")
     const renderRelatoriosIdx = hubSrc.indexOf("const renderRelatorios = ()")
-    expect(hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)).toContain("<PreviewBanner")
+    const visao = hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)
+    // A Visão geral perdeu o PreviewBanner porque perdeu os cartões ilustrativos.
+    expect(visao).not.toContain("<PreviewBanner")
+    expect(visao).toContain("<VisaoGeralReal")
+    expect(visao).toContain("<ContadorAvisosReal")
+    expect(visao).toContain("checklistFechamento.contagem")
     const fechamento = hubSrc.slice(renderFechamentoIdx, renderDocumentosIdx)
     expect(fechamento).toContain("<ContadorFechamentoReal")
     expect(fechamento).not.toContain("<PreviewBanner")
@@ -144,7 +186,6 @@ describe("Contador HUB — valores sensíveis do preview seguem marcados como il
     expect(obrigacoes).toContain("<ContadorAgendaReal")
     expect(obrigacoes).not.toContain("<PreviewBanner")
     expect(obrigacoes).not.toContain("OBRIGACOES_ROWS")
-    expect(hubSrc).toContain("<ContadorAvisosReal")
   })
 })
 
@@ -235,16 +276,18 @@ describe("Contador HUB — navegação não afirma ações reais sobre dados est
     expect(hubSrc.slice(fnStart, fnEnd)).toContain("Híbrido")
   })
 
-  it("'3 de 9 itens concluídos' (Visão geral, ainda preview) vem acompanhado de PreviewBanner local", () => {
-    // GOAL 007 removeu o mock «3 de 9» da seção Fechamento; permanece só na Visão geral (híbrida).
-    const occurrences = [...hubSrc.matchAll(/itens concluídos/g)]
-    expect(occurrences.length).toBeGreaterThanOrEqual(1)
-    const renderVisaoIdx = hubSrc.indexOf("const renderVisao = ()")
-    const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
-    expect(hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)).toContain("itens concluídos")
-    expect(hubSrc.slice(renderFechamentoIdx, hubSrc.indexOf("const renderDocumentos = ()"))).not.toContain(
-      "itens concluídos",
-    )
+  it("o progresso fabricado '3 de 9 / 35%' saiu da Visão geral (GOAL 023)", () => {
+    // GOAL 007 removeu o mock da seção Fechamento; o GOAL 023 removeu o que
+    // sobrava na Visão geral, substituindo pelas contagens REAIS do checklist.
+    expect(hubSrc).not.toContain("itens concluídos")
+    expect(hubSrc).not.toContain("3 de 9")
+    expect(hubSrc).not.toContain("ProgressRing")
+    expect(hubSrc).not.toContain("Números ilustrativos de preview")
+  })
+
+  it("o breadcrumb não inventa nome de unidade", () => {
+    expect(hubSrc).not.toMatch(/<span>Matriz<\/span>/)
+    expect(hubSrc).toContain("identificacaoLoja?.nome")
   })
 })
 
@@ -360,20 +403,21 @@ describe("Contador HUB — estados derivados que a UI renderiza (GOAL 007B, sem 
   })
 })
 
-describe("Contador HUB — card ilustrativo Preview ≠ checklist real derivado (CORREÇÃO 9)", () => {
-  it("o card '3 de 9 / 35%' da Visão geral está rotulado como Preview ilustrativo", () => {
+describe("Contador HUB — a Visão geral usa a contagem REAL do checklist (CORREÇÃO 9 · GOAL 023)", () => {
+  it("o cartão de fechamento da Visão geral lê `checklistFechamento.contagem`, sem percentual", () => {
     const renderVisaoIdx = hubSrc.indexOf("const renderVisao = ()")
     const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
     const visao = hubSrc.slice(renderVisaoIdx, renderFechamentoIdx)
-    // A percentagem ilustrativa (ProgressRing/3 de 9) permanece SÓ na Visão geral…
-    expect(visao).toContain("ProgressRing")
-    expect(visao).toContain("3 de 9")
-    // …mas agora identificada como preview ilustrativo, apontando para o checklist real.
-    expect(visao).toContain("Preview ilustrativo")
-    expect(visao).toContain("Números ilustrativos de preview")
+    expect(visao).toContain("checklistFechamento.contagem.total")
+    expect(visao).toContain("checklistFechamento.contagem.ok")
+    expect(visao).toContain("checklistFechamento.contagem.nao_disponivel")
+    // Sem anel de progresso, sem percentagem, sem "concluído".
+    expect(visao).not.toContain("ProgressRing")
+    expect(visao).not.toContain("35%")
+    expect(visao.toLowerCase()).not.toContain("concluíd")
   })
 
-  it("o checklist real derivado (seção Fechamento) não usa ProgressRing nem percentagem", () => {
+  it("o checklist real derivado (seção Fechamento) segue sem ProgressRing nem percentagem", () => {
     const renderFechamentoIdx = hubSrc.indexOf("const renderFechamento = ()")
     const renderDocsIdx = hubSrc.indexOf("const renderDocumentos = ()")
     const fechamento = hubSrc.slice(renderFechamentoIdx, renderDocsIdx)
@@ -612,5 +656,231 @@ describe("Contador HUB — relatório fiscal read-only (GOAL 018)", () => {
     expect(bloco).toContain("Somente leitura")
     expect(bloco).not.toMatch(/<button/i)
     expect(bloco).not.toMatch(/\bEmitir\b|\bCancelar NFC|\bInutilizar\b|\bCarta de correção\b|\bReprocessar\b/i)
+  })
+})
+
+/* ────────── GOAL 023 — Folha, Portal, Configurações e Dossiês honestos ────────── */
+
+describe("Contador HUB — Folha & DP REAL (GOAL 023)", () => {
+  const folhaSrc = readFileSync(join(DIR, "folha/contador-folha-real.tsx"), "utf8")
+
+  it("nenhum funcionário fictício sobreviveu — no catálogo, no HUB ou na aba", () => {
+    for (const src of [dataSrc, hubSrc, folhaSrc]) {
+      expect(src).not.toContain("FOLHA_FUNCIONARIOS")
+      expect(src).not.toContain("Ana Souza")
+      expect(src).not.toContain("Carlos Lima")
+      expect(src).not.toContain("Marina Reis")
+      // O pró-labore ilustrativo trazia até o nome do sócio.
+      expect(src).not.toContain("Rafael (titular)")
+    }
+  })
+
+  it("a seção monta o componente real e não uma tabela estática", () => {
+    const inicio = hubSrc.indexOf("const renderFolha = ()")
+    const fim = hubSrc.indexOf("const renderPortal = ()")
+    expect(inicio).toBeGreaterThan(-1)
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).toContain("<ContadorFolhaReal")
+    expect(secao).not.toContain("<PreviewBanner")
+    expect(secao).not.toContain("<table")
+  })
+
+  it("lê o domínio de Documentos filtrando pela categoria FOLHA", () => {
+    expect(folhaSrc).toContain('const CATEGORIA_FOLHA = "folha"')
+    expect(folhaSrc).toContain("/api/contador/documentos?c=")
+    expect(folhaSrc).toContain("categoria=${CATEGORIA_FOLHA}")
+  })
+
+  it("cobre carregando, vazio e erro — e o vazio explica o que aparece ali", () => {
+    expect(folhaSrc).toContain("Carregando documentos de folha…")
+    expect(folhaSrc).toContain("Nenhum documento de folha em")
+    expect(folhaSrc).toContain("aparecem aqui automaticamente")
+    expect(folhaSrc).toContain("Documentos de folha indisponíveis.")
+    expect(folhaSrc).toContain("Download não autorizado.")
+  })
+
+  it("o download reusa a autorização real (POST → URL assinada), sem storageRef", () => {
+    expect(folhaSrc).toContain("/download")
+    expect(folhaSrc).toContain('method: "POST"')
+    expect(folhaSrc).not.toContain("storageRef")
+  })
+
+  it("diz explicitamente o que NÃO faz e não cria motor de RH", () => {
+    expect(folhaSrc).toContain("não calcula folha")
+    expect(folhaSrc).toContain("eSocial")
+    expect(folhaSrc).not.toMatch(/\b(prisma|Funcionario|Colaborador|Holerite)\b/)
+  })
+
+  it("nunca envia loja nem autor pelo cliente", () => {
+    expect(folhaSrc).not.toMatch(/\b(storeId|lojaId)\b/)
+    const corpos = folhaSrc.match(/JSON\.stringify\(\{[\s\S]*?\}\)/g) ?? []
+    for (const corpo of corpos) {
+      expect(corpo).not.toMatch(/\b(autorId|atorId|storeId|lojaId|papel|role|userId)\b/)
+    }
+  })
+})
+
+describe("Contador HUB — Portal do contador com resumo REAL (GOAL 023)", () => {
+  const portalSrc = readFileSync(join(DIR, "portal/contador-portal-resumo.tsx"), "utf8")
+
+  it("o escritório fictício e o contato de exemplo saíram", () => {
+    for (const src of [hubSrc, dataSrc, portalSrc]) {
+      expect(src).not.toContain("Escritório Contábil Exemplo")
+      expect(src).not.toContain("contato@escritorio.com.br")
+    }
+  })
+
+  it("a seção monta o resumo real e liga o gerenciamento a Permissões", () => {
+    const inicio = hubSrc.indexOf("const renderPortal = ()")
+    const fim = hubSrc.indexOf("const renderPermissoes = ()")
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).toContain("<ContadorPortalResumo")
+    expect(secao).toContain('goSection("permissoes")')
+    // ADR-CONTADOR-002: simular a sessão do contador continua fora de escopo.
+    expect(secao).not.toContain("Pré-visualizar como contador")
+  })
+
+  it("consome exatamente os contratos que Permissões já usa", () => {
+    expect(portalSrc).toContain("/api/contador-externo/acessos")
+    expect(portalSrc).toContain("/api/contador-externo/convites")
+    // Somente leitura: nada de POST/PUT/DELETE nesta fatia.
+    expect(portalSrc).not.toMatch(/method:\s*"(POST|PUT|PATCH|DELETE)"/)
+    expect(portalSrc).not.toMatch(/\b(storeId|lojaId)\b/)
+  })
+
+  it("cobre carregando, sem permissão, erro e vazio — sem confundir 403 com ausência", () => {
+    expect(portalSrc).toContain("Carregando acesso externo…")
+    expect(portalSrc).toContain("Visível apenas para quem gerencia acesso.")
+    expect(portalSrc).toContain("Isso não")
+    expect(portalSrc).toContain("Acesso externo indisponível.")
+    expect(portalSrc).toContain("Nenhum contador com vínculo ativo nesta loja")
+  })
+
+  it("as métricas vêm dos DTOs, não de números fixos", () => {
+    expect(portalSrc).toContain("valor={ativos.length}")
+    expect(portalSrc).toContain("valor={pendentes.length}")
+    expect(portalSrc).toContain("valor={suspensos.length}")
+    expect(portalSrc).toContain("valor={revogados.length}")
+  })
+
+  it("a lista de capacidades do portal não promete upload", () => {
+    const podeIdx = dataSrc.indexOf("export const PORTAL_PODE")
+    const naoPodeIdx = dataSrc.indexOf("export const PORTAL_NAO_PODE")
+    const pode = dataSrc.slice(podeIdx, naoPodeIdx)
+    expect(pode).not.toMatch(/Enviar documentos|upload/i)
+    expect(dataSrc.slice(naoPodeIdx)).toContain("Enviar documentos")
+  })
+})
+
+describe("Contador HUB — Configurações sem empresa de exemplo (GOAL 023)", () => {
+  it("razão social e CNPJ fictícios saíram do HUB", () => {
+    expect(hubSrc).not.toContain("Loja Exemplo Ltda")
+    expect(hubSrc).not.toContain("00.000.000/0001-00")
+    expect(dataSrc).not.toContain("Loja Exemplo")
+  })
+
+  it("os dados da empresa vêm do cadastro persistido da loja ativa", () => {
+    const inicio = hubSrc.indexOf("const renderConfig = ()")
+    const fim = hubSrc.indexOf("const SECTION_RENDERERS")
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).toContain("identificacaoLoja")
+    expect(secao).toContain("identificacaoLoja.nome")
+    expect(secao).toContain("identificacaoLoja.cnpj")
+    expect(secao).toContain("Cadastro da loja indisponível.")
+  })
+
+  it("controles sem persistência foram OCULTADOS, não fingidos", () => {
+    const inicio = hubSrc.indexOf("const renderConfig = ()")
+    const fim = hubSrc.indexOf("const SECTION_RENDERERS")
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).not.toContain("<select")
+    expect(secao).not.toContain("<Switch")
+    expect(secao).not.toMatch(/Salvar/)
+    expect(secao).toContain("planejado")
+  })
+
+  it("a leitura da loja é server-side e escopada, sem endpoint novo", () => {
+    const lojaSrc = readFileSync(join(DIR, "../../../lib/contador/readers/loja.ts"), "utf8")
+    const pageSrc = readFileSync(join(DIR, "../../../app/dashboard/contador/page.tsx"), "utf8")
+    expect(lojaSrc).toContain("scope.storeId")
+    expect(lojaSrc).toContain("select: { id: true, name: true, cnpj: true }")
+    // Só leitura: nenhum create/update/delete no reader.
+    expect(lojaSrc).not.toMatch(/\.(create|update|upsert|delete|deleteMany|updateMany)\(/)
+    expect(pageSrc).toContain("lerIdentificacaoLoja(escopo)")
+    expect(pageSrc).toContain("[contador/loja]")
+    // A falha é isolada — nunca derruba os demais sinais nem vira empresa de exemplo.
+    expect(pageSrc).toMatch(/\[contador\/loja\][\s\S]{0,160}identificacaoLoja = null/)
+  })
+})
+
+describe("Contador HUB — Dossiês HÍBRIDA honesta (GOAL 023)", () => {
+  it("o status fabricado por documento (atualizado/vencido) deixou de existir", () => {
+    expect(dataSrc).not.toMatch(/status:\s*"(atualizado|vencido|pendente)"/)
+    expect(dataSrc).not.toContain("DossieStatus")
+    // …e o filtro por situação sumiu junto: o HUB não sabe essa situação.
+    expect(dataSrc).not.toMatch(/id:\s*"vencido"/)
+    expect(dataSrc).not.toMatch(/id:\s*"atualizado"/)
+  })
+
+  it("os itens de origem `sistema` leem o DTO real da competência", () => {
+    expect(hubSrc).toContain("function LeituraDossie(")
+    expect(hubSrc).toContain("function lerMetricaSistema(")
+    expect(hubSrc).toContain("dados.financeiro.titulosPagarAberto")
+    expect(hubSrc).toContain("dados.financeiro.titulosReceberAberto")
+    expect(hubSrc).toContain("dados.financeiro")
+    expect(hubSrc).toContain("dados.vendas.formaPagamentoDisponibilidade")
+    // A disponibilidade declarada pelo DTO é exibida — nunca substituída por "OK".
+    expect(hubSrc).toContain("DISP_CHIP[leitura.disponibilidade]")
+  })
+
+  it("item `sistema` sem métrica mapeada é dito por extenso, nunca preenchido", () => {
+    expect(hubSrc).toContain("sem fonte no OmniGestão nesta fase")
+    expect(hubSrc).toContain("leitura indisponível")
+    expect(hubSrc).toContain("não rastreado pelo sistema")
+  })
+
+  it("só `anexar` tem CTA — as demais origens mostram instrução, não botão", () => {
+    const inicio = hubSrc.indexOf("const renderDossies = ()")
+    const fim = hubSrc.indexOf("const renderFolha = ()")
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).toContain("Enviar em Documentos")
+    expect(secao).toContain('goSection("documentos")')
+    expect(secao).toContain("ORIGEM_COMO_OBTER[row.origem]")
+    expect(secao).not.toContain("disabled")
+  })
+
+  it("o Radar CNPJ não afirma mais situação de certidão/alvará", () => {
+    expect(dataSrc).not.toMatch(/status:\s*"(válida|vencida|ativa|em dia|entregue)"/)
+    expect(dataSrc).not.toContain("CND Federal válida")
+    expect(dataSrc).not.toContain("2 pendências")
+    expect(dataSrc).toContain("onde:")
+    expect(hubSrc).toContain("não verificado")
+  })
+})
+
+describe("Contador HUB — Relatórios apontam o arquivo real do Pacote (GOAL 023)", () => {
+  it("os botões de exportação individual saíram e o índice do pacote entrou", () => {
+    const inicio = hubSrc.indexOf("const renderRelatorios = ()")
+    const fim = hubSrc.indexOf("const renderDossies = ()")
+    const secao = hubSrc.slice(inicio, fim)
+    expect(secao).toContain("arquivosPacote")
+    expect(secao).toContain("no pacote:")
+    expect(secao).not.toContain("r.formats")
+    expect(secao).not.toContain("disabled")
+    expect(secao).toContain("<ContadorPacoteDownload")
+  })
+
+  it("o catálogo aponta caminhos que existem de fato no ZIP", () => {
+    const fontesSrc = readFileSync(join(DIR, "../../../lib/contador/pacote/fontes.ts"), "utf8")
+    const caminhos = [...dataSrc.matchAll(/"(\d\d-[A-Z-]+\/[a-z_]+\.(?:csv|md))"/g)].map((m) => m[1])
+    expect(caminhos.length).toBeGreaterThan(0)
+    for (const c of caminhos) {
+      expect(fontesSrc, `caminho inexistente no pacote: ${c}`).toContain(`"${c}"`)
+    }
+  })
+
+  it("relatório sem fonte é dito sem fonte, não exportado em silêncio", () => {
+    expect(dataSrc).toMatch(/title: "Posição de estoque"[\s\S]{0,220}arquivosPacote: \[\]/)
+    expect(hubSrc).toContain("Não entra no Pacote do Contador nesta fase")
   })
 })
