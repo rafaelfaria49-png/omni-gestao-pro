@@ -17,7 +17,7 @@
  * exibido UMA única vez (a resposta da criação); depois disso nem a listagem o
  * conhece (sem `tokenHash`).
  */
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   AlertTriangle,
   Check,
@@ -26,11 +26,18 @@ import {
   Link2,
   Loader2,
   MailPlus,
+  MousePointerClick,
   RefreshCw,
   ShieldAlert,
   UserCheck,
   UserX,
 } from "lucide-react"
+import {
+  copiarLinkConvite,
+  mensagemDeCopia,
+  MENSAGEM_SELECAO,
+  MENSAGEM_SEM_SELECAO,
+} from "@/lib/contador/auth-externa/copiar-link-convite"
 import { cn } from "@/lib/utils"
 import { Botao, Overlay, formatarDataHora, lerErroResposta } from "../contador-ui"
 
@@ -116,6 +123,10 @@ export function ContadorPermissoesReal() {
   const [erroConvite, setErroConvite] = useState<string | null>(null)
   const [linkRevelado, setLinkRevelado] = useState<{ url: string } | null>(null)
   const [copiado, setCopiado] = useState(false)
+  /** Aviso do fallback de cópia. Não é erro — por isso não usa `erroConvite`. */
+  const [avisoCopia, setAvisoCopia] = useState<string | null>(null)
+  /** O campo do link: precisa ser selecionável quando o clipboard falha. */
+  const campoLinkRef = useRef<HTMLInputElement | null>(null)
 
   const [acaoEmCurso, setAcaoEmCurso] = useState<string | null>(null)
   const [confirmacaoIdentidade, setConfirmacaoIdentidade] = useState<{
@@ -165,6 +176,7 @@ export function ContadorPermissoesReal() {
   const gerarConvite = async () => {
     setErroConvite(null)
     setLinkRevelado(null)
+    setAvisoCopia(null)
     setEnviando(true)
     try {
       const res = await fetch("/api/contador-externo/convites", {
@@ -189,14 +201,32 @@ export function ContadorPermissoesReal() {
     }
   }
 
+  /** Seleciona a URL inteira no campo. `false` quando o campo não está montado. */
+  const selecionarCampoLink = useCallback(() => {
+    const campo = campoLinkRef.current
+    if (!campo) return false
+    campo.focus()
+    campo.setSelectionRange(0, campo.value.length)
+    return true
+  }, [])
+
   const copiarLink = async () => {
     if (!linkRevelado) return
-    try {
-      await navigator.clipboard.writeText(linkRevelado.url)
+    const escreverClipboard =
+      typeof navigator !== "undefined" && navigator.clipboard
+        ? (texto: string) => navigator.clipboard.writeText(texto)
+        : null
+
+    const resultado = await copiarLinkConvite({
+      url: linkRevelado.url,
+      escreverClipboard,
+      selecionarCampo: selecionarCampoLink,
+    })
+
+    setAvisoCopia(mensagemDeCopia(resultado))
+    if (resultado.modo === "clipboard") {
       setCopiado(true)
       setTimeout(() => setCopiado(false), 2000)
-    } catch {
-      setErroConvite("Não foi possível copiar automaticamente — selecione e copie o link manualmente.")
     }
   }
 
@@ -329,15 +359,41 @@ export function ContadorPermissoesReal() {
                   contador pelo canal de vocês. Vale por 72h e só pode ser usado uma vez.
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate rounded-md border border-border bg-card px-2.5 py-2 font-mono text-[11.5px] text-foreground">
-                  {linkRevelado.url}
-                </code>
+              {/*
+                Campo de verdade, não `<code truncate>`: o valor carrega a URL
+                COMPLETA e o usuário consegue selecioná-la — com Ctrl+A dentro do
+                campo, com o clique, ou pelo botão de fallback. Rola na horizontal
+                em vez de estourar o card.
+              */}
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <input
+                  ref={campoLinkRef}
+                  readOnly
+                  value={linkRevelado.url}
+                  aria-label="Link do convite do contador"
+                  spellCheck={false}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onClick={(e) => e.currentTarget.select()}
+                  className="min-w-0 flex-1 overflow-x-auto rounded-md border border-border bg-card px-2.5 py-2 font-mono text-[11.5px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
                 <Botao size="sm" onClick={() => void copiarLink()}>
                   {copiado ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
                   {copiado ? "Copiado" : "Copiar"}
                 </Botao>
+                <Botao
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setAvisoCopia(selecionarCampoLink() ? MENSAGEM_SELECAO : MENSAGEM_SEM_SELECAO)
+                  }}
+                >
+                  <MousePointerClick className="h-4 w-4" />
+                  Selecionar link
+                </Botao>
               </div>
+              {avisoCopia ? (
+                <p className="text-[11.5px] font-medium text-foreground">{avisoCopia}</p>
+              ) : null}
             </div>
           ) : null}
 
