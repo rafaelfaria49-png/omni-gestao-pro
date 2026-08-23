@@ -2,8 +2,9 @@
  * Janela efêmera versionada para a futura coleta oficial de WSDL (H-9/H-10).
  *
  * Não existe flag de ambiente. Ativar exige alterar as três constantes abaixo em commit
- * revisado; deployments antigos tornam-se inertes quando `expiresAtUtc` passa. Neste GOAL as
- * três permanecem `null`, portanto nenhuma autoridade real pode ser emitida.
+ * revisado; deployments antigos tornam-se inertes quando `expiresAtUtc` passa. Este GOAL só
+ * rematerializa uma NOVA janela H-9/H-10 — a activation da PR #73 expirou sem consumo e não é
+ * reutilizada. Nenhuma execução é autorizada por este commit; Gate 2 permanece humano e separado.
  */
 import "server-only"
 
@@ -16,9 +17,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260825-1800z-8eb785376e4a4724",
+  notBeforeUtc: "2026-08-25T18:00:00Z",
+  expiresAtUtc: "2026-08-25T18:10:00Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_PILOT_STORE_ID = "loja-1" as const
