@@ -196,8 +196,8 @@ export function ContadorComentarios({
         </div>
         <p className="mt-2 text-[11.5px] text-muted-foreground">
           Comentário <b className="text-foreground">interno</b> nunca sai para o contador externo.
-          O <b className="text-foreground">compartilhado</b> fica preparado para o portal externo —
-          que ainda não existe (GOAL 015).
+          O <b className="text-foreground">compartilhado</b> aparece para o contador no portal
+          externo, para os vínculos ativos desta loja.
         </p>
       </div>
     </div>

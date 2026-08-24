@@ -535,8 +535,12 @@ describe("Contador HUB — Timeline REAL (GOAL 011)", () => {
     expect(comentariosSrc).toContain("Interno — só a sua equipe")
     expect(comentariosSrc).toContain("Compartilhado — visível ao contador")
     expect(comentariosSrc).toContain("nunca sai para o contador externo")
-    // O portal externo ainda não existe — a UI diz isso em vez de prometer.
-    expect(comentariosSrc).toContain("GOAL 015")
+    // GOAL 023: o portal externo v2 está OPERACIONAL em Production desde o GOAL 015 /
+    // smoke 021. A microcopy que dizia «que ainda não existe (GOAL 015)» era stale e
+    // negava funcionalidade real — o mesmo defeito do aviso global removido neste GOAL.
+    expect(comentariosSrc).not.toContain("ainda não existe")
+    expect(comentariosSrc).not.toContain("GOAL 015")
+    expect(comentariosSrc).toContain("aparece para o contador no portal")
   })
 
   it("as transições oferecidas vêm da matriz do domínio, não de uma lista solta na UI", () => {
