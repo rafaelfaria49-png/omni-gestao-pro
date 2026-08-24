@@ -12,8 +12,9 @@ import {
   type WsdlExecutionWindowConfig,
 } from "./wsdl-ephemeral-execution-window"
 
-const NEW_ACTIVATION_ID = "wsdl-h9h10-20260824-1800z-8cd1649df764940e"
+const NEW_ACTIVATION_ID = "wsdl-h9h10-20260825-1200z-f436426a3a234e40"
 const FORBIDDEN_ACTIVATION_IDS = [
+  "wsdl-h9h10-20260824-1800z-8cd1649df764940e",
   "wsdl-h9h10-20260825-1800z-8eb785376e4a4724",
   "wsdl-h9h10-20260820-1800z-a7a5d306e59b2fca",
   "wsdl-h9h10-20260818-1800z-0152a8c5b96f3ffc",
@@ -117,8 +118,8 @@ describe("janela efêmera WSDL versionada", () => {
   it("materializa a NOVA janela H-9/H-10 sem reutilizar activation histórica", () => {
     expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
       activationId: NEW_ACTIVATION_ID,
-      notBeforeUtc: "2026-08-24T18:00:00Z",
-      expiresAtUtc: "2026-08-24T18:10:00Z",
+      notBeforeUtc: "2026-08-25T12:00:00Z",
+      expiresAtUtc: "2026-08-25T12:10:00Z",
     })
     for (const deadId of FORBIDDEN_ACTIVATION_IDS) {
       expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
@@ -131,30 +132,30 @@ describe("janela efêmera WSDL versionada", () => {
 
   it("gera hash e dedupe próprios da nova activation, distintos da activation morta", () => {
     const newHash = sha256Utf8(NEW_ACTIVATION_ID)
-    const deadHash = sha256Utf8("wsdl-h9h10-20260825-1800z-8eb785376e4a4724")
-    expect(newHash).toBe("7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650")
-    expect(deadHash).toBe("1a61ea4d234c20ce9332f8c43d99ed775601884663e754a4a44ee7e561a8699a")
+    const deadHash = sha256Utf8("wsdl-h9h10-20260824-1800z-8cd1649df764940e")
+    expect(newHash).toBe("a42b07fd166371e5d07d6b9c3334cbc82e4e117ee7e669561ab6491b6aeec4b8")
+    expect(deadHash).toBe("7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650")
     expect(newHash).not.toBe(deadHash)
     expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).toBe(
-      "fiscal:wsdl:h9-h10:v1:7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+      "fiscal:wsdl:h9-h10:v1:a42b07fd166371e5d07d6b9c3334cbc82e4e117ee7e669561ab6491b6aeec4b8",
     )
     expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).not.toBe(`fiscal:wsdl:h9-h10:v1:${deadHash}`)
   })
 
   it("avalia a janela materializada: not_started, active, expired em expiresAt e após", () => {
     const config = WSDL_EPHEMERAL_EXECUTION_WINDOW
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T17:59:59Z"))).toEqual({
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-25T11:59:59Z"))).toEqual({
       active: false,
       reason: "not_started",
     })
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:00:00Z")).active).toBe(true)
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:05:00Z")).active).toBe(true)
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:09:59Z")).active).toBe(true)
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:10:00Z"))).toEqual({
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-25T12:00:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-25T12:05:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-25T12:09:59Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-25T12:10:00Z"))).toEqual({
       active: false,
       reason: "expired",
     })
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:10:01Z"))).toEqual({
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-25T12:10:01Z"))).toEqual({
       active: false,
       reason: "expired",
     })
@@ -162,7 +163,7 @@ describe("janela efêmera WSDL versionada", () => {
 
   it("não dispara rede ao avaliar a janela materializada nem ao hashear a activation", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-    evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-08-24T18:05:00Z"))
+    evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-08-25T12:05:00Z"))
     sha256Utf8(NEW_ACTIVATION_ID)
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
@@ -246,27 +247,27 @@ describe("ledger persistente global one-shot", () => {
     const gate = createWsdlExecutionGateTestHarness({
       client: ledgerClient(shared),
       config: WSDL_EPHEMERAL_EXECUTION_WINDOW,
-      clock: () => new Date("2026-08-24T18:05:00Z"),
+      clock: () => new Date("2026-08-25T12:05:00Z"),
     })
     const consumed = await gate.consume({ storeId: "loja-1", operatorId: "admin" })
     expect(consumed.ok).toBe(true)
     expect(shared.jobs).toHaveLength(1)
     expect(shared.jobs[0]).toMatchObject({
       storeId: "loja-1",
-      vendaId: "wsdl-h9-h10:7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+      vendaId: "wsdl-h9-h10:a42b07fd166371e5d07d6b9c3334cbc82e4e117ee7e669561ab6491b6aeec4b8",
       dedupeKey:
-        "fiscal:wsdl:h9-h10:v1:7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+        "fiscal:wsdl:h9-h10:v1:a42b07fd166371e5d07d6b9c3334cbc82e4e117ee7e669561ab6491b6aeec4b8",
       tipo: "CONSULTA",
       status: "CONCLUIDO",
     })
     expect(shared.jobs[0]?.payload).toMatchObject({
-      activationHash: "7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+      activationHash: "a42b07fd166371e5d07d6b9c3334cbc82e4e117ee7e669561ab6491b6aeec4b8",
       targetCount: 6,
     })
-    expect(JSON.stringify(shared.jobs)).not.toContain("wsdl-h9h10-20260825-1800z-8eb785376e4a4724")
-    expect(JSON.stringify(shared.logs)).not.toContain("wsdl-h9h10-20260825-1800z-8eb785376e4a4724")
+    expect(JSON.stringify(shared.jobs)).not.toContain("wsdl-h9h10-20260824-1800z-8cd1649df764940e")
+    expect(JSON.stringify(shared.logs)).not.toContain("wsdl-h9h10-20260824-1800z-8cd1649df764940e")
     expect(JSON.stringify(shared.jobs)).not.toContain(
-      "1a61ea4d234c20ce9332f8c43d99ed775601884663e754a4a44ee7e561a8699a",
+      "7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
     )
   })
 

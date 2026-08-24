@@ -3,8 +3,8 @@
  *
  * Não existe flag de ambiente. Ativar exige alterar as três constantes abaixo em commit
  * revisado; deployments antigos tornam-se inertes quando `expiresAtUtc` passa. Este GOAL só
- * ANTECIPA a janela H-9/H-10 para 24/08 — a activation de 25/08 (PR #107) está comprovadamente
- * não consumida no ledger (0/0) e é substituída como superseded, nunca reutilizada. Nenhuma
+ * REMATERIALIZA a janela H-9/H-10 para 25/08 09:00 BRT — a activation de 24/08 (PR #108) expirou
+ * sem execução autorizada do Gate 2 e é marcada irreutilizável, nunca reutilizada. Nenhuma
  * execução é autorizada por este commit; Gate 2 permanece humano e separado.
  */
 import "server-only"
@@ -18,9 +18,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260824-1800z-8cd1649df764940e",
-  notBeforeUtc: "2026-08-24T18:00:00Z",
-  expiresAtUtc: "2026-08-24T18:10:00Z",
+  activationId: "wsdl-h9h10-20260825-1200z-f436426a3a234e40",
+  notBeforeUtc: "2026-08-25T12:00:00Z",
+  expiresAtUtc: "2026-08-25T12:10:00Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_PILOT_STORE_ID = "loja-1" as const
