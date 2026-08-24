@@ -8,10 +8,18 @@
  * baseada no design aprovado do Cloud Design e adaptada aos tokens do OmniGestão
  * Pro (o design usava indigo; aqui o acento é o `primary` da marca).
  *
- * ⚠️ Fase preview: NADA aqui persiste. Sem backend, API, upload, download, emissão
- * fiscal ou motor de imposto. Todos os dados são estáticos (contador-preview-data.ts)
- * e todos os botões sem efeito real disparam um toast honesto. O AppShell continua
- * dono único do scroll — este componente flui, não cria scroll de página.
+ * Estado após o GOAL CONTADOR-HUB-INTERNAL-REALIFICATION-023: o HUB **não** é mais
+ * uma casca. Fechamento (012), Documentos (010), Obrigações (016), Permissões (014),
+ * Timeline (011), Avisos (017), Folha (023) e o resumo do Portal (023) leem e
+ * escrevem dados reais; Visão geral, Relatórios, Dossiês e Configurações são
+ * híbridos, com o que ainda é preview identificado NO BLOCO — não há mais aviso
+ * global negando funcionalidades que já existem.
+ *
+ * `contador-preview-data.ts` guarda apenas CATÁLOGOS (seções, itens de dossiê, o que
+ * o portal externo faz). Nenhuma fixture pode afirmar estado da empresa do usuário.
+ *
+ * O AppShell continua dono único do scroll — este componente flui, não cria scroll
+ * de página.
  *
  * Competência (GOAL 005): prop `competencia` vem da URL (`?c=AAAA-MM`) via page.tsx.
  * Navegação anterior/próxima usa router.replace — sem useState de mês/ano.
@@ -45,7 +53,8 @@ import {
 } from "@/lib/contador/competencia"
 import type { ChecklistFechamento } from "@/lib/contador/fechamento"
 import type { LeituraFiscalContador } from "@/lib/contador/readers/fiscal"
-import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
+import type { IdentificacaoLoja } from "@/lib/contador/readers/loja"
+import type { ContadorDadosReais, DisponibilidadeDado } from "@/lib/contador/readers/tipos"
 import {
   VisaoGeralReal,
   RelatoriosReal,
@@ -66,24 +75,24 @@ import { ContadorFechamentoReal } from "./fechamento/contador-fechamento-real"
 import { ContadorTimelineReal } from "./timeline/contador-timeline-real"
 import { ContadorPermissoesReal } from "./permissoes/contador-permissoes-real"
 import { ContadorAvisosReal } from "./avisos/contador-avisos-real"
+import { ContadorFolhaReal } from "./folha/contador-folha-real"
+import { ContadorPortalResumo } from "./portal/contador-portal-resumo"
 import {
   CONTADOR_SECTIONS,
   DOSSIES,
   DOSSIE_FILTERS,
-  FOLHA_FUNCIONARIOS,
   PORTAL_NAO_PODE,
   PORTAL_PODE,
   RADAR_CNPJ,
   RELATORIO_CARDS,
-  RESUMO_FINANCEIRO,
-  VISAO_DOSSIE_PROGRESS,
-  VISAO_KPIS,
   dossieFilterCount,
   dossieRowMatches,
   type ChipVariant,
   type ContadorSectionId,
   type DossieFilter,
   type DossieOrigem,
+  type DossieRow,
+  type MetricaSistema,
 } from "./contador-preview-data"
 
 /* ───────────────────────── helpers de estilo (tokens semânticos) ───────────────────────── */
@@ -127,12 +136,6 @@ function PreviewPill({ children = "preview" }: { children?: React.ReactNode }) {
     </span>
   )
 }
-
-/**
- * GOAL CONTADOR-HUB-HONESTY-ROUTE-SAFETY-002 — texto único reaproveitado em todo
- * CTA sem efeito real, para manter a mensagem consistente e fácil de auditar.
- */
-const CTA_INDISPONIVEL_TITLE = "Disponível na fase de dados reais — pré-visualização, sem efeito real."
 
 const ORIGEM_META: Record<DossieOrigem, { label: string; icon: LucideIcon; className: string }> = {
   sistema: { label: "OmniGestão", icon: Sparkles, className: "border-primary/25 bg-primary/10 text-primary" },
@@ -252,6 +255,12 @@ export type ContadorHubPreviewProps = {
    * fora da allowlist / falha → `disponivel: false` (nunca “zero notas”).
    */
   relatorioFiscal?: LeituraFiscalContador | null
+  /**
+   * Cadastro persistido da loja ativa (`Store`, GOAL 023). `null` quando o escopo
+   * não resolve, a linha não existe ou a leitura falha — a aba Configurações
+   * mostra isso como indisponível, nunca como empresa de exemplo.
+   */
+  identificacaoLoja?: IdentificacaoLoja | null
 }
 
 export function ContadorHubPreview({
@@ -260,6 +269,7 @@ export function ContadorHubPreview({
   realErro,
   checklistFechamento,
   relatorioFiscal,
+  identificacaoLoja,
 }: ContadorHubPreviewProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -271,7 +281,6 @@ export function ContadorHubPreview({
   const [active, setActive] = useState<ContadorSectionId>("visao")
   const [modo, setModo] = useState(false)
   const [dossieFilter, setDossieFilter] = useState<DossieFilter>("all")
-  const [toast, setToast] = useState<string | null>(null)
 
   const compName = labelCompetencia(competencia)
   const compCode = formatCompetenciaMmYyyy(competencia)
@@ -312,13 +321,6 @@ export function ContadorHubPreview({
     }
   }
 
-  let toastTimer: ReturnType<typeof setTimeout> | undefined
-  const noop = (action: string) => {
-    setToast(`«${action}» — pré-visualização, sem efeito real nesta fase.`)
-    clearTimeout(toastTimer)
-    toastTimer = setTimeout(() => setToast(null), 2800)
-  }
-
   const visibleSections = CONTADOR_SECTIONS.filter((s) => !(modo && s.ownerOnly))
 
   /* ── seção: Visão geral ── */
@@ -338,78 +340,30 @@ export function ContadorHubPreview({
       {realData ? <VisaoGeralReal dados={realData} /> : null}
       {relatorioFiscal ? <RelatorioFiscalReal leitura={relatorioFiscal} compacto /> : null}
 
-      {realData ? (
-        <PreviewBanner
-          title="Cartões abaixo — dados ilustrativos."
-          text="O bloco “Resumo da competência” acima é leitura real da loja. Os cartões de pendências, progresso do fechamento e dossiês a seguir ainda são fixos e exemplificam o layout. O Pacote do Contador ao final gera um ZIP real da competência."
-        />
-      ) : (
-        <PreviewBanner
-          title="Preview — dados ilustrativos."
-          text="Pendências, KPIs, progresso do fechamento e alertas desta visão geral são fixos e exemplificam o layout. Nenhum valor aqui reflete seu Financeiro, Fiscal ou Caixa reais."
-        />
-      )}
-
-      <div className="mb-4 mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {VISAO_KPIS.map((k) => {
-          const Icon = k.icon
-          return (
-            <Card key={k.label} className="flex flex-col gap-2 p-4">
-              <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                <Icon className="h-4 w-4 text-primary" />
-                {k.label}
-              </span>
-              <span className="text-2xl font-bold leading-none tracking-tight text-foreground">
-                {k.value}
-                {k.unit ? <small className="ml-1 text-[13px] font-medium text-muted-foreground">{k.unit}</small> : null}
-              </span>
-              <span className="text-[11.5px] text-muted-foreground">{k.foot}</span>
-            </Card>
-          )
-        })}
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">
-        <div className="grid gap-4">
-          <Card>
-            <CardHead title={<>Fechamento de {compShort}</>} right={<PreviewPill>Preview ilustrativo</PreviewPill>} />
-            <div className="flex flex-wrap items-center gap-4 p-4">
-              <ProgressRing pct={35} />
-              <div className="min-w-[160px] flex-1">
-                <div className="mb-0.5 font-semibold text-foreground">3 de 9 itens concluídos</div>
-                <div className="text-[12.5px] text-muted-foreground">
-                  Números ilustrativos de preview — não é o fechamento real. O checklist derivado
-                  (somente leitura) está na aba <b className="text-foreground">Fechamento</b>.
-                </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.45fr_1fr]">
+        <Card>
+          <CardHead title={<>Fechamento de {compShort}</>} right={<PreviewPill>somente leitura</PreviewPill>} />
+          <div className="flex flex-wrap items-center gap-4 p-4">
+            <div className="min-w-[200px] flex-1">
+              <div className="mb-1 font-semibold text-foreground">
+                {checklistFechamento.contagem.total} sinais derivados desta competência
               </div>
-              <Btn variant="ghost" size="sm" onClick={() => goSection("fechamento")}>
-                Abrir checklist
-              </Btn>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHead title="Resumo financeiro" right={<PreviewPill>Gerencial</PreviewPill>} />
-            <div className="p-4">
-              <div className="grid grid-cols-2 gap-3.5 sm:grid-cols-4">
-                {RESUMO_FINANCEIRO.map((f) => (
-                  <div key={f.label} className="flex flex-col gap-1.5">
-                    <span className="text-xs text-muted-foreground">{f.label}</span>
-                    <span className="font-mono text-xl font-semibold tracking-tight text-foreground">{f.value}</span>
-                  </div>
-                ))}
+              <div className="flex flex-wrap gap-1.5">
+                <Chip variant="res">{checklistFechamento.contagem.ok} ok</Chip>
+                <Chip variant="warn">{checklistFechamento.contagem.atencao} atenção</Chip>
+                <Chip variant="pend">{checklistFechamento.contagem.pendente} pendente</Chip>
+                <Chip variant="env">{checklistFechamento.contagem.nao_disponivel} não disponível</Chip>
               </div>
-              <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-foreground">
-                <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                <div>
-                  <b className="text-amber-600 dark:text-amber-400">Valores gerenciais — não substituem a contabilidade oficial.</b>{" "}
-                  Lidos do módulo Financeiro para acompanhamento interno. A apuração e os demonstrativos contábeis oficiais são
-                  responsabilidade do seu contador.
-                </div>
+              <div className="mt-2 text-[12.5px] text-muted-foreground">
+                Sinais lidos da competência — não é percentual de conclusão nem fechamento
+                oficial. O checklist completo está na aba <b className="text-foreground">Fechamento</b>.
               </div>
             </div>
-          </Card>
-        </div>
+            <Btn variant="ghost" size="sm" onClick={() => goSection("fechamento")}>
+              Abrir checklist
+            </Btn>
+          </div>
+        </Card>
 
         <Card>
           <CardHead title="Avisos" />
@@ -428,26 +382,11 @@ export function ContadorHubPreview({
             </Btn>
           }
         />
-        <div className="p-4">
-          <div className="grid gap-3.5">
-            {VISAO_DOSSIE_PROGRESS.map((d) => (
-              <div key={d.label}>
-                <div className="mb-1.5 flex justify-between gap-2.5 text-[13px]">
-                  <b className="font-semibold text-foreground">{d.label}</b>
-                  <span className="font-mono text-muted-foreground">
-                    {d.done} de {d.total} prontos
-                  </span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${d.pct}%` }} />
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3.5 flex items-center gap-2 text-[11.5px] text-muted-foreground">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-            Prontos = documentos gerenciais atualizados. Documentos oficiais e fiscais dependem de portal e do contador.
-          </div>
+        <div className="p-4 text-[13px] text-muted-foreground">
+          Roteiro dos documentos que banco, fornecedor e financiamento costumam pedir. O
+          OmniGestão não consulta Receita, Junta, Sefaz, Prefeitura nem e-CAC — por isso o HUB
+          não sabe se a sua certidão está válida, e não afirma que sabe. Os itens lidos do
+          sistema mostram o valor real da competência ao abrir o dossiê.
         </div>
       </Card>
 
@@ -501,7 +440,7 @@ export function ContadorHubPreview({
     <>
       <SectionHeader
         title="Relatórios para o contador"
-        desc="Relatórios básicos com dados reais da competência. Exportação e pacote seguem em preview."
+        desc="Relatórios básicos com dados reais da competência. A entrega dos arquivos é feita pelo Pacote do Contador — não há exportação individual nesta fase."
         actions={
           <Btn size="sm" onClick={() => goSection("dossies")}>
             Dossiês empresariais
@@ -513,12 +452,10 @@ export function ContadorHubPreview({
       {realData ? <RelatoriosReal dados={realData} /> : null}
       {relatorioFiscal ? <RelatorioFiscalReal leitura={relatorioFiscal} /> : null}
 
-      {realData ? (
-        <PreviewBanner
-          title="Exportações por relatório — em preview."
-          text="Os relatórios básicos acima são leitura real da loja. A exportação individual (CSV/PDF) dos cartões abaixo ainda não gera arquivo nesta fase. Já o Pacote do Contador ao lado gera um ZIP real da competência."
-        />
-      ) : null}
+      <PreviewBanner
+        title="Exportação individual por relatório — não existe nesta fase."
+        text="Os cartões abaixo são um índice: cada um aponta o arquivo real equivalente dentro do Pacote do Contador (ZIP da competência). Não há botão de CSV/PDF por relatório porque não há endpoint que gere um arquivo isolado — quando houver, ele nasce reusando o mesmo gerador do pacote, sem CSV duplicado."
+      />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.45fr_1fr]">
         <ContadorPacoteDownload
@@ -530,29 +467,36 @@ export function ContadorHubPreview({
         <div className="grid content-start gap-3">
           {RELATORIO_CARDS.map((r) => {
             const Icon = r.icon
+            const noPacote = r.arquivosPacote.length > 0
             return (
-              <Card key={r.title} className="flex items-center gap-3 p-4">
+              <Card key={r.title} className="flex items-start gap-3 p-4">
                 <div className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-lg", TINT_CLASS[r.tint])}>
                   <Icon className="h-4.5 w-4.5" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <b className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-foreground">
                     {r.title}
-                    {r.preview ? <PreviewPill /> : null}
+                    {noPacote ? null : <PreviewPill>sem fonte</PreviewPill>}
                   </b>
                   <div className="text-xs text-muted-foreground">{r.sub}</div>
+                  {noPacote ? (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">no pacote:</span>
+                      {r.arquivosPacote.map((a) => (
+                        <span
+                          key={a}
+                          className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10.5px] text-foreground/80"
+                        >
+                          {a}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 text-[11.5px] text-muted-foreground">
+                      Não entra no Pacote do Contador nesta fase — o DTO do HUB não lê Estoque.
+                    </div>
+                  )}
                 </div>
-                {r.formats.map((f) => (
-                  <Btn
-                    key={f}
-                    size="sm"
-                    disabled
-                    title={CTA_INDISPONIVEL_TITLE}
-                    onClick={() => noop(`Exportar ${r.title} (${f})`)}
-                  >
-                    {f}
-                  </Btn>
-                ))}
               </Card>
             )
           })}
@@ -561,258 +505,162 @@ export function ContadorHubPreview({
     </>
   )
 
-  /* ── seção: Dossiês ── */
-  const renderDossies = () => {
-    const radarDot: Record<string, string> = {
-      ok: "bg-emerald-500",
-      warn: "bg-amber-500",
-      venc: "bg-rose-500",
-    }
-    const radarText: Record<string, string> = {
-      ok: "text-emerald-600 dark:text-emerald-400",
-      warn: "text-amber-600 dark:text-amber-400",
-      venc: "text-rose-500",
-    }
-    return (
-      <>
-        <SectionHeader
-          title="Documentos empresariais"
-          desc="Dossiês prontos para banco, crédito, fornecedor, financiamento, Pronampe e cadastro comercial — o que comprova o seu CNPJ, reunido num lugar só."
-          actions={<HStatus />}
-        />
-        <PreviewBanner
-          title="O sistema não emite certidões oficiais nem gera DAS real sem integração."
-          text="Os relatórios do OmniGestão são gerenciais. Documentos oficiais — cartão CNPJ, contrato social, certidões, alvará, inscrições — você anexa manualmente ou abre o portal oficial. Todo documento fiscal/contábil traz o selo validar com contador."
-        />
-
-        <Card className="mb-4 mt-4">
-          <CardHead
-            title={
-              <span className="flex items-center gap-3">
-                <span className="grid h-9 w-9 place-items-center rounded-lg bg-sky-500/10 text-sky-500">
-                  <Eye className="h-4.5 w-4.5" />
-                </span>
-                <span>
-                  <span className="block text-[15px] font-semibold text-foreground">Radar CNPJ</span>
-                  <span className="block text-xs font-normal text-muted-foreground">
-                    Situação do CNPJ num relance · indicativo, validar com contador
-                  </span>
-                </span>
-              </span>
-            }
-            right={<PreviewPill>indicativo</PreviewPill>}
-          />
-          <div className="grid gap-x-6 px-4 py-3 sm:grid-cols-2 lg:grid-cols-3">
-            {RADAR_CNPJ.map((r) => (
-              <div key={r.label} className="flex items-center gap-2.5 border-b border-border/50 py-2">
-                <span className={cn("h-2.5 w-2.5 shrink-0 rounded-full", radarDot[r.state])} />
-                <span className="min-w-0 flex-1 text-[13px] font-medium text-foreground">{r.label}</span>
-                <span className={cn("font-mono text-[10.5px] font-semibold", radarText[r.state])}>{r.status}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          {DOSSIE_FILTERS.map((f) => {
-            const activeF = dossieFilter === f.id
-            return (
-              <button
-                key={f.id}
-                type="button"
-                onClick={() => setDossieFilter(f.id)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
-                  activeF
-                    ? "border-primary/25 bg-primary/10 text-primary"
-                    : "border-border bg-card text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                )}
-              >
-                {f.label}
-                <span
-                  className={cn(
-                    "rounded font-mono text-[10px]",
-                    "min-w-[18px] px-1.5 text-center",
-                    activeF ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
-                  )}
-                >
-                  {dossieFilterCount(f.id)}
-                </span>
-              </button>
-            )
-          })}
-        </div>
-
-        <div className="grid gap-4">
-          {DOSSIES.map((dossie) => {
-            const rows = dossie.rows.filter((r) => dossieRowMatches(r, dossieFilter))
-            if (rows.length === 0) return null
-            const Icon = dossie.icon
-            return (
-              <Card key={dossie.id} className="overflow-hidden">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-lg", TINT_CLASS[dossie.tint])}>
-                      <Icon className="h-4.5 w-4.5" />
-                    </span>
-                    <div className="min-w-0">
-                      <h3 className="text-[15px] font-semibold text-foreground">{dossie.title}</h3>
-                      <span className="text-xs text-muted-foreground">{dossie.sub}</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Btn size="sm" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Montar dossiê")}>
-                      Montar dossiê · preview
-                    </Btn>
-                    <Btn size="sm" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Baixar pacote do dossiê")}>
-                      Baixar pacote
-                    </Btn>
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[640px] border-collapse text-[13px]">
-                    <thead>
-                      <Thead cols={["Documento", "Origem", "Status", "Ação"]} lastRight />
-                    </thead>
-                    <tbody>
-                      {rows.map((row, i) => (
-                        <tr key={i} className="border-b border-border/60 last:border-b-0 hover:bg-muted/40">
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <FileText className="h-4.5 w-4.5 shrink-0 text-muted-foreground" />
-                              <div>
-                                <span className="flex flex-wrap items-center gap-1.5 font-semibold text-foreground">
-                                  {row.doc}
-                                  {row.validar ? <ValidarBadge /> : null}
-                                </span>
-                                <span className="text-[11.5px] text-muted-foreground">{row.sub}</span>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <OrigemChip origem={row.origem} />
-                          </td>
-                          <td className="px-4 py-3">
-                            <Chip variant={row.status === "atualizado" ? "res" : row.status === "vencido" ? "venc" : "pend"}>
-                              {row.status}
-                            </Chip>
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <Btn
-                              size="sm"
-                              disabled
-                              title={CTA_INDISPONIVEL_TITLE}
-                              onClick={() => noop(ORIGEM_ACAO[row.origem])}
-                            >
-                              {ORIGEM_ACAO_LABEL[row.origem]}
-                            </Btn>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            )
-          })}
-        </div>
-      </>
-    )
-  }
-
-  /* ── seção: Folha & DP ── */
-  const renderFolha = () => (
+  /* ── seção: Dossiês (HÍBRIDA — itens `sistema` leem o DTO real da competência) ── */
+  const renderDossies = () => (
     <>
       <SectionHeader
-        title="Folha & DP"
-        desc="Funcionários e folha — registro e organização para o contador. Vira um HUB próprio (“Pessoas”) no futuro."
+        title="Documentos empresariais"
+        desc="Dossiês prontos para banco, crédito, fornecedor, financiamento, Pronampe e cadastro comercial — o que comprova o seu CNPJ, reunido num lugar só."
+        actions={<HStatus />}
       />
       <PreviewBanner
-        title="Preview — validar com contador."
-        text="Esta área não calcula folha, holerite, encargos nem envia eSocial / FGTS. Serve para registrar funcionários, anexar documentos e organizar o que o contador precisa."
+        title="O HUB não consulta órgão nenhum — e por isso não afirma situação de documento."
+        text="Receita, Junta Comercial, Sefaz, Prefeitura, Caixa e e-CAC ficam fora do OmniGestão: o sistema não sabe se a sua certidão está válida ou vencida. Os itens marcados «OmniGestão» mostram o valor REAL da competência selecionada; os demais indicam apenas onde obter o documento."
       />
-      <Card className="mt-4 mb-4 overflow-hidden">
+
+      <Card className="mb-4 mt-4">
         <CardHead
-          title="Funcionários"
-          right={
-            <Btn size="sm" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Adicionar funcionário")}>
-              Adicionar
-            </Btn>
+          title={
+            <span className="flex items-center gap-3">
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-sky-500/10 text-sky-500">
+                <Eye className="h-4.5 w-4.5" />
+              </span>
+              <span>
+                <span className="block text-[15px] font-semibold text-foreground">O que acompanhar no CNPJ</span>
+                <span className="block text-xs font-normal text-muted-foreground">
+                  Roteiro de regularidade · consulta feita por você ou pelo contador, fora do OmniGestão
+                </span>
+              </span>
+            </span>
           }
+          right={<PreviewPill>não verificado</PreviewPill>}
         />
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] border-collapse text-[13px]">
-            <thead>
-              <Thead cols={["Funcionário", "Cargo", "Admissão", "Documentos", "Holerite"]} lastRight />
-            </thead>
-            <tbody>
-              {FOLHA_FUNCIONARIOS.map((f) => (
-                <tr key={f.nome} className="border-b border-border/60 last:border-b-0 hover:bg-muted/40">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-primary/10 text-[13px] font-bold text-primary">
-                        {f.iniciais}
-                      </span>
-                      <b className="font-semibold text-foreground">{f.nome}</b>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{f.cargo}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{f.admissao}</td>
-                  <td className="px-4 py-3">
-                    <Chip variant={f.docs.variant}>{f.docs.label}</Chip>
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Btn size="sm" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Ver holerite")}>
-                      Ver · preview
-                    </Btn>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-x-6 px-4 py-3 sm:grid-cols-2 lg:grid-cols-3">
+          {RADAR_CNPJ.map((r) => (
+            <div key={r.label} className="flex items-center gap-2.5 border-b border-border/50 py-2">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/40" />
+              <span className="min-w-0 flex-1 text-[13px] font-medium text-foreground">{r.label}</span>
+              <span className="whitespace-nowrap font-mono text-[10.5px] text-muted-foreground">{r.onde}</span>
+            </div>
+          ))}
         </div>
       </Card>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
-          <h3 className="mb-1 flex flex-wrap items-center gap-2 text-[15px] font-semibold text-foreground">
-            Pró-labore <PreviewPill />
-          </h3>
-          <div className="mb-3 text-[12.5px] text-muted-foreground">Registro do valor — sem cálculo de INSS/IRRF.</div>
-          <Kv label="Sócio" value="Rafael (titular)" />
-          <Kv label="Valor" value="— validar com contador —" muted />
-        </Card>
-        <Card className="p-4">
-          <h3 className="mb-1 flex flex-wrap items-center gap-2 text-[15px] font-semibold text-foreground">
-            Holerite <PreviewPill />
-          </h3>
-          <div className="mb-3 text-[12.5px] text-muted-foreground">Demonstrativo ilustrativo — não calculado pelo sistema.</div>
-          <Kv label="Salário base" value="—" muted />
-          <Kv label="Descontos" value="—" muted />
-          <Kv label="Líquido" value="— validar —" muted last />
-        </Card>
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {DOSSIE_FILTERS.map((f) => {
+          const activeF = dossieFilter === f.id
+          return (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setDossieFilter(f.id)}
+              className={cn(
+                "inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-[12.5px] font-semibold transition-colors",
+                activeF
+                  ? "border-primary/25 bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              )}
+            >
+              {f.label}
+              <span
+                className={cn(
+                  "rounded font-mono text-[10px]",
+                  "min-w-[18px] px-1.5 text-center",
+                  activeF ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+                )}
+              >
+                {dossieFilterCount(f.id)}
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="grid gap-4">
+        {DOSSIES.map((dossie) => {
+          const rows = dossie.rows.filter((r) => dossieRowMatches(r, dossieFilter))
+          if (rows.length === 0) return null
+          const Icon = dossie.icon
+          return (
+            <Card key={dossie.id} className="overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className={cn("grid h-9 w-9 shrink-0 place-items-center rounded-lg", TINT_CLASS[dossie.tint])}>
+                    <Icon className="h-4.5 w-4.5" />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="text-[15px] font-semibold text-foreground">{dossie.title}</h3>
+                    <span className="text-xs text-muted-foreground">{dossie.sub}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-[13px]">
+                  <thead>
+                    <Thead cols={["Documento", "Origem", "No OmniGestão", "Como obter"]} lastRight />
+                  </thead>
+                  <tbody>
+                    {rows.map((row, i) => (
+                      <tr key={i} className="border-b border-border/60 last:border-b-0 hover:bg-muted/40">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <FileText className="h-4.5 w-4.5 shrink-0 text-muted-foreground" />
+                            <div className="min-w-0">
+                              <span className="flex flex-wrap items-center gap-1.5 font-semibold text-foreground">
+                                {row.doc}
+                                {row.validar ? <ValidarBadge /> : null}
+                              </span>
+                              <span className="text-[11.5px] text-muted-foreground">{row.sub}</span>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <OrigemChip origem={row.origem} />
+                        </td>
+                        <td className="px-4 py-3">
+                          <LeituraDossie row={row} dados={realData ?? null} motivo={realErro ?? null} />
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {row.origem === "anexar" ? (
+                            <Btn size="sm" onClick={() => goSection("documentos")}>
+                              Enviar em Documentos
+                            </Btn>
+                          ) : (
+                            <span className="text-[11.5px] text-muted-foreground">{ORIGEM_COMO_OBTER[row.origem]}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )
+        })}
       </div>
     </>
   )
 
-  /* ── seção: Portal do contador ── */
+  /* ── seção: Folha & DP (REAL — GOAL 023: documentos de categoria FOLHA) ── */
+  const renderFolha = () => (
+    <ContadorFolhaReal competencia={competencia} onIrParaDocumentos={() => goSection("documentos")} />
+  )
+
+  /* ── seção: Portal do contador (resumo REAL do acesso externo — GOAL 023) ── */
   const renderPortal = () => (
     <>
       <SectionHeader
         title="Portal do contador"
         desc={
           <>
-            A porta de acesso externo. Ative <b className="text-foreground">Modo contador</b> no topo para pré-visualizar
-            exatamente o que o contador enxerga.
+            A porta de acesso externo do seu contador. O vínculo é por loja e por papel — quem
+            gerencia convites e acessos faz isso em{" "}
+            <b className="text-foreground">Permissões &amp; acesso</b>.
           </>
         }
-        actions={
-          <Btn variant="primary" onClick={() => handleModo(!modo)}>
-            <Eye className="h-4 w-4" />
-            Pré-visualizar como contador
-          </Btn>
-        }
       />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <ContadorPortalResumo onGerenciar={modo ? null : () => goSection("permissoes")} />
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHead title="O contador pode" />
           <ul className="grid list-disc gap-2.5 py-4 pl-9 pr-4 text-[13.5px] text-foreground/90">
@@ -830,18 +678,6 @@ export function ContadorHubPreview({
           </ul>
         </Card>
       </div>
-      <Card className="mt-4 flex flex-wrap items-center gap-3.5 p-4">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sky-500/10 text-[13px] font-bold text-sky-500">
-          EC
-        </span>
-        <div className="min-w-[180px] flex-1">
-          <b className="text-sm text-foreground">Escritório Contábil Exemplo</b>
-          <div className="text-[12.5px] text-muted-foreground">
-            <span className="font-mono">contato@escritorio.com.br</span> · acesso somente leitura
-          </div>
-        </div>
-        <Chip variant="res">ativo</Chip>
-      </Card>
     </>
   )
 
@@ -852,54 +688,63 @@ export function ContadorHubPreview({
   const renderTimeline = () => <ContadorTimelineReal competencia={competencia} />
 
 
-  /* ── seção: Configurações ── */
+  /* ── seção: Configurações (cadastro REAL da loja + o que ainda não tem persistência) ── */
   const renderConfig = () => (
     <>
-      <SectionHeader title="Configurações" desc="Dados da empresa e preferências do HUB." />
+      <SectionHeader
+        title="Configurações"
+        desc="Cadastro da loja ativa lido do servidor e o que o HUB ainda não guarda."
+      />
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-4">
-          <h3 className="mb-3.5 text-[15px] font-semibold text-foreground">Dados da empresa</h3>
-          <Field label="Razão social" value="Loja Exemplo Ltda" readOnly />
-          <Field label="CNPJ" value="00.000.000/0001-00" readOnly mono />
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-foreground/80">
-              Regime tributário{" "}
-              <span className="font-normal text-muted-foreground">(exibição — define o modelo de checklist · validar com contador)</span>
-            </label>
-            <select className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[13px] text-foreground outline-none focus:border-primary focus:bg-card">
-              <option>Simples Nacional</option>
-              <option>Lucro Presumido</option>
-              <option>Lucro Real</option>
-              <option>MEI</option>
-            </select>
-          </div>
+          <h3 className="mb-1 text-[15px] font-semibold text-foreground">Dados da empresa</h3>
+          <p className="mb-3.5 text-[12.5px] text-muted-foreground">
+            Cadastro persistido da loja ativa (somente leitura aqui). Para alterar, use as
+            Configurações do sistema.
+          </p>
+          {identificacaoLoja ? (
+            <>
+              <Field
+                label="Razão social / nome da loja"
+                value={identificacaoLoja.nome || "— não preenchido no cadastro da loja —"}
+                readOnly
+              />
+              <Field
+                label="CNPJ"
+                value={identificacaoLoja.cnpj || "— não preenchido no cadastro da loja —"}
+                readOnly
+                mono
+              />
+              <Kv label="Identificador da loja" value={identificacaoLoja.id} muted last />
+            </>
+          ) : (
+            <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-foreground">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div>
+                <b className="text-amber-600 dark:text-amber-400">Cadastro da loja indisponível.</b>{" "}
+                {realErro ??
+                  "Não foi possível ler o cadastro da loja ativa agora. Nenhum dado de exemplo é exibido no lugar."}
+              </div>
+            </div>
+          )}
         </Card>
         <Card className="p-4">
-          <h3 className="mb-3.5 text-[15px] font-semibold text-foreground">Preferências</h3>
-          <div className="mb-4 flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-foreground/80">Competência padrão ao abrir</label>
-            <select className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-[13px] text-foreground outline-none focus:border-primary focus:bg-card">
-              <option>Mês atual</option>
-              <option>Último mês fechado</option>
-            </select>
+          <h3 className="mb-1 text-[15px] font-semibold text-foreground">Ainda não configurável aqui</h3>
+          <p className="mb-3.5 text-[12.5px] text-muted-foreground">
+            Estes ajustes não têm onde ser gravados: o HUB não tem tabela de preferências. Os
+            controles ficam fora da tela até existir persistência — botão de salvar que não salva é
+            promessa falsa.
+          </p>
+          <Kv label="Regime tributário" value="planejado" muted />
+          <Kv label="Competência padrão ao abrir" value="planejado" muted />
+          <Kv label="Avisar vencimentos" value="planejado" muted />
+          <Kv label="Lembrar de fechar o mês" value="planejado" muted last />
+          <div className="mt-3.5 flex items-start gap-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            Enquanto isso, a competência é sempre a da URL (<span className="font-mono">?c=AAAA-MM</span>),
+            os vencimentos vivem em Obrigações e o lembrete de fechamento aparece nos Avisos da Visão
+            geral — todos com dado real.
           </div>
-          <div className="flex items-center justify-between gap-3.5 border-b border-border/60 py-3">
-            <div>
-              <b className="text-[13.5px] font-semibold text-foreground">Avisar vencimentos</b>
-              <small className="block text-[11.5px] text-muted-foreground">badges no painel · preview</small>
-            </div>
-            <Switch defaultChecked disabled title={CTA_INDISPONIVEL_TITLE} aria-label="Avisar vencimentos" />
-          </div>
-          <div className="flex items-center justify-between gap-3.5 py-3">
-            <div>
-              <b className="text-[13.5px] font-semibold text-foreground">Lembrar de fechar o mês</b>
-              <small className="block text-[11.5px] text-muted-foreground">alerta de fechamento</small>
-            </div>
-            <Switch defaultChecked disabled title={CTA_INDISPONIVEL_TITLE} aria-label="Lembrar de fechar o mês" />
-          </div>
-          <Btn className="mt-3.5" disabled title={CTA_INDISPONIVEL_TITLE} onClick={() => noop("Salvar configurações")}>
-            Salvar · preview
-          </Btn>
         </Card>
       </div>
     </>
@@ -926,8 +771,12 @@ export function ContadorHubPreview({
         <div className="flex min-w-0 items-center gap-2 text-muted-foreground">
           <span>OmniGestão</span>
           <span className="text-muted-foreground/50">/</span>
-          <span>Matriz</span>
-          <span className="text-muted-foreground/50">/</span>
+          {identificacaoLoja?.nome ? (
+            <>
+              <span className="truncate">{identificacaoLoja.nome}</span>
+              <span className="text-muted-foreground/50">/</span>
+            </>
+          ) : null}
           <span className="font-semibold text-foreground">Contador HUB</span>
         </div>
         <span className="ml-auto hidden items-center gap-2 font-mono text-[11px] text-muted-foreground sm:flex">
@@ -945,7 +794,6 @@ export function ContadorHubPreview({
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-[23px] font-bold tracking-tight text-foreground">Contador HUB</h1>
             <HybridStatus />
-            <PreviewPill>Fechamento · preview</PreviewPill>
           </div>
           <span className="text-[12.5px] text-muted-foreground">
             Organize documentos, pendências e o fechamento do mês com seu contador.
@@ -1001,9 +849,6 @@ export function ContadorHubPreview({
         </div>
       </div>
 
-      {/* aviso global e persistente — visível em todas as seções, ver GlobalPreviewNotice */}
-      <GlobalPreviewNotice />
-
       {/* corpo: nav interna + conteúdo */}
       <div className="flex flex-col lg:flex-row">
         <nav
@@ -1038,16 +883,8 @@ export function ContadorHubPreview({
                       {s.badge}
                     </span>
                   ) : null}
-                  {s.count != null ? (
-                    <span
-                      className={cn(
-                        "ml-auto hidden min-w-[18px] rounded-full px-1.5 text-center text-[10.5px] font-semibold lg:inline-grid lg:h-[18px] lg:place-items-center",
-                        isActive ? "bg-primary text-primary-foreground" : "bg-muted text-foreground/80",
-                      )}
-                    >
-                      {s.count}
-                    </span>
-                  ) : null}
+                  {/* GOAL 023: a nav não exibe contador numérico. O único badge é
+                      textual (maturidade da seção) — número sem leitura real é mock. */}
                 </button>
               </div>
             )
@@ -1062,14 +899,6 @@ export function ContadorHubPreview({
         </main>
       </div>
 
-      {/* toast honesto auto-contido */}
-      {toast ? (
-        <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex justify-center px-4">
-          <div className="max-w-[90vw] rounded-lg bg-foreground px-4 py-3 text-center text-[13px] font-medium text-background shadow-lg">
-            {toast}
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }
@@ -1094,19 +923,6 @@ function HybridStatus() {
   )
 }
 
-function ProgressRing({ pct }: { pct: number }) {
-  return (
-    <div
-      className="grid h-[60px] w-[60px] shrink-0 place-items-center rounded-full"
-      style={{ background: `conic-gradient(var(--primary) ${pct}%, var(--muted) 0)` }}
-    >
-      <div className="grid h-[46px] w-[46px] place-items-center rounded-full bg-card text-sm font-bold text-foreground">
-        {pct}%
-      </div>
-    </div>
-  )
-}
-
 function PreviewBanner({ title, text }: { title: string; text: string }) {
   return (
     <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3.5">
@@ -1119,27 +935,6 @@ function PreviewBanner({ title, text }: { title: string; text: string }) {
   )
 }
 
-/**
- * Aviso global e persistente (GOAL CONTADOR-HUB-HONESTY-ROUTE-SAFETY-002).
- * Renderizado uma única vez, fora do conteúdo trocado por seção — por isso continua
- * visível em todas as 11 áreas e ao trocar de aba/competência, sem depender de
- * hover/tooltip/clique. Tom informativo (primary), não de erro/alerta.
- */
-function GlobalPreviewNotice() {
-  return (
-    <div className="flex flex-wrap items-start gap-2.5 border-b border-primary/20 bg-primary/[0.06] px-4 py-2.5 sm:px-6">
-      <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-foreground/85">
-        <b className="font-semibold text-foreground">Experiência híbrida — blocos reais identificados + preview.</b>{" "}
-        Na Visão Geral e em Relatórios, os blocos com selo verde leem a loja e a competência quando disponíveis;
-        indisponibilidade é mostrada sem presumir zero.{" "}
-        Os demais cartões e seções continuam ilustrativos. Nenhum envio, fechamento, guia ou documento é processado;
-        a competência selecionada altera somente os blocos reais.
-      </p>
-    </div>
-  )
-}
-
 function ContadorModeBanner() {
   return (
     <div className="relative mb-4 flex flex-wrap items-center gap-3.5 overflow-hidden rounded-lg border border-primary/20 bg-primary/5 p-3.5">
@@ -1148,10 +943,11 @@ function ContadorModeBanner() {
         <Eye className="h-5 w-5" />
       </span>
       <div className="min-w-[210px] flex-1">
-        <b className="block text-sm font-bold text-foreground">Pré-visualização do Portal do Contador — acesso somente leitura</b>
+        <b className="block text-sm font-bold text-foreground">Modo contador — as abas restritas ao lojista estão ocultas</b>
         <div className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">
-          Você está vendo o que o contador externo enxerga. Ele pode baixar, enviar documentos, comentar e abrir
-          solicitações — mas não edita vendas, estoque, caixa ou configurações, e não acessa permissões.
+          É um recorte desta tela, não o portal externo: o contador acessa outro endereço, com outra
+          sessão e outro layout. No portal ele baixa pacote e documentos, comenta e — no papel
+          Conferência — marca documento como conferido; nunca envia arquivo nem edita dados.
         </div>
       </div>
       <span className="whitespace-nowrap rounded-full border border-primary/30 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-wide text-primary">
@@ -1208,16 +1004,110 @@ function Field({ label, value, readOnly, mono }: { label: string; value: string;
   )
 }
 
-/** Ações "no-op" por origem do dossiê (rótulo + texto do toast honesto). */
-const ORIGEM_ACAO_LABEL: Record<DossieOrigem, string> = {
-  sistema: "Gerar",
-  anexar: "Anexar",
-  portal: "Abrir portal",
-  solicitar: "Solicitar",
+/**
+ * Como obter o item quando a origem NÃO é o OmniGestão. É instrução, não ação: o HUB
+ * não abre portal de órgão nem despacha pedido ao contador, então não existe botão
+ * prometendo isso. `anexar` é a exceção — tem contrato real (aba Documentos) e por
+ * isso ganha CTA de verdade no lugar deste texto.
+ */
+const ORIGEM_COMO_OBTER: Record<DossieOrigem, string> = {
+  sistema: "leitura da competência",
+  anexar: "envie o arquivo em Documentos",
+  portal: "baixe no portal oficial do órgão",
+  solicitar: "peça ao seu contador",
 }
-const ORIGEM_ACAO: Record<DossieOrigem, string> = {
-  sistema: "Gerar relatório do sistema",
-  anexar: "Anexar documento",
-  portal: "Abrir portal oficial",
-  solicitar: "Solicitar ao contador",
+
+/**
+ * Coluna «No OmniGestão» dos dossiês. Só um item de origem `sistema` COM `metrica`
+ * mapeada tem valor real; qualquer outro estado é dito por extenso, nunca preenchido
+ * com "OK", vencimento, arquivo ou status inventado.
+ */
+function LeituraDossie({
+  row,
+  dados,
+  motivo,
+}: {
+  row: DossieRow
+  dados: ContadorDadosReais | null
+  motivo: string | null
+}) {
+  if (row.origem !== "sistema") {
+    return <span className="text-[11.5px] text-muted-foreground">não rastreado pelo sistema</span>
+  }
+  if (!row.metrica) {
+    return (
+      <span className="text-[11.5px] text-muted-foreground">
+        sem fonte no OmniGestão nesta fase
+      </span>
+    )
+  }
+  if (!dados) {
+    return (
+      <span className="text-[11.5px] text-muted-foreground" title={motivo ?? undefined}>
+        leitura indisponível
+      </span>
+    )
+  }
+  const leitura = lerMetricaSistema(dados, row.metrica)
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <span className="font-mono text-[12px] font-semibold text-foreground">{leitura.texto}</span>
+      <Chip variant={DISP_CHIP[leitura.disponibilidade]}>{DISP_ROTULO[leitura.disponibilidade]}</Chip>
+    </span>
+  )
+}
+
+const DISP_CHIP: Record<DisponibilidadeDado, ChipVariant> = {
+  real: "res",
+  parcial: "warn",
+  indisponivel: "pend",
+}
+const DISP_ROTULO: Record<DisponibilidadeDado, string> = {
+  real: "real",
+  parcial: "parcial",
+  indisponivel: "não disponível",
+}
+
+const BRL_DOSSIE = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
+
+/**
+ * Traduz uma `MetricaSistema` no par (texto, disponibilidade) do DTO real da
+ * competência (GOAL 006). Nenhum ramo fabrica valor: `valor === null` sai como "—"
+ * com a disponibilidade que o próprio DTO declarou.
+ */
+function lerMetricaSistema(
+  dados: ContadorDadosReais,
+  metrica: MetricaSistema,
+): { texto: string; disponibilidade: DisponibilidadeDado } {
+  const money = (d: { valor: number | null; disponibilidade: DisponibilidadeDado }) => ({
+    texto: d.valor === null ? "—" : BRL_DOSSIE.format(d.valor),
+    disponibilidade: d.disponibilidade,
+  })
+  switch (metrica) {
+    case "fluxo": {
+      const { entradasRealizadas: e, saidasRealizadas: sa } = dados.financeiro
+      const pior: DisponibilidadeDado =
+        e.disponibilidade === "indisponivel" || sa.disponibilidade === "indisponivel"
+          ? "indisponivel"
+          : e.disponibilidade === "parcial" || sa.disponibilidade === "parcial"
+            ? "parcial"
+            : "real"
+      if (e.valor === null || sa.valor === null) return { texto: "—", disponibilidade: pior }
+      return {
+        texto: `+${BRL_DOSSIE.format(e.valor)} / -${BRL_DOSSIE.format(sa.valor)}`,
+        disponibilidade: pior,
+      }
+    }
+    case "contas_pagar":
+      return money(dados.financeiro.titulosPagarAberto)
+    case "contas_receber":
+      return money(dados.financeiro.titulosReceberAberto)
+    case "formas_pagamento": {
+      const n = dados.vendas.formasPagamento.length
+      return {
+        texto: n === 0 ? "—" : `${n} forma(s)`,
+        disponibilidade: dados.vendas.formaPagamentoDisponibilidade,
+      }
+    }
+  }
 }

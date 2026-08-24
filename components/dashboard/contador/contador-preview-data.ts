@@ -1,16 +1,19 @@
 /**
- * Contador HUB (interno) · dados ESTÁTICOS de pré-visualização.
+ * Contador HUB (interno) · catálogos ESTÁTICOS de apoio à UI.
  *
- * ⚠️ TODOS os valores aqui são fixos e ilustrativos (espelham o design aprovado
- * do Cloud Design). NADA neste arquivo consulta banco, Financeiro, Caixa, Fiscal
- * ou o portal externo `/contador`. É a "casca visual" da fase preview: os números
- * são gerenciais/fictícios e não devem ser confundidos com persistência real.
+ * ⚠️ Regra deste arquivo (GOAL CONTADOR-HUB-INTERNAL-REALIFICATION-023): aqui só
+ * podem viver **catálogos** — a lista de seções do HUB, a lista de documentos que
+ * compõem cada dossiê empresarial, o que o portal externo faz e não faz. Nada
+ * neste arquivo pode afirmar **estado da empresa do usuário**: sem funcionário,
+ * sem escritório contábil, sem CNPJ/razão social, sem faturamento, sem contagem
+ * de pendências, sem "atualizado/vencido" por documento.
  *
- * A integração real (Financeiro, documentos, obrigações, folha, portal do
- * contador) é uma fase futura — ver GOAL CONTADOR-HUB-VISUAL-PREVIEW-ONLY-001.
+ * Todo dado empresarial exibido pelo HUB vem de leitura real:
+ * `ContadorDadosReais` (GOAL 006), documentos (010), timeline (011), fechamento
+ * (012), permissões/acesso externo (014), obrigações (016), avisos (017),
+ * fiscal (018) e identificação da loja (`lib/contador/readers/loja.ts`).
  */
 import {
-  AlertTriangle,
   BarChart3,
   Building2,
   CalendarClock,
@@ -18,14 +21,12 @@ import {
   Clock,
   Eye,
   FileText,
-  FileWarning,
   FolderClosed,
   LayoutGrid,
   Landmark,
   Lock,
   Users,
   Send,
-  CheckCheck,
   ShieldCheck,
   TrendingDown,
   LineChart,
@@ -53,10 +54,11 @@ export type ContadorSection = {
   id: ContadorSectionId
   label: string
   icon: LucideIcon
-  /** Badge textual (ex.: "Preview", "Novo"). */
+  /**
+   * Badge textual da navegação. Só pode qualificar a MATURIDADE da seção
+   * ("Parcial"); nunca um número — contagem sem leitura real é dado inventado.
+   */
   badge?: string
-  /** Contador numérico à direita (ex.: nº de documentos). */
-  count?: number
   /** Só o lojista/equipe vê — some no "Modo contador". */
   ownerOnly?: boolean
   /** Agrupador de seção acima do item. */
@@ -66,187 +68,102 @@ export type ContadorSection = {
 export const CONTADOR_SECTIONS: ContadorSection[] = [
   { id: "visao", label: "Visão geral", icon: LayoutGrid },
   { id: "fechamento", label: "Fechamento mensal", icon: ClipboardCheck },
-  { id: "documentos", label: "Documentos", icon: FileText, count: 4 },
+  { id: "documentos", label: "Documentos", icon: FileText },
   { id: "obrigacoes", label: "Obrigações", icon: CalendarClock },
   { id: "relatorios", label: "Relatórios", icon: BarChart3 },
-  { id: "dossies", label: "Dossiês", icon: FolderClosed, badge: "Novo" },
-  { id: "folha", label: "Folha & DP", icon: Users, badge: "Preview" },
+  { id: "dossies", label: "Dossiês", icon: FolderClosed, badge: "Parcial" },
+  { id: "folha", label: "Folha & DP", icon: Users },
   { id: "portal", label: "Portal do contador", icon: Eye, group: "Acesso do contador" },
   { id: "permissoes", label: "Permissões & acesso", icon: Lock, ownerOnly: true },
   { id: "timeline", label: "Timeline / atividade", icon: Clock },
   { id: "config", label: "Configurações", icon: ShieldCheck, ownerOnly: true },
 ]
 
-/* ─────────────────────────── VISÃO GERAL ─────────────────────────── */
-
-export type Kpi = { label: string; value: string; unit?: string; foot: string; icon: LucideIcon }
-export const VISAO_KPIS: Kpi[] = [
-  { label: "Pendências", value: "3", foot: "aguardando você", icon: Clock },
-  { label: "A enviar", value: "4", foot: "documentos", icon: Send },
-  { label: "Vencimentos", value: "2", unit: "/ próx. 7 dias", foot: "validar com contador", icon: CalendarClock },
-  { label: "Recebidos", value: "5", foot: "do contador", icon: CheckCheck },
-]
-
-export type FinResumo = { label: string; value: string }
-export const RESUMO_FINANCEIRO: FinResumo[] = [
-  { label: "Vendas", value: "R$ 48,2k" },
-  { label: "Despesas", value: "R$ 21,7k" },
-  { label: "A pagar", value: "R$ 9,4k" },
-  { label: "A receber", value: "R$ 12,1k" },
-]
-
-export type Alerta = {
-  tone: "danger" | "warn" | "info"
-  cat: string
-  title: string
-  desc: string
-  when?: string
-  icon: LucideIcon
-}
-export const VISAO_ALERTAS: Alerta[] = [
-  {
-    tone: "danger",
-    cat: "Fiscal · validar com contador",
-    title: "Guia vencendo",
-    desc: "DAS — Simples Nacional · apuração com o contador",
-    when: "20/07",
-    icon: AlertTriangle,
-  },
-  {
-    tone: "warn",
-    cat: "Documentos pendentes",
-    title: "Nota sem anexo",
-    desc: "Recibo de serviço sem comprovante",
-    icon: FileWarning,
-  },
-  {
-    tone: "info",
-    cat: "Folha & DP",
-    title: "Funcionário sem documento",
-    desc: "Carlos Lima · falta contrato",
-    icon: Users,
-  },
-  {
-    tone: "warn",
-    cat: "Fechamento mensal",
-    title: "Fechamento incompleto",
-    desc: "6 itens ainda em aberto",
-    icon: ClipboardCheck,
-  },
-]
-
-export type DossieProgress = { label: string; done: number; total: number; pct: number }
-export const VISAO_DOSSIE_PROGRESS: DossieProgress[] = [
-  { label: "Banco & Crédito", done: 11, total: 17, pct: 65 },
-  { label: "CNPJ & Cadastro", done: 8, total: 14, pct: 57 },
-  { label: "Fiscal / Regularidade", done: 7, total: 13, pct: 54 },
-]
-
-/* ─────────────────────────── FECHAMENTO ─────────────────────────── */
-
-export type ChecklistItem = {
-  label: string
-  sub: string
-  state: "done" | "partial" | "todo"
-  status: { label: string; variant: ChipVariant }
-  validar?: boolean
-}
-export const FECHAMENTO_CHECKLIST: ChecklistItem[] = [
-  { label: "Enviar notas fiscais de venda", sub: "12 NF-e da competência", state: "done", status: { label: "resolvido", variant: "res" } },
-  { label: "Conferir contas a pagar e a receber", sub: "conferido pelo contador", state: "done", status: { label: "conferido", variant: "conf" } },
-  { label: "Enviar notas de compra / entrada", sub: "aguardando conferência", state: "partial", status: { label: "enviado", variant: "env" } },
-  { label: "Enviar extratos bancários", sub: "Banco principal · Junho", state: "todo", status: { label: "pendente", variant: "pend" } },
-  { label: "Conferir despesas do mês", sub: "21 lançamentos", state: "todo", status: { label: "pendente", variant: "pend" } },
-  { label: "Enviar folha do mês", sub: "sem cálculo no sistema", state: "todo", status: { label: "pendente", variant: "pend" }, validar: true },
-  { label: "Anexar comprovantes de impostos", sub: "guias pagas no período", state: "todo", status: { label: "pendente", variant: "pend" } },
-  { label: "Revisar pró-labore", sub: "registro manual", state: "todo", status: { label: "pendente", variant: "pend" }, validar: true },
-  { label: "Fechar competência", sub: "trava a edição da competência", state: "todo", status: { label: "pendente", variant: "pend" } },
-]
-
-/* ─────────────────────────── DOCUMENTOS ─────────────────────────── */
-
-export type DocSeg = "all" | "send" | "recv"
-export type DocumentoRow = {
-  name: string
-  sub: string
-  tipo: string
-  seg: DocSeg
-  status: { label: string; variant: ChipVariant }
-  /** preview badge no nome. */
-  preview?: boolean
-  /** tipo de drawer aberto pelo "Ver" (doc) ou download direto (recv). */
-  kind: "doc" | "recv"
-}
-export const DOCUMENTOS_ROWS: DocumentoRow[] = [
-  { name: "Extrato bancário", sub: "Banco principal · PDF", tipo: "A enviar", seg: "send", status: { label: "pendente", variant: "pend" }, kind: "doc" },
-  { name: "Folha do mês", sub: "manual · sem cálculo", tipo: "A enviar", seg: "send", status: { label: "pendente", variant: "pend" }, preview: true, kind: "doc" },
-  { name: "NF-e de venda 001234", sub: "XML · R$ 1.240,00", tipo: "Nota fiscal", seg: "send", status: { label: "enviado", variant: "env" }, preview: true, kind: "doc" },
-  { name: "NF-e de compra 5678", sub: "XML · entrada", tipo: "Nota fiscal", seg: "send", status: { label: "conferido", variant: "conf" }, preview: true, kind: "doc" },
-  { name: "Balancete de Maio/2026", sub: "recebido do contador · PDF", tipo: "Recebido", seg: "recv", status: { label: "resolvido", variant: "res" }, kind: "recv" },
-]
-
-/* ─────────────────────────── OBRIGAÇÕES ─────────────────────────── */
-
-export type ObrigacaoRow = {
-  name: string
-  comp: string
-  venc: string
-  valor: string | null
-  status: { label: string; variant: ChipVariant }
-  preview?: boolean
-  /** obrigações "preview" abrem drawer de guia; honorário abre no-op. */
-  kind: "guia" | "acao"
-}
-export const OBRIGACOES_ROWS: ObrigacaoRow[] = [
-  { name: "DAS — Simples Nacional", comp: "06/2026", venc: "20/07/2026", valor: null, status: { label: "pendente", variant: "pend" }, preview: true, kind: "guia" },
-  { name: "FGTS Digital", comp: "06/2026", venc: "20/07/2026", valor: null, status: { label: "pendente", variant: "pend" }, preview: true, kind: "guia" },
-  { name: "INSS / Pró-labore", comp: "06/2026", venc: "20/07/2026", valor: null, status: { label: "pendente", variant: "pend" }, preview: true, kind: "guia" },
-  { name: "ISS retido", comp: "05/2026", venc: "10/06/2026", valor: null, status: { label: "vencido", variant: "venc" }, preview: true, kind: "guia" },
-  { name: "Honorários do contador", comp: "06/2026", venc: "10/07/2026", valor: "R$ 480,00", status: { label: "pendente", variant: "pend" }, preview: true, kind: "acao" },
-]
-
 /* ─────────────────────────── RELATÓRIOS ─────────────────────────── */
 
+/**
+ * Catálogo dos relatórios que o contador costuma pedir. O HUB **não** exporta
+ * cada um isoladamente nesta fase: os dados equivalentes saem no Pacote do
+ * Contador (ZIP real da competência). `arquivoPacote` aponta o arquivo exato
+ * dentro do ZIP; `null` = o pacote não cobre este relatório.
+ */
 export type RelatorioCard = {
   title: string
   sub: string
   icon: LucideIcon
   tint: "primary" | "info" | "danger" | "conf"
-  formats: string[]
-  preview?: boolean
+  /** Caminho(s) dentro do ZIP do Pacote do Contador que cobrem este relatório. */
+  arquivosPacote: string[]
 }
 export const RELATORIO_CARDS: RelatorioCard[] = [
-  { title: "DRE / Resumo mensal", sub: "visão gerencial — não é a DRE contábil oficial", icon: LineChart, tint: "primary", formats: ["PDF"], preview: true },
-  { title: "Relatório de vendas", sub: "do módulo de Vendas", icon: Send, tint: "info", formats: ["CSV", "PDF"] },
-  { title: "Relatório de despesas", sub: "do módulo Financeiro", icon: TrendingDown, tint: "danger", formats: ["CSV", "PDF"] },
-  { title: "Posição de estoque", sub: "do módulo de Estoque", icon: Package, tint: "conf", formats: ["CSV"] },
+  {
+    title: "DRE / Resumo mensal",
+    sub: "visão gerencial — não é a DRE contábil oficial",
+    icon: LineChart,
+    tint: "primary",
+    arquivosPacote: ["00-LEIA-ME/resumo.md"],
+  },
+  {
+    title: "Relatório de vendas",
+    sub: "do módulo de Vendas",
+    icon: Send,
+    tint: "info",
+    arquivosPacote: ["01-VENDAS/vendas.csv", "01-VENDAS/itens.csv", "01-VENDAS/devolucoes.csv"],
+  },
+  {
+    title: "Relatório de despesas",
+    sub: "do módulo Financeiro",
+    icon: TrendingDown,
+    tint: "danger",
+    arquivosPacote: ["02-FINANCEIRO/movimentacoes.csv", "02-FINANCEIRO/contas_pagar.csv"],
+  },
+  {
+    title: "Posição de estoque",
+    sub: "do módulo de Estoque",
+    icon: Package,
+    tint: "conf",
+    arquivosPacote: [],
+  },
 ]
 
 /* ─────────────────────────── DOSSIÊS ─────────────────────────── */
 
-export type RadarState = "ok" | "warn" | "venc"
-export type RadarItem = { label: string; state: RadarState; status: string }
+/**
+ * Itens que valem acompanhar na regularidade do CNPJ. É um **roteiro**, não um
+ * diagnóstico: o OmniGestão não consulta Receita, Junta, Sefaz, Prefeitura,
+ * Caixa nem e-CAC, então nenhum item carrega situação ("válida", "vencida").
+ */
+export type RadarItem = { label: string; onde: string }
 export const RADAR_CNPJ: RadarItem[] = [
-  { label: "CNPJ ativo", state: "ok", status: "ativo" },
-  { label: "Simples Nacional ativo", state: "ok", status: "ativo" },
-  { label: "CND Federal válida", state: "ok", status: "válida" },
-  { label: "Certidão Estadual válida", state: "ok", status: "válida" },
-  { label: "Certidão Municipal válida", state: "venc", status: "vencida" },
-  { label: "DAS em dia", state: "ok", status: "em dia" },
-  { label: "DEFIS entregue", state: "ok", status: "entregue" },
-  { label: "Certificado digital válido", state: "warn", status: "vence 30d" },
-  { label: "Alvará atualizado", state: "venc", status: "vencido" },
-  { label: "Procuração contador ativa", state: "ok", status: "ativa" },
-  { label: "Pendências e-CAC", state: "warn", status: "2 pendências" },
+  { label: "Situação cadastral do CNPJ", onde: "Receita Federal" },
+  { label: "Opção pelo Simples Nacional", onde: "Portal do Simples Nacional" },
+  { label: "CND Federal (Receita + PGFN)", onde: "e-CAC" },
+  { label: "Certidão Estadual", onde: "Sefaz" },
+  { label: "Certidão Municipal", onde: "Prefeitura" },
+  { label: "DAS do período", onde: "PGDAS-D / PGMEI" },
+  { label: "DEFIS", onde: "Portal do Simples Nacional" },
+  { label: "Certificado digital", onde: "sua certificadora" },
+  { label: "Alvará / licença de funcionamento", onde: "Prefeitura / Vigilância" },
+  { label: "Procuração do contador", onde: "e-CAC" },
+  { label: "Pendências fiscais", onde: "e-CAC" },
 ]
 
 export type DossieOrigem = "sistema" | "anexar" | "portal" | "solicitar"
-export type DossieStatus = "pendente" | "atualizado" | "vencido"
+
+/**
+ * Métrica REAL do DTO da competência (GOAL 006) que cobre um item de dossiê de
+ * origem `sistema`. Só entra aqui o que tem correspondência inequívoca no DTO —
+ * série histórica, DRE contábil, recebíveis de adquirente, dívidas/parcelamentos
+ * e estoque **não** têm, e por isso ficam sem métrica (nunca com valor fabricado).
+ */
+export type MetricaSistema = "fluxo" | "contas_pagar" | "contas_receber" | "formas_pagamento"
+
 export type DossieRow = {
   doc: string
   sub: string
   origem: DossieOrigem
-  status: DossieStatus
+  /** Só para `origem: "sistema"` com correspondência real no DTO da competência. */
+  metrica?: MetricaSistema
   validar?: boolean
 }
 export type Dossie = {
@@ -266,20 +183,20 @@ export const DOSSIES: Dossie[] = [
     icon: Building2,
     tint: "primary",
     rows: [
-      { doc: "Cartão CNPJ / Comprovante de Inscrição e Situação Cadastral", sub: "Receita Federal · REDESIM", origem: "portal", status: "atualizado" },
-      { doc: "Contrato Social / Requerimento de Empresário", sub: "arquivo registrado na Junta", origem: "anexar", status: "atualizado" },
-      { doc: "Alterações contratuais", sub: "aditivos registrados", origem: "anexar", status: "pendente" },
-      { doc: "Certidão Simplificada da Junta Comercial", sub: "Junta Comercial", origem: "portal", status: "pendente" },
-      { doc: "Certidão de Inteiro Teor", sub: "Junta Comercial", origem: "portal", status: "pendente" },
-      { doc: "QSA / Quadro de Sócios", sub: "Receita Federal / e-CAC", origem: "portal", status: "atualizado" },
-      { doc: "Inscrição Estadual", sub: "Sintegra / Sefaz", origem: "portal", status: "atualizado" },
-      { doc: "Inscrição Municipal", sub: "Prefeitura", origem: "portal", status: "atualizado" },
-      { doc: "Alvará / Licença de funcionamento", sub: "Prefeitura / Vigilância", origem: "anexar", status: "vencido" },
-      { doc: "Comprovante de endereço", sub: "conta recente em nome do CNPJ", origem: "anexar", status: "pendente" },
-      { doc: "Dados bancários PJ", sub: "conta PJ para movimentação", origem: "anexar", status: "atualizado" },
-      { doc: "Certificado digital", sub: "e-CAC · A1 / A3", origem: "anexar", status: "atualizado" },
-      { doc: "Procuração e-CAC / contador", sub: "acesso e-CAC do contador", origem: "solicitar", status: "pendente", validar: true },
-      { doc: "CCMEI — quando MEI", sub: "Portal do Empreendedor", origem: "portal", status: "atualizado" },
+      { doc: "Cartão CNPJ / Comprovante de Inscrição e Situação Cadastral", sub: "Receita Federal · REDESIM", origem: "portal" },
+      { doc: "Contrato Social / Requerimento de Empresário", sub: "arquivo registrado na Junta", origem: "anexar" },
+      { doc: "Alterações contratuais", sub: "aditivos registrados", origem: "anexar" },
+      { doc: "Certidão Simplificada da Junta Comercial", sub: "Junta Comercial", origem: "portal" },
+      { doc: "Certidão de Inteiro Teor", sub: "Junta Comercial", origem: "portal" },
+      { doc: "QSA / Quadro de Sócios", sub: "Receita Federal / e-CAC", origem: "portal" },
+      { doc: "Inscrição Estadual", sub: "Sintegra / Sefaz", origem: "portal" },
+      { doc: "Inscrição Municipal", sub: "Prefeitura", origem: "portal" },
+      { doc: "Alvará / Licença de funcionamento", sub: "Prefeitura / Vigilância", origem: "anexar" },
+      { doc: "Comprovante de endereço", sub: "conta recente em nome do CNPJ", origem: "anexar" },
+      { doc: "Dados bancários PJ", sub: "conta PJ para movimentação", origem: "anexar" },
+      { doc: "Certificado digital", sub: "e-CAC · A1 / A3", origem: "anexar" },
+      { doc: "Procuração e-CAC / contador", sub: "acesso e-CAC do contador", origem: "solicitar", validar: true },
+      { doc: "CCMEI — quando MEI", sub: "Portal do Empreendedor", origem: "portal" },
     ],
   },
   {
@@ -289,19 +206,19 @@ export const DOSSIES: Dossie[] = [
     icon: ShieldCheck,
     tint: "warn",
     rows: [
-      { doc: "CND Federal — Receita + PGFN", sub: "certidão conjunta", origem: "portal", status: "pendente", validar: true },
-      { doc: "Certidão Estadual", sub: "Sefaz", origem: "portal", status: "atualizado", validar: true },
-      { doc: "Certidão Municipal", sub: "Prefeitura", origem: "portal", status: "vencido", validar: true },
-      { doc: "CRF FGTS — quando houver funcionário", sub: "Caixa", origem: "portal", status: "atualizado", validar: true },
-      { doc: "Relatório de Situação Fiscal / Pendências e-CAC", sub: "e-CAC", origem: "portal", status: "pendente", validar: true },
-      { doc: "Consulta Optante Simples Nacional", sub: "Simples Nacional", origem: "portal", status: "atualizado", validar: true },
-      { doc: "Extrato do Simples Nacional", sub: "PGDAS / e-CAC", origem: "portal", status: "atualizado", validar: true },
-      { doc: "PGDAS-D", sub: "declaração mensal do Simples", origem: "portal", status: "atualizado", validar: true },
-      { doc: "DEFIS", sub: "declaração anual do Simples", origem: "portal", status: "pendente", validar: true },
-      { doc: "DAS pagos", sub: "comprovantes do período", origem: "anexar", status: "atualizado", validar: true },
-      { doc: "DAS em aberto", sub: "gerar no PGDAS / PGMEI", origem: "portal", status: "pendente", validar: true },
-      { doc: "Parcelamentos", sub: "e-CAC / Simples Nacional", origem: "portal", status: "pendente", validar: true },
-      { doc: "Comprovantes de pagamento de tributos", sub: "guias quitadas", origem: "anexar", status: "atualizado", validar: true },
+      { doc: "CND Federal — Receita + PGFN", sub: "certidão conjunta", origem: "portal", validar: true },
+      { doc: "Certidão Estadual", sub: "Sefaz", origem: "portal", validar: true },
+      { doc: "Certidão Municipal", sub: "Prefeitura", origem: "portal", validar: true },
+      { doc: "CRF FGTS — quando houver funcionário", sub: "Caixa", origem: "portal", validar: true },
+      { doc: "Relatório de Situação Fiscal / Pendências e-CAC", sub: "e-CAC", origem: "portal", validar: true },
+      { doc: "Consulta Optante Simples Nacional", sub: "Simples Nacional", origem: "portal", validar: true },
+      { doc: "Extrato do Simples Nacional", sub: "PGDAS / e-CAC", origem: "portal", validar: true },
+      { doc: "PGDAS-D", sub: "declaração mensal do Simples", origem: "portal", validar: true },
+      { doc: "DEFIS", sub: "declaração anual do Simples", origem: "portal", validar: true },
+      { doc: "DAS pagos", sub: "comprovantes do período", origem: "anexar", validar: true },
+      { doc: "DAS em aberto", sub: "gerar no PGDAS / PGMEI", origem: "portal", validar: true },
+      { doc: "Parcelamentos", sub: "e-CAC / Simples Nacional", origem: "portal", validar: true },
+      { doc: "Comprovantes de pagamento de tributos", sub: "guias quitadas", origem: "anexar", validar: true },
     ],
   },
   {
@@ -311,51 +228,45 @@ export const DOSSIES: Dossie[] = [
     icon: Landmark,
     tint: "info",
     rows: [
-      { doc: "Faturamento dos últimos 12 meses", sub: "relatório gerencial", origem: "sistema", status: "atualizado" },
-      { doc: "Faturamento mês a mês", sub: "relatório gerencial", origem: "sistema", status: "atualizado" },
-      { doc: "Declaração de faturamento assinada pelo contador", sub: "assinatura do contador", origem: "solicitar", status: "pendente", validar: true },
-      { doc: "DRE gerencial", sub: "não substitui a DRE contábil", origem: "sistema", status: "atualizado", validar: true },
-      { doc: "Fluxo de caixa", sub: "relatório gerencial", origem: "sistema", status: "atualizado" },
-      { doc: "Contas a pagar", sub: "relatório gerencial", origem: "sistema", status: "atualizado" },
-      { doc: "Contas a receber", sub: "relatório gerencial", origem: "sistema", status: "atualizado" },
-      { doc: "Extratos bancários PJ", sub: "conciliação bancária", origem: "anexar", status: "pendente" },
-      { doc: "Relatório de vendas por forma de pagamento", sub: "módulo de Vendas", origem: "sistema", status: "atualizado" },
-      { doc: "Relatório de recebíveis / cartões", sub: "adquirentes", origem: "sistema", status: "atualizado" },
-      { doc: "Relação de dívidas e parcelamentos", sub: "conferir com contador", origem: "sistema", status: "pendente", validar: true },
-      { doc: "Relatório de estoque", sub: "módulo de Estoque", origem: "sistema", status: "atualizado" },
-      { doc: "Certidões negativas", sub: "CND", origem: "portal", status: "pendente", validar: true },
-      { doc: "Cartão CNPJ", sub: "Receita Federal", origem: "portal", status: "atualizado" },
-      { doc: "Contrato social", sub: "arquivo registrado", origem: "anexar", status: "atualizado" },
-      { doc: "Certidão simplificada", sub: "Junta Comercial", origem: "portal", status: "pendente" },
-      { doc: "Comprovante de endereço", sub: "conta recente", origem: "anexar", status: "pendente" },
+      { doc: "Faturamento dos últimos 12 meses", sub: "série histórica — o HUB lê uma competência por vez", origem: "sistema" },
+      { doc: "Faturamento mês a mês", sub: "série histórica — o HUB lê uma competência por vez", origem: "sistema" },
+      { doc: "Declaração de faturamento assinada pelo contador", sub: "assinatura do contador", origem: "solicitar", validar: true },
+      { doc: "DRE gerencial", sub: "sem plano de contas contábil no sistema", origem: "sistema", validar: true },
+      { doc: "Fluxo de caixa", sub: "entradas e saídas realizadas na competência", origem: "sistema", metrica: "fluxo" },
+      { doc: "Contas a pagar", sub: "títulos em aberto com vencimento na competência", origem: "sistema", metrica: "contas_pagar" },
+      { doc: "Contas a receber", sub: "títulos em aberto com vencimento na competência", origem: "sistema", metrica: "contas_receber" },
+      { doc: "Extratos bancários PJ", sub: "conciliação bancária", origem: "anexar" },
+      { doc: "Relatório de vendas por forma de pagamento", sub: "quebra declarada nas vendas da competência", origem: "sistema", metrica: "formas_pagamento" },
+      { doc: "Relatório de recebíveis / cartões", sub: "sem integração com adquirente", origem: "sistema" },
+      { doc: "Relação de dívidas e parcelamentos", sub: "sem cadastro de dívida no sistema", origem: "sistema", validar: true },
+      { doc: "Relatório de estoque", sub: "fora do DTO do Contador nesta fase", origem: "sistema" },
+      { doc: "Certidões negativas", sub: "CND", origem: "portal", validar: true },
+      { doc: "Cartão CNPJ", sub: "Receita Federal", origem: "portal" },
+      { doc: "Contrato social", sub: "arquivo registrado", origem: "anexar" },
+      { doc: "Certidão simplificada", sub: "Junta Comercial", origem: "portal" },
+      { doc: "Comprovante de endereço", sub: "conta recente", origem: "anexar" },
     ],
   },
 ]
 
-export type DossieFilter =
-  | "all"
-  | "sistema"
-  | "anexar"
-  | "portal"
-  | "solicitar"
-  | "validar"
-  | "pendente"
-  | "atualizado"
-  | "vencido"
+/**
+ * Filtros por ORIGEM do item (o que fazer para obtê-lo) e pelo selo "validar com
+ * contador". Não há filtro por situação do documento: o HUB não sabe se a sua
+ * certidão está válida ou vencida, e inventar esse estado era o mock removido no
+ * GOAL 023.
+ */
+export type DossieFilter = "all" | "sistema" | "anexar" | "portal" | "solicitar" | "validar"
 
 export const DOSSIE_FILTERS: { id: DossieFilter; label: string }[] = [
   { id: "all", label: "Todos" },
-  { id: "sistema", label: "Gerado pelo OmniGestão" },
+  { id: "sistema", label: "Lido do OmniGestão" },
   { id: "anexar", label: "Anexar manualmente" },
   { id: "portal", label: "Abrir portal oficial" },
   { id: "solicitar", label: "Solicitar ao contador" },
   { id: "validar", label: "Validar com contador" },
-  { id: "pendente", label: "Pendente" },
-  { id: "atualizado", label: "Atualizado" },
-  { id: "vencido", label: "Vencido" },
 ]
 
-/** Um dossiê row passa no filtro selecionado? (espelha applyDossieFilter do design.) */
+/** Um dossiê row passa no filtro selecionado? */
 export function dossieRowMatches(row: DossieRow, filter: DossieFilter): boolean {
   switch (filter) {
     case "all":
@@ -367,10 +278,6 @@ export function dossieRowMatches(row: DossieRow, filter: DossieFilter): boolean 
       return row.origem === filter
     case "validar":
       return row.validar === true
-    case "pendente":
-    case "atualizado":
-    case "vencido":
-      return row.status === filter
     default:
       return true
   }
@@ -382,68 +289,39 @@ export function dossieFilterCount(filter: DossieFilter): number {
 }
 
 /* ─────────────────────────── FOLHA & DP ─────────────────────────── */
-
-export type Funcionario = {
-  nome: string
-  iniciais: string
-  cargo: string
-  admissao: string
-  docs: { label: string; variant: ChipVariant }
-}
-export const FOLHA_FUNCIONARIOS: Funcionario[] = [
-  { nome: "Ana Souza", iniciais: "AS", cargo: "Vendedora", admissao: "02/2023", docs: { label: "completo", variant: "res" } },
-  { nome: "Carlos Lima", iniciais: "CL", cargo: "Técnico", admissao: "08/2024", docs: { label: "falta contrato", variant: "venc" } },
-  { nome: "Marina Reis", iniciais: "MR", cargo: "Atendente", admissao: "11/2025", docs: { label: "completo", variant: "res" } },
-]
+//
+// GOAL 023: a lista de funcionários fictícios do preview e os cartões
+// de pró-labore/holerite ilustrativos foram REMOVIDOS. A aba passou a listar os
+// documentos REAIS de categoria `folha` (`folha/contador-folha-real.tsx`). O HUB
+// não tem — e não terá neste escopo — cadastro de colaborador, cálculo de folha,
+// holerite, encargos, eSocial ou ponto.
 
 /* ─────────────────────────── PORTAL ─────────────────────────── */
 
+/**
+ * O que o portal externo v2 (`/contador-externo`, GOAL 015) realmente faz. Cada
+ * linha corresponde a um caminho existente em `lib/contador/portal/**`. Não
+ * listar capacidade inexistente é parte do critério de honestidade do GOAL 023 —
+ * o portal, por exemplo, **não** recebe upload.
+ */
 export const PORTAL_PODE: string[] = [
-  "Baixar o Pacote do Contador e relatórios",
-  "Enviar documentos (upload)",
-  "Comentar e abrir solicitações de pendência",
-  "Marcar itens como conferido",
+  "Ver o resumo e a timeline da competência das lojas com vínculo ativo",
+  "Baixar o Pacote do Contador oficial e confirmar o recebimento",
+  "Baixar documentos enviados pela loja",
+  "Comentar na competência e nos documentos",
+  "Marcar documento como conferido — somente no papel Conferência",
 ]
 export const PORTAL_NAO_PODE: string[] = [
   "Editar vendas, estoque ou caixa",
   "Alterar o financeiro",
-  "Mudar configurações do sistema",
-  "Ver dados que não precisa (minimização LGPD)",
+  "Enviar documentos (o upload é sempre da loja)",
+  "Fechar ou reabrir a competência",
+  "Mudar configurações, convites ou permissões",
+  "Ver qualquer loja sem vínculo ativo (minimização LGPD)",
 ]
-
-/* ─────────────────────────── PERMISSÕES ─────────────────────────── */
-
-export type PermissaoRow = { label: string; sub: string; on: boolean }
-export const PERMISSOES_ROWS: PermissaoRow[] = [
-  { label: "Documentos", sub: "enviar e baixar arquivos", on: true },
-  { label: "Obrigações & vencimentos", sub: "acompanhar prazos", on: true },
-  { label: "Relatórios & Pacote", sub: "baixar relatórios", on: true },
-  { label: "Folha & DP", sub: "dados sensíveis · cuidado LGPD", on: false },
-  { label: "Resumo financeiro", sub: "números gerenciais", on: true },
-]
-
-/* ─────────────────────────── TIMELINE ─────────────────────────── */
-//
-// GOAL 011: a seção Timeline passou a ler `ContadorEvento` + `ContadorComentario`
-// reais (`timeline/contador-timeline-real.tsx`). O array ilustrativo `TIMELINE_ITEMS`
-// e a "conversa com o contador" mockada foram REMOVIDOS — não existe mais atividade
-// fictícia no HUB.
 
 /* ─────────────────────────── COMPETÊNCIA ─────────────────────────── */
-
-export const MESES = [
-  "Janeiro",
-  "Fevereiro",
-  "Março",
-  "Abril",
-  "Maio",
-  "Junho",
-  "Julho",
-  "Agosto",
-  "Setembro",
-  "Outubro",
-  "Novembro",
-  "Dezembro",
-]
-
-export const COMPETENCIA_INICIAL = { mesIdx: 5, ano: 2026 } // Junho / 2026
+//
+// GOAL 023: os nomes de mês e a competência-semente do preview foram removidos —
+// não tinham consumidor produtivo. A competência canônica vive em
+// `lib/contador/competencia.ts` e vem da URL (`?c=AAAA-MM`).

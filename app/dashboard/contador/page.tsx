@@ -8,6 +8,8 @@ import type { ChecklistFechamento } from "@/lib/contador/fechamento"
 import type { EvidenciaAgendaGuias } from "@/lib/contador/fechamento/montar-checklist"
 import { requireContadorScope } from "@/lib/contador/scope"
 import { construirDadosContador } from "@/lib/contador/readers"
+import { lerIdentificacaoLoja } from "@/lib/contador/readers/loja"
+import type { IdentificacaoLoja } from "@/lib/contador/readers/loja"
 import type { ContadorDadosReais } from "@/lib/contador/readers/tipos"
 import { lerNotasFiscais, toEvidenciaChecklist, type LeituraFiscalContador } from "@/lib/contador/readers/fiscal"
 import { carregarResumoGuiasChecklist, criarRepoAgenda } from "@/lib/contador/agenda"
@@ -56,6 +58,7 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
   let realErro: string | null = null
   let evidenciaAgenda: EvidenciaAgendaGuias | null = null
   let relatorioFiscal: LeituraFiscalContador | null = null
+  let identificacaoLoja: IdentificacaoLoja | null = null
 
   const escopo = await requireContadorScope()
   if (!escopo.ok) {
@@ -78,6 +81,14 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
     } catch (e) {
       console.error("[contador/agenda-resumo]", e instanceof Error ? e.message : String(e))
       evidenciaAgenda = { leituraOk: false, total: 0, vencidas: 0, vencendo: 0, pagas: 0 }
+    }
+    // Loja (GOAL 023): cadastro persistido da unidade ativa — leitura independente.
+    // Falha NÃO vira empresa de exemplo: a aba Configurações mostra indisponível.
+    try {
+      identificacaoLoja = await lerIdentificacaoLoja(escopo)
+    } catch (e) {
+      console.error("[contador/loja]", e instanceof Error ? e.message : String(e))
+      identificacaoLoja = null
     }
     // Fiscal (GOAL 018): leitura independente — falha NÃO vira zero notas.
     try {
@@ -121,6 +132,7 @@ export default async function ContadorHubPage({ searchParams }: ContadorHubPageP
           realErro={realErro}
           checklistFechamento={checklistFechamento}
           relatorioFiscal={relatorioFiscal}
+          identificacaoLoja={identificacaoLoja}
         />
       </Suspense>
     </div>
