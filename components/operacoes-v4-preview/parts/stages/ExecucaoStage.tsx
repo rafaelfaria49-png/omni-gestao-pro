@@ -14,8 +14,12 @@
  *
  * GOAL OPS-V4-BLOCKERS-FINAL-CLOSEOUT-018: consumo de estoque deixa de ser
  * somente leitura — `v.baixarEstoqueOS` chama o adapter oficial (idempotente). */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CHECKLIST_TECNICO_PADRAO } from "@/types/os";
+import {
+  createChecklistBurstSaver,
+  toggleChecklistTecnicoItem,
+} from "@/lib/operacoes-v4/checklist-tecnico-burst";
 import { C, card, cardTitle, upLabel, HATCH } from "../../tokens";
 import type { V4Vals } from "../../use-v4-preview";
 import { PrioridadePickerV4, TecnicoPickerV4 } from "../ProducaoControlesV4";
@@ -327,29 +331,66 @@ function ConsumoEstoqueCard({ v }: { v: V4Vals }) {
   );
 }
 
+function padraoChecklistTecnico() {
+  return CHECKLIST_TECNICO_PADRAO.map((d) => ({ id: d.id, label: d.label, ok: false }));
+}
+
 function ChecklistTecnicoCard({ v }: { v: V4Vals }) {
   const osId = v.selectedOsId;
   const e = v.execucao;
-  const [busy, setBusy] = useState(false);
-  const itens = e.checklist.length > 0 ? e.checklist : CHECKLIST_TECNICO_PADRAO.map((d) => ({ id: d.id, label: d.label, ok: false }));
   const persistidos = e.checklist.length > 0;
+  const serverKey = persistidos
+    ? e.checklist.map((it) => `${it.id}:${it.ok ? 1 : 0}`).join("|")
+    : "padrao";
+  const [itens, setItens] = useState(() => (persistidos ? e.checklist : padraoChecklistTecnico()));
+  const [saving, setSaving] = useState(false);
+  const touchedRef = useRef(false);
+  const itensRef = useRef(itens);
+  itensRef.current = itens;
+  const persistRef = useRef(v.salvarChecklistTecnico);
+  persistRef.current = v.salvarChecklistTecnico;
+  const osIdRef = useRef(osId);
+  osIdRef.current = osId;
+  const osIdSeen = useRef(osId);
+  const saverRef = useRef(
+    createChecklistBurstSaver<{ id: string; label: string; ok: boolean }[]>(async (snapshot) => {
+      const id = (osIdRef.current ?? "").trim();
+      if (!id) return;
+      await persistRef.current(id, snapshot);
+    }),
+  );
 
-  const gravar = async (next: { id: string; label: string; ok: boolean }[]) => {
-    if (!osId || busy) return;
-    setBusy(true);
-    try {
-      await v.salvarChecklistTecnico(osId, next);
-    } finally {
-      setBusy(false);
+  useEffect(() => {
+    if (osIdSeen.current !== osId) {
+      osIdSeen.current = osId;
+      touchedRef.current = false;
     }
+    if (touchedRef.current) return;
+    const next = persistidos ? e.checklist : padraoChecklistTecnico();
+    itensRef.current = next;
+    setItens(next);
+  }, [osId, persistidos, serverKey, e.checklist]);
+
+  const marcar = (id: string) => {
+    if (!osId) return;
+    touchedRef.current = true;
+    const next = toggleChecklistTecnicoItem(itensRef.current, id);
+    itensRef.current = next;
+    setItens(next);
+    setSaving(true);
+    void saverRef.current.submit(next).finally(() => {
+      if (!saverRef.current.pending) setSaving(false);
+    });
   };
+
+  const okCount = itens.filter((it) => it.ok).length;
 
   return (
     <div style={card}>
       <div style={{ ...cardTitle, marginBottom: 11 }}>
-        Checklist técnico (pós-reparo){persistidos ? ` · ${e.checklistOk}/${e.checklist.length}` : ""}
+        Checklist técnico (pós-reparo){persistidos || touchedRef.current ? ` · ${okCount}/${itens.length}` : ""}
       </div>
-      {!persistidos ? (
+      {!persistidos && !touchedRef.current ? (
         <div style={{ ...emptyText, marginBottom: 8 }}>Nenhum checklist de execução registrado. Inicie o padrão da bancada para marcar as etapas.</div>
       ) : null}
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
@@ -357,9 +398,9 @@ function ChecklistTecnicoCard({ v }: { v: V4Vals }) {
           <button
             key={t.id}
             type="button"
-            disabled={!osId || busy}
-            onClick={() => void gravar(itens.map((it) => (it.id === t.id ? { ...it, ok: !it.ok } : it)))}
-            style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5, color: t.ok ? C.body : C.subtle, background: "transparent", border: 0, padding: 0, textAlign: "left", cursor: !osId || busy ? "default" : "pointer" }}
+            disabled={!osId}
+            onClick={() => marcar(t.id)}
+            style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5, color: t.ok ? C.body : C.subtle, background: "transparent", border: 0, padding: 0, textAlign: "left", cursor: osId ? "pointer" : "default" }}
           >
             {t.ok
               ? <span style={{ width: 18, height: 18, borderRadius: 5, background: C.success, color: C.white, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flex: "none" }}>✓</span>
@@ -368,6 +409,9 @@ function ChecklistTecnicoCard({ v }: { v: V4Vals }) {
           </button>
         ))}
       </div>
+      {saving ? (
+        <div style={{ fontSize: 10, color: C.subtle, marginTop: 9, lineHeight: 1.4 }}>Salvando checklist…</div>
+      ) : null}
     </div>
   );
 }
