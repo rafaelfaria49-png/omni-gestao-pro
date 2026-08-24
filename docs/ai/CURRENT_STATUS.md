@@ -67,6 +67,13 @@ pagamento) mostram o valor real **com a disponibilidade que o próprio DTO decla
 dizem "sem fonte no OmniGestão nesta fase". `anexar` ganhou CTA real para Documentos; `portal` e
 `solicitar` perderam o botão e viraram instrução.
 
+**Achado do aceite visual.** Percorrendo as 11 seções no navegador apareceu um segundo
+texto stale, na caixa de comentários da Timeline: dizia que o comentário compartilhado
+``ficava preparado para o portal externo — que ainda não existe (GOAL 015)``. O portal v2
+está OPERACIONAL em Production desde o GOAL 015, com smoke autenticado real no 021 — era
+o mesmo defeito do aviso global. Pior: o teste de honestidade **congelava** a mentira,
+exigindo a string `GOAL 015` na microcopy. Texto corrigido e asserção invertida.
+
 **Zero CTA no-op.** O helper `noop`, o toast honesto e a constante `CTA_INDISPONIVEL_TITLE` foram
 removidos por falta de call site. O único `disabled` restante é o do Pacote do Contador, condicionado
 a haver dado real — não a "fase".
