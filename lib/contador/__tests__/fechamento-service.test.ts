@@ -821,6 +821,49 @@ describe("divergência pós-fechamento", () => {
     expect(db.estado.eventos.filter((e) => e.tipo === "alteracao_pos_fechamento")).toHaveLength(0)
   })
 
+  it("mudança exclusivamente textual do pacote não produz falso drift pós-deploy", async () => {
+    const caminhoReadme = "04-DOCUMENTOS/LEIA-ME.md"
+    const pacoteV1 = {
+      caminho: caminhoReadme,
+      bytes: 180,
+      sha256: "1".repeat(64),
+      fonte: "documentos",
+    }
+    const pacoteV2 = {
+      caminho: caminhoReadme,
+      bytes: 240,
+      sha256: "2".repeat(64),
+      fonte: "documentos",
+    }
+    const db = fakeDb()
+    const storage = fakeStorage()
+    const depsV1 = { repo: criarRepoFechamento(db), pacote: fakePacotePort({ arquivos: [pacoteV1] }), storage }
+
+    // T0: fecha com a geração anterior e congela o estado empresarial.
+    await fecharCompetencia(SCOPE_A, ELEVADO, COMP, { confirmacao: CODIGO }, depsV1, AGORA)
+    const totaisSnapshotV1 = (db.estado.competencias[0].snapshot as { totais: unknown }).totais
+
+    // T1: a única diferença da nova geração é textual, no arquivo de documentos.
+    await reabrirCompetencia(ESCOPO_A, ELEVADO, COMP, { confirmacao: CODIGO, motivo: "ajuste de copy" }, depsV1, AGORA)
+    const depsV2 = {
+      repo: criarRepoFechamento(db),
+      pacote: fakePacotePort({ arquivos: [pacoteV2], vendasTotal: 1200 }),
+      storage,
+    }
+    await fecharCompetencia(SCOPE_A, ELEVADO, COMP, { confirmacao: CODIGO }, depsV2, AGORA)
+
+    // T2: nenhum dado empresarial mudou; a baseline de totais continua a mesma.
+    expect((db.estado.competencias[0].snapshot as { totais: unknown }).totais).toEqual(totaisSnapshotV1)
+    const comp = db.estado.competencias[0]
+    const divergencia = avaliarDivergencia(comp, extrairTotais(dados(1200)))!
+
+    // T3: comparação oficial usa somente snapshot.totais; copy textual não vira drift.
+    expect(divergencia.divergente).toBe(false)
+    const resultado = await registrarDivergencia(ESCOPO_A, COMP, comp, divergencia, { repo: depsV2.repo })
+    expect(resultado.criado).toBe(false)
+    expect(db.estado.eventos.filter((e) => e.tipo === "alteracao_pos_fechamento")).toHaveLength(0)
+  })
+
   it("competência ABERTA não é comparável (sem linha de base)", async () => {
     const db = fakeDb()
     expect(avaliarDivergencia(db.estado.competencias[0], extrairTotais(dados()))).toBeNull()

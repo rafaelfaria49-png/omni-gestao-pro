@@ -208,7 +208,7 @@ export function montarAvisos(fiscal?: EvidenciaFiscalPacote | null): string[] {
     "Não é fechamento oficial, snapshot nem apuração contábil/fiscal.",
     "Dados minimizados: sem nomes, documentos, contatos ou observações livres — apenas IDs técnicos, códigos, valores, datas e status.",
     xmlAviso,
-    "Documentos anexos ainda não têm domínio real (chegam após GOALs 009/010).",
+    "Documentos anexos não foram incluídos neste pacote; isso é específico deste pacote e não indica se há ou não documentos no acervo do Contador. Os documentos reais são gerenciados pelo domínio Documentos.",
   ]
 }
 
@@ -316,13 +316,14 @@ function pendenciasMd(entrada: EntradaConteudoPacote): string {
 }
 
 const PLACEHOLDER_DOCUMENTOS = [
-  "# Documentos — nenhum documento foi incluído nesta fase",
+  "# Documentos — nenhum documento foi incluído neste pacote",
   "",
-  "Esta pasta está intencionalmente **vazia de anexos**. A ausência de arquivos aqui",
-  "**não prova** que a loja não possua documentos — apenas que o domínio real de",
-  "documentos do Contador ainda não existe.",
+  "Este pacote não contém anexos de documentos. A ausência de anexos no ZIP é específica",
+  "deste pacote e não indica se há ou não documentos no acervo do Contador para esta",
+  "competência.",
   "",
-  "O domínio de documentos chega depois dos GOALs 009/010.",
+  "Os documentos reais são gerenciados pelo domínio Documentos. Este arquivo apenas",
+  "registra que nenhum anexo foi incluído neste pacote.",
   "",
 ].join("\n")
 
@@ -386,7 +387,7 @@ export function montarArquivosConteudo(entrada: EntradaConteudoPacote): ArquivoP
     csvFonte("02-FINANCEIRO/contas_pagar.csv", "contas_pagar", "Títulos a pagar em aberto com vencimento na competência (posição atual).", csvTitulos(d.contasPagar.linhas), d.contasPagar),
     csvFonte("03-CAIXA/sessoes.csv", "sessoes", "Sessões de caixa da competência.", csvSessoes(d), d.sessoes),
     csvFonte("03-CAIXA/operacoes.csv", "operacoes", "Operações de caixa (sangria/suprimento/…).", csvOperacoes(d), d.operacoes),
-    { caminho: "04-DOCUMENTOS/LEIA-ME.md", categoria: "placeholder", fonte: "documentos", descricao: "Placeholder honesto: documentos não incluídos.", conteudo: PLACEHOLDER_DOCUMENTOS },
+    { caminho: "04-DOCUMENTOS/LEIA-ME.md", categoria: "placeholder", fonte: "documentos", descricao: "Placeholder honesto: documentos não incluídos neste pacote.", conteudo: PLACEHOLDER_DOCUMENTOS },
     ...arquivosXml(entrada.fiscal),
   ]
 }

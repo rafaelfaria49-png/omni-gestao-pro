@@ -15,6 +15,7 @@ import {
   type PacoteReaderClient,
 } from "./carregar-fontes"
 import { montarConteudoPacote } from "./builder"
+import { montarAvisos } from "./fontes"
 import { montarCsv, numero, texto } from "./csv"
 import {
   assertRegistrosFonte,
@@ -270,6 +271,40 @@ describe("Pacote 008B — manifesto v1 canônico", () => {
     expect(Array.isArray(man.pendencias)).toBe(true)
     expect(Array.isArray(man.itensNaoDisponiveis)).toBe(true)
     expect(man.avisos.join(" ")).toContain("CONTADOR_FISCAL_READER")
+  })
+})
+
+describe("Pacote 025 — copy de documentos e determinismo", () => {
+  it("README limita a ausência a este pacote e continua no manifesto", async () => {
+    const { conteudo } = await montar()
+    const readme = arq(conteudo, "04-DOCUMENTOS/LEIA-ME.md")
+
+    expect(readme).toContain("nenhum documento foi incluído neste pacote")
+    expect(readme).toContain("ausência de anexos no ZIP")
+    expect(readme).toContain("domínio Documentos")
+    const staleDomainClaim = ["domínio real de documentos", "ainda não existe"].join(" ")
+    const staleGoalsReference = ["GOALs", "009/010"].join(" ")
+    expect(readme).not.toContain(staleDomainClaim)
+    expect(readme).not.toContain(staleGoalsReference)
+    expect(readme).not.toMatch(/\bzero documentos\b/i)
+    expect(readme).not.toMatch(/loja não possu[ai] documentos/i)
+
+    const manifesto = JSON.parse(arq(conteudo, "manifest.json")) as {
+      arquivos: { caminho: string; sha256: string }[]
+    }
+    const item = manifesto.arquivos.find((arquivo) => arquivo.caminho === "04-DOCUMENTOS/LEIA-ME.md")
+    expect(item).toBeDefined()
+    expect(item?.sha256).toBe(sha256Hex(readme))
+
+    const avisos = montarAvisos().join("\n")
+    expect(avisos).not.toMatch(/GOALs 009\/010/i)
+    expect(avisos).not.toMatch(/domínio real.*não (existe|têm)/i)
+  })
+
+  it("montagem permanece determinística para a mesma entrada", async () => {
+    const primeiro = await montar()
+    const segundo = await montar()
+    expect(segundo.conteudo).toEqual(primeiro.conteudo)
   })
 })
 
