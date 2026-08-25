@@ -232,6 +232,26 @@ export async function cancelarNfceAutorizada(
   const existente = await ports.findEvento(identidade)
 
   if (existente && existente.status === StatusEventoFiscal.AUTORIZADO) {
+    let xmlAutorizado = nota.xmlAutorizado
+    let xmlAssinado = nota.xmlAssinado
+    if (nota.status !== StatusNotaFiscal.CANCELADA) {
+      const persistido = await ports.markNotaCancelada({
+        notaFiscalId: nota.id,
+        cStat: existente.cStat,
+        xMotivo: existente.xMotivo,
+        xmlAutorizadoAtual: nota.xmlAutorizado,
+        xmlAssinadoAtual: nota.xmlAssinado,
+      })
+      xmlAutorizado = persistido.xmlAutorizado
+      xmlAssinado = persistido.xmlAssinado
+    }
+    if (venda.fiscalStatus !== FiscalStatusVenda.CANCELADA_FISCAL) {
+      await ports.setVendaFiscalStatus({
+        vendaId: nota.vendaId,
+        de: String(venda.fiscalStatus ?? ""),
+        para: FiscalStatusVenda.CANCELADA_FISCAL,
+      })
+    }
     await ports.log({
       storeId,
       vendaId: nota.vendaId,
@@ -258,9 +278,9 @@ export async function cancelarNfceAutorizada(
       eventoId: existente.id,
       protocolo: existente.protocolo,
       cStat: existente.cStat,
-      xmlAutorizado: nota.xmlAutorizado,
-      xmlAssinado: nota.xmlAssinado,
-      xmlAutorizadoAlterado: false,
+      xmlAutorizado,
+      xmlAssinado,
+      xmlAutorizadoAlterado: xmlAutorizado !== nota.xmlAutorizado,
       financeWriteCount: financeWriteCountOf(ports),
       guardia: null,
     }

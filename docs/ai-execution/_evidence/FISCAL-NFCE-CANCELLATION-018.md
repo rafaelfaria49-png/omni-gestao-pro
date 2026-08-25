@@ -17,3 +17,7 @@
 ## Homologação externa
 
 Janela H-9/H-10 `2026-08-24T18:00:00Z`–`18:10:00Z` expirada em 2026-08-25. Caminho interno pronto. Sem chamada SEFAZ real neste GOAL.
+
+## Revisão independente
+
+Família distinta (grok-4.5, read-only). Veredito **A**. P0/P1: nenhum. `FINANCE_WRITE_COUNT=0`.

@@ -219,6 +219,39 @@ describe("cancelarNfceAutorizada — serviço shipped", () => {
     expect(second.financeWriteCount).toBe(0)
   })
 
+  it("idempotência reconverge Nota/Venda se o evento já está AUTORIZADO e o reflexo faltou", async () => {
+    const ports = createPorts({
+      nota: notaAutorizada({ status: StatusNotaFiscal.AUTORIZADA }),
+      venda: { id: "venda-1", storeId: "loja-1", fiscalStatus: FiscalStatusVenda.AUTORIZADA },
+      eventos: [
+        {
+          id: "evt-1",
+          notaFiscalId: "nota-1",
+          tipo: TIPO_EVENTO_CANCELAMENTO,
+          sequencia: 1,
+          status: StatusEventoFiscal.AUTORIZADO,
+          protocolo: "135250000000099",
+          cStat: "101",
+          xMotivo: "Cancelamento de NF-e homologado",
+          justificativa: JUSTIFICATIVA,
+          xmlEvento: null,
+          xmlRetorno: null,
+        },
+      ],
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(true)
+    expect(r.idempotente).toBe(true)
+    expect(r.sequencia).toBe(1)
+    expect(ports.nota.status).toBe(StatusNotaFiscal.CANCELADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.CANCELADA_FISCAL)
+    expect(ports.nota.xmlAutorizado).toBe(XML_AUTORIZADO)
+    expect(ports.finance.__writeCount).toBe(0)
+  })
+
   it("duplicidade do mesmo evento reusa sequência 1 — não inventa 2", async () => {
     const ports = createPorts()
     await cancelarNfceAutorizada(
