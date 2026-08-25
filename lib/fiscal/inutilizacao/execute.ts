@@ -42,14 +42,8 @@ export async function executeInutilizacaoJob(
     }
   }
 
-  if (
-    payload.mark === INUTILIZACAO_MARK.INUTILIZADO &&
-    podeBaixarMarcacao({
-      cStat: payload.cStat,
-      protocolo: payload.protocolo,
-      simulado: dependencies.provider.simulado,
-    })
-  ) {
+  // Baixa local já definitiva: não revalida TProt contra o provider atual e não reenvia.
+  if (payload.mark === INUTILIZACAO_MARK.INUTILIZADO) {
     return {
       kind: "success",
       code: "ja_inutilizada",
@@ -69,11 +63,7 @@ export async function executeInutilizacaoJob(
     : null
   if (
     existingEvento?.status === "AUTORIZADO" &&
-    podeBaixarMarcacao({
-      cStat: existingEvento.cStat,
-      protocolo: existingEvento.protocolo,
-      simulado: dependencies.provider.simulado,
-    })
+    String(existingEvento.protocolo ?? "").trim() !== ""
   ) {
     const now = dependencies.now?.() ?? new Date()
     const baixado: typeof payload = {
