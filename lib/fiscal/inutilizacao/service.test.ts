@@ -53,6 +53,7 @@ function createMemory(): InutilizacaoPorts & {
   eventos: Map<string, { id: string; status: string; protocolo: string | null; cStat: string | null }>
   vendaStatus: string
   numbers: number[]
+  configUf: string
 } {
   const jobs = new Map<string, InutilizacaoJobRow>()
   const notas = new Map<string, InutilizacaoNotaRow>()
@@ -67,6 +68,7 @@ function createMemory(): InutilizacaoPorts & {
     eventos,
     vendaStatus: "REJEITADA",
     numbers: [] as number[],
+    configUf: "SP",
   }
   const ports: InutilizacaoPorts = {
     async findJobByDedupe({ storeId, dedupeKey }) {
@@ -146,6 +148,12 @@ function createMemory(): InutilizacaoPorts & {
       old.vigente = true
       return true
     },
+    async clearSuccessorNumero({ notaFiscalId, expectedNumero }) {
+      const n = notas.get(notaFiscalId)
+      if (!n || n.numero !== expectedNumero || !n.vigente) return false
+      n.numero = null
+      return true
+    },
     async createReissueNota({ vendaId, storeId, origem, localKey }) {
       const existing = [...notas.values()].find((n) => n.localKey === localKey)
       if (existing) return { id: existing.id, localKey }
@@ -169,7 +177,12 @@ function createMemory(): InutilizacaoPorts & {
       return true
     },
     async findConfig() {
-      return { cnpj: "11222333000181", uf: "SP", ambiente: "HOMOLOGACAO", modeloFiscal: "NFCE" }
+      return {
+        cnpj: "11222333000181",
+        uf: state.configUf,
+        ambiente: "HOMOLOGACAO",
+        modeloFiscal: "NFCE",
+      }
     },
     async upsertEmissionJob({ notaFiscalId }) {
       return { id: `job-em-${notaFiscalId}`, created: true }
@@ -214,6 +227,30 @@ function numberingPorts(notas: Map<string, InutilizacaoNotaRow>, start = 10): Fi
       return { ok: true }
     },
   }
+}
+
+function sefazHomologadaProvider(cUFSeen?: string[]): FiscalProvider {
+  return sefazLikeProvider(async (params) => {
+    cUFSeen?.push(String(params.cUF ?? ""))
+    return {
+      ok: true,
+      operacao: "inutilizar",
+      resultado: "ok",
+      simulado: false,
+      provider: "SEFAZ_DIRETO",
+      ambiente: "HOMOLOGACAO",
+      statusNota: null,
+      dados: {
+        cStat: "102",
+        protocolo: "135260000000001",
+        xMotivo: "Inutilizacao de numero homologado",
+      },
+      mensagem: "Inutilização homologada.",
+      pendencias: [],
+      erros: [],
+      eventos: [],
+    }
+  })
 }
 
 function sefazLikeProvider(inutilizar: FiscalProvider["inutilizar"]): FiscalProvider {
@@ -370,7 +407,7 @@ describe("executeInutilizacaoJob", () => {
     if (!enq.ok) return
     const first = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
       ports: mem,
-      provider: stubHomologacaoProvider,
+      provider: sefazHomologadaProvider(),
     })
     expect(first.kind).toBe("success")
     expect(first.code).toBe("inutilizacao_homologada")
@@ -389,7 +426,37 @@ describe("executeInutilizacaoJob", () => {
     expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
   })
 
-  it("não reenvia à SEFAZ quando a marca já é INUTILIZADO com protocolo stub", async () => {
+  it("stub/simulado não baixa marca nem autoriza EventoFiscal", async () => {
+    const mem = createMemory()
+    const enq = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 31,
+        numeroFinal: 31,
+        justificativa: JUST,
+        motivo: "rejeicao_definitiva",
+        operador: "op",
+      },
+      mem,
+    )
+    expect(enq.ok).toBe(true)
+    if (!enq.ok) return
+    const result = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
+      ports: mem,
+      provider: stubHomologacaoProvider,
+    })
+    expect(result.kind).toBe("terminal")
+    expect(result.code).toBe("inutilizacao_simulada_nao_autoritativa")
+    expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.A_INUTILIZAR)
+    expect(mem.eventos.get("nf-1")?.status).not.toBe("AUTORIZADO")
+    expect(mem.logs.some((l) => l.acao === "fiscal.inutilizacao.homologada")).toBe(false)
+    expect(mem.logs.some((l) => l.acao === "fiscal.inutilizacao.simulada_nao_autoritativa")).toBe(true)
+  })
+
+  it("não reenvia à SEFAZ quando a marca já é INUTILIZADO", async () => {
     const mem = createMemory()
     const enq = await enqueueInutilizacao(
       {
@@ -409,12 +476,10 @@ describe("executeInutilizacaoJob", () => {
     if (!enq.ok) return
     const first = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
       ports: mem,
-      provider: stubHomologacaoProvider,
+      provider: sefazHomologadaProvider(),
     })
     expect(first.kind).toBe("success")
-    const payload = asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)!
-    expect(payload.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
-    expect(payload.protocolo?.startsWith("SIM-")).toBe(true)
+    expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
 
     let sefazHits = 0
     const second = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
@@ -428,10 +493,9 @@ describe("executeInutilizacaoJob", () => {
     expect(second.kind).toBe("success")
     expect(second.code).toBe("ja_inutilizada")
     expect(second.externalTransmissionAttempted).toBe(false)
-    expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
   })
 
-  it("EventoFiscal AUTORIZADO com protocolo stub baixa a marca sem reenviar à SEFAZ", async () => {
+  it("EventoFiscal AUTORIZADO com TProt baixa a marca sem reenviar", async () => {
     const mem = createMemory()
     const enq = await enqueueInutilizacao(
       {
@@ -452,7 +516,7 @@ describe("executeInutilizacaoJob", () => {
     mem.eventos.set("nf-1", {
       id: "ev-1",
       status: "AUTORIZADO",
-      protocolo: "SIM-INUT-32",
+      protocolo: "135260000000001",
       cStat: "102",
     })
     let sefazHits = 0
@@ -467,6 +531,156 @@ describe("executeInutilizacaoJob", () => {
     expect(result.kind).toBe("success")
     expect(result.code).toBe("ja_inutilizada")
     expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
+  })
+
+  it("mapeia UF para cUF IBGE e recusa UF inválida sem transmitir", async () => {
+    const seen: string[] = []
+    const memSp = createMemory()
+    memSp.configUf = "SP"
+    const enqSp = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 0,
+        numeroInicial: 1,
+        numeroFinal: 1,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      memSp,
+    )
+    expect(enqSp.ok).toBe(true)
+    if (!enqSp.ok) return
+    await executeInutilizacaoJob(jobFromRow(memSp.jobs.get(enqSp.jobId)!), {
+      ports: memSp,
+      provider: sefazHomologadaProvider(seen),
+    })
+    const memRj = createMemory()
+    memRj.configUf = "RJ"
+    const enqRj = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 2,
+        numeroFinal: 2,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      memRj,
+    )
+    expect(enqRj.ok).toBe(true)
+    if (!enqRj.ok) return
+    await executeInutilizacaoJob(jobFromRow(memRj.jobs.get(enqRj.jobId)!), {
+      ports: memRj,
+      provider: sefazHomologadaProvider(seen),
+    })
+    const memDf = createMemory()
+    memDf.configUf = "DF"
+    const enqDf = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 3,
+        numeroFinal: 3,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      memDf,
+    )
+    expect(enqDf.ok).toBe(true)
+    if (!enqDf.ok) return
+    await executeInutilizacaoJob(jobFromRow(memDf.jobs.get(enqDf.jobId)!), {
+      ports: memDf,
+      provider: sefazHomologadaProvider(seen),
+    })
+    expect(seen).toEqual(["35", "33", "53"])
+
+    let hits = 0
+    const memBad = createMemory()
+    memBad.configUf = "ZZ"
+    const enqBad = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 4,
+        numeroFinal: 4,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      memBad,
+    )
+    expect(enqBad.ok).toBe(true)
+    if (!enqBad.ok) return
+    const bad = await executeInutilizacaoJob(jobFromRow(memBad.jobs.get(enqBad.jobId)!), {
+      ports: memBad,
+      provider: sefazLikeProvider(async () => {
+        hits += 1
+        throw new Error("não deveria transmitir com UF inválida")
+      }),
+    })
+    expect(hits).toBe(0)
+    expect(bad.code).toBe("uf_invalida")
+  })
+
+  it("TSerie aceita 0 e 999 e recusa série inválida", async () => {
+    const mem = createMemory()
+    const zero = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 0,
+        numeroInicial: 1,
+        numeroFinal: 1,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      mem,
+    )
+    const max = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-2",
+        serie: 999,
+        numeroInicial: 1,
+        numeroFinal: 1,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      mem,
+    )
+    const invalid = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-3",
+        serie: 1000,
+        numeroInicial: 1,
+        numeroFinal: 1,
+        justificativa: JUST,
+        motivo: "admin",
+        operador: "op",
+      },
+      mem,
+    )
+    expect(zero.ok).toBe(true)
+    expect(max.ok).toBe(true)
+    expect(invalid.ok).toBe(false)
+    if (!invalid.ok) expect(invalid.code).toBe("parametros_invalidos")
   })
 
   it("falha do pedido preserva a marca A_INUTILIZAR", async () => {
@@ -538,7 +752,7 @@ describe("número jamais retorna ao pool", () => {
     if (!enq.ok) return
     await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
       ports: mem,
-      provider: stubHomologacaoProvider,
+      provider: sefazHomologadaProvider(),
     })
 
     mem.notas.set("nf-new", {
@@ -603,6 +817,53 @@ describe("rejeição → inutilização → reemissão", () => {
     expect(neu.localKey).not.toBe(old.localKey)
     expect(mem.vendaStatus).toBe("PENDENTE")
     expect(mem.jobs.size).toBeGreaterThanOrEqual(1)
+  })
+
+  it("numero_reutilizado avança para sucessor e não devolve o número ao pool", async () => {
+    const mem = createMemory()
+    mem.notas.set("nf-old", {
+      id: "nf-old",
+      storeId: "loja-1",
+      vendaId: "venda-1",
+      status: "REJEITADA",
+      vigente: true,
+      modelo: "NFCE",
+      ambiente: "HOMOLOGACAO",
+      serie: 1,
+      numero: 5,
+      localKey: "nfce-snapshot:loja-1:venda-1",
+      snapshotEmitente: {},
+      snapshotDestinatario: {},
+      snapshotPagamento: {},
+      valorTotal: 10,
+      valorDesconto: 0,
+      valorFrete: 0,
+      valorTotalTributos: 0,
+    })
+    const numbering = numberingPorts(mem.notas, 5)
+    const first = await reemitirVendaAposRejeicao(
+      { storeId: "loja-1", vendaId: "venda-1", operador: "op", justificativa: JUST },
+      mem,
+      numbering,
+    )
+    expect(first.ok).toBe(true)
+    if (!first.ok) return
+    expect(first.oldNumero).toBe(5)
+    expect(first.newNumero).toBe(6)
+    expect(mem.notas.get("nf-old")?.numero).toBe(5)
+    expect(mem.notas.get(first.newNotaId)?.numero).toBe(6)
+    expect(mem.notas.get("nf-old")?.vigente).toBe(false)
+    expect(mem.notas.get(first.newNotaId)?.vigente).toBe(true)
+
+    const again = await reemitirVendaAposRejeicao(
+      { storeId: "loja-1", vendaId: "venda-1", operador: "op", justificativa: JUST },
+      mem,
+      numbering,
+    )
+    expect(again.ok).toBe(false)
+    if (!again.ok) expect(again.code).toBe("status_incompativel")
+    expect(mem.notas.get(first.newNotaId)?.numero).toBe(6)
+    expect(mem.notas.get("nf-old")?.numero).toBe(5)
   })
 })
 

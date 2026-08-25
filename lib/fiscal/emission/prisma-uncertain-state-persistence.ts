@@ -6,6 +6,7 @@ import { resolveXmlStorageMirror } from "../storage/mirror-vault"
 import type { XmlStorageMirror } from "../storage/types"
 import { enqueueInutilizacao, JUSTIFICATIVA_REJEICAO_PADRAO } from "../inutilizacao/enqueue"
 import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
+import { serieInutilizacaoValida } from "../inutilizacao/validation"
 import {
   AuthorizedDivergenceError,
   type FiscalDocumentLocator,
@@ -676,8 +677,8 @@ export function createPrismaUncertainStatePersistence(
       if (
         requiresInutilizacao &&
         Number.isInteger(document.serie) &&
+        serieInutilizacaoValida(document.serie) &&
         Number.isInteger(document.numero) &&
-        document.serie > 0 &&
         document.numero > 0
       ) {
         try {

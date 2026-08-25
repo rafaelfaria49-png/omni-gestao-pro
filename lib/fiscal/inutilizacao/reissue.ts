@@ -101,10 +101,22 @@ export async function reemitirVendaAposRejeicao(
     return { ok: false, code: "conflito_concorrente", error: "Não foi possível abrir a nova NotaFiscal vigente." }
   }
 
-  const allocation = await allocateFiscalNumber(
-    { storeId, notaFiscalId: created.id },
-    numbering,
-  )
+  const MAX_SUCCESSOR = 8
+  let allocation = await allocateFiscalNumber({ storeId, notaFiscalId: created.id }, numbering)
+  for (let attempt = 0; attempt < MAX_SUCCESSOR; attempt++) {
+    if (!allocation.ok) break
+    if (allocation.numero !== oldNumero) break
+    const cleared = await ports.clearSuccessorNumero({
+      storeId,
+      notaFiscalId: created.id,
+      expectedNumero: oldNumero,
+    })
+    if (!cleared) break
+    allocation = await allocateFiscalNumber(
+      { storeId, notaFiscalId: created.id, maxTentativas: 3 },
+      numbering,
+    )
+  }
   if (!allocation.ok) {
     await ports.restoreRejectedVigente({
       storeId,
@@ -124,7 +136,7 @@ export async function reemitirVendaAposRejeicao(
     return {
       ok: false,
       code: "numero_reutilizado",
-      error: "A reemissão tentou reutilizar o número consumido.",
+      error: "A reemissão tentou reutilizar o número consumido após esgotar o sucessor.",
     }
   }
 

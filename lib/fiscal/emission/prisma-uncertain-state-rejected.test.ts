@@ -180,6 +180,22 @@ describe("createPrismaUncertainStatePersistence.markRejected", () => {
     expect(payload?.numeroFinal).toBe(19)
   })
 
+  it("série 0 (TSerie) também enfileira INUTILIZACAO após REJEITADA", async () => {
+    const client = createRejectClient()
+    const persistence = createPrismaUncertainStatePersistence(client as never)
+    await persistence.markRejected({
+      document: { ...document, serie: 0 },
+      result: { outcome: "REJECTED", cStat: "215", xMotivo: "Falha de schema" },
+      now: new Date("2026-08-25T12:00:00.000Z"),
+      source: "CONSULTATION",
+      requiresInutilizacao: true,
+    })
+    const snap = client.snapshot()
+    const inut = snap.jobs.find((j: Row) => j.tipo === "INUTILIZACAO")
+    expect(inut).toBeTruthy()
+    expect(asInutilizacaoPayload(inut?.payload)?.serie).toBe(0)
+  })
+
   it("falha no enqueue não desfaz a rejeição já commitada", async () => {
     const client = createRejectClient({ failEnqueue: true })
     const persistence = createPrismaUncertainStatePersistence(client as never)

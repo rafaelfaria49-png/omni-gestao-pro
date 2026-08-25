@@ -64,6 +64,10 @@ describe("validateInutilizacaoPedido", () => {
     expect(r.issues.some((i) => i.code === "serie_invalida")).toBe(true)
   })
 
+  it("aceita série 0 (TSerie)", () => {
+    expect(validateInutilizacaoPedido(pedido({ serie: "0" })).ok).toBe(true)
+  })
+
   it("rejeita modelo incompatível com NFC-e", () => {
     const r = validateInutilizacaoPedido(pedido({ modelo: "55" }))
     expect(r.ok).toBe(false)

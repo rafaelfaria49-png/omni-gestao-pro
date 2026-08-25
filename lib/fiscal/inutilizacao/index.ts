@@ -4,7 +4,9 @@ export {
 export {
   validateInutilizacaoPedido,
   normalizarJustificativa,
+  serieInutilizacaoValida,
 } from "./validation"
+export { assertInutilizacaoXmlDsig } from "./xmldsig-structure"
 export {
   montarIdInutilizacao,
   idConferePedido,

@@ -6,7 +6,7 @@
  */
 
 import { AmbienteFiscal, FiscalProviderTipo, StatusNotaFiscal } from "@/generated/prisma"
-import { buildSefazSoap12Envelope } from "../provider/sefaz/sefaz-envelope"
+import { buildSefazSoap12Envelope, extractFiscalBytes } from "../provider/sefaz/sefaz-envelope"
 import { selectSefazEndpoint } from "../provider/sefaz/sefaz-endpoint-catalog"
 import type { SefazTransport } from "../provider/sefaz/sefaz-transport.types"
 import type {
@@ -16,9 +16,15 @@ import type {
 } from "../provider/types"
 import { buildInutilizacaoXml } from "./xml-builder"
 import { parseInutilizacaoResponse } from "./response-parser"
-import { INUTILIZACAO_JUSTIFICATIVA_MAX, INUTILIZACAO_JUSTIFICATIVA_MIN } from "./types"
+import {
+  INUTILIZACAO_JUSTIFICATIVA_MAX,
+  INUTILIZACAO_JUSTIFICATIVA_MIN,
+  TCOD_UF_IBGE,
+  TSERIE_PATTERN,
+} from "./types"
 import { signInutilizacaoXml } from "./sign-boundary"
 import type { FiscalCertificateMaterial, SignNfceOptions } from "../signing/signer.types"
+import { assertInutilizacaoXmlDsig } from "./xmldsig-structure"
 
 /** Assina o `inutNFe` antes do envelope. Sem isto o adapter recusa o envio. */
 export type InutilizacaoSignPort = (xml: string) => string | Promise<string>
@@ -31,8 +37,12 @@ export function createInutilizacaoXmlSigner(
   return (xml) => signInutilizacaoXml(xml, certificado, senha, options).xml
 }
 
-function xmlAssinadoComDsig(xml: string): boolean {
-  return xml.includes("<Signature") && xml.includes("http://www.w3.org/2000/09/xmldsig#")
+function bytesIguais(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
 }
 
 function erro(code: FiscalProviderError["code"], mensagem: string, campo?: string): FiscalProviderError {
@@ -75,8 +85,8 @@ export async function executarInutilizacaoSefaz(input: {
       ),
     )
   }
-  if (!Number.isInteger(serie) || serie < 0) {
-    erros.push(erro("parametros_invalidos", "Série inválida.", "serie"))
+  if (!Number.isInteger(serie) || !TSERIE_PATTERN.test(String(serie))) {
+    erros.push(erro("parametros_invalidos", "Série inválida (TSerie: 0 a 999).", "serie"))
   }
   if (!Number.isInteger(ini) || !Number.isInteger(fim) || ini <= 0 || fim < ini) {
     erros.push(erro("parametros_invalidos", "Faixa de numeração inválida.", "numeroInicial"))
@@ -121,7 +131,23 @@ export async function executarInutilizacaoSefaz(input: {
   }
 
   const cnpj = digits(texto(params.cnpj))
-  const cUF = texto(params.cUF) || "35"
+  const cUF = texto(params.cUF)
+  if (!(TCOD_UF_IBGE as readonly string[]).includes(cUF)) {
+    return {
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "rejeitado",
+      simulado: false,
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      ambiente,
+      statusNota: null,
+      dados: null,
+      mensagem: "cUF ausente ou inválido; envio recusado.",
+      pendencias: [],
+      erros: [erro("parametros_invalidos", "cUF deve ser código IBGE de UF.", "cUF")],
+      eventos: [],
+    }
+  }
   const ano = texto(params.ano) || String(new Date().getFullYear()).slice(-2)
   const xml = cnpj
     ? buildInutilizacaoXml({
@@ -214,7 +240,8 @@ export async function executarInutilizacaoSefaz(input: {
       eventos: [],
     }
   }
-  if (!xmlAssinadoComDsig(xmlAssinado)) {
+  const dsig = assertInutilizacaoXmlDsig(xmlAssinado)
+  if (!dsig.ok) {
     return {
       ok: false,
       operacao: "inutilizar",
@@ -224,9 +251,9 @@ export async function executarInutilizacaoSefaz(input: {
       ambiente,
       statusNota: null,
       dados: null,
-      mensagem: "XML de inutilização assinado não contém Signature XMLDSig.",
+      mensagem: dsig.mensagem,
       pendencias: [],
-      erros: [erro("erro_interno", "XMLDSig ausente após a assinatura.")],
+      erros: [erro("erro_interno", dsig.mensagem)],
       eventos: [],
     }
   }
@@ -249,6 +276,23 @@ export async function executarInutilizacaoSefaz(input: {
       mensagem: envelope.mensagem,
       pendencias: [],
       erros: [erro("erro_interno", envelope.mensagem)],
+      eventos: [],
+    }
+  }
+  const fiscalNoSoap = extractFiscalBytes(envelope.envelope)
+  if (!bytesIguais(fiscalNoSoap, exactBytes)) {
+    return {
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "erro",
+      simulado: false,
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      ambiente,
+      statusNota: null,
+      dados: null,
+      mensagem: "Bytes assinados divergem do payload fiscal no envelope SOAP.",
+      pendencias: [],
+      erros: [erro("erro_interno", "Payload SOAP não é o XML assinado.")],
       eventos: [],
     }
   }
