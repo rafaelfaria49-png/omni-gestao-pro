@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma"
 
 import { resolveXmlStorageMirror } from "../storage/mirror-vault"
 import type { XmlStorageMirror } from "../storage/types"
+import { enqueueInutilizacao, JUSTIFICATIVA_REJEICAO_PADRAO } from "../inutilizacao/enqueue"
+import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
 import {
   AuthorizedDivergenceError,
   type FiscalDocumentLocator,
@@ -658,7 +660,7 @@ export function createPrismaUncertainStatePersistence(
             // mas NÃO pede inutilização, e afirmar o contrário no log contradiria o próprio
             // `detalhe.requiresInutilizacao` do mesmo evento.
             mensagem: requiresInutilizacao
-              ? "Número consumido; não reutilizar. Inutilização futura no GOAL-019."
+              ? "Número consumido; não reutilizar. Job INUTILIZACAO enfileirado."
               : "Número consumido; não reutilizar. Inutilização NÃO se aplica a esta rejeição.",
             operador: "fiscal-goal-012",
             detalhe: {
@@ -669,6 +671,29 @@ export function createPrismaUncertainStatePersistence(
             },
           },
         })
+        if (
+          requiresInutilizacao &&
+          Number.isInteger(document.serie) &&
+          Number.isInteger(document.numero) &&
+          document.serie > 0 &&
+          document.numero > 0
+        ) {
+          await enqueueInutilizacao(
+            {
+              storeId: document.storeId,
+              vendaId: document.vendaId,
+              notaFiscalId: document.notaFiscalId,
+              serie: document.serie,
+              numeroInicial: document.numero,
+              numeroFinal: document.numero,
+              justificativa: JUSTIFICATIVA_REJEICAO_PADRAO,
+              motivo: "rejeicao_definitiva",
+              operador: "fiscal-goal-012",
+              now,
+            },
+            createPrismaInutilizacaoPorts(tx as never),
+          )
+        }
       })
     },
 

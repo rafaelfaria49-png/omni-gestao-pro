@@ -195,6 +195,11 @@ export type FiscalProviderInutilizacaoParams = {
   numeroInicial: number
   numeroFinal: number
   justificativa: string
+  /** Identidade da loja para o pedido `inutNFe` (adapter SEFAZ). */
+  cnpj?: string | null
+  cUF?: string | null
+  /** Ano com 2 dígitos (Tano). */
+  ano?: string | null
 }
 
 export type FiscalProviderStatusParams = {

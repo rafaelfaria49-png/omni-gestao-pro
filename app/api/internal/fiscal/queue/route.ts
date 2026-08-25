@@ -10,6 +10,8 @@ import {
   sanitizeFiscalQueueError,
   setFiscalQueuePause,
 } from "@/lib/fiscal/queue"
+import { solicitarInutilizacaoAdministrativa } from "@/lib/fiscal/inutilizacao/admin"
+import { createPrismaInutilizacaoPorts } from "@/lib/fiscal/inutilizacao/prisma-ports"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -132,6 +134,25 @@ export async function POST(request: Request) {
         actor: String(body.actor ?? ""),
         reason: String(body.reason ?? ""),
       })
+      return NextResponse.json({ ok: true, result })
+    }
+    if (action === "inutilizar") {
+      const result = await solicitarInutilizacaoAdministrativa(
+        {
+          storeId: String(body.storeId ?? ""),
+          vendaId: String(body.vendaId ?? ""),
+          notaFiscalId: body.notaFiscalId == null ? null : String(body.notaFiscalId),
+          serie: Number(body.serie),
+          numeroInicial: Number(body.numeroInicial),
+          numeroFinal: Number(body.numeroFinal),
+          justificativa: String(body.justificativa ?? body.reason ?? ""),
+          actor: String(body.actor ?? ""),
+        },
+        createPrismaInutilizacaoPorts(),
+      )
+      if (!result.ok) {
+        throw new FiscalQueueAdminError(result.code, result.error)
+      }
       return NextResponse.json({ ok: true, result })
     }
     return NextResponse.json({ ok: false, error: "acao_invalida" }, { status: 400 })

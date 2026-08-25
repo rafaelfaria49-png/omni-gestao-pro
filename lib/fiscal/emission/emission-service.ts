@@ -16,6 +16,8 @@ import { resolveFiscalProvider } from "../provider/resolver"
 import type { FiscalProvider, FiscalProviderConfigInput } from "../provider/types"
 import { allocateFiscalNumber } from "../numbering/allocate-fiscal-number"
 import { createPrismaFiscalNumberingPorts } from "../numbering/prisma-numbering-ports"
+import { enqueueInutilizacao, JUSTIFICATIVA_LACUNA_PADRAO } from "../inutilizacao/enqueue"
+import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
 import { runEmissionPipeline } from "./emission-pipeline"
 import { recordFiscalEmissionLog } from "./emission-log"
 import { reconstructSnapshotFromNota, type NotaFiscalRow } from "./snapshot-reader"
@@ -181,6 +183,26 @@ export async function emitirNotaFiscalVenda(input: EmissionInput): Promise<Emiss
     },
     allocateNumero: async (ctx) =>
       allocateFiscalNumber({ storeId: ctx.storeId, notaFiscalId: ctx.notaFiscalId ?? "" }, numberingPorts),
+    recordLacunasParaInutilizacao: async (lacunas) => {
+      const portsInut = createPrismaInutilizacaoPorts()
+      for (const gap of lacunas) {
+        if (!gap.requerInutilizacao) continue
+        await enqueueInutilizacao(
+          {
+            storeId: gap.storeId,
+            vendaId,
+            notaFiscalId: gap.notaFiscalId,
+            serie: gap.serie,
+            numeroInicial: gap.numero,
+            numeroFinal: gap.numero,
+            justificativa: JUSTIFICATIVA_LACUNA_PADRAO,
+            motivo: "lacuna_numeracao",
+            operador: operador ?? "fiscal-numbering",
+          },
+          portsInut,
+        )
+      }
+    },
   }
 
   // 6) Pipeline puro.
