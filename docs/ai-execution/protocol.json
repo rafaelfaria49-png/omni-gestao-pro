@@ -96,6 +96,11 @@
       "dir": "contador",
       "risk_tier": "MEDIO",
       "titulo": "<PREENCHER>"
+    },
+    "fiscal": {
+      "dir": "fiscal",
+      "risk_tier": "ALTO",
+      "titulo": "NFC-e / SEFAZ-SP (homologação)"
     }
   },
   "remote_layer": {
