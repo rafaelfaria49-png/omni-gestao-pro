@@ -221,8 +221,9 @@ describe("nenhum caller produtivo novo (GOAL-016D-C1)", () => {
     return encontrados.sort()
   }
 
-  it("os únicos importadores produtivos continuam sendo o barril e o provider direto", () => {
+  it("os únicos importadores produtivos são o barril, o provider direto e a inutilização", () => {
     expect(importadores()).toEqual([
+      "lib/fiscal/inutilizacao/sefaz-inutilizar.ts",
       "lib/fiscal/provider/sefaz/index.ts",
       "lib/fiscal/provider/sefaz/sefaz-direto-provider.ts",
     ])

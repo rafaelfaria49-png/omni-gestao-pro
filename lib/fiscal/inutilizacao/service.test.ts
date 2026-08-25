@@ -216,6 +216,22 @@ function numberingPorts(notas: Map<string, InutilizacaoNotaRow>, start = 10): Fi
   }
 }
 
+function sefazLikeProvider(inutilizar: FiscalProvider["inutilizar"]): FiscalProvider {
+  const inner = stubHomologacaoProvider
+  return {
+    tipo: "SEFAZ_DIRETO" as FiscalProvider["tipo"],
+    simulado: false,
+    validarConfiguracao: inner.validarConfiguracao.bind(inner),
+    validarSnapshot: inner.validarSnapshot.bind(inner),
+    prepararEmissao: inner.prepararEmissao.bind(inner),
+    emitir: inner.emitir.bind(inner),
+    consultar: inner.consultar.bind(inner),
+    cancelar: inner.cancelar.bind(inner),
+    statusServico: inner.statusServico.bind(inner),
+    inutilizar,
+  }
+}
+
 function failingProvider(cStat = "241"): FiscalProvider {
   const inner = stubHomologacaoProvider
   return {
@@ -370,6 +386,86 @@ describe("executeInutilizacaoJob", () => {
     })
     expect(second.kind).toBe("success")
     expect(second.code).toBe("ja_inutilizada")
+    expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
+  })
+
+  it("não reenvia à SEFAZ quando a marca já é INUTILIZADO com protocolo stub", async () => {
+    const mem = createMemory()
+    const enq = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 31,
+        numeroFinal: 31,
+        justificativa: JUST,
+        motivo: "rejeicao_definitiva",
+        operador: "op",
+      },
+      mem,
+    )
+    expect(enq.ok).toBe(true)
+    if (!enq.ok) return
+    const first = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
+      ports: mem,
+      provider: stubHomologacaoProvider,
+    })
+    expect(first.kind).toBe("success")
+    const payload = asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)!
+    expect(payload.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
+    expect(payload.protocolo?.startsWith("SIM-")).toBe(true)
+
+    let sefazHits = 0
+    const second = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
+      ports: mem,
+      provider: sefazLikeProvider(async () => {
+        sefazHits += 1
+        throw new Error("SEFAZ não deveria ser reinvocada após baixa local")
+      }),
+    })
+    expect(sefazHits).toBe(0)
+    expect(second.kind).toBe("success")
+    expect(second.code).toBe("ja_inutilizada")
+    expect(second.externalTransmissionAttempted).toBe(false)
+    expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
+  })
+
+  it("EventoFiscal AUTORIZADO com protocolo stub baixa a marca sem reenviar à SEFAZ", async () => {
+    const mem = createMemory()
+    const enq = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 32,
+        numeroFinal: 32,
+        justificativa: JUST,
+        motivo: "rejeicao_definitiva",
+        operador: "op",
+      },
+      mem,
+    )
+    expect(enq.ok).toBe(true)
+    if (!enq.ok) return
+    mem.eventos.set("nf-1", {
+      id: "ev-1",
+      status: "AUTORIZADO",
+      protocolo: "SIM-INUT-32",
+      cStat: "102",
+    })
+    let sefazHits = 0
+    const result = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
+      ports: mem,
+      provider: sefazLikeProvider(async () => {
+        sefazHits += 1
+        throw new Error("SEFAZ não deveria ser reinvocada com EventoFiscal AUTORIZADO")
+      }),
+    })
+    expect(sefazHits).toBe(0)
+    expect(result.kind).toBe("success")
+    expect(result.code).toBe("ja_inutilizada")
     expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
   })
 
