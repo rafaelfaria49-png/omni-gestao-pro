@@ -371,6 +371,26 @@ describe("adapter Prisma da fila fiscal", () => {
     expect(emit).not.toHaveBeenCalled()
   })
 
+  it("INUTILIZACAO com SEFAZ_DIRETO sem provider injetado falha fechado (sem stub silencioso)", async () => {
+    const state = casClient(jobRow({ tipo: "INUTILIZACAO" }))
+    state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue({
+      provider: "SEFAZ_DIRETO",
+      ambiente: "HOMOLOGACAO",
+      modeloFiscal: "NFCE",
+      fiscalEnabled: true,
+    })
+    const emit = vi.fn()
+    const ports = createPrismaFiscalQueueWorkerPorts(state.client as never, emit as never)
+    const result = await ports.execute(state.current())
+    expect(result).toMatchObject({
+      kind: "terminal",
+      code: "inutilizacao_provider_nao_configurado",
+      simulado: true,
+      externalTransmissionAttempted: false,
+    })
+    expect(emit).not.toHaveBeenCalled()
+  })
+
   it("configuração inválida continua bloqueada (ambiente, modelo, flag)", async () => {
     const emit = vi.fn()
     const goal012 = vi.fn()

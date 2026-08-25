@@ -660,7 +660,7 @@ export function createPrismaUncertainStatePersistence(
             // mas NÃO pede inutilização, e afirmar o contrário no log contradiria o próprio
             // `detalhe.requiresInutilizacao` do mesmo evento.
             mensagem: requiresInutilizacao
-              ? "Número consumido; não reutilizar. Job INUTILIZACAO enfileirado."
+              ? "Número consumido; não reutilizar. Inutilização será enfileirada após o commit."
               : "Número consumido; não reutilizar. Inutilização NÃO se aplica a esta rejeição.",
             operador: "fiscal-goal-012",
             detalhe: {
@@ -671,13 +671,15 @@ export function createPrismaUncertainStatePersistence(
             },
           },
         })
-        if (
-          requiresInutilizacao &&
-          Number.isInteger(document.serie) &&
-          Number.isInteger(document.numero) &&
-          document.serie > 0 &&
-          document.numero > 0
-        ) {
+      })
+      if (
+        requiresInutilizacao &&
+        Number.isInteger(document.serie) &&
+        Number.isInteger(document.numero) &&
+        document.serie > 0 &&
+        document.numero > 0
+      ) {
+        try {
           await enqueueInutilizacao(
             {
               storeId: document.storeId,
@@ -691,10 +693,24 @@ export function createPrismaUncertainStatePersistence(
               operador: "fiscal-goal-012",
               now,
             },
-            createPrismaInutilizacaoPorts(tx as never),
+            createPrismaInutilizacaoPorts(client as never),
           )
+        } catch {
+          await client.fiscalLog.create({
+            data: {
+              storeId: document.storeId,
+              vendaId: document.vendaId,
+              notaFiscalId: document.notaFiscalId,
+              nivel: "ERROR",
+              acao: "fiscal.inutilizacao.enqueue_failed_after_rejection",
+              mensagem:
+                "Rejeição persistida; enqueue de inutilização falhou e será retentado administrativamente.",
+              operador: "fiscal-goal-012",
+              detalhe: { serie: document.serie, numero: document.numero },
+            },
+          }).catch(() => undefined)
         }
-      })
+      }
     },
 
     authorizeExactRetransmission: async ({ document, now }) => {

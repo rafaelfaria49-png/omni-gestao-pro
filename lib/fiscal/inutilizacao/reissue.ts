@@ -90,31 +90,37 @@ export async function reemitirVendaAposRejeicao(
     return { ok: false, code: inutilizacao.code, error: inutilizacao.error }
   }
 
-  const demoted = await ports.demoteVigente({
-    storeId,
-    vendaId,
-    notaFiscalId: vigente.id,
-  })
-  if (!demoted) {
-    return { ok: false, code: "conflito_concorrente", error: "Não foi possível despromover a nota rejeitada." }
-  }
-
   const localKey = resolveReissueSnapshotLocalKey(storeId, vendaId, vigente.id)
-  const created = await ports.createReissueNota({
+  const created = await ports.swapReissueVigente({
     storeId,
     vendaId,
     origem: vigente,
     localKey,
   })
+  if (!created) {
+    return { ok: false, code: "conflito_concorrente", error: "Não foi possível abrir a nova NotaFiscal vigente." }
+  }
 
   const allocation = await allocateFiscalNumber(
     { storeId, notaFiscalId: created.id },
     numbering,
   )
   if (!allocation.ok) {
+    await ports.restoreRejectedVigente({
+      storeId,
+      vendaId,
+      rejectedNotaId: vigente.id,
+      newNotaId: created.id,
+    })
     return { ok: false, code: allocation.errorCode, error: allocation.mensagem }
   }
   if (allocation.numero === oldNumero) {
+    await ports.restoreRejectedVigente({
+      storeId,
+      vendaId,
+      rejectedNotaId: vigente.id,
+      newNotaId: created.id,
+    })
     return {
       ok: false,
       code: "numero_reutilizado",
