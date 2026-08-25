@@ -334,9 +334,15 @@ async function executeFiscalJob(
         externalTransmissionAttempted: false,
       }
     }
+    if (config.provider === "STUB_HOMOLOGACAO") {
+      return executeInutilizacaoJob(job, {
+        ports: createPrismaInutilizacaoPorts(client as never),
+        provider: stubHomologacaoProvider,
+      })
+    }
     return executeInutilizacaoJob(job, {
       ports: createPrismaInutilizacaoPorts(client as never),
-      provider: inutilizacaoProvider ?? stubHomologacaoProvider,
+      provider: inutilizacaoProvider as FiscalProvider,
     })
   }
   if (!["EMISSAO", "CONSULTA"].includes(job.tipo)) {
@@ -734,6 +740,14 @@ export function createPrismaFiscalQueueWorkerPorts(
  * injetados; a factory legada continua fail-closed para payload v2 sem wiring.
  * SEFAZ_DIRETO só alcança este executor — nunca o pipeline legado.
  */
+function asInutilizacaoProvider(
+  provider: UncertainStateJobExecutorDependencies["provider"],
+): FiscalProvider | undefined {
+  const candidate = provider as Partial<FiscalProvider>
+  if (typeof candidate.inutilizar !== "function") return undefined
+  return candidate as FiscalProvider
+}
+
 export function createPrismaGoal012FiscalQueueWorkerPorts(
   dependencies: UncertainStateJobExecutorDependencies,
   client: QueuePrismaClient = prisma as unknown as QueuePrismaClient,
@@ -742,5 +756,6 @@ export function createPrismaGoal012FiscalQueueWorkerPorts(
     client,
     emitirNotaFiscalVenda,
     createUncertainStateJobExecutor(dependencies),
+    asInutilizacaoProvider(dependencies.provider),
   )
 }

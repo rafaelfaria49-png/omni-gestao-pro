@@ -58,7 +58,10 @@ import {
   type SefazTransportErrorCode,
 } from "./sefaz-transport.types"
 import type { SefazServico } from "./sefaz-endpoint-catalog"
-import { executarInutilizacaoSefaz } from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
+import {
+  executarInutilizacaoSefaz,
+  type InutilizacaoSignPort,
+} from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
 
 const PROVIDER = FiscalProviderTipo.SEFAZ_DIRETO
 
@@ -114,6 +117,11 @@ export type SefazDiretoProviderOptions = {
   transport?: SefazTransport
   connectionTimeoutMs?: number
   totalDeadlineMs?: number
+  /**
+   * Assinatura XMLDSig do `inutNFe`. Sem isto `inutilizar` recusa o envio
+   * (o leiaute oficial exige Signature). Não abre cofre por conta própria.
+   */
+  signInutilizacaoXml?: InutilizacaoSignPort
 }
 
 function erro(code: FiscalProviderError["code"], mensagem: string): FiscalProviderError {
@@ -160,6 +168,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
   private readonly transport: SefazTransport
   private readonly connectionTimeoutMs: number
   private readonly totalDeadlineMs: number
+  private readonly signInutilizacaoXml: InutilizacaoSignPort | undefined
 
   constructor(options: SefazDiretoProviderOptions) {
     this.ports = options.ports
@@ -167,6 +176,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     this.connectionTimeoutMs =
       options.connectionTimeoutMs ?? SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS
     this.totalDeadlineMs = options.totalDeadlineMs ?? SEFAZ_DEFAULT_TOTAL_DEADLINE_MS
+    this.signInutilizacaoXml = options.signInutilizacaoXml
   }
 
   /**
@@ -410,6 +420,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       transport: this.transport,
       connectionTimeoutMs: this.connectionTimeoutMs,
       totalDeadlineMs: this.totalDeadlineMs,
+      signXml: this.signInutilizacaoXml,
     })
   }
 }

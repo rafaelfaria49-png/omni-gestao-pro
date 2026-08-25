@@ -26,6 +26,7 @@ type UncertainPrismaClient = {
   }
   fiscalEmissaoJob: {
     findFirst: (args: unknown) => Promise<unknown | null>
+    findUnique: (args: unknown) => Promise<unknown | null>
     update: (args: unknown) => Promise<unknown>
     updateMany: (args: unknown) => Promise<{ count: number }>
     upsert: (args: unknown) => Promise<unknown>

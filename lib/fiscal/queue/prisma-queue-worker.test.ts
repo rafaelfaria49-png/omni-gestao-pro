@@ -2,6 +2,7 @@ import { FiscalStatusVenda } from "@/generated/prisma"
 import { describe, expect, it, vi } from "vitest"
 import {
   createPrismaFiscalQueueWorkerPorts,
+  createPrismaGoal012FiscalQueueWorkerPorts,
   readFiscalQueuePauseSnapshot,
 } from "./prisma-queue-worker"
 import type { FiscalQueueJob } from "./queue.types"
@@ -69,9 +70,12 @@ function casClient(initial: FiscalQueueJob) {
     return { count: 1 }
   })
   const client = {
+    $transaction: async <T>(fn: (tx: never) => Promise<T>) => fn(client as never),
     fiscalEmissaoJob: {
       findMany: vi.fn(async () => [{ ...current }]),
       findUnique: vi.fn(async () => ({ ...current })),
+      findFirst: vi.fn(async () => ({ ...current })),
+      upsert: vi.fn(async () => ({ ...current })),
       updateMany,
     },
     fiscalLog: {
@@ -84,6 +88,20 @@ function casClient(initial: FiscalQueueJob) {
     },
     notaFiscal: {
       findFirst: vi.fn(async (): Promise<unknown | null> => null),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      create: vi.fn(),
+    },
+    notaFiscalItem: {
+      findMany: vi.fn(async () => []),
+      createMany: vi.fn(),
+    },
+    eventoFiscal: {
+      findFirst: vi.fn(async () => null),
+      create: vi.fn(async () => ({ id: "ev-1" })),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
+    venda: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
   }
   return { client, updateMany, current: () => current }
@@ -389,6 +407,78 @@ describe("adapter Prisma da fila fiscal", () => {
       externalTransmissionAttempted: false,
     })
     expect(emit).not.toHaveBeenCalled()
+  })
+
+  it("createPrismaGoal012FiscalQueueWorkerPorts injeta o provider no caminho INUTILIZACAO", async () => {
+    const state = casClient(
+      jobRow({
+        tipo: "INUTILIZACAO",
+        payload: {
+          version: 1,
+          operation: "INUTILIZACAO",
+          mark: "A_INUTILIZAR",
+          storeId: "store-matriz-fixture",
+          modelo: "NFCE",
+          ambiente: "HOMOLOGACAO",
+          serie: 1,
+          numeroInicial: 1,
+          numeroFinal: 1,
+          justificativa: "Numero NFC-e rejeitado pela SEFAZ; faixa inutilizada para nao reutilizar.",
+          motivo: "rejeicao_definitiva",
+          notaFiscalId: "nota-1",
+          vendaId: "venda-1",
+          protocolo: null,
+          cStat: null,
+          xMotivo: null,
+          inutilizadoEm: null,
+          requestedAt: "2026-08-25T00:00:00.000Z",
+          requestedBy: "op",
+        },
+      }),
+    )
+    state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue({
+      provider: "SEFAZ_DIRETO",
+      ambiente: "HOMOLOGACAO",
+      modeloFiscal: "NFCE",
+      fiscalEnabled: true,
+    })
+    const inutilizar = vi.fn(async () => ({
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "erro",
+      simulado: false,
+      provider: "SEFAZ_DIRETO",
+      ambiente: "HOMOLOGACAO",
+      statusNota: null,
+      dados: null,
+      mensagem: "assinatura recusada no teste",
+      pendencias: [],
+      erros: [],
+      eventos: [],
+    }))
+    const provider = {
+      simulado: false,
+      inutilizar,
+      transmit: vi.fn(),
+      consult: vi.fn(),
+    }
+    const ports = createPrismaGoal012FiscalQueueWorkerPorts(
+      {
+        persistence: {
+          load: vi.fn(),
+          persistBeforeTransmission: vi.fn(),
+          recordUncertainAndEnsureConsultation: vi.fn(),
+          markAuthorized: vi.fn(),
+          markRejected: vi.fn(),
+          authorizeExactRetransmission: vi.fn(),
+        } as never,
+        preparer: { prepare: vi.fn() },
+        provider: provider as never,
+      },
+      state.client as never,
+    )
+    await ports.execute(state.current())
+    expect(inutilizar).toHaveBeenCalled()
   })
 
   it("configuração inválida continua bloqueada (ambiente, modelo, flag)", async () => {

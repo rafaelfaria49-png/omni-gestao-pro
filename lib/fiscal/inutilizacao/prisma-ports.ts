@@ -172,13 +172,13 @@ export function createPrismaInutilizacaoPorts(
       return { job, created: !existingJob }
     },
     async updateJobPayload({ jobId, storeId, expectedMark, payload, status }) {
-      const current = await client.fiscalEmissaoJob.findFirst({
-        where: { id: jobId, storeId, tipo: "INUTILIZACAO" },
-      })
-      const currentPayload = asInutilizacaoPayload(record(current).payload)
-      if (!currentPayload || currentPayload.mark !== expectedMark) return false
       const updated = await client.fiscalEmissaoJob.updateMany({
-        where: { id: jobId, storeId, tipo: "INUTILIZACAO" },
+        where: {
+          id: jobId,
+          storeId,
+          tipo: "INUTILIZACAO",
+          payload: { path: ["mark"], equals: expectedMark },
+        },
         data: {
           payload,
           ...(status ? { status, concluidoEm: status === "CONCLUIDO" ? new Date() : undefined } : {}),
