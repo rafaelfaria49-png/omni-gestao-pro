@@ -63,7 +63,7 @@ const INCLUIDO: readonly string[] = [
 
 const NAO_INCLUIDO: readonly string[] = [
   "Notas fiscais (XML) — placeholder honesto se a leitura fiscal estiver off; XML autorizado/HOMOLOGACAO só com CONTADOR_FISCAL_READER=on e loja na allowlist",
-  "Documentos anexos — placeholder honesto (após GOAL 009/010)",
+  "Documentos anexos — não incluídos diretamente neste pacote",
   "Dados pessoais (nome, documento, contato) — minimizados",
 ]
 

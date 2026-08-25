@@ -19,6 +19,7 @@ const DIR = dirname(fileURLToPath(import.meta.url))
 const hubSrc = readFileSync(join(DIR, "contador-hub-preview.tsx"), "utf8")
 const realSrc = readFileSync(join(DIR, "contador-dados-reais.tsx"), "utf8")
 const dataSrc = readFileSync(join(DIR, "contador-preview-data.ts"), "utf8")
+const checklistBuilderSrc = readFileSync(join(DIR, "../../../lib/contador/fechamento/montar-checklist.ts"), "utf8")
 const legacySrc = readFileSync(join(DIR, "area-contador-pro.tsx"), "utf8")
 const checklistSrc = readFileSync(join(DIR, "contador-fechamento-checklist.tsx"), "utf8")
 
@@ -480,6 +481,27 @@ describe("Contador HUB — Pacote do Contador com download GET direto (GOAL 008B
     // Duas seções (Visão geral + Relatórios) reutilizam o mesmo estado.
     const usos = hubSrc.split("download={pacoteDownload}").length - 1
     expect(usos).toBe(2)
+  })
+})
+
+describe("Contador HUB — copies de Documentos sem referências históricas", () => {
+  const downloadSrc = readFileSync(join(DIR, "contador-pacote-download.tsx"), "utf8")
+  const fontes = [checklistBuilderSrc, downloadSrc].join("\n")
+  const staleCopies = [
+    ["domínio de documentos", " ainda não existe"].join(""),
+    ["Domínio de documentos", " — ainda não implementado"].join(""),
+    ["será implementado", " após o schema núcleo"].join(""),
+    ["após GOAL ", "009/010"].join(""),
+  ]
+
+  it("remove as quatro formulações stale das copies runtime", () => {
+    for (const stale of staleCopies) expect(fontes).not.toContain(stale)
+  })
+
+  it("preserva a semântica factual e conservadora", () => {
+    expect(checklistBuilderSrc).toContain("Documentos não avaliados neste sinal do checklist")
+    expect(checklistBuilderSrc).toContain("não consulta o acervo real do domínio Documentos")
+    expect(downloadSrc).toContain("Documentos anexos — não incluídos diretamente neste pacote")
   })
 })
 
