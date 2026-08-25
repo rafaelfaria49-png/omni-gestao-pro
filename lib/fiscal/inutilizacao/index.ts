@@ -67,5 +67,9 @@ export {
 } from "./reissue"
 export { solicitarInutilizacaoAdministrativa } from "./admin"
 export { createPrismaInutilizacaoPorts } from "./prisma-ports"
-export { executarInutilizacaoSefaz } from "./sefaz-inutilizar"
+export {
+  executarInutilizacaoSefaz,
+  createInutilizacaoXmlSigner,
+} from "./sefaz-inutilizar"
+export type { InutilizacaoSignPort } from "./sefaz-inutilizar"
 export type { InutilizacaoPorts, EnqueueInutilizacaoInput } from "./ports"

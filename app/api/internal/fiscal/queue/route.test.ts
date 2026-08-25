@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest"
 
 const h = vi.hoisted(() => ({
-  createPorts: vi.fn(() => ({ marker: "ports" })),
+  createPorts: vi.fn(() => ({ ports: { marker: "ports" } })),
   drain: vi.fn(async () => ({ acquired: 1, completed: 1 })),
   metrics: vi.fn(async () => ({ depth: 0 })),
   pause: vi.fn(async () => ({ globalPaused: true })),
@@ -20,7 +20,6 @@ vi.mock("@/lib/fiscal/queue", () => {
   }
   return {
     cancelFiscalQueueJob: h.cancel,
-    createPrismaFiscalQueueWorkerPorts: h.createPorts,
     drainFiscalQueue: h.drain,
     FiscalQueueAdminError,
     readFiscalQueueMetrics: h.metrics,
@@ -29,6 +28,10 @@ vi.mock("@/lib/fiscal/queue", () => {
     setFiscalQueuePause: h.pause,
   }
 })
+
+vi.mock("@/lib/fiscal/homologation/nfce-homologation-pilot-wiring", () => ({
+  createNfceHomologationPilotWiring: h.createPorts,
+}))
 
 import { GET, POST } from "./route"
 

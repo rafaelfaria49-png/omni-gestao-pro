@@ -67,7 +67,10 @@ import {
   type SefazTransportErrorCode,
 } from "./sefaz-transport.types"
 import type { SefazServico } from "./sefaz-endpoint-catalog"
-import { executarInutilizacaoSefaz } from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
+import {
+  executarInutilizacaoSefaz,
+  type InutilizacaoSignPort,
+} from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
 
 const PROVIDER = FiscalProviderTipo.SEFAZ_DIRETO
 
@@ -128,6 +131,11 @@ export type SefazDiretoProviderOptions = {
   signingPassphrase?: string
   /** Override de assinatura. Default: `signEventoCancelamentoXml` com `signingMaterial`. */
   signEvento?: (unsignedXml: string) => string | Promise<string>
+  /**
+   * Assinatura XMLDSig do `inutNFe`. Sem isto `inutilizar` recusa o envio
+   * (o leiaute oficial exige Signature). Não abre cofre por conta própria.
+   */
+  signInutilizacaoXml?: InutilizacaoSignPort
 }
 
 function erro(code: FiscalProviderError["code"], mensagem: string): FiscalProviderError {
@@ -177,6 +185,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
   private readonly signingMaterial: FiscalCertificateMaterial | null
   private readonly signingPassphrase: string
   private readonly signEvento: ((unsignedXml: string) => string | Promise<string>) | null
+  private readonly signInutilizacaoXml: InutilizacaoSignPort | undefined
 
   constructor(options: SefazDiretoProviderOptions) {
     this.ports = options.ports
@@ -187,6 +196,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     this.signingMaterial = options.signingMaterial ?? null
     this.signingPassphrase = options.signingPassphrase ?? ""
     this.signEvento = options.signEvento ?? null
+    this.signInutilizacaoXml = options.signInutilizacaoXml
   }
 
   /**
@@ -665,6 +675,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       transport: this.transport,
       connectionTimeoutMs: this.connectionTimeoutMs,
       totalDeadlineMs: this.totalDeadlineMs,
+      signXml: this.signInutilizacaoXml,
     })
   }
 }

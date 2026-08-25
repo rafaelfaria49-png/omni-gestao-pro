@@ -21,8 +21,14 @@ import type {
 import { SefazAdapterBlockedError, SefazDiretoProvider } from "./sefaz-direto-provider"
 import type { SefazGuardPorts } from "./sefaz-guards"
 import type { SefazTransport } from "./sefaz-transport.types"
+import { createInutilizacaoXmlSigner } from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
 import { loadCertificateMaterialFromPem } from "@/lib/fiscal/signing/nfce-signer"
 import { TEST_CERT_PEM, TEST_KEY_PLAIN_PEM } from "@/lib/fiscal/signing/__fixtures__/test-cert"
+
+const INUT_CERT = loadCertificateMaterialFromPem(TEST_KEY_PLAIN_PEM, TEST_CERT_PEM)
+const INUT_SIGN = createInutilizacaoXmlSigner(INUT_CERT, "", {
+  agora: new Date("2027-06-01T12:00:00.000Z"),
+})
 
 const LOJA_PILOTO = "store-piloto-real"
 const CHAVE = "3".repeat(44)
@@ -430,8 +436,21 @@ describe("P1 inutilizar — NFeInutilizacao4 via transporte injetado", () => {
     ano: "26",
   }
 
+  it("sem XMLDSig recusa o envio e não chama o transporte", async () => {
+    const transport: SefazTransport = { permiteRede: true, send: vi.fn() }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(false)
+    expect(r.mensagem).toMatch(/XMLDSig/i)
+    expect(r.dados?.cStat ?? null).not.toBe("102")
+    expect(transport.send).not.toHaveBeenCalled()
+  })
+
   it("transporte offline não inventa cStat 102", async () => {
-    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      signInutilizacaoXml: INUT_SIGN,
+    })
     const r = await provider.inutilizar(params)
     expect(r.ok).toBe(false)
     expect(r.dados?.cStat ?? null).not.toBe("102")
@@ -455,12 +474,18 @@ describe("P1 inutilizar — NFeInutilizacao4 via transporte injetado", () => {
         externalTransmissionAttempted: true as const,
       })),
     }
-    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: INUT_SIGN,
+    })
     const r = await provider.inutilizar(params)
     expect(r.ok).toBe(true)
     expect(r.dados?.cStat).toBe("102")
     expect(r.dados?.protocolo).toBe("135260000000001")
     expect(transport.send).toHaveBeenCalledTimes(1)
+    const sent = vi.mocked(transport.send).mock.calls[0]?.[0]
+    expect(new TextDecoder().decode(sent!.bodyBytes)).toContain("<Signature")
   })
 
   it("cStat 241 não baixa protocolo homologado", async () => {
@@ -479,7 +504,11 @@ describe("P1 inutilizar — NFeInutilizacao4 via transporte injetado", () => {
         externalTransmissionAttempted: true as const,
       })),
     }
-    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: INUT_SIGN,
+    })
     const r = await provider.inutilizar(params)
     expect(r.ok).toBe(false)
     expect(r.resultado).toBe("rejeitado")

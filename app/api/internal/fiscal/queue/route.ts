@@ -2,7 +2,6 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import {
   cancelFiscalQueueJob,
-  createPrismaFiscalQueueWorkerPorts,
   drainFiscalQueue,
   FiscalQueueAdminError,
   readFiscalQueueMetrics,
@@ -12,6 +11,7 @@ import {
 } from "@/lib/fiscal/queue"
 import { solicitarInutilizacaoAdministrativa } from "@/lib/fiscal/inutilizacao/admin"
 import { createPrismaInutilizacaoPorts } from "@/lib/fiscal/inutilizacao/prisma-ports"
+import { createNfceHomologationPilotWiring } from "@/lib/fiscal/homologation/nfce-homologation-pilot-wiring"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
           workerId,
           batchSize: Number(body.batchSize ?? 10),
         },
-        createPrismaFiscalQueueWorkerPorts(),
+        createNfceHomologationPilotWiring().ports,
       )
       return NextResponse.json({ ok: true, report })
     }

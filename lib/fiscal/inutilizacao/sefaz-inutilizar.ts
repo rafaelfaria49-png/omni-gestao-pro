@@ -17,6 +17,23 @@ import type {
 import { buildInutilizacaoXml } from "./xml-builder"
 import { parseInutilizacaoResponse } from "./response-parser"
 import { INUTILIZACAO_JUSTIFICATIVA_MAX, INUTILIZACAO_JUSTIFICATIVA_MIN } from "./types"
+import { signInutilizacaoXml } from "./sign-boundary"
+import type { FiscalCertificateMaterial, SignNfceOptions } from "../signing/signer.types"
+
+/** Assina o `inutNFe` antes do envelope. Sem isto o adapter recusa o envio. */
+export type InutilizacaoSignPort = (xml: string) => string | Promise<string>
+
+export function createInutilizacaoXmlSigner(
+  certificado: FiscalCertificateMaterial,
+  senha = "",
+  options: SignNfceOptions = {},
+): InutilizacaoSignPort {
+  return (xml) => signInutilizacaoXml(xml, certificado, senha, options).xml
+}
+
+function xmlAssinadoComDsig(xml: string): boolean {
+  return xml.includes("<Signature") && xml.includes("http://www.w3.org/2000/09/xmldsig#")
+}
 
 function erro(code: FiscalProviderError["code"], mensagem: string, campo?: string): FiscalProviderError {
   return { code, mensagem, campo: campo ?? null, origem: null }
@@ -35,6 +52,8 @@ export async function executarInutilizacaoSefaz(input: {
   transport: SefazTransport
   connectionTimeoutMs: number
   totalDeadlineMs: number
+  /** Obrigatório para enviar. Sem XMLDSig o pedido é recusado antes do SOAP. */
+  signXml?: InutilizacaoSignPort
 }): Promise<FiscalProviderResponse> {
   const params = input.params
   const ambiente = texto(params.contexto?.ambiente) || AmbienteFiscal.HOMOLOGACAO
@@ -119,10 +138,23 @@ export async function executarInutilizacaoSefaz(input: {
       })
     : null
 
-  let exactBytes = new Uint8Array()
-  if (xml?.ok) {
-    exactBytes = Uint8Array.from(new TextEncoder().encode(xml.xml))
-  } else if (xml && !xml.ok) {
+  if (!xml) {
+    return {
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "rejeitado",
+      simulado: false,
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      ambiente,
+      statusNota: null,
+      dados: null,
+      mensagem: "CNPJ da loja é obrigatório para montar o pedido de inutilização.",
+      pendencias: [],
+      erros: [erro("parametros_invalidos", "CNPJ da loja é obrigatório.", "cnpj")],
+      eventos: [],
+    }
+  }
+  if (!xml.ok) {
     return {
       ok: false,
       operacao: "inutilizar",
@@ -145,6 +177,61 @@ export async function executarInutilizacaoSefaz(input: {
     }
   }
 
+  if (!input.signXml) {
+    return {
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "erro",
+      simulado: false,
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      ambiente,
+      statusNota: null,
+      dados: null,
+      mensagem: "Pedido de inutilização sem XMLDSig; envio recusado.",
+      pendencias: [],
+      erros: [erro("erro_interno", "Assinatura XMLDSig obrigatória antes de NFeInutilizacao4.")],
+      eventos: [],
+    }
+  }
+
+  let xmlAssinado: string
+  try {
+    xmlAssinado = await input.signXml(xml.xml)
+  } catch (error) {
+    const mensagem = error instanceof Error ? error.message : "Falha ao assinar inutNFe."
+    return {
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "erro",
+      simulado: false,
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      ambiente,
+      statusNota: null,
+      dados: null,
+      mensagem,
+      pendencias: [],
+      erros: [erro("erro_interno", mensagem)],
+      eventos: [],
+    }
+  }
+  if (!xmlAssinadoComDsig(xmlAssinado)) {
+    return {
+      ok: false,
+      operacao: "inutilizar",
+      resultado: "erro",
+      simulado: false,
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      ambiente,
+      statusNota: null,
+      dados: null,
+      mensagem: "XML de inutilização assinado não contém Signature XMLDSig.",
+      pendencias: [],
+      erros: [erro("erro_interno", "XMLDSig ausente após a assinatura.")],
+      eventos: [],
+    }
+  }
+
+  const exactBytes = Uint8Array.from(new TextEncoder().encode(xmlAssinado))
   const envelope = buildSefazSoap12Envelope({
     servico: "NFeInutilizacao4",
     exactBytes,
