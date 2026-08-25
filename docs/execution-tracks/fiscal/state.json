@@ -1,0 +1,18 @@
+{
+  "aep": "1.0-R2",
+  "track": "fiscal",
+  "status": "RUNNING",
+  "risk_tier": "ALTO",
+  "current_goal": "FISCAL-NFCE-CANCELLATION-018",
+  "next_goal": null,
+  "bootstrap_commit": null,
+  "counters": {
+    "goals_done": 0,
+    "goals_blocked": 0,
+    "goals_imported": 0,
+    "ledger_lines": 0
+  },
+  "last_goal": null,
+  "last_result": null,
+  "last_ratified_at": null
+}
