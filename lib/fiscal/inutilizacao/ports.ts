@@ -121,6 +121,19 @@ export type InutilizacaoPorts = {
     vendaId: string
     notaFiscalId: string
   }): Promise<boolean>
+  /** Demote a rejeitada e cria a sucessora vigente na mesma transação. */
+  swapReissueVigente(input: {
+    storeId: string
+    vendaId: string
+    origem: InutilizacaoNotaRow
+    localKey: string
+  }): Promise<{ id: string; localKey: string } | null>
+  restoreRejectedVigente(input: {
+    storeId: string
+    vendaId: string
+    rejectedNotaId: string
+    newNotaId: string
+  }): Promise<boolean>
   createReissueNota(input: {
     storeId: string
     vendaId: string

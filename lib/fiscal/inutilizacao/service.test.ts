@@ -132,6 +132,20 @@ function createMemory(): InutilizacaoPorts & {
       nota.vigente = false
       return true
     },
+    async swapReissueVigente({ storeId, vendaId, origem, localKey }) {
+      const nota = notas.get(origem.id)
+      if (!nota || !nota.vigente || nota.status !== "REJEITADA") return null
+      nota.vigente = false
+      return ports.createReissueNota({ storeId, vendaId, origem, localKey })
+    },
+    async restoreRejectedVigente({ rejectedNotaId, newNotaId }) {
+      const neu = notas.get(newNotaId)
+      const old = notas.get(rejectedNotaId)
+      if (neu) neu.vigente = false
+      if (!old || old.status !== "REJEITADA") return false
+      old.vigente = true
+      return true
+    },
     async createReissueNota({ vendaId, storeId, origem, localKey }) {
       const existing = [...notas.values()].find((n) => n.localKey === localKey)
       if (existing) return { id: existing.id, localKey }

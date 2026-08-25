@@ -285,6 +285,30 @@ export function createPrismaInutilizacaoPorts(
       })
       return updated.count === 1
     },
+    async swapReissueVigente({ storeId, vendaId, origem, localKey }) {
+      return client.$transaction(async (tx) => {
+        const demoted = await tx.notaFiscal.updateMany({
+          where: { id: origem.id, storeId, vendaId, vigente: true, status: "REJEITADA" },
+          data: { vigente: false },
+        })
+        if (demoted.count !== 1) return null
+        const ports = createPrismaInutilizacaoPorts(tx)
+        return ports.createReissueNota({ storeId, vendaId, origem, localKey })
+      })
+    },
+    async restoreRejectedVigente({ storeId, vendaId, rejectedNotaId, newNotaId }) {
+      return client.$transaction(async (tx) => {
+        await tx.notaFiscal.updateMany({
+          where: { id: newNotaId, storeId, vendaId, vigente: true },
+          data: { vigente: false },
+        })
+        const restored = await tx.notaFiscal.updateMany({
+          where: { id: rejectedNotaId, storeId, vendaId, status: "REJEITADA", vigente: false },
+          data: { vigente: true },
+        })
+        return restored.count === 1
+      })
+    },
     async createReissueNota({ storeId, vendaId, origem, localKey }) {
       const existing = toNota(
         await client.notaFiscal.findFirst({

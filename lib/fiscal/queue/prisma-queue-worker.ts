@@ -296,7 +296,44 @@ async function executeFiscalJob(
   executeGoal012?: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>,
   inutilizacaoProvider?: FiscalProvider,
 ): Promise<FiscalQueueExecutionResult> {
+  const config = record(await client.configuracaoFiscalLoja.findUnique({
+    where: { storeId: job.storeId },
+    select: {
+      provider: true,
+      ambiente: true,
+      modeloFiscal: true,
+      fiscalEnabled: true,
+    },
+  }))
   if (job.tipo === "INUTILIZACAO") {
+    if (config.ambiente !== "HOMOLOGACAO" || config.modeloFiscal !== "NFCE") {
+      return {
+        kind: "terminal",
+        code: "contexto_simulado_obrigatorio",
+        mensagem: "Inutilização bloqueada: somente NFCE/HOMOLOGACAO.",
+        simulado: true,
+        externalTransmissionAttempted: false,
+      }
+    }
+    if (config.provider === "SEFAZ_DIRETO" && !inutilizacaoProvider) {
+      return {
+        kind: "terminal",
+        code: "inutilizacao_provider_nao_configurado",
+        mensagem:
+          "SEFAZ_DIRETO exige provider de inutilização injetado; stub silencioso é proibido.",
+        simulado: true,
+        externalTransmissionAttempted: false,
+      }
+    }
+    if (config.provider !== "STUB_HOMOLOGACAO" && config.provider !== "SEFAZ_DIRETO") {
+      return {
+        kind: "terminal",
+        code: "contexto_simulado_obrigatorio",
+        mensagem: "Inutilização bloqueada: provider da loja não suportado.",
+        simulado: true,
+        externalTransmissionAttempted: false,
+      }
+    }
     return executeInutilizacaoJob(job, {
       ports: createPrismaInutilizacaoPorts(client as never),
       provider: inutilizacaoProvider ?? stubHomologacaoProvider,
@@ -311,15 +348,6 @@ async function executeFiscalJob(
       externalTransmissionAttempted: false,
     }
   }
-  const config = record(await client.configuracaoFiscalLoja.findUnique({
-    where: { storeId: job.storeId },
-    select: {
-      provider: true,
-      ambiente: true,
-      modeloFiscal: true,
-      fiscalEnabled: true,
-    },
-  }))
   const homologacaoNfceHabilitada =
     config.ambiente === "HOMOLOGACAO" &&
     config.modeloFiscal === "NFCE" &&

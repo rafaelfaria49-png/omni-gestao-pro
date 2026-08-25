@@ -181,6 +181,14 @@ export async function executeInutilizacaoJob(
           detalhe: { protocolo: atual.protocolo, cStat: atual.cStat, mark: atual.mark, idempotent: true },
         }
       }
+      return {
+        kind: "terminal",
+        code: "marca_nao_baixada",
+        mensagem: "Protocolo recebido, mas a marca A_INUTILIZAR não pôde ser baixada.",
+        simulado: resposta.simulado,
+        externalTransmissionAttempted: !resposta.simulado,
+        detalhe: { protocolo, cStat, mark: atual?.mark ?? INUTILIZACAO_MARK.A_INUTILIZAR },
+      }
     }
     await dependencies.ports.createLog({
       storeId: payload.storeId,
