@@ -307,13 +307,12 @@ describe("REGISTRY de P1 permanece sem SEFAZ_DIRETO (ADR-0020 §2.2 · D11 regra
 describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
   const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
 
-  it("emitir/prepararEmissao/validarSnapshot/consultar/cancelar/inutilizar ⇒ operacao_nao_suportada", async () => {
+  it("emitir/prepararEmissao/validarSnapshot/consultar/inutilizar ⇒ operacao_nao_suportada", async () => {
     const respostas = [
       provider.prepararEmissao({} as never),
       provider.validarSnapshot(null),
       await provider.emitir({} as never),
       await provider.consultar({} as never),
-      await provider.cancelar({} as never),
       await provider.inutilizar({} as never),
     ]
     for (const r of respostas) {
@@ -569,5 +568,70 @@ describe("stub existente continua simulado (nenhuma regressão do GOAL-012)", ()
       retryAuthorizedByConsultation: true,
     })
     expect(outcome.kind).toBe("authorized")
+  })
+})
+
+describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
+  const contexto = {
+    storeId: LOJA_PILOTO,
+    notaFiscalId: "nota-1",
+    modelo: "NFCE" as const,
+    ambiente: "HOMOLOGACAO" as const,
+  }
+  const chave = "35250811222333000165550010000000011000000010"
+  const protocolo = "135250000000001"
+
+  it("rejeita justificativa fora de 15..255", async () => {
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const r = await provider.cancelar({ contexto, chaveAcesso: chave, protocolo, justificativa: "curto" })
+    expect(r.ok).toBe(false)
+    expect(r.resultado).toBe("rejeitado")
+    expect(r.erros[0]?.code).toBe("justificativa_invalida")
+    expect(r.statusNota).toBeNull()
+  })
+
+  it("com transporte offline não fabrica cStat 101", async () => {
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const r = await provider.cancelar({
+      contexto,
+      chaveAcesso: chave,
+      protocolo,
+      justificativa: "Cancelamento de teste em homologação",
+    })
+    expect(r.ok).toBe(false)
+    expect(r.dados?.servico).toBe("NFeRecepcaoEvento4")
+    expect(r.dados?.cStat ?? null).not.toBe("101")
+    expect(String(r.mensagem)).toMatch(/offline|indispon/i)
+  })
+
+  it("transporte com retEnvEvento cStat 101 → CANCELADA", async () => {
+    const xml =
+      `<retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe">` +
+      `<infEvento><tpAmb>2</tpAmb><cOrgao>35</cOrgao><cStat>101</cStat>` +
+      `<xMotivo>Cancelamento de NF-e homologado</xMotivo>` +
+      `<chNFe>${chave}</chNFe><nProt>135250000000099</nProt></infEvento></retEnvEvento>`
+    const transport: SefazTransport = {
+      permiteRede: true,
+      send: vi.fn(async () => ({
+        ok: true as const,
+        classification: "RESPONSE_RECEIVED" as const,
+        httpStatus: 200,
+        contentType: "application/soap+xml",
+        bodyBytes: new TextEncoder().encode(xml),
+        externalTransmissionAttempted: true as const,
+      })),
+    }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const r = await provider.cancelar({
+      contexto,
+      chaveAcesso: chave,
+      protocolo,
+      justificativa: "Cancelamento de teste em homologação",
+    })
+    expect(r.ok).toBe(true)
+    expect(r.dados?.cStat).toBe("101")
+    expect(r.statusNota).toBe("CANCELADA")
+    expect(r.dados?.protocolo).toBe("135250000000099")
+    expect(r.simulado).toBe(false)
   })
 })

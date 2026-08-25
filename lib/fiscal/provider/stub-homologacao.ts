@@ -298,8 +298,8 @@ export class StubHomologacaoProvider implements FiscalProvider {
         placeholder: true,
         chaveAcesso: s(params.chaveAcesso) || null,
         protocolo: placeholderId("CANC", seed),
-        cStat: "135",
-        xMotivo: "Evento registrado e vinculado a NF-e (SIMULADO)",
+        cStat: "101",
+        xMotivo: "Cancelamento de NF-e homologado (SIMULADO)",
       },
       eventos: [evento("cancelamento_simulado", "Cancelamento simulado (stub).")],
     })

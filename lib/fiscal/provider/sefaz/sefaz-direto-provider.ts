@@ -24,7 +24,7 @@
  *    recusa de transporte lança `SefazAdapterBlockedError` — jamais um `AUTHORIZED`,
  *    `REJECTED` ou `UNCERTAIN` fabricado, que a máquina de estado tomaria por resposta real.
  */
-import { AmbienteFiscal, FiscalProviderTipo } from "@/generated/prisma"
+import { AmbienteFiscal, FiscalProviderTipo, StatusNotaFiscal } from "@/generated/prisma"
 import type {
   FiscalConsultationResult,
   FiscalExecutionProvenanceSink,
@@ -45,7 +45,12 @@ import type {
   FiscalProviderStatus,
   FiscalProviderStatusParams,
 } from "../types"
+import { validarJustificativaCancelamento } from "@/lib/fiscal/events/justificativa"
+import { buildXmlEventoCancelamento } from "@/lib/fiscal/events/evento-xml"
+import { parseRetornoEventoCancelamento } from "@/lib/fiscal/events/parse-retorno-evento"
+import { isCancelamentoFiscalAutorizado } from "@/lib/fiscal/events/cstat-cancelamento"
 import { buildSefazSoap12Envelope, type SefazEnvelopeRejectionCode } from "./sefaz-envelope"
+import { selectSefazEndpoint } from "./sefaz-endpoint-catalog"
 import {
   runSefazPreTransportGuards,
   type SefazGuardCode,
@@ -398,9 +403,163 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     return respostaInerte("consultar", MENSAGEM_P1_INERTE)
   }
 
-  async cancelar(_params: FiscalProviderCancelamentoParams): Promise<FiscalProviderResponse> {
-    void _params
-    return respostaInerte("cancelar", MENSAGEM_P1_INERTE)
+  async cancelar(params: FiscalProviderCancelamentoParams): Promise<FiscalProviderResponse> {
+    const ambiente = texto(params?.contexto?.ambiente) || AmbienteFiscal.HOMOLOGACAO
+    const just = validarJustificativaCancelamento(params?.justificativa)
+    if (!just.ok) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "rejeitado",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem: just.mensagem,
+        pendencias: [],
+        erros: [erro("justificativa_invalida", just.mensagem)],
+        eventos: [],
+      }
+    }
+
+    const chave = texto(params?.chaveAcesso)
+    const protocolo = texto(params?.protocolo)
+    if (!/^\d{44}$/.test(chave) || !protocolo) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "rejeitado",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem: "Cancelamento exige chave de acesso (44 dígitos) e protocolo de autorização.",
+        pendencias: ["chaveAcesso", "protocolo"].filter((p) =>
+          p === "chaveAcesso" ? !/^\d{44}$/.test(chave) : !protocolo,
+        ),
+        erros: [erro("parametros_invalidos", "chaveAcesso e protocolo são obrigatórios.")],
+        eventos: [],
+      }
+    }
+
+    const xmlEvento = buildXmlEventoCancelamento({
+      chaveAcesso: chave,
+      protocolo,
+      justificativa: just.texto,
+      cnpj: chave.slice(6, 20),
+      tpAmb: ambiente === AmbienteFiscal.PRODUCAO ? "1" : "2",
+      cOrgao: chave.slice(0, 2),
+      sequencia: 1,
+    })
+    const exactBytes = new TextEncoder().encode(xmlEvento)
+    const envelope = buildSefazSoap12Envelope({
+      servico: "NFeRecepcaoEvento4",
+      exactBytes,
+    })
+    if (!envelope.ok) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem: envelope.mensagem,
+        pendencias: [],
+        erros: [erro("erro_interno", envelope.mensagem)],
+        eventos: [],
+      }
+    }
+
+    const endpoint = selectSefazEndpoint({
+      uf: "SP",
+      ambiente: ambiente === AmbienteFiscal.PRODUCAO ? "PRODUCAO" : "HOMOLOGACAO",
+      servico: "NFeRecepcaoEvento4",
+    })
+    if (!endpoint.ok) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem: endpoint.mensagem,
+        pendencias: [],
+        erros: [erro("operacao_nao_suportada", endpoint.mensagem)],
+        eventos: [],
+      }
+    }
+
+    const outcome = await this.transport.send({
+      endpoint: endpoint.endpoint,
+      contentType: envelope.envelope.contentType,
+      bodyBytes: envelope.envelope.bytes,
+      correlationId: texto(params?.contexto?.notaFiscalId) || chave,
+      certificate: {
+        storeId: texto(params?.contexto?.storeId) || "unknown",
+        blobRef: "ref-opaca",
+        senhaRef: "ref-opaca",
+      },
+      connectionTimeoutMs: this.connectionTimeoutMs,
+      totalDeadlineMs: this.totalDeadlineMs,
+    })
+
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: {
+          chaveAcesso: chave,
+          servico: "NFeRecepcaoEvento4",
+          transporte: outcome.codigo,
+          xmlEvento,
+        },
+        mensagem: outcome.mensagem,
+        pendencias: [],
+        erros: [erro("erro_interno", outcome.mensagem)],
+        eventos: [],
+      }
+    }
+
+    const xmlRetorno = new TextDecoder("utf-8", { fatal: false }).decode(outcome.bodyBytes)
+    const parsed = parseRetornoEventoCancelamento({ xml: xmlRetorno, chaveAcessoEsperada: chave })
+    const autorizado = parsed.desfecho === "autorizado" || parsed.desfecho === "duplicidade" || isCancelamentoFiscalAutorizado(parsed.cStat)
+    return {
+      ok: autorizado,
+      operacao: "cancelar",
+      resultado: autorizado ? "ok" : parsed.desfecho === "incerto" ? "erro" : "rejeitado",
+      simulado: false,
+      provider: PROVIDER,
+      ambiente,
+      statusNota: autorizado ? StatusNotaFiscal.CANCELADA : null,
+      dados: {
+        chaveAcesso: chave,
+        protocolo: parsed.protocolo,
+        cStat: parsed.cStat,
+        xMotivo: parsed.xMotivo,
+        servico: "NFeRecepcaoEvento4",
+      },
+      mensagem: autorizado
+        ? "Cancelamento fiscal homologado (NFeRecepcaoEvento4)."
+        : parsed.xMotivo || "Cancelamento fiscal não homologado.",
+      pendencias: [],
+      erros: autorizado
+        ? []
+        : [erro(parsed.desfecho === "incerto" ? "erro_interno" : "parametros_invalidos", parsed.xMotivo || "Evento não autorizado.")],
+      eventos: [],
+    }
   }
 
   async inutilizar(_params: FiscalProviderInutilizacaoParams): Promise<FiscalProviderResponse> {
