@@ -239,7 +239,12 @@ describe("parser e classificador fail-closed", () => {
 })
 
 describe("XSD oficial offline", () => {
-  it("valida pedido assinado contra inutNFe_v4.00.xsd", () => {
+  const xsdSmoke = validarInutilizacaoRetornoXsd(
+    retInutNFe({ cStat: "102", xMotivo: "Inutilizacao de numero homologado", nProt: PROT_15 }),
+  )
+  const temXmllint = xsdSmoke.valid || /schemas|validity|fails to load|failed to load|parser error/i.test(xsdSmoke.output)
+
+  it.skipIf(!temXmllint)("valida pedido assinado contra inutNFe_v4.00.xsd", () => {
     const built = buildInutilizacaoXml(pedido())
     expect(built.ok).toBe(true)
     if (!built.ok) return
@@ -248,7 +253,7 @@ describe("XSD oficial offline", () => {
     expect(xsd.valid, xsd.output).toBe(true)
   })
 
-  it("valida pedido com CNPJ alfanumérico contra o XSD vigente", () => {
+  it.skipIf(!temXmllint)("valida pedido com CNPJ alfanumérico contra o XSD vigente", () => {
     const built = buildInutilizacaoXml(PEDIDO_CNPJ_ALFA)
     expect(built.ok).toBe(true)
     if (!built.ok) return
@@ -258,7 +263,7 @@ describe("XSD oficial offline", () => {
     expect(xsd.valid, xsd.output).toBe(true)
   })
 
-  it("reprova pedido com Id divergente no XSD", () => {
+  it.skipIf(!temXmllint)("reprova pedido com Id divergente no XSD", () => {
     const built = buildInutilizacaoXml(pedido())
     expect(built.ok).toBe(true)
     if (!built.ok) return
@@ -268,7 +273,7 @@ describe("XSD oficial offline", () => {
     expect(xsd.valid).toBe(false)
   })
 
-  it("valida retorno sintético 102 contra retInutNFe_v4.00.xsd", () => {
+  it.skipIf(!temXmllint)("valida retorno sintético 102 contra retInutNFe_v4.00.xsd", () => {
     const xml = retInutNFe({
       cStat: "102",
       xMotivo: "Inutilizacao de numero homologado",

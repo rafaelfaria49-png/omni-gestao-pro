@@ -58,6 +58,7 @@ import {
   type SefazTransportErrorCode,
 } from "./sefaz-transport.types"
 import type { SefazServico } from "./sefaz-endpoint-catalog"
+import { executarInutilizacaoSefaz } from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
 
 const PROVIDER = FiscalProviderTipo.SEFAZ_DIRETO
 
@@ -403,8 +404,12 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     return respostaInerte("cancelar", MENSAGEM_P1_INERTE)
   }
 
-  async inutilizar(_params: FiscalProviderInutilizacaoParams): Promise<FiscalProviderResponse> {
-    void _params
-    return respostaInerte("inutilizar", MENSAGEM_P1_INERTE)
+  async inutilizar(params: FiscalProviderInutilizacaoParams): Promise<FiscalProviderResponse> {
+    return executarInutilizacaoSefaz({
+      params,
+      transport: this.transport,
+      connectionTimeoutMs: this.connectionTimeoutMs,
+      totalDeadlineMs: this.totalDeadlineMs,
+    })
   }
 }

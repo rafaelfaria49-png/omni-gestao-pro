@@ -49,3 +49,23 @@ export type {
   InutilizacaoReason,
   InutilizacaoIssue,
 } from "./types"
+export {
+  INUTILIZACAO_DEDUPE_VERSION,
+  INUTILIZACAO_MARK,
+  buildInutilizacaoDedupeKey,
+  asInutilizacaoPayload,
+  podeBaixarMarcacao,
+  protocoloInutilizacaoValido,
+} from "./mark"
+export type { InutilizacaoJobPayload, InutilizacaoMark, InutilizacaoMotivo } from "./mark"
+export { enqueueInutilizacao, JUSTIFICATIVA_REJEICAO_PADRAO, JUSTIFICATIVA_LACUNA_PADRAO } from "./enqueue"
+export { executeInutilizacaoJob } from "./execute"
+export {
+  reemitirVendaAposRejeicao,
+  resolveReissueSnapshotLocalKey,
+  buildFiscalReissueDedupeKey,
+} from "./reissue"
+export { solicitarInutilizacaoAdministrativa } from "./admin"
+export { createPrismaInutilizacaoPorts } from "./prisma-ports"
+export { executarInutilizacaoSefaz } from "./sefaz-inutilizar"
+export type { InutilizacaoPorts, EnqueueInutilizacaoInput } from "./ports"

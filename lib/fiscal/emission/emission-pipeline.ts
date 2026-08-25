@@ -291,6 +291,9 @@ export async function runEmissionPipeline(
       modelo: snapshot.modelo,
       ambiente: snapshot.ambiente,
     })
+    if (ports.recordLacunasParaInutilizacao && alloc.lacunas.length > 0) {
+      await ports.recordLacunasParaInutilizacao(alloc.lacunas)
+    }
     if (!alloc.ok) {
       await ports.log({
         acao: "emissao.numeracao_indisponivel",

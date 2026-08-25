@@ -21,7 +21,7 @@ function runXmllint(schemaFile: "inutNFe_v4.00.xsd" | "retInutNFe_v4.00.xsd", xm
   try {
     writeFileSync(xmlPath, xml, "utf8")
     const result = spawnSync(
-      "/usr/bin/xmllint",
+      process.platform === "win32" ? "xmllint" : "/usr/bin/xmllint",
       ["--noout", "--nonet", "--nocatalogs", "--schema", schema, xmlPath],
       {
         encoding: "utf8",

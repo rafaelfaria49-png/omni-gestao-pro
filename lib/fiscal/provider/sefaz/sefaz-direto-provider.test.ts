@@ -307,14 +307,13 @@ describe("REGISTRY de P1 permanece sem SEFAZ_DIRETO (ADR-0020 §2.2 · D11 regra
 describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
   const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
 
-  it("emitir/prepararEmissao/validarSnapshot/consultar/cancelar/inutilizar ⇒ operacao_nao_suportada", async () => {
+  it("emitir/prepararEmissao/validarSnapshot/consultar/cancelar ⇒ operacao_nao_suportada", async () => {
     const respostas = [
       provider.prepararEmissao({} as never),
       provider.validarSnapshot(null),
       await provider.emitir({} as never),
       await provider.consultar({} as never),
       await provider.cancelar({} as never),
-      await provider.inutilizar({} as never),
     ]
     for (const r of respostas) {
       expect(r.ok).toBe(false)
@@ -322,6 +321,14 @@ describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
       expect(r.dados).toBeNull()
       expect(r.statusNota).toBeNull()
     }
+  })
+
+  it("inutilizar rejeita parâmetros vazios sem inventar protocolo", async () => {
+    const r = await provider.inutilizar({} as never)
+    expect(r.ok).toBe(false)
+    expect(r.operacao).toBe("inutilizar")
+    expect(r.dados).toBeNull()
+    expect(r.erros.length).toBeGreaterThan(0)
   })
 
   it("statusServico fica bloqueado pelo transporte offline — sem fingir 107", async () => {
@@ -400,6 +407,82 @@ describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
       uf: "SP",
     })
     expect(desligado.ok).toBe(true)
+  })
+})
+
+describe("P1 inutilizar — NFeInutilizacao4 via transporte injetado", () => {
+  const params = {
+    contexto: {
+      storeId: LOJA_PILOTO,
+      notaFiscalId: "nota-1",
+      modelo: "NFCE",
+      ambiente: "HOMOLOGACAO",
+      serie: 1,
+      numero: 1,
+    },
+    serie: 1,
+    numeroInicial: 1,
+    numeroFinal: 1,
+    justificativa: "Numero NFC-e rejeitado pela SEFAZ; faixa inutilizada para nao reutilizar.",
+    cnpj: "11222333000181",
+    cUF: "35",
+    ano: "26",
+  }
+
+  it("transporte offline não inventa cStat 102", async () => {
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(false)
+    expect(r.dados?.cStat ?? null).not.toBe("102")
+    expect(r.simulado).toBe(false)
+  })
+
+  it("resposta 102 com TProt persiste como homologada", async () => {
+    const ret =
+      `<retInutNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">` +
+      `<infInut><tpAmb>2</tpAmb><verAplic>SP</verAplic><cStat>102</cStat>` +
+      `<xMotivo>Inutilizacao de numero homologado</xMotivo><cUF>35</cUF>` +
+      `<nProt>135260000000001</nProt></infInut></retInutNFe>`
+    const transport: SefazTransport = {
+      permiteRede: true,
+      send: vi.fn(async () => ({
+        ok: true as const,
+        classification: "RESPONSE_RECEIVED" as const,
+        httpStatus: 200,
+        contentType: "application/soap+xml",
+        bodyBytes: new TextEncoder().encode(ret),
+        externalTransmissionAttempted: true as const,
+      })),
+    }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(true)
+    expect(r.dados?.cStat).toBe("102")
+    expect(r.dados?.protocolo).toBe("135260000000001")
+    expect(transport.send).toHaveBeenCalledTimes(1)
+  })
+
+  it("cStat 241 não baixa protocolo homologado", async () => {
+    const ret =
+      `<retInutNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">` +
+      `<infInut><tpAmb>2</tpAmb><verAplic>SP</verAplic><cStat>241</cStat>` +
+      `<xMotivo>Um numero da faixa ja foi utilizado</xMotivo><cUF>35</cUF></infInut></retInutNFe>`
+    const transport: SefazTransport = {
+      permiteRede: true,
+      send: vi.fn(async () => ({
+        ok: true as const,
+        classification: "RESPONSE_RECEIVED" as const,
+        httpStatus: 200,
+        contentType: "application/soap+xml",
+        bodyBytes: new TextEncoder().encode(ret),
+        externalTransmissionAttempted: true as const,
+      })),
+    }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(false)
+    expect(r.resultado).toBe("rejeitado")
+    expect(r.dados?.cStat).toBe("241")
   })
 })
 

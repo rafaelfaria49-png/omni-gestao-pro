@@ -11,6 +11,10 @@ import {
   createUncertainStateJobExecutor,
   type UncertainStateJobExecutorDependencies,
 } from "../emission/uncertain-state-job-executor"
+import { executeInutilizacaoJob } from "../inutilizacao/execute"
+import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
+import { stubHomologacaoProvider } from "../provider/stub-homologacao"
+import type { FiscalProvider } from "../provider/types"
 import { sanitizeFiscalQueueError } from "./queue-policy"
 import type {
   FiscalQueueAuditEvent,
@@ -290,7 +294,14 @@ async function executeFiscalJob(
     operador?: string | null
   }) => Promise<EmissionOutcome>,
   executeGoal012?: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>,
+  inutilizacaoProvider?: FiscalProvider,
 ): Promise<FiscalQueueExecutionResult> {
+  if (job.tipo === "INUTILIZACAO") {
+    return executeInutilizacaoJob(job, {
+      ports: createPrismaInutilizacaoPorts(client as never),
+      provider: inutilizacaoProvider ?? stubHomologacaoProvider,
+    })
+  }
   if (!["EMISSAO", "CONSULTA"].includes(job.tipo)) {
     return {
       kind: "terminal",
@@ -431,6 +442,7 @@ export function createPrismaFiscalQueueWorkerPorts(
     operador?: string | null
   }) => Promise<EmissionOutcome> = emitirNotaFiscalVenda,
   executeGoal012?: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>,
+  inutilizacaoProvider?: FiscalProvider,
 ): FiscalQueueWorkerPorts {
   return {
     readPauseSnapshot: () => readFiscalQueuePauseSnapshot(client),
@@ -684,7 +696,7 @@ export function createPrismaFiscalQueueWorkerPorts(
       }
       return updated.count === 1
     },
-    execute: (job) => executeFiscalJob(client, job, emit, executeGoal012),
+    execute: (job) => executeFiscalJob(client, job, emit, executeGoal012, inutilizacaoProvider),
     audit: (event) => bestEffortAudit(client, event),
   }
 }

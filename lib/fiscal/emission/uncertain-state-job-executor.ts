@@ -381,7 +381,7 @@ export function createUncertainStateJobExecutor(
       return {
         kind: "terminal",
         code: "rejeitada_numero_consumido",
-        mensagem: "Rejeição simulada; número permanece consumido e aguarda GOAL-019.",
+        mensagem: "Rejeição definitiva; número permanece consumido e segue para inutilização.",
         ...invocado,
         detalhe,
       }
