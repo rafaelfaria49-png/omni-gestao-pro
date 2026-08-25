@@ -5,9 +5,10 @@
  * Sinais sem evidência suficiente → `nao_disponivel` (nunca inventados).
  * Semântica honesta (007B): vendas sem movimento ficam `pendente`; sessões
  * respeitam competência passada/atual/futura via `agora`; vencimento de títulos
- * permanece `nao_disponivel` sem prova agregada; Documentos e Conferência do
- * contador ainda não têm domínio/persistência. Fechamento real com snapshot
- * permanece fora de escopo (GOAL 012).
+ * permanece `nao_disponivel` sem prova agregada; o domínio Documentos existe,
+ * mas este checklist não consulta o acervo dele. A Conferência do contador ainda
+ * não tem persistência. Fechamento real com snapshot permanece fora de escopo
+ * (GOAL 012).
  */
 import { competenciaAtual, type Competencia } from "@/lib/contador/competencia"
 import {
@@ -625,16 +626,15 @@ function derivarFiscal(evidencia: EvidenciaFiscalChecklist | null | undefined): 
   })
 }
 
-/** Domínio de documentos do Contador ainda não existe (sem mock, sem portal externo). */
+/** O domínio Documentos existe; este sinal não consulta o acervo de documentos. */
 function derivarDocumentos(): ChecklistItemFechamento {
   return item({
     id: "documentos",
     titulo: "Documentos do fechamento",
     estado: "nao_disponivel",
-    origem: "Domínio de documentos — ainda não implementado",
-    explicacao:
-      "O domínio real de documentos do Contador será implementado após o schema núcleo.",
-    evidencia: "sem domínio real",
+    origem: "Documentos não avaliados neste sinal do checklist",
+    explicacao: "Este sinal não consulta o acervo real do domínio Documentos.",
+    evidencia: "sem evidência neste builder",
   })
 }
 

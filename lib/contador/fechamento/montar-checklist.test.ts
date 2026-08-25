@@ -230,9 +230,9 @@ describe("montarChecklistFechamento — Fiscal, Documentos, Conferência, Fecham
     const it = itemDe(c, "documentos")
     expect(it.estado).toBe("nao_disponivel")
     expect(it.titulo).toBe("Documentos do fechamento")
-    expect(it.origem).toBe("Domínio de documentos — ainda não implementado")
-    expect(it.explicacao).toContain("domínio real de documentos do Contador será implementado após o schema núcleo")
-    expect(it.evidencia).toBe("sem domínio real")
+    expect(it.origem).toBe("Documentos não avaliados neste sinal do checklist")
+    expect(it.explicacao).toContain("não consulta o acervo real do domínio Documentos")
+    expect(it.evidencia).toBe("sem evidência neste builder")
   })
 
   it("conferencia_contador existe e é nao_disponivel, sem persistência", () => {
@@ -313,7 +313,7 @@ describe("montarChecklistFechamento — sem DTO", () => {
     }
     expect(estadoDe(c, "fechamento_oficial")).toBe("pendente")
     expect(itemDe(c, "vendas").explicacao).toContain("Nenhuma loja ativa")
-    expect(itemDe(c, "documentos").origem).toBe("Domínio de documentos — ainda não implementado")
+    expect(itemDe(c, "documentos").origem).toBe("Documentos não avaliados neste sinal do checklist")
     expect(itemDe(c, "conferencia_contador").evidencia).toBe("sem confirmação persistida")
     expect(itemDe(c, "guias_informadas_vencendo_vencidas").evidencia).toBe("agenda indisponível")
 
