@@ -6,9 +6,11 @@
 
 import type { FiscalProvider } from "../provider/types"
 import type { FiscalQueueExecutionResult, FiscalQueueJob } from "../queue/queue.types"
+import { codigoUf } from "../xml/nfce-chave-acesso"
+import { TPROT_PATTERN } from "./types"
 import { INUTILIZACAO_MARK, asInutilizacaoPayload, podeBaixarMarcacao } from "./mark"
 import type { InutilizacaoPorts } from "./ports"
-import { normalizarJustificativa } from "./validation"
+import { normalizarJustificativa, serieInutilizacaoValida } from "./validation"
 
 export type ExecuteInutilizacaoDependencies = {
   ports: InutilizacaoPorts
@@ -63,7 +65,7 @@ export async function executeInutilizacaoJob(
     : null
   if (
     existingEvento?.status === "AUTORIZADO" &&
-    String(existingEvento.protocolo ?? "").trim() !== ""
+    TPROT_PATTERN.test(String(existingEvento.protocolo ?? "").trim())
   ) {
     const now = dependencies.now?.() ?? new Date()
     const baixado: typeof payload = {
@@ -94,8 +96,26 @@ export async function executeInutilizacaoJob(
     }
   }
 
+  if (!serieInutilizacaoValida(payload.serie)) {
+    return {
+      kind: "terminal",
+      code: "parametros_invalidos",
+      mensagem: "Série fiscal inválida (TSerie: 0 a 999).",
+      ...naoInvocado,
+    }
+  }
+
   const justificativa = normalizarJustificativa(payload.justificativa)
   const config = await dependencies.ports.findConfig({ storeId: payload.storeId })
+  const cUF = codigoUf(config?.uf)
+  if (!cUF) {
+    return {
+      kind: "terminal",
+      code: "uf_invalida",
+      mensagem: "UF da loja ausente ou não mapeável para cUF IBGE; envio recusado.",
+      ...naoInvocado,
+    }
+  }
   const ano = String((dependencies.now?.() ?? new Date()).getFullYear()).slice(-2)
   const resposta = await dependencies.provider.inutilizar({
     contexto: {
@@ -111,7 +131,7 @@ export async function executeInutilizacaoJob(
     numeroFinal: payload.numeroFinal,
     justificativa,
     cnpj: config?.cnpj ?? null,
-    cUF: config?.uf === "SP" ? "35" : config?.uf ?? "35",
+    cUF,
     ano,
   })
 
@@ -136,6 +156,44 @@ export async function executeInutilizacaoJob(
       cStat,
       xMotivo,
     })
+  }
+
+  if (resposta.simulado) {
+    await dependencies.ports.createLog({
+      storeId: payload.storeId,
+      vendaId: payload.vendaId,
+      notaFiscalId: payload.notaFiscalId,
+      jobId: job.id,
+      eventoFiscalId: null,
+      nivel: "WARN",
+      acao: "fiscal.inutilizacao.simulada_nao_autoritativa",
+      mensagem: "Resposta simulada não autoriza inutilização; marca A_INUTILIZAR preservada.",
+      cStat,
+      xMotivo,
+      operador: payload.requestedBy,
+      detalhe: {
+        protocolo,
+        mark: INUTILIZACAO_MARK.A_INUTILIZAR,
+        simulado: true,
+        serie: payload.serie,
+        numeroInicial: payload.numeroInicial,
+        numeroFinal: payload.numeroFinal,
+      },
+    })
+    return {
+      kind: "terminal",
+      code: "inutilizacao_simulada_nao_autoritativa",
+      mensagem: "Resposta simulada não autoriza inutilização; número permanece fora do pool.",
+      simulado: true,
+      externalTransmissionAttempted: false,
+      detalhe: {
+        mark: INUTILIZACAO_MARK.A_INUTILIZAR,
+        cStat,
+        protocolo,
+        numeroInicial: payload.numeroInicial,
+        numeroFinal: payload.numeroFinal,
+      },
+    }
   }
 
   if (baixar) {

@@ -134,6 +134,12 @@ export type InutilizacaoPorts = {
     rejectedNotaId: string
     newNotaId: string
   }): Promise<boolean>
+  /** Limpa número da sucessora sem devolver ao pool (reserva já queimada). */
+  clearSuccessorNumero(input: {
+    storeId: string
+    notaFiscalId: string
+    expectedNumero: number
+  }): Promise<boolean>
   createReissueNota(input: {
     storeId: string
     vendaId: string

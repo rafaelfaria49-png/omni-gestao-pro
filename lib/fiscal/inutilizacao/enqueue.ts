@@ -7,7 +7,7 @@ import {
   INUTILIZACAO_JUSTIFICATIVA_MIN,
   INUTILIZACAO_MAX_FAIXA,
 } from "./types"
-import { normalizarJustificativa } from "./validation"
+import { normalizarJustificativa, serieInutilizacaoValida } from "./validation"
 import {
   INUTILIZACAO_DEDUPE_VERSION,
   INUTILIZACAO_MARK,
@@ -55,8 +55,8 @@ export async function enqueueInutilizacao(
   if (!storeId || !vendaId || !operador) {
     return { ok: false, code: "parametros_invalidos", error: "storeId, vendaId e operador são obrigatórios." }
   }
-  if (!Number.isInteger(input.serie) || input.serie < 0) {
-    return { ok: false, code: "parametros_invalidos", error: "Série fiscal inválida." }
+  if (!serieInutilizacaoValida(input.serie)) {
+    return { ok: false, code: "parametros_invalidos", error: "Série fiscal inválida (TSerie: 0 a 999)." }
   }
   const faixaErro = validarFaixa(input.numeroInicial, input.numeroFinal)
   if (faixaErro) return { ok: false, code: "parametros_invalidos", error: faixaErro }

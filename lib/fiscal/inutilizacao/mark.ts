@@ -98,17 +98,15 @@ export function asInutilizacaoPayload(value: unknown): InutilizacaoJobPayload | 
 }
 
 /**
- * Protocolo válido para baixar a marca.
- * Stub/simulado: qualquer protocolo não vazio com cStat 102.
- * SEFAZ real: TProt (15 ou 17 dígitos).
+ * Protocolo autoritativo para baixar a marca. Resposta simulada nunca baixa.
+ * SEFAZ: TProt (15 ou 17 dígitos) e cStat 102.
  */
 export function protocoloInutilizacaoValido(
   protocolo: string | null | undefined,
   simulado: boolean,
 ): boolean {
+  if (simulado) return false
   const value = String(protocolo ?? "").trim()
-  if (!value) return false
-  if (simulado) return true
   return TPROT_PATTERN.test(value)
 }
 
@@ -117,5 +115,6 @@ export function podeBaixarMarcacao(input: {
   protocolo: string | null | undefined
   simulado: boolean
 }): boolean {
-  return String(input.cStat ?? "").trim() === "102" && protocoloInutilizacaoValido(input.protocolo, input.simulado)
+  if (input.simulado) return false
+  return String(input.cStat ?? "").trim() === "102" && protocoloInutilizacaoValido(input.protocolo, false)
 }

@@ -22,6 +22,7 @@ import { SefazAdapterBlockedError, SefazDiretoProvider } from "./sefaz-direto-pr
 import type { SefazGuardPorts } from "./sefaz-guards"
 import type { SefazTransport } from "./sefaz-transport.types"
 import { createInutilizacaoXmlSigner } from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
+import { assertInutilizacaoXmlDsig } from "@/lib/fiscal/inutilizacao/xmldsig-structure"
 import { loadCertificateMaterialFromPem } from "@/lib/fiscal/signing/nfce-signer"
 import { TEST_CERT_PEM, TEST_KEY_PLAIN_PEM } from "@/lib/fiscal/signing/__fixtures__/test-cert"
 
@@ -486,7 +487,48 @@ describe("P1 inutilizar — NFeInutilizacao4 via transporte injetado", () => {
     expect(r.dados?.protocolo).toBe("135260000000001")
     expect(transport.send).toHaveBeenCalledTimes(1)
     const sent = vi.mocked(transport.send).mock.calls[0]?.[0]
-    expect(new TextDecoder().decode(sent!.bodyBytes)).toContain("<Signature")
+    const soap = new TextDecoder().decode(sent!.bodyBytes)
+    expect(assertInutilizacaoXmlDsig(soap.slice(soap.indexOf("<inutNFe"), soap.indexOf("</inutNFe>") + "</inutNFe>".length)).ok).toBe(true)
+  })
+
+  it("Signature deslocada ou Reference errada não chama o transporte", async () => {
+    const transport: SefazTransport = { permiteRede: true, send: vi.fn() }
+    const displaced = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: async (xml) => {
+        const signed = await INUT_SIGN(xml)
+        return signed.replace(
+          /(<inutNFe[^>]*>)([\s\S]*?)(<Signature[\s\S]*<\/Signature>)(<\/inutNFe>)/,
+          "$1$3$2$4",
+        )
+      },
+    })
+    const r1 = await displaced.inutilizar(params)
+    expect(r1.ok).toBe(false)
+    expect(transport.send).not.toHaveBeenCalled()
+
+    const wrongRef = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: async (xml) => {
+        const signed = await INUT_SIGN(xml)
+        return signed.replace(/URI="#ID/, 'URI="#XX')
+      },
+    })
+    const r2 = await wrongRef.inutilizar(params)
+    expect(r2.ok).toBe(false)
+    expect(transport.send).not.toHaveBeenCalled()
+
+    const textual = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: async (xml) =>
+        xml.replace("</inutNFe>", `<!-- <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">fake</Signature> --></inutNFe>`),
+    })
+    const r3 = await textual.inutilizar(params)
+    expect(r3.ok).toBe(false)
+    expect(transport.send).not.toHaveBeenCalled()
   })
 
   it("cStat 241 não baixa protocolo homologado", async () => {

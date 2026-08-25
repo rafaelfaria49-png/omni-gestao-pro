@@ -441,6 +441,8 @@ describe("adapter Prisma da fila fiscal", () => {
       ambiente: "HOMOLOGACAO",
       modeloFiscal: "NFCE",
       fiscalEnabled: true,
+      uf: "SP",
+      cnpj: "11222333000181",
     })
     const inutilizar = vi.fn(async () => ({
       ok: false,

@@ -309,6 +309,13 @@ export function createPrismaInutilizacaoPorts(
         return restored.count === 1
       })
     },
+    async clearSuccessorNumero({ storeId, notaFiscalId, expectedNumero }) {
+      const updated = await client.notaFiscal.updateMany({
+        where: { id: notaFiscalId, storeId, numero: expectedNumero, vigente: true },
+        data: { numero: null, serieFiscalId: null },
+      })
+      return updated.count === 1
+    },
     async createReissueNota({ storeId, vendaId, origem, localKey }) {
       const existing = toNota(
         await client.notaFiscal.findFirst({

@@ -45,6 +45,11 @@ export function normalizarJustificativa(raw: string): string {
   return String(raw ?? "").trim()
 }
 
+/** TSerie oficial: 0..999. Única porta de série para admin, enqueue e executor. */
+export function serieInutilizacaoValida(serie: number): boolean {
+  return Number.isInteger(serie) && TSERIE_PATTERN.test(String(serie))
+}
+
 export function validateInutilizacaoPedido(input: InutilizacaoPedidoInput): InutilizacaoValidationResult {
   const issues: InutilizacaoIssue[] = []
   const tpAmb = asText(input.tpAmb)
