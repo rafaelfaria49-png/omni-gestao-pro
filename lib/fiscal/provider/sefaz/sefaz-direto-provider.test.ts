@@ -21,6 +21,8 @@ import type {
 import { SefazAdapterBlockedError, SefazDiretoProvider } from "./sefaz-direto-provider"
 import type { SefazGuardPorts } from "./sefaz-guards"
 import type { SefazTransport } from "./sefaz-transport.types"
+import { loadCertificateMaterialFromPem } from "@/lib/fiscal/signing/nfce-signer"
+import { TEST_CERT_PEM, TEST_KEY_PLAIN_PEM } from "@/lib/fiscal/signing/__fixtures__/test-cert"
 
 const LOJA_PILOTO = "store-piloto-real"
 const CHAVE = "3".repeat(44)
@@ -577,12 +579,18 @@ describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
     notaFiscalId: "nota-1",
     modelo: "NFCE" as const,
     ambiente: "HOMOLOGACAO" as const,
+    uf: "SP",
+    correlationId: "corr-cancel-1",
+    serie: 1,
+    numero: 1,
   }
   const chave = "35250811222333000165550010000000011000000010"
   const protocolo = "135250000000001"
+  const signingMaterial = loadCertificateMaterialFromPem(TEST_KEY_PLAIN_PEM, TEST_CERT_PEM)
+  const justificativaOk = "Cancelamento de teste em homologação"
 
   it("rejeita justificativa fora de 15..255", async () => {
-    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), signingMaterial })
     const r = await provider.cancelar({ contexto, chaveAcesso: chave, protocolo, justificativa: "curto" })
     expect(r.ok).toBe(false)
     expect(r.resultado).toBe("rejeitado")
@@ -590,13 +598,30 @@ describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
     expect(r.statusNota).toBeNull()
   })
 
-  it("com transporte offline não fabrica cStat 101", async () => {
-    const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
+  it("sem material A1 recusa transmitir evento não assinado", async () => {
+    const send = vi.fn()
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport: { permiteRede: true, send },
+    })
     const r = await provider.cancelar({
       contexto,
       chaveAcesso: chave,
       protocolo,
-      justificativa: "Cancelamento de teste em homologação",
+      justificativa: justificativaOk,
+    })
+    expect(r.ok).toBe(false)
+    expect(send).not.toHaveBeenCalled()
+    expect(String(r.mensagem)).toMatch(/XMLDSig|não assinado|material A1/i)
+  })
+
+  it("com transporte offline não fabrica cStat 101", async () => {
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), signingMaterial })
+    const r = await provider.cancelar({
+      contexto,
+      chaveAcesso: chave,
+      protocolo,
+      justificativa: justificativaOk,
     })
     expect(r.ok).toBe(false)
     expect(r.dados?.servico).toBe("NFeRecepcaoEvento4")
@@ -621,17 +646,59 @@ describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
         externalTransmissionAttempted: true as const,
       })),
     }
-    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport, signingMaterial })
     const r = await provider.cancelar({
       contexto,
       chaveAcesso: chave,
       protocolo,
-      justificativa: "Cancelamento de teste em homologação",
+      justificativa: justificativaOk,
     })
     expect(r.ok).toBe(true)
     expect(r.dados?.cStat).toBe("101")
     expect(r.statusNota).toBe("CANCELADA")
     expect(r.dados?.protocolo).toBe("135250000000099")
     expect(r.simulado).toBe(false)
+  })
+
+  it("transport.send recebe XMLDSig do infEvento e refs de certificado resolvidas — nunca ref-opaca", async () => {
+    const send = vi.fn(async (req) => ({
+      ok: true as const,
+      classification: "RESPONSE_RECEIVED" as const,
+      httpStatus: 200,
+      contentType: "application/soap+xml",
+      bodyBytes: new TextEncoder().encode(
+        `<retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe">` +
+          `<infEvento><tpAmb>2</tpAmb><cOrgao>35</cOrgao><cStat>101</cStat>` +
+          `<xMotivo>Cancelamento de NF-e homologado</xMotivo>` +
+          `<chNFe>${chave}</chNFe><nProt>135250000000099</nProt></infEvento></retEnvEvento>`,
+      ),
+      externalTransmissionAttempted: true as const,
+    }))
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport: { permiteRede: true, send },
+      signingMaterial,
+    })
+    const r = await provider.cancelar({
+      contexto,
+      chaveAcesso: chave,
+      protocolo,
+      justificativa: justificativaOk,
+    })
+    expect(r.ok).toBe(true)
+    expect(send).toHaveBeenCalledTimes(1)
+    const req = send.mock.calls[0][0] as {
+      certificate: { blobRef: string; senhaRef: string }
+      bodyBytes: Uint8Array
+    }
+    expect(req.certificate.blobRef).toBe(BLOB_REF_SENTINELA)
+    expect(req.certificate.senhaRef).toBe(SENHA_REF_SENTINELA)
+    expect(req.certificate.blobRef).not.toBe("ref-opaca")
+    expect(req.certificate.senhaRef).not.toBe("ref-opaca")
+    const body = new TextDecoder().decode(req.bodyBytes)
+    expect(body).toContain("<Signature")
+    expect(body).toContain("http://www.w3.org/2000/09/xmldsig#")
+    expect(body).toContain("<infEvento")
+    expect(body).not.toContain("ref-opaca")
   })
 })

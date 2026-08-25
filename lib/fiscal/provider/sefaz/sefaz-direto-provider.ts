@@ -24,9 +24,11 @@
  *    recusa de transporte lança `SefazAdapterBlockedError` — jamais um `AUTHORIZED`,
  *    `REJECTED` ou `UNCERTAIN` fabricado, que a máquina de estado tomaria por resposta real.
  */
+import { createHash } from "node:crypto"
 import { AmbienteFiscal, FiscalProviderTipo, StatusNotaFiscal } from "@/generated/prisma"
 import type {
   FiscalConsultationResult,
+  FiscalDocumentIdentity,
   FiscalExecutionProvenanceSink,
   FiscalTransmissionResult,
   UncertainStateFiscalProvider,
@@ -47,10 +49,12 @@ import type {
 } from "../types"
 import { validarJustificativaCancelamento } from "@/lib/fiscal/events/justificativa"
 import { buildXmlEventoCancelamento } from "@/lib/fiscal/events/evento-xml"
+import { signEventoCancelamentoXml } from "@/lib/fiscal/events/evento-sign"
 import { parseRetornoEventoCancelamento } from "@/lib/fiscal/events/parse-retorno-evento"
 import { isCancelamentoFiscalAutorizado } from "@/lib/fiscal/events/cstat-cancelamento"
+import type { FiscalCertificateMaterial } from "@/lib/fiscal/signing/signer.types"
+import { NfceSignError } from "@/lib/fiscal/signing/signer.types"
 import { buildSefazSoap12Envelope, type SefazEnvelopeRejectionCode } from "./sefaz-envelope"
-import { selectSefazEndpoint } from "./sefaz-endpoint-catalog"
 import {
   runSefazPreTransportGuards,
   type SefazGuardCode,
@@ -118,6 +122,11 @@ export type SefazDiretoProviderOptions = {
   transport?: SefazTransport
   connectionTimeoutMs?: number
   totalDeadlineMs?: number
+  /** Material A1 em memória para XMLDSig do infEvento (testes / wiring explícito). */
+  signingMaterial?: FiscalCertificateMaterial
+  signingPassphrase?: string
+  /** Override de assinatura. Default: `signEventoCancelamentoXml` com `signingMaterial`. */
+  signEvento?: (unsignedXml: string) => string | Promise<string>
 }
 
 function erro(code: FiscalProviderError["code"], mensagem: string): FiscalProviderError {
@@ -164,6 +173,9 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
   private readonly transport: SefazTransport
   private readonly connectionTimeoutMs: number
   private readonly totalDeadlineMs: number
+  private readonly signingMaterial: FiscalCertificateMaterial | null
+  private readonly signingPassphrase: string
+  private readonly signEvento: ((unsignedXml: string) => string | Promise<string>) | null
 
   constructor(options: SefazDiretoProviderOptions) {
     this.ports = options.ports
@@ -171,6 +183,9 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     this.connectionTimeoutMs =
       options.connectionTimeoutMs ?? SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS
     this.totalDeadlineMs = options.totalDeadlineMs ?? SEFAZ_DEFAULT_TOTAL_DEADLINE_MS
+    this.signingMaterial = options.signingMaterial ?? null
+    this.signingPassphrase = options.signingPassphrase ?? ""
+    this.signEvento = options.signEvento ?? null
   }
 
   /**
@@ -444,16 +459,117 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       }
     }
 
-    const xmlEvento = buildXmlEventoCancelamento({
+    if (ambiente === AmbienteFiscal.PRODUCAO) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem: "Somente o ambiente de homologação é permitido.",
+        pendencias: [],
+        erros: [erro("operacao_nao_suportada", "Somente o ambiente de homologação é permitido.")],
+        eventos: [],
+      }
+    }
+
+    const unsignedXml = buildXmlEventoCancelamento({
       chaveAcesso: chave,
       protocolo,
       justificativa: just.texto,
       cnpj: chave.slice(6, 20),
-      tpAmb: ambiente === AmbienteFiscal.PRODUCAO ? "1" : "2",
+      tpAmb: "2",
       cOrgao: chave.slice(0, 2),
       sequencia: 1,
     })
+
+    let xmlEvento: string
+    try {
+      xmlEvento = this.signEvento
+        ? await this.signEvento(unsignedXml)
+        : this.signingMaterial
+          ? signEventoCancelamentoXml(unsignedXml, this.signingMaterial, this.signingPassphrase, {
+              ignorarValidade: false,
+            })
+          : ""
+    } catch (e) {
+      const mensagem = e instanceof NfceSignError ? e.message : "Falha ao assinar o evento de cancelamento."
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem,
+        pendencias: [],
+        erros: [erro("erro_interno", mensagem)],
+        eventos: [],
+      }
+    }
+    if (!xmlEvento.includes("<Signature")) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: null,
+        mensagem:
+          "Assinatura XMLDSig do infEvento indisponível: material A1 não injetado. Evento não assinado não é transmitido.",
+        pendencias: [],
+        erros: [erro("erro_interno", "Evento de cancelamento sem XMLDSig; transmissão recusada.")],
+        eventos: [],
+      }
+    }
+
     const exactBytes = new TextEncoder().encode(xmlEvento)
+    const bytesSha256 = createHash("sha256").update(exactBytes).digest("hex")
+    const document: FiscalDocumentIdentity = {
+      storeId: texto(params?.contexto?.storeId),
+      vendaId: texto(params?.contexto?.notaFiscalId) || chave,
+      notaFiscalId: texto(params?.contexto?.notaFiscalId) || chave,
+      modelo: "NFCE",
+      ambiente: "HOMOLOGACAO",
+      serie: Number(params?.contexto?.serie) > 0 ? Number(params.contexto.serie) : 1,
+      numero: Number(params?.contexto?.numero) > 0 ? Number(params.contexto.numero) : 1,
+      chaveAcesso: chave,
+      uf: texto(params?.contexto?.uf),
+      correlationId: texto(params?.contexto?.correlationId),
+    }
+
+    const guards = await runSefazPreTransportGuards({
+      document,
+      exactBytes,
+      bytesSha256,
+      servico: "NFeRecepcaoEvento4",
+      ports: this.ports,
+      modo: "transmissao",
+    })
+    if (!guards.ok) {
+      return {
+        ok: false,
+        operacao: "cancelar",
+        resultado: "erro",
+        simulado: false,
+        provider: PROVIDER,
+        ambiente,
+        statusNota: null,
+        dados: { chaveAcesso: chave, servico: "NFeRecepcaoEvento4", guard: guards.codigo },
+        mensagem: guards.mensagem,
+        pendencias: [],
+        erros: [erro("erro_interno", guards.mensagem)],
+        eventos: [],
+      }
+    }
+
     const envelope = buildSefazSoap12Envelope({
       servico: "NFeRecepcaoEvento4",
       exactBytes,
@@ -475,37 +591,15 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       }
     }
 
-    const endpoint = selectSefazEndpoint({
-      uf: "SP",
-      ambiente: ambiente === AmbienteFiscal.PRODUCAO ? "PRODUCAO" : "HOMOLOGACAO",
-      servico: "NFeRecepcaoEvento4",
-    })
-    if (!endpoint.ok) {
-      return {
-        ok: false,
-        operacao: "cancelar",
-        resultado: "erro",
-        simulado: false,
-        provider: PROVIDER,
-        ambiente,
-        statusNota: null,
-        dados: null,
-        mensagem: endpoint.mensagem,
-        pendencias: [],
-        erros: [erro("operacao_nao_suportada", endpoint.mensagem)],
-        eventos: [],
-      }
-    }
-
     const outcome = await this.transport.send({
-      endpoint: endpoint.endpoint,
+      endpoint: guards.endpoint,
       contentType: envelope.envelope.contentType,
       bodyBytes: envelope.envelope.bytes,
-      correlationId: texto(params?.contexto?.notaFiscalId) || chave,
+      correlationId: guards.correlationId,
       certificate: {
-        storeId: texto(params?.contexto?.storeId) || "unknown",
-        blobRef: "ref-opaca",
-        senhaRef: "ref-opaca",
+        storeId: document.storeId,
+        blobRef: guards.certificado.blobRef,
+        senhaRef: guards.certificado.senhaRef,
       },
       connectionTimeoutMs: this.connectionTimeoutMs,
       totalDeadlineMs: this.totalDeadlineMs,

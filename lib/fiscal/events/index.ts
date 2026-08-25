@@ -34,4 +34,5 @@ export {
 } from "./cancelamento-service"
 export { cancelarNfceAutorizadaPersistido, createPrismaCancelamentoPorts } from "./cancelamento-prisma"
 export { buildXmlEventoCancelamento, TP_EVENTO_CANCELAMENTO } from "./evento-xml"
+export { signEventoCancelamentoXml } from "./evento-sign"
 export { parseRetornoEventoCancelamento } from "./parse-retorno-evento"
