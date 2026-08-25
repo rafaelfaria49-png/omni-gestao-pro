@@ -8,7 +8,32 @@ import { INUTILIZACAO_MARK, asInutilizacaoPayload } from "../inutilizacao/mark"
 
 type Row = Record<string, unknown>
 
-function createRejectClient(options: { failEnqueue?: boolean } = {}) {
+type RejectTx = {
+  notaFiscal: {
+    findFirst: (args: { where: Row }) => Promise<Row | null>
+    updateMany: (args: { where: Row; data: Row }) => Promise<{ count: number }>
+  }
+  venda: {
+    updateMany: (args: { where: Row; data: Row }) => Promise<{ count: number }>
+  }
+  fiscalEmissaoJob: {
+    findFirst: (args: { where: Row }) => Promise<Row | null>
+    findUnique: (args: { where: { storeId_dedupeKey?: { storeId: string; dedupeKey: string } } }) => Promise<Row | null>
+    update: (args: { where: Row; data: Row }) => Promise<Row | null>
+    updateMany: () => Promise<{ count: number }>
+    upsert: (args: { where: { storeId_dedupeKey: { storeId: string; dedupeKey: string } }; create: Row }) => Promise<Row>
+  }
+  fiscalLog: {
+    create: (args: { data: Row }) => Promise<Row>
+  }
+}
+
+type RejectClient = RejectTx & {
+  $transaction: <T>(fn: (tx: RejectTx) => Promise<T>) => Promise<T>
+  snapshot: () => { notas: Row[]; vendas: Row[]; jobs: Row[]; logs: Row[]; committed: boolean }
+}
+
+function createRejectClient(options: { failEnqueue?: boolean } = {}): RejectClient {
   const notas: Row[] = [
     {
       id: "nf-1",
@@ -36,8 +61,8 @@ function createRejectClient(options: { failEnqueue?: boolean } = {}) {
   const logs: Row[] = []
   let committed = false
 
-  const api = {
-    $transaction: async <T>(fn: (tx: typeof api) => Promise<T>): Promise<T> => {
+  const api: RejectClient = {
+    $transaction: async <T>(fn: (tx: RejectTx) => Promise<T>): Promise<T> => {
       const snapshot = {
         notas: notas.map((n) => ({ ...n })),
         vendas: vendas.map((v) => ({ ...v })),
@@ -147,7 +172,7 @@ describe("createPrismaUncertainStatePersistence.markRejected", () => {
     expect(snap.committed).toBe(true)
     expect(snap.notas[0]?.status).toBe("REJEITADA")
     expect(snap.vendas[0]?.fiscalStatus).toBe("REJEITADA")
-    const inut = snap.jobs.find((j) => j.tipo === "INUTILIZACAO")
+    const inut = snap.jobs.find((j: Row) => j.tipo === "INUTILIZACAO")
     expect(inut).toBeTruthy()
     const payload = asInutilizacaoPayload(inut?.payload)
     expect(payload?.mark).toBe(INUTILIZACAO_MARK.A_INUTILIZAR)
@@ -168,7 +193,7 @@ describe("createPrismaUncertainStatePersistence.markRejected", () => {
     const snap = client.snapshot()
     expect(snap.notas[0]?.status).toBe("REJEITADA")
     expect(snap.vendas[0]?.fiscalStatus).toBe("REJEITADA")
-    expect(snap.jobs.some((j) => j.tipo === "INUTILIZACAO")).toBe(false)
-    expect(snap.logs.some((l) => l.acao === "fiscal.inutilizacao.enqueue_failed_after_rejection")).toBe(true)
+    expect(snap.jobs.some((j: Row) => j.tipo === "INUTILIZACAO")).toBe(false)
+    expect(snap.logs.some((l: Row) => l.acao === "fiscal.inutilizacao.enqueue_failed_after_rejection")).toBe(true)
   })
 })
