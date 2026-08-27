@@ -64,3 +64,24 @@ Revisão final (runtime real): glm, read-only — ver seção "Revisão final" a
     e o serviço os grava no EventoFiscal (registro probatório).
 - Revalidação pós-correções: 280 testes focados verdes (18 arquivos), typecheck limpo,
   lint focado limpo, build de produção ok.
+
+## Ratificação AEP (close)
+
+`track.mjs close fiscal` abortou nos checks 6/7/8: o bootstrap da trilha fiscal
+(`3bedfcd` — protocol.json, REGISTRY, TRACK, LEDGER, state.json, goal file) foi
+commitado DENTRO da branch do GOAL pela sessão de planejamento, enquanto a convenção do
+repositório é bootstrap na main (cf. `9168d9d`, trilha contador). Com
+`base_commit=a2bf6b0`, o diff base..HEAD sempre conterá a infra AEP — o close é
+estruturalmente inexequível nesta branch antes do merge.
+
+Procedimento de ratificação pós-merge da PR #113 (sem reescrita de história):
+
+1. merge da PR #113 em `main` (decisão humana);
+2. na worktree `C:/Projetos/omni-gestao-fiscal-018-cancellation`,
+   `git fetch origin && git checkout goal/fiscal-018-nfce-cancellation`;
+3. `node scripts/track.mjs open fiscal` — reancora `base_commit` no merge-base com a
+   main atualizada (o diff base..HEAD esvazia e os checks 6/7/8 passam);
+4. `node scripts/track.mjs close fiscal` — ratifica DONE no LEDGER.
+
+A implementação em si está completa, revisada e validada; a pendência é exclusivamente
+processual (ratificação AEP pós-merge).
