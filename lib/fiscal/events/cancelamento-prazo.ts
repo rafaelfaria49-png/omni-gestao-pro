@@ -1,9 +1,9 @@
 /**
  * Prazo oficial de cancelamento NFC-e modelo 65 em SP.
  *
- * Fonte: Portaria CAT 12/2015 art. 14 (redação CAT-83/18), consolidada em
- * `docs/fiscal/FISCAL_SEFAZ_DOSSIE_UF_001.md` Q-05 — 30 minutos contados da
- * Autorização de Uso. Cancelamento extemporâneo (SIPET) NÃO é webservice.
+ * Base vigente: Portaria SRE 40/2024 (revoga CAT 12/2015) + Ajuste SINIEF 19/16
+ * (cláusula de cancelamento) e orientação SEFAZ-SP para cancelamento extemporâneo (SIPET).
+ * A janela operacional permanece 30 minutos da Autorização de Uso. Após isso não é webservice.
  */
 export const NFCE_CANCELAMENTO_PRAZO_MS = 30 * 60 * 1000
 
@@ -56,7 +56,8 @@ export function avaliarPrazoCancelamentoNfce(input: {
       ok: false,
       code: "prazo_vencido",
       mensagem:
-        "Cancelamento fiscal fora do prazo de 30 minutos da Autorização de Uso (Portaria CAT 12/2015 art. 14). " +
+        "Cancelamento fiscal fora do prazo de 30 minutos da Autorização de Uso " +
+        "(Portaria SRE 40/2024 / Ajuste SINIEF 19/16). " +
         "Após esse prazo o cancelamento não é webservice — oriente o processo administrativo SIPET.",
       limiteEm,
     }

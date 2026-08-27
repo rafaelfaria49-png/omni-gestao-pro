@@ -9,7 +9,10 @@ import type { FiscalProvider } from "@/lib/fiscal/provider/types"
 import { avaliarGuardiaCancelamentoFiscal, type GuardiaCancelamentoFiscal } from "./guard-matrix"
 import { identidadeEventoCancelamento, SEQUENCIA_CANCELAMENTO_NFCE, TIPO_EVENTO_CANCELAMENTO } from "./evento-identidade"
 import { validarJustificativaCancelamento } from "./justificativa"
-import { interpretarCStatCancelamento, isCancelamentoFiscalAutorizado } from "./cstat-cancelamento"
+import {
+  interpretarCStatCancelamento,
+  vereditoPersistenciaCancelamento,
+} from "./cstat-cancelamento"
 
 export type NotaFiscalCancelamento = {
   id: string
@@ -175,6 +178,17 @@ function fail(
 
 function financeWriteCountOf(ports: CancelamentoFiscalPorts): number {
   return Number((ports.finance as { __writeCount?: number } | undefined)?.__writeCount ?? 0)
+}
+
+function ufEmitenteDaNota(nota: NotaFiscalCancelamento): string | null {
+  const snap = nota.snapshotEmitente
+  if (snap && typeof snap === "object" && "uf" in snap) {
+    const uf = String((snap as { uf?: unknown }).uf ?? "").trim().toUpperCase()
+    if (uf) return uf
+  }
+  const chave = String(nota.chaveAcesso ?? "").trim()
+  if (chave.startsWith("35")) return "SP"
+  return null
 }
 
 /**
@@ -354,6 +368,31 @@ export async function cancelarNfceAutorizada(
   const xmlAutorizadoAntes = nota.xmlAutorizado
   const xmlAssinadoAntes = nota.xmlAssinado
 
+  if (ports.provider.simulado) {
+    await ports.log({
+      storeId,
+      vendaId: nota.vendaId,
+      notaFiscalId,
+      nivel: "WARN",
+      acao: "evento.cancelamento.resposta_simulada",
+      mensagem: "Provider simulado recusado: cancelamento fiscal não persiste CANCELADA.",
+      detalhe: { ...identidade, provider: ports.provider.tipo },
+      operador,
+    })
+    return fail({
+      resultado: "rejeitado",
+      code: "resposta_simulada",
+      mensagem: "Resposta simulada não autoriza persistência de cancelamento fiscal.",
+      statusHttp: 422,
+      notaStatus: nota.status,
+      vendaFiscalStatus: venda.fiscalStatus,
+      xmlAutorizado: xmlAutorizadoAntes,
+      xmlAssinado: xmlAssinadoAntes,
+      financeWriteCount: financeWriteCountOf(ports),
+      guardia,
+    })
+  }
+
   const eventoPendente = await ports.upsertEvento({
     storeId,
     notaFiscalId: nota.id,
@@ -370,6 +409,8 @@ export async function cancelarNfceAutorizada(
       notaFiscalId: nota.id,
       modelo: nota.modelo,
       ambiente: nota.ambiente,
+      uf: ufEmitenteDaNota(nota),
+      correlationId: `canc:${nota.id}:${SEQUENCIA_CANCELAMENTO_NFCE}`,
     },
     chaveAcesso: nota.chaveAcesso,
     protocolo: nota.protocolo,
@@ -380,6 +421,7 @@ export async function cancelarNfceAutorizada(
   const xMotivo = resposta.dados?.xMotivo != null ? String(resposta.dados.xMotivo) : resposta.mensagem
   const protocoloEvento = resposta.dados?.protocolo != null ? String(resposta.dados.protocolo) : null
   const desfecho = interpretarCStatCancelamento(cStat)
+  const veredito = vereditoPersistenciaCancelamento(resposta)
 
   if (desfecho.desfecho === "duplicidade" && existente?.status === StatusEventoFiscal.AUTORIZADO) {
     return {
@@ -403,11 +445,7 @@ export async function cancelarNfceAutorizada(
     }
   }
 
-  const autorizado =
-    resposta.ok &&
-    (isCancelamentoFiscalAutorizado(cStat) || desfecho.desfecho === "autorizado" || desfecho.desfecho === "duplicidade")
-
-  if (!autorizado) {
+  if (!veredito.ok) {
     const eventoRej = await ports.upsertEvento({
       storeId,
       notaFiscalId: nota.id,
@@ -429,16 +467,20 @@ export async function cancelarNfceAutorizada(
       acao: "evento.cancelamento.rejeitado",
       cStat,
       xMotivo,
-      mensagem: resposta.mensagem || "Cancelamento fiscal não autorizado pela SEFAZ.",
-      detalhe: { ...identidade, resultado: resposta.resultado },
+      mensagem: veredito.mensagem,
+      detalhe: { ...identidade, resultado: resposta.resultado, code: veredito.code },
       operador,
     })
     const resultado: CancelamentoFiscalResultado =
-      desfecho.desfecho === "incerto" || resposta.resultado === "erro" ? "incerto" : "rejeitado"
+      veredito.code === "fiscal_cancelamento_incerto" ||
+      desfecho.desfecho === "incerto" ||
+      resposta.resultado === "erro"
+        ? "incerto"
+        : "rejeitado"
     return fail({
       resultado,
-      code: resultado === "incerto" ? "fiscal_cancelamento_incerto" : "fiscal_cancelamento_rejeitado",
-      mensagem: resposta.mensagem || "Cancelamento fiscal não autorizado.",
+      code: veredito.code,
+      mensagem: veredito.mensagem,
       statusHttp: resultado === "incerto" ? 409 : 422,
       notaStatus: nota.status,
       vendaFiscalStatus: venda.fiscalStatus,

@@ -626,10 +626,11 @@ describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
     expect(r.ok).toBe(false)
     expect(r.dados?.servico).toBe("NFeRecepcaoEvento4")
     expect(r.dados?.cStat ?? null).not.toBe("101")
+    expect(r.dados?.cStat ?? null).not.toBe("135")
     expect(String(r.mensagem)).toMatch(/offline|indispon/i)
   })
 
-  it("transporte com retEnvEvento cStat 101 → CANCELADA", async () => {
+  it("transporte com retEnvEvento cStat 101 NÃO autoriza RecepcaoEvento4", async () => {
     const xml =
       `<retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe">` +
       `<infEvento><tpAmb>2</tpAmb><cOrgao>35</cOrgao><cStat>101</cStat>` +
@@ -653,8 +654,37 @@ describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
       protocolo,
       justificativa: justificativaOk,
     })
-    expect(r.ok).toBe(true)
+    expect(r.ok).toBe(false)
     expect(r.dados?.cStat).toBe("101")
+    expect(r.statusNota).toBeNull()
+  })
+
+  it("transporte com retEnvEvento cStat 135 → CANCELADA", async () => {
+    const xml =
+      `<retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe">` +
+      `<infEvento><tpAmb>2</tpAmb><cOrgao>35</cOrgao><cStat>135</cStat>` +
+      `<xMotivo>Evento registrado e vinculado a NF-e</xMotivo>` +
+      `<chNFe>${chave}</chNFe><nProt>135250000000099</nProt></infEvento></retEnvEvento>`
+    const transport: SefazTransport = {
+      permiteRede: true,
+      send: vi.fn(async () => ({
+        ok: true as const,
+        classification: "RESPONSE_RECEIVED" as const,
+        httpStatus: 200,
+        contentType: "application/soap+xml",
+        bodyBytes: new TextEncoder().encode(xml),
+        externalTransmissionAttempted: true as const,
+      })),
+    }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport, signingMaterial })
+    const r = await provider.cancelar({
+      contexto,
+      chaveAcesso: chave,
+      protocolo,
+      justificativa: justificativaOk,
+    })
+    expect(r.ok).toBe(true)
+    expect(r.dados?.cStat).toBe("135")
     expect(r.statusNota).toBe("CANCELADA")
     expect(r.dados?.protocolo).toBe("135250000000099")
     expect(r.simulado).toBe(false)
@@ -668,8 +698,8 @@ describe("cancelar — NFeRecepcaoEvento4 (GOAL 018)", () => {
       contentType: "application/soap+xml",
       bodyBytes: new TextEncoder().encode(
         `<retEnvEvento xmlns="http://www.portalfiscal.inf.br/nfe">` +
-          `<infEvento><tpAmb>2</tpAmb><cOrgao>35</cOrgao><cStat>101</cStat>` +
-          `<xMotivo>Cancelamento de NF-e homologado</xMotivo>` +
+          `<infEvento><tpAmb>2</tpAmb><cOrgao>35</cOrgao><cStat>135</cStat>` +
+          `<xMotivo>Evento registrado e vinculado a NF-e</xMotivo>` +
           `<chNFe>${chave}</chNFe><nProt>135250000000099</nProt></infEvento></retEnvEvento>`,
       ),
       externalTransmissionAttempted: true as const,

@@ -17,10 +17,11 @@ governa_codigo: prisma EventoFiscal/FiscalEmissaoJob, lib/fiscal/provider/*
 > **Dados:** `docs/architecture/FISCAL_SCHEMA_DESIGN.md` · **Fluxo:** `NFCE_ARCHITECTURE.md`.
 >
 > Cancelamento fiscal de NFC-e autorizada (GOAL 018): evento `NFeRecepcaoEvento4` idempotente
-> por `(notaFiscalId, tipo, sequencia)`, prazo SP de 30 min, persistência de `EventoFiscal` +
-> `FiscalLog`, transições `NotaFiscal.CANCELADA` / `Venda.CANCELADA_FISCAL`. **Inutilização**
-> permanece fora deste GOAL. O worker da fila de emissão já existe; não é o caminho síncrono
-> administrativo de cancelamento.
+> por `(notaFiscalId, tipo, sequencia)`, prazo SP de 30 min (Portaria SRE 40/2024 / Ajuste SINIEF
+> 19/16; CAT 12/2015 revogada), persistência somente com resposta **não simulada** e `cStat 135`.
+> `101` é status de documento na consulta, não do webservice de eventos. Transições
+> `NotaFiscal.CANCELADA` / `Venda.CANCELADA_FISCAL`. **Inutilização** permanece fora deste GOAL.
+> O worker da fila de emissão já existe; não é o caminho síncrono administrativo de cancelamento.
 
 ---
 
@@ -72,7 +73,7 @@ sequenceDiagram
   Svc->>DB: cria EventoFiscal CANCELAMENTO seq=n (PENDENTE) [idempotente]
   Svc->>Prov: cancelar(chave, protocolo, justificativa)
   Prov->>SEFAZ: transmite evento
-  SEFAZ-->>Prov: cStat (101=cancelamento homologado / 135=evento registrado / erro)
+  SEFAZ-->>Prov: cStat (135=evento registrado / 573=duplicidade / rejeição)
   Prov-->>Svc: resultado
   alt autorizado
     Svc->>DB: EventoFiscal AUTORIZADO + NotaFiscal CANCELADA + Venda CANCELADA_FISCAL

@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it } from "vitest"
-import { FiscalStatusVenda, StatusEventoFiscal, StatusNotaFiscal } from "@/generated/prisma"
+import { FiscalProviderTipo, FiscalStatusVenda, StatusEventoFiscal, StatusNotaFiscal } from "@/generated/prisma"
 import { stubHomologacaoProvider } from "@/lib/fiscal/provider/stub-homologacao"
-import type { FiscalProvider } from "@/lib/fiscal/provider/types"
+import type { FiscalProvider, FiscalProviderResponse } from "@/lib/fiscal/provider/types"
 import { SEQUENCIA_CANCELAMENTO_NFCE, TIPO_EVENTO_CANCELAMENTO } from "./evento-identidade"
 import {
   cancelarNfceAutorizada,
@@ -38,6 +38,54 @@ function financeSpy(): FinanceiroWritePorts & { __writeCount: number } {
   return f
 }
 
+function respostaCancelar(overrides: Partial<FiscalProviderResponse> = {}): FiscalProviderResponse {
+  return {
+    ok: true,
+    operacao: "cancelar",
+    resultado: "ok",
+    simulado: false,
+    provider: FiscalProviderTipo.SEFAZ_DIRETO,
+    ambiente: "HOMOLOGACAO",
+    statusNota: StatusNotaFiscal.CANCELADA,
+    dados: {
+      cStat: "135",
+      protocolo: "135250000000099",
+      xMotivo: "Evento registrado e vinculado a NF-e",
+    },
+    mensagem: "Evento de cancelamento registrado (NFeRecepcaoEvento4, cStat 135).",
+    pendencias: [],
+    erros: [],
+    eventos: [],
+    ...overrides,
+  }
+}
+
+function providerNaoSimulado(
+  cancelar: FiscalProvider["cancelar"] = async () => respostaCancelar(),
+): FiscalProvider {
+  const inerte = async () => respostaCancelar({ ok: false, resultado: "erro", operacao: "consultar" })
+  return {
+    tipo: FiscalProviderTipo.SEFAZ_DIRETO,
+    simulado: false,
+    validarConfiguracao: () => respostaCancelar({ ok: true, operacao: "validarConfiguracao" }),
+    validarSnapshot: () => respostaCancelar({ ok: true, operacao: "validarSnapshot" }),
+    prepararEmissao: () => respostaCancelar({ ok: true, operacao: "prepararEmissao" }),
+    emitir: inerte,
+    consultar: inerte,
+    cancelar,
+    inutilizar: inerte,
+    statusServico: async () => ({
+      provider: FiscalProviderTipo.SEFAZ_DIRETO,
+      online: true,
+      ambiente: "HOMOLOGACAO",
+      simulado: false,
+      mensagem: "ok",
+      cStat: "107",
+      verificadoEm: "2026-08-25T12:00:00.000Z",
+    }),
+  }
+}
+
 function notaAutorizada(overrides: Partial<NotaFiscalCancelamento> = {}): NotaFiscalCancelamento {
   return {
     id: "nota-1",
@@ -49,7 +97,7 @@ function notaAutorizada(overrides: Partial<NotaFiscalCancelamento> = {}): NotaFi
     dataAutorizacao: new Date("2026-08-25T12:00:00.000Z"),
     xmlAutorizado: XML_AUTORIZADO,
     xmlAssinado: XML_ASSINADO,
-    snapshotEmitente: { cnpj: "11222333000165" },
+    snapshotEmitente: { cnpj: "11222333000165", uf: "SP" },
     ambiente: "HOMOLOGACAO",
     modelo: "NFCE",
     ...overrides,
@@ -92,7 +140,7 @@ function createPorts(opts: {
     nota,
     venda,
     now: () => opts.now ?? new Date("2026-08-25T12:10:00.000Z"),
-    provider: opts.provider ?? stubHomologacaoProvider,
+    provider: opts.provider ?? providerNaoSimulado(),
     async loadNota() {
       return ports.nota
     },
@@ -167,7 +215,7 @@ describe("cancelarNfceAutorizada — serviço shipped", () => {
     expect(r.vendaFiscalStatus).toBe(FiscalStatusVenda.CANCELADA_FISCAL)
     expect(r.sequencia).toBe(SEQUENCIA_CANCELAMENTO_NFCE)
     expect(r.protocolo).toBeTruthy()
-    expect(r.cStat).toBe("101")
+    expect(r.cStat).toBe("135")
     expect(r.xmlAutorizado).toBe(XML_AUTORIZADO)
     expect(r.xmlAssinado).toBe(XML_ASSINADO)
     expect(r.xmlAutorizadoAlterado).toBe(false)
@@ -231,8 +279,8 @@ describe("cancelarNfceAutorizada — serviço shipped", () => {
           sequencia: 1,
           status: StatusEventoFiscal.AUTORIZADO,
           protocolo: "135250000000099",
-          cStat: "101",
-          xMotivo: "Cancelamento de NF-e homologado",
+          cStat: "135",
+          xMotivo: "Evento registrado e vinculado a NF-e",
           justificativa: JUSTIFICATIVA,
           xmlEvento: null,
           xmlRetorno: null,
@@ -309,6 +357,93 @@ describe("cancelarNfceAutorizada — serviço shipped", () => {
     )
     expect(r.ok).toBe(true)
     expect(r.financeWriteCount).toBe(0)
+    expect(ports.finance.__writeCount).toBe(0)
+  })
+
+  it("stub/simulado não persiste CANCELADA nem CANCELADA_FISCAL", async () => {
+    const ports = createPorts({ provider: stubHomologacaoProvider })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe("resposta_simulada")
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.AUTORIZADA)
+    expect(ports.finance.__writeCount).toBe(0)
+  })
+
+  it("cStat 135 simulado não persiste mesmo com ok=true", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () => respostaCancelar({ simulado: true })),
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe("resposta_simulada")
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.AUTORIZADA)
+  })
+
+  it("cStat 101 real não persiste — sucesso do evento é 135", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () =>
+        respostaCancelar({
+          ok: true,
+          dados: { cStat: "101", protocolo: "135250000000099", xMotivo: "Cancelamento de NF-e homologado" },
+        }),
+      ),
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.AUTORIZADA)
+  })
+
+  it("timeout/incerto não persiste CANCELADA", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () =>
+        respostaCancelar({
+          ok: false,
+          resultado: "erro",
+          dados: null,
+          mensagem: "transporte_deadline_total",
+        }),
+      ),
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe("fiscal_cancelamento_incerto")
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.AUTORIZADA)
+  })
+
+  it("rejeição SEFAZ não persiste CANCELADA", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () =>
+        respostaCancelar({
+          ok: false,
+          resultado: "rejeitado",
+          dados: { cStat: "218", xMotivo: "NF-e já está cancelada na base de dados da SEFAZ" },
+          mensagem: "rejeitado",
+        }),
+      ),
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe("fiscal_cancelamento_rejeitado")
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
     expect(ports.finance.__writeCount).toBe(0)
   })
 })

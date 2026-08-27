@@ -213,7 +213,7 @@ export class MockProvider implements FiscalProvider {
   async cancelar(params: FiscalProviderCancelamentoParams): Promise<FiscalProviderResponse> {
     const em = this.record("cancelar")
     return this.respond("cancelar", em, {
-      dados: { placeholder: true, chaveAcesso: s(params?.chaveAcesso) || null, cStat: "101" },
+      dados: { placeholder: true, chaveAcesso: s(params?.chaveAcesso) || null, cStat: "135" },
     })
   }
 

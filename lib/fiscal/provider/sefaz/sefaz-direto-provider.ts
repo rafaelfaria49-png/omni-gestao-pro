@@ -51,7 +51,7 @@ import { validarJustificativaCancelamento } from "@/lib/fiscal/events/justificat
 import { buildXmlEventoCancelamento } from "@/lib/fiscal/events/evento-xml"
 import { signEventoCancelamentoXml } from "@/lib/fiscal/events/evento-sign"
 import { parseRetornoEventoCancelamento } from "@/lib/fiscal/events/parse-retorno-evento"
-import { isCancelamentoFiscalAutorizado } from "@/lib/fiscal/events/cstat-cancelamento"
+
 import type { FiscalCertificateMaterial } from "@/lib/fiscal/signing/signer.types"
 import { NfceSignError } from "@/lib/fiscal/signing/signer.types"
 import { buildSefazSoap12Envelope, type SefazEnvelopeRejectionCode } from "./sefaz-envelope"
@@ -551,7 +551,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       bytesSha256,
       servico: "NFeRecepcaoEvento4",
       ports: this.ports,
-      modo: "transmissao",
+      modo: "evento",
     })
     if (!guards.ok) {
       return {
@@ -629,7 +629,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
 
     const xmlRetorno = new TextDecoder("utf-8", { fatal: false }).decode(outcome.bodyBytes)
     const parsed = parseRetornoEventoCancelamento({ xml: xmlRetorno, chaveAcessoEsperada: chave })
-    const autorizado = parsed.desfecho === "autorizado" || parsed.desfecho === "duplicidade" || isCancelamentoFiscalAutorizado(parsed.cStat)
+    const autorizado = parsed.desfecho === "autorizado"
     return {
       ok: autorizado,
       operacao: "cancelar",
@@ -646,8 +646,8 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
         servico: "NFeRecepcaoEvento4",
       },
       mensagem: autorizado
-        ? "Cancelamento fiscal homologado (NFeRecepcaoEvento4)."
-        : parsed.xMotivo || "Cancelamento fiscal não homologado.",
+        ? "Evento de cancelamento registrado (NFeRecepcaoEvento4, cStat 135)."
+        : parsed.xMotivo || "Cancelamento fiscal não registrado.",
       pendencias: [],
       erros: autorizado
         ? []

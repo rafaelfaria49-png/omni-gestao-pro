@@ -28,6 +28,7 @@ describe("prazo cancelamento NFC-e SP (30 min)", () => {
       expect(r.code).toBe("prazo_vencido")
       expect(r.mensagem).toMatch(/30 minutos/i)
       expect(r.mensagem).toMatch(/SIPET/)
+      expect(r.mensagem).not.toMatch(/CAT 12\/2015/)
     }
   })
 

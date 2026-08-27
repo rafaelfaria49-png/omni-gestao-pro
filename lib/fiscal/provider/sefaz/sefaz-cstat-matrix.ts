@@ -39,7 +39,7 @@ import type { SefazServico } from "./sefaz-endpoint-catalog"
  * alterada — vai para a trilha de auditoria junto com a classificação, de modo que se saiba
  * QUAL matriz classificou um documento.
  */
-export const SEFAZ_CSTAT_MATRIX_VERSION = "018.1" as const
+export const SEFAZ_CSTAT_MATRIX_VERSION = "018.2" as const
 
 /**
  * Desfecho canônico de um `cStat`.
@@ -200,8 +200,8 @@ const ENTRADAS: readonly SefazCStatEntry[] = Object.freeze([
     cStat: "101",
     outcome: "AUTHORIZED",
     reason: "CANCELAMENTO_HOMOLOGADO",
-    rotulo: "Cancelamento de NF-e homologado",
-    servicos: SERVICOS_DE_EVENTO,
+    rotulo: "Cancelamento de NF-e homologado (consulta de documento; não autoriza RecepcaoEvento4)",
+    servicos: SERVICOS_DE_CONSULTA,
     exigeProtocolo: true,
     exigeXmlAutorizado: false,
     exigeRecibo: false,

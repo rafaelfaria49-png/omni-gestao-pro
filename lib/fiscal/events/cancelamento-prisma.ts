@@ -1,6 +1,8 @@
 /**
  * Portas Prisma do cancelamento fiscal. Nenhuma escrita em Financeiro/Caixa.
  * XML autorizado/assinado e snapshots NÃO são atualizados.
+ *
+ * Sem fallback para stub: o provider vem injetado ou da composição SEFAZ_DIRETO 016/017.
  */
 import { prisma } from "@/lib/prisma"
 import {
@@ -9,10 +11,8 @@ import {
   StatusNotaFiscal,
   TipoEventoFiscal,
 } from "@/generated/prisma"
-import type { Prisma } from "@/generated/prisma"
-import { stubHomologacaoProvider } from "@/lib/fiscal/provider/stub-homologacao"
-import { resolveFiscalProvider } from "@/lib/fiscal/provider/resolver"
 import { recordFiscalEmissionLog } from "@/lib/fiscal/emission/emission-log"
+import { SEQUENCIA_CANCELAMENTO_NFCE } from "./evento-identidade"
 import {
   cancelarNfceAutorizada,
   type CancelamentoFiscalInput,
@@ -21,6 +21,10 @@ import {
   type EventoFiscalCancelamento,
   type NotaFiscalCancelamento,
 } from "./cancelamento-service"
+import {
+  createSefazDiretoCancelamentoRuntime,
+  type CancelamentoSefazRuntimeDeps,
+} from "./cancelamento-sefaz-runtime"
 
 type PrismaLike = {
   notaFiscal: {
@@ -39,7 +43,7 @@ type PrismaLike = {
     updateMany: (args: unknown) => Promise<{ count: number }>
   }
   configuracaoFiscalLoja: {
-    findUnique: (args: unknown) => Promise<{ provider: string; ambiente: string; modeloFiscal: string; fiscalEnabled: boolean; cnpj: string; razaoSocial: string; uf: string; providerConfig: unknown; providerTokenRef: string | null; cscId: string; cscTokenRef: string | null } | null>
+    findUnique: (args: unknown) => Promise<{ storeId?: string; provider: string; ambiente: string; modeloFiscal: string; fiscalEnabled: boolean; cnpj: string; razaoSocial: string; uf: string; providerConfig: unknown; providerTokenRef: string | null; cscId: string; cscTokenRef: string | null } | null>
   }
 }
 
@@ -63,13 +67,42 @@ function mapNota(row: {
   return { ...row, cnpjEmitente: snap?.cnpj ?? null }
 }
 
+function failPersistido(
+  partial: Pick<CancelamentoFiscalOutcome, "code" | "mensagem" | "statusHttp"> & {
+    resultado?: CancelamentoFiscalOutcome["resultado"]
+  },
+): CancelamentoFiscalOutcome {
+  return {
+    ok: false,
+    resultado: partial.resultado ?? "erro",
+    code: partial.code,
+    mensagem: partial.mensagem,
+    statusHttp: partial.statusHttp,
+    idempotente: false,
+    sequencia: SEQUENCIA_CANCELAMENTO_NFCE,
+    notaStatus: null,
+    vendaFiscalStatus: null,
+    eventoId: null,
+    protocolo: null,
+    cStat: null,
+    xmlAutorizado: null,
+    xmlAssinado: null,
+    xmlAutorizadoAlterado: false,
+    financeWriteCount: 0,
+    guardia: null,
+  }
+}
+
 export function createPrismaCancelamentoPorts(input: {
-  provider?: CancelamentoFiscalPorts["provider"]
+  provider: CancelamentoFiscalPorts["provider"]
   client?: PrismaLike
 }): CancelamentoFiscalPorts {
+  if (!input.provider) {
+    throw new Error("createPrismaCancelamentoPorts exige provider; stub não é fallback.")
+  }
   const db = input.client ?? (prisma as unknown as PrismaLike)
   return {
-    provider: input.provider ?? stubHomologacaoProvider,
+    provider: input.provider,
     async loadNota({ storeId, notaFiscalId }) {
       const row = await db.notaFiscal.findFirst({
         where: { id: notaFiscalId, storeId },
@@ -186,32 +219,28 @@ export function createPrismaCancelamentoPorts(input: {
 }
 
 export async function cancelarNfceAutorizadaPersistido(
-  input: CancelamentoFiscalInput & { provider?: CancelamentoFiscalPorts["provider"] },
+  input: CancelamentoFiscalInput & {
+    provider?: CancelamentoFiscalPorts["provider"]
+    runtime?: Omit<CancelamentoSefazRuntimeDeps, "storeId" | "client">
+  },
   client: PrismaLike = prisma as unknown as PrismaLike,
 ): Promise<CancelamentoFiscalOutcome> {
   let provider = input.provider
   if (!provider) {
-    const config = await client.configuracaoFiscalLoja.findUnique({
-      where: { storeId: input.storeId },
+    const runtime = await createSefazDiretoCancelamentoRuntime({
+      storeId: input.storeId,
+      client,
+      ...(input.runtime ?? {}),
     })
-    const resolved = resolveFiscalProvider(
-      config
-        ? {
-            provider: config.provider,
-            ambiente: config.ambiente,
-            modeloFiscal: config.modeloFiscal,
-            fiscalEnabled: config.fiscalEnabled,
-            cnpj: config.cnpj,
-            razaoSocial: config.razaoSocial,
-            uf: config.uf,
-            providerConfig: (config.providerConfig as Prisma.JsonObject | null) ?? null,
-            providerTokenRef: config.providerTokenRef,
-            cscId: config.cscId,
-            cscTokenRef: config.cscTokenRef,
-          }
-        : null,
-    )
-    provider = resolved.ok ? resolved.provider : stubHomologacaoProvider
+    if (!runtime.ok) {
+      return failPersistido({
+        resultado: "erro",
+        code: runtime.code,
+        mensagem: runtime.mensagem,
+        statusHttp: runtime.statusHttp,
+      })
+    }
+    provider = runtime.provider
   }
   return cancelarNfceAutorizada(input, createPrismaCancelamentoPorts({ provider, client }))
 }

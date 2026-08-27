@@ -100,18 +100,13 @@ describe("matriz de cStat — cobertura obrigatória", () => {
     expect(entrada("104").outcome).toBe("LOTE_PROCESSADO")
   })
 
-  it("101 é cancelamento homologado SOMENTE em NFeRecepcaoEvento4 — não é autorização de uso", () => {
-    const e = entrada("101", "NFeRecepcaoEvento4")
-    expect(e.outcome).toBe("AUTHORIZED")
-    expect(e.reason).toBe("CANCELAMENTO_HOMOLOGADO")
-    expect(e.exigeProtocolo).toBe(true)
-    expect(e.exigeXmlAutorizado).toBe(false)
-    expect(e.consequencias.terminal).toBe(true)
-    for (const servico of ["NFeAutorizacao4", "NFeConsultaProtocolo4"] as const) {
-      const lookup = lookupSefazCStat("101", servico)
-      expect(lookup.ok).toBe(false)
-      if (!lookup.ok) expect(lookup.reason).toBe("SERVICE_MISMATCH")
-    }
+  it("101 não autoriza NFeRecepcaoEvento4 — sucesso do evento é 135", () => {
+    const evento = lookupSefazCStat("101", "NFeRecepcaoEvento4")
+    expect(evento.ok).toBe(false)
+    if (!evento.ok) expect(evento.reason).toBe("SERVICE_MISMATCH")
+    const consulta = entrada("101", "NFeConsultaProtocolo4")
+    expect(consulta.reason).toBe("CANCELAMENTO_HOMOLOGADO")
+    expect(lookupSefazCStat("101", "NFeAutorizacao4").ok).toBe(false)
   })
 
   it("135 é evento registrado SOMENTE em NFeRecepcaoEvento4", () => {
@@ -174,7 +169,7 @@ describe("matriz de cStat — default fail-closed", () => {
 
 describe("matriz de cStat — imutabilidade e versionamento", () => {
   it("expõe uma versão estável", () => {
-    expect(SEFAZ_CSTAT_MATRIX_VERSION).toBe("018.1")
+    expect(SEFAZ_CSTAT_MATRIX_VERSION).toBe("018.2")
   })
 
   it("entradas, listas de serviço e consequências estão congeladas", () => {

@@ -41,7 +41,7 @@ describe("POST /api/fiscal/notas/[id]/cancelar", () => {
       vendaFiscalStatus: "CANCELADA_FISCAL",
       eventoId: "evt-1",
       protocolo: "135",
-      cStat: "101",
+      cStat: "135",
       xmlAutorizadoAlterado: false,
       financeWriteCount: 0,
     })
@@ -58,7 +58,7 @@ describe("POST /api/fiscal/notas/[id]/cancelar", () => {
     expect(res.status).toBe(200)
     expect(json.ok).toBe(true)
     expect(json.financeWriteCount).toBe(0)
-    expect(json.cStat).toBe("101")
+    expect(json.cStat).toBe("135")
     expect(h.cancelar).toHaveBeenCalledTimes(1)
     expect(h.cancelar.mock.calls[0][0]).toMatchObject({
       storeId: "loja-1",

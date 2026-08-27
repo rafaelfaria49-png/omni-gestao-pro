@@ -253,7 +253,7 @@ describe("cancelar (stub)", () => {
     expect(r.ok).toBe(true)
     expect(r.simulado).toBe(true)
     expect(r.statusNota).toBe("CANCELADA")
-    expect(r.dados?.cStat).toBe("101")
+    expect(r.dados?.cStat).toBe("135")
   })
 
   it("rejeita justificativa curta", async () => {

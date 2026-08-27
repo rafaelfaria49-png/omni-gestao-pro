@@ -17,9 +17,15 @@ export {
 export {
   CSTAT_CANCELAMENTO_HOMOLOGADO,
   CSTAT_EVENTO_REGISTRADO,
+  CSTAT_DUPLICIDADE_EVENTO,
   isCancelamentoFiscalAutorizado,
   interpretarCStatCancelamento,
+  vereditoPersistenciaCancelamento,
 } from "./cstat-cancelamento"
+export {
+  createSefazDiretoCancelamentoRuntime,
+  createCancelamentoSefazGuardPorts,
+} from "./cancelamento-sefaz-runtime"
 export {
   avaliarGuardiaCancelamentoFiscal,
   type GuardiaCancelamentoFiscal,
