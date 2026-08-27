@@ -129,8 +129,10 @@ export type SefazGuardOutcome = SefazGuardSuccess | SefazGuardFailure
  *  - `consulta`: não há documento sendo transmitido, só a chave. Os guards 2, 7 e 8
  *    (tpAmb do XML, hash dos bytes, atestado XSD) não têm objeto sobre o qual incidir e
  *    são **inaplicáveis** — jamais "pulados por conveniência". Todos os demais rodam.
+ *  - `evento`: payload de `NFeRecepcaoEvento4` (`envEvento`). Roda tpAmb + hash dos bytes
+ *    assinados; o atestado XSD de `nfe_v4.00` é **inaplicável** a este leiaute.
  */
-export type SefazGuardMode = "transmissao" | "consulta"
+export type SefazGuardMode = "transmissao" | "consulta" | "evento"
 
 const AMBIENTE_PERMITIDO = "HOMOLOGACAO"
 const MODELO_PERMITIDO = "NFCE"
@@ -208,8 +210,8 @@ export async function runSefazPreTransportGuards(input: {
     return falha("ambiente_nao_permitido", "Somente o ambiente de homologação é permitido.")
   }
 
-  // 2 — tpAmb lido do XML PERSISTIDO (não da config). Só há XML em transmissão.
-  if (modo === "transmissao") {
+  // 2 — tpAmb lido do XML PERSISTIDO (não da config). Só há XML em transmissão/evento.
+  if (modo === "transmissao" || modo === "evento") {
     const tpAmb = readTpAmbFromSignedXml(exactBytes)
     if (tpAmb !== TPAMB_PERMITIDO) {
       return falha(
@@ -252,7 +254,7 @@ export async function runSefazPreTransportGuards(input: {
   }
 
   const hashDeclarado = texto(bytesSha256).toLowerCase()
-  if (modo === "transmissao") {
+  if (modo === "transmissao" || modo === "evento") {
     // 7 — bytes assinados presentes e hash conferido contra os PRÓPRIOS bytes.
     if (exactBytes.length === 0 || !hashDeclarado || sha256Hex(exactBytes) !== hashDeclarado) {
       return falha(
@@ -260,8 +262,10 @@ export async function runSefazPreTransportGuards(input: {
         "XML assinado ausente ou SHA-256 divergente dos bytes recebidos.",
       )
     }
-
+  }
+  if (modo === "transmissao") {
     // 8 — prova de validação XSD vinculada A ESTES bytes. Nunca presumida.
+    // Inaplicável a `envEvento` (modo evento): o schema nfe_v4.00 não descreve RecepcaoEvento.
     const atestado = await ports.readXsdAttestation({
       storeId,
       chaveAcesso: document.chaveAcesso,
