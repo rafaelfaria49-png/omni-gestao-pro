@@ -67,32 +67,45 @@ export async function executeInutilizacaoJob(
     existingEvento?.status === "AUTORIZADO" &&
     TPROT_PATTERN.test(String(existingEvento.protocolo ?? "").trim())
   ) {
-    const now = dependencies.now?.() ?? new Date()
-    const baixado: typeof payload = {
-      ...payload,
-      mark: INUTILIZACAO_MARK.INUTILIZADO,
-      protocolo: existingEvento.protocolo,
-      cStat: existingEvento.cStat,
-      inutilizadoEm: now.toISOString(),
-    }
-    await dependencies.ports.updateJobPayload({
-      jobId: job.id,
-      storeId: job.storeId,
-      expectedMark: payload.mark,
-      payload: baixado,
-      status: "CONCLUIDO",
-    })
-    return {
-      kind: "success",
-      code: "ja_inutilizada",
-      mensagem: "EventoFiscal de inutilização já autorizado; marca baixada.",
-      ...naoInvocado,
-      detalhe: {
+    // O EventoFiscal não persiste série/faixa; ele só prova homologação desta faixa quando
+    // a nota vinculada é exatamente a nota do número único inutilizado. Sem esse vínculo,
+    // o protocolo pode ser de outra faixa — e baixar sem transmitir seria autorização falsa.
+    const notaVinculada = payload.notaFiscalId
+      ? await dependencies.ports.findNota({ storeId: payload.storeId, notaFiscalId: payload.notaFiscalId })
+      : null
+    const eventoCobreAFaixa =
+      notaVinculada != null &&
+      notaVinculada.serie === payload.serie &&
+      notaVinculada.numero === payload.numeroInicial &&
+      payload.numeroInicial === payload.numeroFinal
+    if (eventoCobreAFaixa) {
+      const now = dependencies.now?.() ?? new Date()
+      const baixado: typeof payload = {
+        ...payload,
+        mark: INUTILIZACAO_MARK.INUTILIZADO,
         protocolo: existingEvento.protocolo,
         cStat: existingEvento.cStat,
-        mark: INUTILIZACAO_MARK.INUTILIZADO,
-        idempotent: true,
-      },
+        inutilizadoEm: now.toISOString(),
+      }
+      await dependencies.ports.updateJobPayload({
+        jobId: job.id,
+        storeId: job.storeId,
+        expectedMark: payload.mark,
+        payload: baixado,
+        status: "CONCLUIDO",
+      })
+      return {
+        kind: "success",
+        code: "ja_inutilizada",
+        mensagem: "EventoFiscal de inutilização já autorizado; marca baixada.",
+        ...naoInvocado,
+        detalhe: {
+          protocolo: existingEvento.protocolo,
+          cStat: existingEvento.cStat,
+          mark: INUTILIZACAO_MARK.INUTILIZADO,
+          idempotent: true,
+        },
+      }
     }
   }
 
@@ -145,20 +158,8 @@ export async function executeInutilizacaoJob(
     simulado: resposta.simulado,
   })
 
-  if (payload.notaFiscalId) {
-    await dependencies.ports.upsertEvento({
-      storeId: payload.storeId,
-      notaFiscalId: payload.notaFiscalId,
-      justificativa,
-      operador: payload.requestedBy,
-      status: baixar ? "AUTORIZADO" : resposta.resultado === "rejeitado" ? "REJEITADO" : "PENDENTE",
-      protocolo: baixar ? protocolo : null,
-      cStat,
-      xMotivo,
-    })
-  }
-
   if (resposta.simulado) {
+    // EventoFiscal só nasce de transmissão real; resposta simulada não é fonte autoritativa.
     await dependencies.ports.createLog({
       storeId: payload.storeId,
       vendaId: payload.vendaId,
@@ -194,6 +195,19 @@ export async function executeInutilizacaoJob(
         numeroFinal: payload.numeroFinal,
       },
     }
+  }
+
+  if (payload.notaFiscalId) {
+    await dependencies.ports.upsertEvento({
+      storeId: payload.storeId,
+      notaFiscalId: payload.notaFiscalId,
+      justificativa,
+      operador: payload.requestedBy,
+      status: baixar ? "AUTORIZADO" : resposta.resultado === "rejeitado" ? "REJEITADO" : "PENDENTE",
+      protocolo: baixar ? protocolo : null,
+      cStat,
+      xMotivo,
+    })
   }
 
   if (baixar) {

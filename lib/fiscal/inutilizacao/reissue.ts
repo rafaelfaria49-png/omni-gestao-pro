@@ -7,7 +7,11 @@
 
 import { allocateFiscalNumber } from "../numbering/allocate-fiscal-number"
 import type { FiscalNumberingPorts } from "../numbering/numbering.types"
-import { JUSTIFICATIVA_REJEICAO_PADRAO, enqueueInutilizacao } from "./enqueue"
+import {
+  JUSTIFICATIVA_LACUNA_PADRAO,
+  JUSTIFICATIVA_REJEICAO_PADRAO,
+  enqueueInutilizacao,
+} from "./enqueue"
 import type { InutilizacaoPorts } from "./ports"
 
 export function resolveReissueSnapshotLocalKey(
@@ -137,6 +141,50 @@ export async function reemitirVendaAposRejeicao(
       ok: false,
       code: "numero_reutilizado",
       error: "A reemissão tentou reutilizar o número consumido após esgotar o sucessor.",
+    }
+  }
+
+  // Lacunas observadas na alocação da sucessora também são números consumidos: mesma
+  // doutrina do pipeline de emissão. Falha do enqueue não aborta a reemissão — o número
+  // já está fora do pool; a inutilização é retentada administrativamente.
+  for (const gap of allocation.lacunas) {
+    if (!gap.requerInutilizacao) continue
+    try {
+      await enqueueInutilizacao(
+        {
+          storeId: gap.storeId,
+          vendaId,
+          notaFiscalId: gap.notaFiscalId,
+          serie: gap.serie,
+          numeroInicial: gap.numero,
+          numeroFinal: gap.numero,
+          justificativa: JUSTIFICATIVA_LACUNA_PADRAO,
+          motivo: "lacuna_numeracao",
+          operador,
+          now,
+        },
+        ports,
+      )
+    } catch (error) {
+      await ports
+        .createLog({
+          storeId: gap.storeId,
+          vendaId,
+          notaFiscalId: gap.notaFiscalId,
+          jobId: null,
+          eventoFiscalId: null,
+          nivel: "ERROR",
+          acao: "fiscal.inutilizacao.enqueue_failed_after_reissue",
+          mensagem:
+            "Reemissão prosseguiu; enqueue de inutilização da lacuna falhou e será retentado administrativamente.",
+          operador,
+          detalhe: {
+            serie: gap.serie,
+            numero: gap.numero,
+            motivoFalha: error instanceof Error ? error.message : String(error),
+          },
+        })
+        .catch(() => undefined)
     }
   }
 

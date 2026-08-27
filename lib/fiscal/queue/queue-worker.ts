@@ -510,6 +510,12 @@ async function processLease(input: {
    *
    * `externalTransmissionAttempted: true` é deliberadamente conservador: sinaliza contato
    * externo POSSÍVEL, forçando reconciliação humana em vez de presumir que nada saiu.
+   *
+   * 4. **`INUTILIZACAO` não é freada (GOAL 019).** A transmissão real de inutilização é a
+   *    própria entrega deste GOAL: o executor fail-closeia fora de NFCE/HOMOLOGACAO, exige
+   *    provider injetado (stub silencioso proibido) e baixa a marca somente com cStat 102 +
+   *    TProt real. Reescrever o resultado real como bloqueio gravaria job CONCLUIDO com
+   *    falso `provider_real_bloqueado` e drenagem reportando `lock_perdido`.
    */
   const repeticaoDeConsultaSegura =
     job.tipo === "CONSULTA" &&
@@ -520,7 +526,13 @@ async function processLease(input: {
     execution.kind === "processing" ||
     execution.kind === "unresolved" ||
     (execution.kind === "uncertain" && execution.externalTransmissionAttempted)
-  if (!maisRestritivoQueTerminal && !repeticaoDeConsultaSegura && !execution.simulado) {
+  const inutilizacaoRealAutorizada = job.tipo === "INUTILIZACAO"
+  if (
+    !maisRestritivoQueTerminal &&
+    !repeticaoDeConsultaSegura &&
+    !inutilizacaoRealAutorizada &&
+    !execution.simulado
+  ) {
     execution = {
       kind: "terminal" as const,
       code: "provider_real_bloqueado",

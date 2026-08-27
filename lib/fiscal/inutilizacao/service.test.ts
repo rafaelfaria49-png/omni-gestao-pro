@@ -46,6 +46,28 @@ function jobFromRow(row: InutilizacaoJobRow): FiscalQueueJob {
   }
 }
 
+function notaRow(overrides: Partial<InutilizacaoNotaRow> & { id: string }): InutilizacaoNotaRow {
+  return {
+    storeId: "loja-1",
+    vendaId: "venda-1",
+    status: "REJEITADA",
+    vigente: true,
+    modelo: "NFCE",
+    ambiente: "HOMOLOGACAO",
+    serie: 1,
+    numero: null,
+    localKey: null,
+    snapshotEmitente: null,
+    snapshotDestinatario: null,
+    snapshotPagamento: null,
+    valorTotal: 0,
+    valorDesconto: 0,
+    valorFrete: 0,
+    valorTotalTributos: 0,
+    ...overrides,
+  }
+}
+
 function createMemory(): InutilizacaoPorts & {
   jobs: Map<string, InutilizacaoJobRow>
   notas: Map<string, InutilizacaoNotaRow>
@@ -513,6 +535,7 @@ describe("executeInutilizacaoJob", () => {
     )
     expect(enq.ok).toBe(true)
     if (!enq.ok) return
+    mem.notas.set("nf-1", notaRow({ id: "nf-1", serie: 1, numero: 32 }))
     mem.eventos.set("nf-1", {
       id: "ev-1",
       status: "AUTORIZADO",
@@ -531,6 +554,46 @@ describe("executeInutilizacaoJob", () => {
     expect(result.kind).toBe("success")
     expect(result.code).toBe("ja_inutilizada")
     expect(asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)?.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
+  })
+
+  it("EventoFiscal AUTORIZADO de faixa diversa não baixa sem vínculo: transmite à SEFAZ", async () => {
+    const mem = createMemory()
+    const enq = await enqueueInutilizacao(
+      {
+        storeId: "loja-1",
+        vendaId: "venda-1",
+        notaFiscalId: "nf-1",
+        serie: 1,
+        numeroInicial: 32,
+        numeroFinal: 32,
+        justificativa: JUST,
+        motivo: "rejeicao_definitiva",
+        operador: "op",
+      },
+      mem,
+    )
+    expect(enq.ok).toBe(true)
+    if (!enq.ok) return
+    // Evento autorizado, mas a nota vinculada tem número fora da faixa do job: sem vínculo
+    // comprovado, o atalho é recusado e a faixa é transmitida de verdade.
+    mem.notas.set("nf-1", notaRow({ id: "nf-1", serie: 1, numero: 40 }))
+    mem.eventos.set("nf-1", {
+      id: "ev-1",
+      status: "AUTORIZADO",
+      protocolo: "135260000000001",
+      cStat: "102",
+    })
+    const cUFSeen: string[] = []
+    const result = await executeInutilizacaoJob(jobFromRow(mem.jobs.get(enq.jobId)!), {
+      ports: mem,
+      provider: sefazHomologadaProvider(cUFSeen),
+    })
+    expect(cUFSeen.length).toBe(1)
+    expect(result.kind).toBe("success")
+    expect(result.code).toBe("inutilizacao_homologada")
+    const payload = asInutilizacaoPayload(mem.jobs.get(enq.jobId)!.payload)!
+    expect(payload.mark).toBe(INUTILIZACAO_MARK.INUTILIZADO)
+    expect(payload.cStat).toBe("102")
   })
 
   it("mapeia UF para cUF IBGE e recusa UF inválida sem transmitir", async () => {
@@ -817,6 +880,65 @@ describe("rejeição → inutilização → reemissão", () => {
     expect(neu.localKey).not.toBe(old.localKey)
     expect(mem.vendaStatus).toBe("PENDENTE")
     expect(mem.jobs.size).toBeGreaterThanOrEqual(1)
+  })
+
+  it("lacunas da alocação da sucessora são enfileiradas para inutilização", async () => {
+    const mem = createMemory()
+    mem.notas.set("nf-old", notaRow({ id: "nf-old", numero: 5, status: "REJEITADA", vigente: true }))
+    let reservas = 0
+    const numbering: FiscalNumberingPorts = {
+      async getNota({ notaFiscalId }) {
+        const n = mem.notas.get(notaFiscalId)
+        if (!n) return null
+        return {
+          id: n.id,
+          storeId: n.storeId,
+          vendaId: n.vendaId,
+          modelo: n.modelo,
+          ambiente: n.ambiente,
+          serie: n.serie,
+          numero: n.numero,
+          serieFiscalId: "serie-1",
+          localKey: n.localKey,
+        } satisfies NumberingNota
+      },
+      async findActiveSerie() {
+        return { id: "serie-1", storeId: "loja-1", serie: 1, modelo: "NFCE", ambiente: "HOMOLOGACAO", ativo: true, proximoNumero: 6 }
+      },
+      async reserveNextNumber() {
+        reservas += 1
+        // Primeira reserva (6) perde o bind para um concorrente e fica queimada = lacuna.
+        return { serieFiscalId: "serie-1", serie: 1, numero: reservas === 1 ? 6 : 7 }
+      },
+      async bindNotaNumero({ notaFiscalId, serie, numero }) {
+        const n = mem.notas.get(notaFiscalId)
+        if (!n) return { ok: false, conflito: false, mensagem: "nota ausente" }
+        if (n.numero != null) return { ok: false, conflito: true, motivo: "nota_ja_numerada", mensagem: "já numerada" }
+        if (numero === 6) {
+          n.serie = serie
+          n.numero = 7
+          return { ok: false, conflito: true, motivo: "nota_ja_numerada", mensagem: "concorrente venceu com 7" }
+        }
+        n.serie = serie
+        n.numero = numero
+        return { ok: true }
+      },
+    }
+    const result = await reemitirVendaAposRejeicao(
+      { storeId: "loja-1", vendaId: "venda-1", operador: "op", justificativa: JUST },
+      mem,
+      numbering,
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.oldNumero).toBe(5)
+    expect(result.newNumero).toBe(7)
+    const jobLacuna = [...mem.jobs.values()].find((j) => {
+      const p = asInutilizacaoPayload(j.payload)
+      return p?.motivo === "lacuna_numeracao" && p.numeroInicial === 6 && p.numeroFinal === 6
+    })
+    expect(jobLacuna).toBeTruthy()
+    expect(mem.logs.some((l) => l.acao === "fiscal.inutilizacao.enqueued" && (l.detalhe as Record<string, unknown>)?.numeroInicial === 6)).toBe(true)
   })
 
   it("numero_reutilizado avança para sucessor e não devolve o número ao pool", async () => {

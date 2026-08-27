@@ -52,8 +52,11 @@ export function assertInutilizacaoXmlDsig(xml: string): InutilizacaoDsigCheck {
   }
 
   const signedInfo = childElements(last, "SignedInfo", DSIG_NS)[0]
-  const reference = signedInfo ? childElements(signedInfo, "Reference", DSIG_NS)[0] : undefined
-  const uri = reference ? attrOf(reference, "URI") : ""
+  const references = signedInfo ? childElements(signedInfo, "Reference", DSIG_NS) : []
+  if (references.length !== 1) {
+    return { ok: false, mensagem: "SignedInfo deve ter exatamente uma Reference (a do infInut)." }
+  }
+  const uri = attrOf(references[0]!, "URI")
   if (uri !== `#${id}`) {
     return { ok: false, mensagem: "Reference URI não aponta para infInut/@Id." }
   }
