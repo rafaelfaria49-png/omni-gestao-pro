@@ -54,6 +54,16 @@ describe("XMLDSig estrutural do inutNFe", () => {
     expect(assertInutilizacaoXmlDsig(textual).ok).toBe(false)
   })
 
+  it("recusa SignedInfo com mais de uma Reference", () => {
+    const signed = sign(pedidoXml())
+    const duplicated = signed.replace(
+      /(<Reference URI="#ID[\s\S]*?<\/Reference>)(\s*<\/SignedInfo>)/,
+      '$1<Reference URI="#outra"><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"/><DigestValue>Zg==</DigestValue></Reference>$2',
+    )
+    expect(duplicated).not.toBe(signed)
+    expect(assertInutilizacaoXmlDsig(duplicated).ok).toBe(false)
+  })
+
   it("bytes no SOAP são exatamente o XML assinado", () => {
     const signed = sign(pedidoXml())
     const exactBytes = Uint8Array.from(new TextEncoder().encode(signed))

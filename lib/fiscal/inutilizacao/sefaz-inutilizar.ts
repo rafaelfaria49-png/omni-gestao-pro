@@ -29,11 +29,12 @@ import { assertInutilizacaoXmlDsig } from "./xmldsig-structure"
 /** Assina o `inutNFe` antes do envelope. Sem isto o adapter recusa o envio. */
 export type InutilizacaoSignPort = (xml: string) => string | Promise<string>
 
+/** Factory síncrona: a porta async (`InutilizacaoSignPort`) continua aceita no envio. */
 export function createInutilizacaoXmlSigner(
   certificado: FiscalCertificateMaterial,
   senha = "",
   options: SignNfceOptions = {},
-): InutilizacaoSignPort {
+): (xml: string) => string {
   return (xml) => signInutilizacaoXml(xml, certificado, senha, options).xml
 }
 

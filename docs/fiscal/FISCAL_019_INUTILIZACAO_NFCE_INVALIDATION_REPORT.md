@@ -68,3 +68,22 @@ coberto por testes (rejeição → inutilizar → protocolo stub 102 → reemiti
 
 `HOMOLOGATION_STATUS=internal-only`
 `REMAINING_EXTERNAL_GATE=SEFAZ homologação ao vivo (017/H9-H10 + auth A1)`
+
+## Closeout da execução final (2026-08-27)
+
+Revisão independente final por outra família sobre o head `8b6a581` + correções na mesma branch:
+
+| Achado | Classe | Correção |
+|---|---|---|
+| Atalho "EventoFiscal AUTORIZADO" baixava faixa sem vínculo com a nota/número do job (protocolo de outra faixa podia baixar sem transmissão) | P0 | `execute.ts` exige `nota.serie/numero === payload (faixa de 1)` antes de baixar; sem vínculo, transmite |
+| Freio GOAL-011 reescrevia resultado real de INUTILIZACAO como `provider_real_bloqueado` (falso `lock_perdido` na drenagem; cStat real mascarado) | P1 | `queue-worker.ts`: `INUTILIZACAO` isenta do freio; EMISSAO/CONSULTA continuam freados |
+| `createInutilizacaoXmlSigner` tipada como `string \| Promise<string>` quebrava o tsc do CI (6 erros TS) | P1 | factory tipada como síncrona `(xml: string) => string` |
+| EventoFiscal persistido a partir de resposta simulada | P2 | evento só nasce de transmissão real |
+| Lacunas da alocação na reemissão não eram inutilizadas | P2 | `reissue.ts` enfileira job `lacuna_numeracao` (idempotente por dedupe) |
+| `SignedInfo` aceitava mais de uma `Reference` | P2 | validação estrutural exige exatamente uma |
+| Enqueue de lacunas da emissão podia abortar o pipeline | P2 | try/catch + log de compensação (`fiscal.inutilizacao.enqueue_failed_after_gap`) |
+
+G-C7 reavaliado com o estado final: mantém **FECHAVEL_INTERNO** — os contratos internos de
+010/011/012/013/019 e suas suítes sustentam a doutrina sem reutilização de número. O que resta é
+exclusivamente o gate externo de homologação SEFAZ ao vivo (H-9/H-10 + A1), que não impede o
+merge da implementação interna.

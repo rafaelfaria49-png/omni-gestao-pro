@@ -187,20 +187,44 @@ export async function emitirNotaFiscalVenda(input: EmissionInput): Promise<Emiss
       const portsInut = createPrismaInutilizacaoPorts()
       for (const gap of lacunas) {
         if (!gap.requerInutilizacao) continue
-        await enqueueInutilizacao(
-          {
-            storeId: gap.storeId,
-            vendaId,
-            notaFiscalId: gap.notaFiscalId,
-            serie: gap.serie,
-            numeroInicial: gap.numero,
-            numeroFinal: gap.numero,
-            justificativa: JUSTIFICATIVA_LACUNA_PADRAO,
-            motivo: "lacuna_numeracao",
-            operador: operador ?? "fiscal-numbering",
-          },
-          portsInut,
-        )
+        // Lacuna não pode abortar a emissão: o número já está consumido no contador e
+        // permanece fora do pool; a inutilização é retentada administrativamente.
+        try {
+          await enqueueInutilizacao(
+            {
+              storeId: gap.storeId,
+              vendaId,
+              notaFiscalId: gap.notaFiscalId,
+              serie: gap.serie,
+              numeroInicial: gap.numero,
+              numeroFinal: gap.numero,
+              justificativa: JUSTIFICATIVA_LACUNA_PADRAO,
+              motivo: "lacuna_numeracao",
+              operador: operador ?? "fiscal-numbering",
+            },
+            portsInut,
+          )
+        } catch (error) {
+          await portsInut
+            .createLog({
+              storeId: gap.storeId,
+              vendaId,
+              notaFiscalId: gap.notaFiscalId,
+              jobId: null,
+              eventoFiscalId: null,
+              nivel: "ERROR",
+              acao: "fiscal.inutilizacao.enqueue_failed_after_gap",
+              mensagem:
+                "Emissão prosseguiu; enqueue de inutilização da lacuna falhou e será retentado administrativamente.",
+              operador: operador ?? "fiscal-numbering",
+              detalhe: {
+                serie: gap.serie,
+                numero: gap.numero,
+                motivoFalha: error instanceof Error ? error.message : String(error),
+              },
+            })
+            .catch(() => undefined)
+        }
       }
     },
   }
