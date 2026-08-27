@@ -8,7 +8,7 @@
   "class": "C2",
   "risk_tier": "ALTO",
   "branch": "goal/pdv-001-trocas-busca-vale-credito",
-  "worktree": "<PREENCHER>",
+  "worktree": "C:/Projetos/omni-gestao",
   "test_command": "npx vitest run app/api/vendas/historico/route.test.ts app/api/ops/devolucao/route.test.ts app/api/ops/credito-cliente/route.test.ts lib/ops-upsert-venda-vale-concorrencia.test.ts lib/ops-upsert-venda-vale.test.ts lib/ops-upsert-venda.test.ts lib/ops-upsert-venda-safety.test.ts lib/pdv-payments.test.ts lib/caixa-fechamento-resumo.test.ts",
   "allowlist": [
     "app/api/vendas/historico/route.ts",

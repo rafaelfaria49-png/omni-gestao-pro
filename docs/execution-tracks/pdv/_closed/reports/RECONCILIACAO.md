@@ -1,9 +1,9 @@
 # Reconciliação de importação — trilha `pdv`
 
-- importação nº 1 · 2026-08-27T18:05:53.659Z
+- importação nº 2 · 2026-08-27T18:06:24.100Z
 - plano: `PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001` (plan_rev 1)
 - bootstrap_commit declarado: `2b223705a3a2d6982a50b2fbb1d025cedc8541d5`
-- manifesto (proveniência): `docs/execution-tracks/pdv/_closed/reports/IMPORT-1-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/pdv/_closed/reports/IMPORT-2-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
