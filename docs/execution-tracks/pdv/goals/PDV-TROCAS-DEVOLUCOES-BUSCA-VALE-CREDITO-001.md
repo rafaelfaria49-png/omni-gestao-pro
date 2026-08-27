@@ -20,6 +20,8 @@
     "app/api/ops/credito-cliente/route.test.ts",
     "lib/ops-upsert-venda.ts",
     "lib/ops-upsert-venda-vale-concorrencia.test.ts",
+    "lib/ops-upsert-venda-vale.test.ts",
+    "lib/ops-upsert-venda-replay-conflict.test.ts",
     "lib/operations-store.tsx",
     "components/dashboard/vendas/payment-modal.tsx",
     "components/dashboard/vendas/pdv-classic.tsx",
@@ -59,6 +61,8 @@
 - `app/api/ops/credito-cliente/route.test.ts`
 - `lib/ops-upsert-venda.ts`
 - `lib/ops-upsert-venda-vale-concorrencia.test.ts`
+- `lib/ops-upsert-venda-vale.test.ts`
+- `lib/ops-upsert-venda-replay-conflict.test.ts`
 - `lib/operations-store.tsx`
 - `components/dashboard/vendas/payment-modal.tsx`
 - `components/dashboard/vendas/pdv-classic.tsx`
