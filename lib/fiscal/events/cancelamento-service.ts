@@ -192,6 +192,82 @@ function ufEmitenteDaNota(nota: NotaFiscalCancelamento): string | null {
 }
 
 /**
+ * Reconvergência para evento AUTORIZADO: completa Nota/Venda se uma escrita
+ * concorrente ficou pela metade e NUNCA rebaixa o evento. Usada no retry
+ * idempotente e quando uma resposta tardia (573/timeout) chega depois de outra
+ * chamada ter autorizado o mesmo evento.
+ */
+async function reconvergeEventoAutorizado(
+  ports: CancelamentoFiscalPorts,
+  args: {
+    storeId: string
+    operador: string
+    nota: NotaFiscalCancelamento
+    venda: VendaCancelamento
+    existente: EventoFiscalCancelamento
+    identidade: { notaFiscalId: string; tipo: string; sequencia: number }
+    resultado: "idempotente" | "duplicado"
+    code: string
+    mensagem: string
+    acaoLog: string
+  },
+): Promise<CancelamentoFiscalOutcome> {
+  const { nota, venda, existente, identidade } = args
+  let xmlAutorizado = nota.xmlAutorizado
+  let xmlAssinado = nota.xmlAssinado
+  if (nota.status !== StatusNotaFiscal.CANCELADA) {
+    const persistido = await ports.markNotaCancelada({
+      notaFiscalId: nota.id,
+      cStat: existente.cStat,
+      xMotivo: existente.xMotivo,
+      xmlAutorizadoAtual: nota.xmlAutorizado,
+      xmlAssinadoAtual: nota.xmlAssinado,
+    })
+    xmlAutorizado = persistido.xmlAutorizado
+    xmlAssinado = persistido.xmlAssinado
+  }
+  if (venda.fiscalStatus !== FiscalStatusVenda.CANCELADA_FISCAL) {
+    await ports.setVendaFiscalStatus({
+      vendaId: nota.vendaId,
+      de: String(venda.fiscalStatus ?? ""),
+      para: FiscalStatusVenda.CANCELADA_FISCAL,
+    })
+  }
+  await ports.log({
+    storeId: args.storeId,
+    vendaId: nota.vendaId,
+    notaFiscalId: nota.id,
+    eventoFiscalId: existente.id,
+    nivel: "INFO",
+    acao: args.acaoLog,
+    cStat: existente.cStat,
+    xMotivo: existente.xMotivo,
+    mensagem: args.mensagem,
+    detalhe: { ...identidade },
+    operador: args.operador,
+  })
+  return {
+    ok: true,
+    resultado: args.resultado,
+    code: args.code,
+    mensagem: args.mensagem,
+    statusHttp: 200,
+    idempotente: true,
+    sequencia: identidade.sequencia,
+    notaStatus: StatusNotaFiscal.CANCELADA,
+    vendaFiscalStatus: FiscalStatusVenda.CANCELADA_FISCAL,
+    eventoId: existente.id,
+    protocolo: existente.protocolo,
+    cStat: existente.cStat,
+    xmlAutorizado,
+    xmlAssinado,
+    xmlAutorizadoAlterado: xmlAutorizado !== nota.xmlAutorizado,
+    financeWriteCount: financeWriteCountOf(ports),
+    guardia: null,
+  }
+}
+
+/**
  * Cancela fiscamente uma NFC-e autorizada. Idempotente por (notaFiscalId, CANCELAMENTO, 1).
  * Zero escritas em Financeiro/Caixa.
  */
@@ -241,63 +317,36 @@ export async function cancelarNfceAutorizada(
     })
   }
 
+  if (String(nota.modelo ?? "").toUpperCase() !== "NFCE") {
+    return fail({
+      resultado: "bloqueado",
+      code: "modelo_nao_suportado",
+      mensagem: "Cancelamento fiscal deste GOAL suporta apenas NFC-e (modelo 65).",
+      statusHttp: 422,
+      notaStatus: nota.status,
+      vendaFiscalStatus: venda.fiscalStatus,
+      xmlAutorizado: nota.xmlAutorizado,
+      xmlAssinado: nota.xmlAssinado,
+    })
+  }
+
   const agora = ports.now ? ports.now() : new Date()
   const identidade = identidadeEventoCancelamento(nota.id)
   const existente = await ports.findEvento(identidade)
 
   if (existente && existente.status === StatusEventoFiscal.AUTORIZADO) {
-    let xmlAutorizado = nota.xmlAutorizado
-    let xmlAssinado = nota.xmlAssinado
-    if (nota.status !== StatusNotaFiscal.CANCELADA) {
-      const persistido = await ports.markNotaCancelada({
-        notaFiscalId: nota.id,
-        cStat: existente.cStat,
-        xMotivo: existente.xMotivo,
-        xmlAutorizadoAtual: nota.xmlAutorizado,
-        xmlAssinadoAtual: nota.xmlAssinado,
-      })
-      xmlAutorizado = persistido.xmlAutorizado
-      xmlAssinado = persistido.xmlAssinado
-    }
-    if (venda.fiscalStatus !== FiscalStatusVenda.CANCELADA_FISCAL) {
-      await ports.setVendaFiscalStatus({
-        vendaId: nota.vendaId,
-        de: String(venda.fiscalStatus ?? ""),
-        para: FiscalStatusVenda.CANCELADA_FISCAL,
-      })
-    }
-    await ports.log({
+    return reconvergeEventoAutorizado(ports, {
       storeId,
-      vendaId: nota.vendaId,
-      notaFiscalId,
-      eventoFiscalId: existente.id,
-      nivel: "INFO",
-      acao: "evento.cancelamento.idempotente",
-      cStat: existente.cStat,
-      xMotivo: existente.xMotivo,
-      mensagem: "Evento de cancelamento já autorizado — identidade reutilizada, sem nova transmissão.",
-      detalhe: { ...identidade },
       operador,
-    })
-    return {
-      ok: true,
+      nota,
+      venda,
+      existente,
+      identidade,
       resultado: "idempotente",
       code: "evento_ja_autorizado",
       mensagem: "Cancelamento fiscal já autorizado para esta identidade (notaFiscalId, tipo, sequencia).",
-      statusHttp: 200,
-      idempotente: true,
-      sequencia: identidade.sequencia,
-      notaStatus: StatusNotaFiscal.CANCELADA,
-      vendaFiscalStatus: FiscalStatusVenda.CANCELADA_FISCAL,
-      eventoId: existente.id,
-      protocolo: existente.protocolo,
-      cStat: existente.cStat,
-      xmlAutorizado,
-      xmlAssinado,
-      xmlAutorizadoAlterado: xmlAutorizado !== nota.xmlAutorizado,
-      financeWriteCount: financeWriteCountOf(ports),
-      guardia: null,
-    }
+      acaoLog: "evento.cancelamento.idempotente",
+    })
   }
 
   const guardia = avaliarGuardiaCancelamentoFiscal({
@@ -420,32 +469,34 @@ export async function cancelarNfceAutorizada(
   const cStat = resposta.dados?.cStat != null ? String(resposta.dados.cStat) : null
   const xMotivo = resposta.dados?.xMotivo != null ? String(resposta.dados.xMotivo) : resposta.mensagem
   const protocoloEvento = resposta.dados?.protocolo != null ? String(resposta.dados.protocolo) : null
+  const xmlEventoResposta = resposta.dados?.xmlEvento != null ? String(resposta.dados.xmlEvento) : null
+  const xmlRetornoResposta = resposta.dados?.xmlRetorno != null ? String(resposta.dados.xmlRetorno) : null
   const desfecho = interpretarCStatCancelamento(cStat)
   const veredito = vereditoPersistenciaCancelamento(resposta)
 
-  if (desfecho.desfecho === "duplicidade" && existente?.status === StatusEventoFiscal.AUTORIZADO) {
-    return {
-      ok: true,
-      resultado: "duplicado",
-      code: "evento_duplicado",
-      mensagem: "SEFAZ informou duplicidade do mesmo evento — identidade preservada, sem nova mutação.",
-      statusHttp: 200,
-      idempotente: true,
-      sequencia: identidade.sequencia,
-      notaStatus: StatusNotaFiscal.CANCELADA,
-      vendaFiscalStatus: FiscalStatusVenda.CANCELADA_FISCAL,
-      eventoId: existente.id,
-      protocolo: existente.protocolo,
-      cStat: existente.cStat,
-      xmlAutorizado: xmlAutorizadoAntes,
-      xmlAssinado: xmlAssinadoAntes,
-      xmlAutorizadoAlterado: false,
-      financeWriteCount: financeWriteCountOf(ports),
-      guardia,
-    }
-  }
-
   if (!veredito.ok) {
+    // Re-leitura antes de persistir qualquer rejeição: uma chamada concorrente pode
+    // ter autorizado este evento enquanto a resposta atual estava em trânsito
+    // (573/timeout pós-processamento na SEFAZ). Evento AUTORIZADO local nunca é
+    // rebaixado a REJEITADO.
+    const atual = await ports.findEvento(identidade)
+    if (atual?.status === StatusEventoFiscal.AUTORIZADO) {
+      return reconvergeEventoAutorizado(ports, {
+        storeId,
+        operador,
+        nota,
+        venda,
+        existente: atual,
+        identidade,
+        resultado: "duplicado",
+        code: "evento_duplicado",
+        mensagem:
+          desfecho.desfecho === "duplicidade"
+            ? "SEFAZ informou duplicidade do mesmo evento — evento já autorizado localmente, sem nova mutação."
+            : "Resposta tardia de tentativa concorrente — evento já autorizado localmente, sem nova mutação.",
+        acaoLog: "evento.cancelamento.reconvergido",
+      })
+    }
     const eventoRej = await ports.upsertEvento({
       storeId,
       notaFiscalId: nota.id,
@@ -456,6 +507,8 @@ export async function cancelarNfceAutorizada(
       protocolo: protocoloEvento,
       cStat,
       xMotivo,
+      xmlEvento: xmlEventoResposta ?? undefined,
+      xmlRetorno: xmlRetornoResposta ?? undefined,
       operador,
     })
     await ports.log({
@@ -473,6 +526,7 @@ export async function cancelarNfceAutorizada(
     })
     const resultado: CancelamentoFiscalResultado =
       veredito.code === "fiscal_cancelamento_incerto" ||
+      veredito.code === "evento_duplicado_sem_autorizacao_local" ||
       desfecho.desfecho === "incerto" ||
       resposta.resultado === "erro"
         ? "incerto"
@@ -504,6 +558,8 @@ export async function cancelarNfceAutorizada(
     protocolo: protocoloEvento,
     cStat,
     xMotivo,
+    xmlEvento: xmlEventoResposta ?? undefined,
+    xmlRetorno: xmlRetornoResposta ?? undefined,
     operador,
   })
 

@@ -644,6 +644,8 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
         cStat: parsed.cStat,
         xMotivo: parsed.xMotivo,
         servico: "NFeRecepcaoEvento4",
+        xmlEvento,
+        xmlRetorno,
       },
       mensagem: autorizado
         ? "Evento de cancelamento registrado (NFeRecepcaoEvento4, cStat 135)."

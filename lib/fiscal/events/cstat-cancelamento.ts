@@ -62,7 +62,9 @@ export function vereditoPersistenciaCancelamento(resposta: {
     return {
       ok: false,
       code: "evento_duplicado_sem_autorizacao_local",
-      mensagem: "SEFAZ informou duplicidade de evento; persistência exige autorização local prévia.",
+      mensagem:
+        "Cancelamento incerto: a SEFAZ informou duplicidade de evento sem autorização local " +
+        "registrada — consulte o protocolo do evento na SEFAZ antes de reprocessar.",
     }
   }
   if (desfecho.desfecho === "rejeitado") {

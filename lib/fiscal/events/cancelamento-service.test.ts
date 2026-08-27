@@ -51,6 +51,8 @@ function respostaCancelar(overrides: Partial<FiscalProviderResponse> = {}): Fisc
       cStat: "135",
       protocolo: "135250000000099",
       xMotivo: "Evento registrado e vinculado a NF-e",
+      xmlEvento: "<envEvento versao=\"1.00\">EVENTO-ASSINADO</envEvento>",
+      xmlRetorno: "<retEnvEvento versao=\"1.00\">RETORNO-SEFAZ</retEnvEvento>",
     },
     mensagem: "Evento de cancelamento registrado (NFeRecepcaoEvento4, cStat 135).",
     pendencias: [],
@@ -445,6 +447,141 @@ describe("cancelarNfceAutorizada — serviço shipped", () => {
     expect(r.code).toBe("fiscal_cancelamento_rejeitado")
     expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
     expect(ports.finance.__writeCount).toBe(0)
+  })
+
+  it("573 tardio reconverge para evento AUTORIZADO de chamada concorrente — sem rebaixar a REJEITADO", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () =>
+        respostaCancelar({
+          ok: false,
+          resultado: "rejeitado",
+          dados: { cStat: "573", xMotivo: "Duplicidade de evento" },
+          mensagem: "rejeitado",
+        }),
+      ),
+    })
+    const autorizadoPelaConcorrente: EventoFiscalCancelamento = {
+      id: "evt-concorrente",
+      notaFiscalId: "nota-1",
+      tipo: TIPO_EVENTO_CANCELAMENTO,
+      sequencia: 1,
+      status: StatusEventoFiscal.AUTORIZADO,
+      protocolo: "135250000000099",
+      cStat: "135",
+      xMotivo: "Evento registrado e vinculado a NF-e",
+      justificativa: JUSTIFICATIVA,
+      xmlEvento: null,
+      xmlRetorno: null,
+    }
+    // 1ª leitura: sem evento. Re-leitura pós-573: chamada concorrente autorizou.
+    const reads = [null, autorizadoPelaConcorrente]
+    let call = 0
+    ports.findEvento = async () => reads[Math.min(call++, reads.length - 1)] ?? null
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(true)
+    expect(r.resultado).toBe("duplicado")
+    expect(r.code).toBe("evento_duplicado")
+    expect(r.idempotente).toBe(true)
+    expect(r.notaStatus).toBe(StatusNotaFiscal.CANCELADA)
+    expect(r.vendaFiscalStatus).toBe(FiscalStatusVenda.CANCELADA_FISCAL)
+    expect(ports.nota.status).toBe(StatusNotaFiscal.CANCELADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.CANCELADA_FISCAL)
+    // Nenhum upsert REJEITADO pode ter rebaixado o evento concorrente.
+    expect(ports.eventos.every((e) => e.status !== StatusEventoFiscal.REJEITADO)).toBe(true)
+    expect(ports.logs.some((l) => l.acao === "evento.cancelamento.reconvergido")).toBe(true)
+    expect(ports.finance.__writeCount).toBe(0)
+  })
+
+  it("timeout tardio com evento AUTORIZADO concorrente também reconverge", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () =>
+        respostaCancelar({
+          ok: false,
+          resultado: "erro",
+          dados: null,
+          mensagem: "transporte_deadline_total",
+        }),
+      ),
+    })
+    const autorizadoPelaConcorrente: EventoFiscalCancelamento = {
+      id: "evt-concorrente",
+      notaFiscalId: "nota-1",
+      tipo: TIPO_EVENTO_CANCELAMENTO,
+      sequencia: 1,
+      status: StatusEventoFiscal.AUTORIZADO,
+      protocolo: "135250000000099",
+      cStat: "135",
+      xMotivo: "Evento registrado e vinculado a NF-e",
+      justificativa: JUSTIFICATIVA,
+      xmlEvento: null,
+      xmlRetorno: null,
+    }
+    const reads = [null, autorizadoPelaConcorrente]
+    let call = 0
+    ports.findEvento = async () => reads[Math.min(call++, reads.length - 1)] ?? null
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(true)
+    expect(r.resultado).toBe("duplicado")
+    expect(ports.eventos.every((e) => e.status !== StatusEventoFiscal.REJEITADO)).toBe(true)
+    expect(ports.nota.status).toBe(StatusNotaFiscal.CANCELADA)
+  })
+
+  it("573 sem autorização local é incerto (409), não rejeição definitiva", async () => {
+    const ports = createPorts({
+      provider: providerNaoSimulado(async () =>
+        respostaCancelar({
+          ok: false,
+          resultado: "rejeitado",
+          dados: { cStat: "573", xMotivo: "Duplicidade de evento" },
+          mensagem: "rejeitado",
+        }),
+      ),
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe("evento_duplicado_sem_autorizacao_local")
+    expect(r.resultado).toBe("incerto")
+    expect(r.statusHttp).toBe(409)
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
+    expect(ports.venda.fiscalStatus).toBe(FiscalStatusVenda.AUTORIZADA)
+    expect(ports.finance.__writeCount).toBe(0)
+  })
+
+  it("modelo 55 (NFe) é bloqueado — cancelamento deste GOAL é NFC-e", async () => {
+    const ports = createPorts({
+      nota: notaAutorizada({ modelo: "NFE" }),
+    })
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(false)
+    expect(r.code).toBe("modelo_nao_suportado")
+    expect(r.resultado).toBe("bloqueado")
+    expect(ports.nota.status).toBe(StatusNotaFiscal.AUTORIZADA)
+    expect(ports.eventos).toHaveLength(0)
+    expect(ports.finance.__writeCount).toBe(0)
+  })
+
+  it("persiste xmlEvento/xmlRetorno do evento autorizado como registro probatório", async () => {
+    const ports = createPorts()
+    const r = await cancelarNfceAutorizada(
+      { storeId: "loja-1", notaFiscalId: "nota-1", justificativa: JUSTIFICATIVA },
+      ports,
+    )
+    expect(r.ok).toBe(true)
+    expect(ports.eventos[0]?.xmlEvento).toContain("<envEvento")
+    expect(ports.eventos[0]?.xmlRetorno).toContain("<retEnvEvento")
+    expect(ports.nota.xmlAutorizado).toBe(XML_AUTORIZADO)
   })
 })
 

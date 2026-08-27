@@ -29,6 +29,8 @@ function resposta135(overrides: Partial<FiscalProviderResponse> = {}): FiscalPro
       cStat: "135",
       protocolo: "135250000000099",
       xMotivo: "Evento registrado e vinculado a NF-e",
+      xmlEvento: "<envEvento versao=\"1.00\">EVENTO-ASSINADO</envEvento>",
+      xmlRetorno: "<retEnvEvento versao=\"1.00\">RETORNO-SEFAZ</retEnvEvento>",
     },
     mensagem: "Evento registrado",
     pendencias: [],
@@ -90,10 +92,12 @@ function fakeClient(opts: {
     fiscalStatus: opts.vendaStatus ?? FiscalStatusVenda.AUTORIZADA,
   }
   const eventos: Array<Record<string, unknown>> = []
+  const upsertCalls: Array<{ create: Record<string, unknown>; update: Record<string, unknown> }> = []
   return {
     nota,
     vendaRow,
     eventos,
+    upsertCalls,
     notaFiscal: {
       findFirst: async () => nota,
       update: async () => {
@@ -111,6 +115,7 @@ function fakeClient(opts: {
     eventoFiscal: {
       findUnique: async () => eventos[0] ?? null,
       upsert: async ({ create, update }: { create: Record<string, unknown>; update: Record<string, unknown> }) => {
+        upsertCalls.push({ create, update })
         const found = eventos[0]
         if (found) {
           Object.assign(found, update)
@@ -233,6 +238,44 @@ describe("cancelarNfceAutorizadaPersistido — fail-closed", () => {
     expect(client.nota.status).toBe(StatusNotaFiscal.CANCELADA)
     expect(client.vendaRow.fiscalStatus).toBe(FiscalStatusVenda.CANCELADA_FISCAL)
     expect(client.nota.xmlAutorizado).toBe(XML_AUTORIZADO)
+    expect(String(client.eventos[0]?.xmlEvento)).toContain("<envEvento")
+    expect(String(client.eventos[0]?.xmlRetorno)).toContain("<retEnvEvento")
+  })
+
+  it("reabrir PENDENTE zera cStat/xMotivo/protocolo/XMLs da tentativa anterior", async () => {
+    const client = fakeClient({ provider: FiscalProviderTipo.SEFAZ_DIRETO })
+    client.eventos.push({
+      id: "evt-1",
+      notaFiscalId: "nota-1",
+      tipo: "CANCELAMENTO",
+      sequencia: 1,
+      status: StatusEventoFiscal.REJEITADO,
+      protocolo: "135250000000001",
+      cStat: "218",
+      xMotivo: "NF-e já está cancelada na base de dados da SEFAZ",
+      justificativa: JUSTIFICATIVA,
+      xmlEvento: "<envEvento>ANTIGO</envEvento>",
+      xmlRetorno: "<retEnvEvento>ANTIGO</retEnvEvento>",
+    })
+    const r = await cancelarNfceAutorizadaPersistido(
+      {
+        storeId: "loja-1",
+        notaFiscalId: "nota-1",
+        justificativa: JUSTIFICATIVA,
+        provider: providerReal(async () => resposta135()),
+      },
+      client as never,
+    )
+    expect(r.ok).toBe(true)
+    const pendente = client.upsertCalls.find((c) => c.update.status === StatusEventoFiscal.PENDENTE)
+    expect(pendente).toBeDefined()
+    expect(pendente?.update.cStat).toBeNull()
+    expect(pendente?.update.xMotivo).toBeNull()
+    expect(pendente?.update.protocolo).toBeNull()
+    expect(pendente?.update.xmlEvento).toBeNull()
+    expect(pendente?.update.xmlRetorno).toBeNull()
+    expect(client.eventos[0]?.status).toBe(StatusEventoFiscal.AUTORIZADO)
+    expect(client.eventos[0]?.cStat).toBe("135")
   })
 
   it("idempotência reconverge sem retransmitir", async () => {

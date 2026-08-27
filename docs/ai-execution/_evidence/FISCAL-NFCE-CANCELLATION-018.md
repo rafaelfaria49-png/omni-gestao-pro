@@ -46,5 +46,21 @@ Revisão final (runtime real): glm, read-only — ver seção "Revisão final" a
 
 ## Revisão final (runtime real)
 
-- Família distinta (GLM, read-only), pós-correção do blocker.
-- (veredito registrado após a execução da revisão)
+- Família distinta (GLM, read-only), pós-correção do blocker. **Veredito A** — P0: nenhum.
+- Achados P1 corrigidos nesta execução:
+  - P1.1 race de duplo-submit com 573/timeout tardio podia rebaixar EventoFiscal
+    AUTORIZADO→REJEITADO. Corrigido: re-leitura do evento antes de persistir qualquer
+    rejeição; AUTORIZADO local reconverge (`evento.cancelamento.reconvergido`) e nunca
+    é rebaixado.
+  - P1.2 573 sem autorização local era rejeição definitiva (422). Corrigido: classificado
+    como **incerto** (409, `evento_duplicado_sem_autorizacao_local`) com mensagem exigindo
+    consulta do protocolo na SEFAZ.
+- Achados P2 corrigidos nesta execução:
+  - P2.1 `cstat-cancelamento.test.ts` não versionado — commitado.
+  - P2.2 reabrir PENDENTE não zerava cStat/xMotivo/protocolo/XMLs da tentativa anterior —
+    porta Prisma agora zera ao reabrir PENDENTE.
+  - P2.3 serviço não validava `nota.modelo === NFCE` — bloqueio `modelo_nao_suportado`.
+  - P2.4 `xmlEvento`/`xmlRetorno` nunca persistidos — provider retorna ambos em `dados`
+    e o serviço os grava no EventoFiscal (registro probatório).
+- Revalidação pós-correções: 280 testes focados verdes (18 arquivos), typecheck limpo,
+  lint focado limpo, build de produção ok.

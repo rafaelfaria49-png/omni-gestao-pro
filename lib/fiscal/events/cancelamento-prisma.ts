@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma"
 import {
   FiscalJobStatus,
   FiscalStatusVenda,
+  StatusEventoFiscal,
   StatusNotaFiscal,
   TipoEventoFiscal,
 } from "@/generated/prisma"
@@ -127,6 +128,9 @@ export function createPrismaCancelamentoPorts(input: {
       })
     },
     async upsertEvento(data) {
+      // Reabrir como PENDENTE zera cStat/xMotivo/protocolo/XMLs da tentativa
+      // anterior — o evento em retransmissão não pode exibir resposta stale.
+      const reabrePendente = data.status === StatusEventoFiscal.PENDENTE
       return db.eventoFiscal.upsert({
         where: {
           notaFiscalId_tipo_sequencia: {
@@ -152,11 +156,11 @@ export function createPrismaCancelamentoPorts(input: {
         update: {
           status: data.status as never,
           justificativa: data.justificativa,
-          protocolo: data.protocolo ?? undefined,
-          cStat: data.cStat ?? undefined,
-          xMotivo: data.xMotivo ?? undefined,
-          xmlEvento: data.xmlEvento ?? undefined,
-          xmlRetorno: data.xmlRetorno ?? undefined,
+          protocolo: reabrePendente ? null : (data.protocolo ?? undefined),
+          cStat: reabrePendente ? null : (data.cStat ?? undefined),
+          xMotivo: reabrePendente ? null : (data.xMotivo ?? undefined),
+          xmlEvento: reabrePendente ? null : (data.xmlEvento ?? undefined),
+          xmlRetorno: reabrePendente ? null : (data.xmlRetorno ?? undefined),
           operador: data.operador ?? undefined,
         },
       })
