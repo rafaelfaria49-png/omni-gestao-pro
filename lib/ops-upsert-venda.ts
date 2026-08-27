@@ -976,6 +976,10 @@ export async function upsertVendaInTransaction(
 
   // ── 5. Debitar ClienteCredito (quando creditoVale foi usado na venda) ─────────
   // Dentro da mesma transação: se falhar, a venda inteira reverte — sem crédito perdido.
+  // Débito ATÔMICO: `updateMany` com predicado `saldoAtual >= débito` reavalia a
+  // condição no banco após a espera por lock (READ COMMITTED), então duas vendas
+  // concorrentes nunca conseguem gastar o mesmo saldo duas vezes — a segunda
+  // recebe count 0 e passa para o próximo crédito (FIFO).
   const creditoValeUsado = arredonda2(pb?.creditoVale ?? 0)
   const cpfNorm = typeof sale.customerCpf === "string" ? sale.customerCpf.replace(/\D/g, "") : ""
   if (creditoValeUsado > 0 && cpfNorm) {
@@ -988,15 +992,34 @@ export async function upsertVendaInTransaction(
       if (restante <= 0.001) break
       const debit = arredonda2(Math.min(c.saldoAtual, restante))
       if (debit <= 0) continue
-      const saldoAntes = c.saldoAtual
-      const saldoDepois = arredonda2(c.saldoAtual - debit)
-      await tx.clienteCredito.update({
-        where: { id: c.id },
-        data: {
-          saldoAtual: saldoDepois,
-          status: saldoDepois <= 0.001 ? "zerado" : "ativo",
-        },
+      const upd = await tx.clienteCredito.updateMany({
+        where: { id: c.id, saldoAtual: { gte: debit } },
+        data: { saldoAtual: { decrement: debit } },
       })
+      if (upd.count === 0) {
+        // O saldo deste crédito foi consumido por outra transação entre o findMany
+        // e o débito — nunca sobrescrever: tenta o próximo crédito do FIFO.
+        console.warn("[upsert-venda] credito-saldo-concorrente", {
+          pedidoId,
+          creditoId: c.id,
+          snapshotSaldo: c.saldoAtual,
+          debit,
+        })
+        continue
+      }
+      // Releitura dentro da tx reflete o débito real — audit trail fiel.
+      const atual = await tx.clienteCredito.findUnique({
+        where: { id: c.id },
+        select: { saldoAtual: true },
+      })
+      const saldoDepois = arredonda2(atual?.saldoAtual ?? arredonda2(c.saldoAtual - debit))
+      const saldoAntes = arredonda2(saldoDepois + debit)
+      if (saldoDepois <= 0.001) {
+        await tx.clienteCredito.update({
+          where: { id: c.id },
+          data: { status: "zerado" },
+        })
+      }
       await tx.usoCreditoCliente.create({
         data: {
           creditoId: c.id,

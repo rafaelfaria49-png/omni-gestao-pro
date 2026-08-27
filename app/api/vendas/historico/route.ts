@@ -5,7 +5,7 @@
  * Lê storeId do header x-assistec-loja-id, cookie assistec-active-store ou query storeId.
  *
  * Filtros disponíveis:
- *  q          — busca por pedidoId / clienteNome
+ *  q          — busca por pedidoId / clienteNome / item vendido (nome) / SKU / barcode (EAN)
  *  status     — concluida | cancelada | parcialmente_devolvida | devolvida
  *  pagamento  — dinheiro | pix | cartaoDebito | cartaoCredito | carne | aPrazo | creditoVale
  *  operador   — string parcial no campo operador
@@ -20,6 +20,10 @@
 import { NextResponse } from "next/server"
 import { prisma, prismaEnsureConnected, withPrismaSafe } from "@/lib/prisma"
 import { opsLojaIdFromRequest } from "@/lib/ops-api-gate"
+import {
+  buildHistoricoBuscaOr,
+  buildProdutoCodigoWhere,
+} from "@/lib/vendas/historico-busca"
 import type { PaymentBreakdownFull } from "@/lib/operations-sale-types"
 import type { Prisma } from "@/generated/prisma"
 
@@ -89,14 +93,22 @@ export async function GET(req: Request) {
           ? { terminalId: terminalIdParam }
           : null
 
+    // Busca por código de produto (SKU/EAN): uma query indexada por loja que
+    // resolve os ids; a venda é casada por `itens: { some: { inventoryId } }`.
+    let productIds: string[] = []
+    if (q) {
+      const produtos = await prisma.produto.findMany({
+        where: buildProdutoCodigoWhere({ storeId, q }),
+        select: { id: true },
+      })
+      productIds = produtos.map((p) => p.id)
+    }
+
     const where: Prisma.VendaWhereInput = {
       storeId,
       ...(q
         ? {
-            OR: [
-              { pedidoId: { contains: q, mode: "insensitive" } },
-              { clienteNome: { contains: q, mode: "insensitive" } },
-            ],
+            OR: buildHistoricoBuscaOr({ q, productIds }),
           }
         : {}),
       ...(statusFilter ? { status: statusFilter } : {}),

@@ -109,7 +109,53 @@ export async function POST(req: Request) {
   }
 
   try {
+    // Valor autoritativo — pode ser recalculado DENTRO da transação (passo 0) e
+    // é usado fora dela pela integração financeira (createSaida).
+    let valorTotalEfetivo = data.valorTotal
     const devolucao = await prisma.$transaction(async (tx) => {
+      // 0. Valor autoritativo — quando a venda de origem existe no banco, o valor
+      // devolvido e o crédito emitido são RECALCULADOS dos itens persistidos
+      // (unitário = lineTotal/quantidade da venda original × qtd devolvida) e o
+      // crédito é limitado ao valor efetivamente devolvido — o client nunca é
+      // autoridade financeira. Só substitui quando TODAS as linhas resolvem na
+      // venda original; caso contrário (venda legada fora do banco), mantém os
+      // valores do client com warning.
+      let creditoEfetivo = data.tipo === "somente_estoque" ? 0 : data.creditoEmitido
+      if (data.vendaLocalId) {
+        const vendaOrigem = await tx.venda.findFirst({
+          where: { pedidoId: data.vendaLocalId, storeId: lojaId },
+          select: { itens: { select: { inventoryId: true, quantidade: true, lineTotal: true } } },
+        })
+        if (vendaOrigem) {
+          let totalCalc = 0
+          let todasResolvidas = true
+          for (const it of data.itens) {
+            const orig = vendaOrigem.itens.find((iv) => iv.inventoryId === it.inventoryId)
+            if (!orig || orig.quantidade <= 0) {
+              todasResolvidas = false
+              break
+            }
+            totalCalc += (orig.lineTotal / orig.quantidade) * it.quantidade
+          }
+          if (todasResolvidas) {
+            valorTotalEfetivo = arredonda2(totalCalc)
+            if (creditoEfetivo > valorTotalEfetivo) {
+              console.warn(
+                "[ops/devolucao] credito-emitido-reduzido-ao-valor-devolvido",
+                JSON.stringify({ localId: data.localId, venda: data.vendaLocalId, creditoEmitido: data.creditoEmitido, valorDevolvido: valorTotalEfetivo }),
+              )
+              creditoEfetivo = valorTotalEfetivo
+            }
+            if (Math.abs(valorTotalEfetivo - data.valorTotal) > 0.01) {
+              console.warn(
+                "[ops/devolucao] valor-total-divergente-do-client",
+                JSON.stringify({ localId: data.localId, client: data.valorTotal, servidor: valorTotalEfetivo }),
+              )
+            }
+          }
+        }
+      }
+
       // 1. Criar documento de devolução
       const dev = await tx.devolucaoVenda.create({
         data: {
@@ -118,8 +164,8 @@ export async function POST(req: Request) {
           vendaLocalId: data.vendaLocalId,
           sessaoId: data.sessaoId ?? null,
           tipo: data.tipo,
-          valorTotal: data.valorTotal,
-          creditoEmitido: data.creditoEmitido,
+          valorTotal: valorTotalEfetivo,
+          creditoEmitido: creditoEfetivo,
           clienteNome: data.clienteNome,
           clienteDoc: data.clienteDoc,
           operador: operadorFinal,
@@ -217,8 +263,11 @@ export async function POST(req: Request) {
         }
       }
 
-      // 4. Crédito persistente — cria ClienteCredito quando vale é emitido
-      if (data.creditoEmitido > 0 && data.tipo !== "somente_estoque") {
+      // 4. Crédito persistente — cria ClienteCredito quando vale é emitido.
+      // Uma devolução gera crédito UMA única vez: o guard de idempotência por
+      // [storeId, localId] no topo já devolve replay antes daqui, e o crédito é
+      // criado na MESMA transação do documento de devolução.
+      if (creditoEfetivo > 0 && data.tipo !== "somente_estoque") {
         const docNorm = data.clienteDoc.replace(/\D/g, "")
         if (docNorm) {
           await tx.clienteCredito.create({
@@ -228,8 +277,8 @@ export async function POST(req: Request) {
               clienteNome: data.clienteNome,
               devolucaoId: dev.id,
               vendaOrigemId: data.vendaLocalId,
-              valorOriginal: arredonda2(data.creditoEmitido),
-              saldoAtual: arredonda2(data.creditoEmitido),
+              valorOriginal: arredonda2(creditoEfetivo),
+              saldoAtual: arredonda2(creditoEfetivo),
               status: "ativo",
             },
           })
@@ -240,12 +289,15 @@ export async function POST(req: Request) {
     })
 
     // 4. Integração financeira — saída por devolução (fora da tx para não bloquear)
-    // Só cria movimentação se há valor devolvido real (não apenas troca de estoque)
-    if (data.valorTotal > 0 && data.tipo !== "somente_estoque") {
+    // Só cria movimentação se há valor devolvido real (não apenas troca de estoque).
+    // Vale-Troca NÃO é dinheiro novo: a saída financeira representa o valor que
+    // sai do caixa/financeiro pela devolução (reembolso real), nunca entrada
+    // simulada do vale; devolução parcial movimenta somente o valor devolvido.
+    if (valorTotalEfetivo > 0 && data.tipo !== "somente_estoque") {
       try {
         await createSaida({
           storeId: lojaId,
-          valor: data.valorTotal,
+          valor: valorTotalEfetivo,
           descricao: `Devolução PDV — ${data.localId}${data.clienteNome ? ` | ${data.clienteNome}` : ""}`,
           origem: "devolucao_pdv",
           referenciaId: devolucao.id,

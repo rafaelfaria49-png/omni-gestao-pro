@@ -360,6 +360,14 @@ interface OperationsContextType {
   refreshCaixaSession: () => Promise<CaixaRefreshOutcome>
   incrementOsAbertasDia: () => void
   getSaldoCreditoCliente: (cpf: string) => number
+  /**
+   * Semeia/reforça o saldo local de crédito (CPF/CNPJ) com o valor reportado
+   * pelo servidor quando o PaymentModal localiza um vale por doc/código. Só
+   * sobe o teto — nunca reduz — porque o DB é a fonte da verdade e a
+   * reconciliação do bootstrap volta a sobrescrever. Evita o falso
+   * "Saldo de crédito insuficiente" no guard do finalize em navegador frio.
+   */
+  sincronizarCreditoLocal: (doc: string, nome: string, saldo: number) => void
   finalizeSaleTransaction: (input: {
     lines: Array<
       SaleLine & {
@@ -1953,6 +1961,26 @@ export function OperationsProvider({
     return stateRef.current.customerCredits[k]?.saldo ?? 0
   }, [])
 
+  const sincronizarCreditoLocal = useCallback((doc: string, nome: string, saldo: number) => {
+    const k = normalizeDocDigits(doc)
+    const saldoSeguro = Math.max(0, Math.round((Number.isFinite(saldo) ? saldo : 0) * 100) / 100)
+    if (!k || saldoSeguro <= 0) return
+    setState((prev) => {
+      const atual = prev.customerCredits[k]?.saldo ?? 0
+      if (atual >= saldoSeguro) return prev
+      return {
+        ...prev,
+        customerCredits: {
+          ...prev.customerCredits,
+          [k]: {
+            nome: nome?.trim() || prev.customerCredits[k]?.nome || "Cliente",
+            saldo: saldoSeguro,
+          },
+        },
+      }
+    })
+  }, [])
+
   const incrementOsAbertasDia = useCallback(() => {
     setState((prev) => {
       const dailyLedger = ensureLedger(prev.dailyLedger)
@@ -2405,6 +2433,7 @@ export function OperationsProvider({
       refreshCaixaSession,
       incrementOsAbertasDia,
       getSaldoCreditoCliente,
+      sincronizarCreditoLocal,
       finalizeSaleTransaction,
       registrarDevolucao,
       registrarOperacaoCaixa,
@@ -2432,6 +2461,7 @@ export function OperationsProvider({
       refreshCaixaSession,
       incrementOsAbertasDia,
       getSaldoCreditoCliente,
+      sincronizarCreditoLocal,
       finalizeSaleTransaction,
       registrarDevolucao,
       registrarOperacaoCaixa,

@@ -96,6 +96,11 @@
       "dir": "contador",
       "risk_tier": "MEDIO",
       "titulo": "<PREENCHER>"
+    },
+    "pdv": {
+      "dir": "pdv",
+      "risk_tier": "ALTO",
+      "titulo": "<PREENCHER>"
     }
   },
   "remote_layer": {

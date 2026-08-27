@@ -67,6 +67,19 @@ function makeFakeTx(opts?: { creditos?: Array<{ id: string; saldo: number }>; mo
         creditos
           .filter((c) => c.status === "ativo" && c.saldoAtual > 0)
           .sort((a, b) => a.createdAt - b.createdAt),
+      // Débito atômico (PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001): o motor
+      // decrementa via updateMany condicional (`saldoAtual >= gte`) + releitura.
+      updateMany: async ({ where, data }: any) => {
+        const c = creditos.find((x) => x.id === where.id)
+        if (!c) return { count: 0 }
+        const gte = where.saldoAtual?.gte
+        if (gte !== undefined && c.saldoAtual < gte) return { count: 0 }
+        const dec = data.saldoAtual?.decrement
+        if (typeof dec !== "number") return { count: 0 }
+        c.saldoAtual = Math.round((c.saldoAtual - dec) * 100) / 100
+        return { count: 1 }
+      },
+      findUnique: async ({ where }: any) => creditos.find((x) => x.id === where.id) ?? null,
       update: async ({ where, data }: any) => {
         const c = creditos.find((x) => x.id === where.id)
         if (c) Object.assign(c, data)

@@ -18,7 +18,7 @@ test.describe("PDV — Fase 2 (caixa + histórico)", () => {
 
     await expect(page.getByRole("heading", { name: /Histórico de Vendas/i })).toBeVisible({ timeout: 30_000 })
     await expect(
-      page.getByPlaceholder(/Buscar por cupom, cliente ou ID da venda/i),
+      page.getByPlaceholder(/Buscar por cupom, cliente, produto\/SKU ou ID da venda/i),
     ).toBeVisible({ timeout: 15_000 })
   })
 })

@@ -150,9 +150,24 @@ function makeDb(options?: { createP2002?: boolean; sessionStatus?: "ABERTA" | "F
           createdAt: new Date("2026-01-01T00:00:00.000Z"),
         },
       ],
-      update: async ({ data }: any) => {
-        credit.saldo = data.saldoAtual
+      // Débito atômico (PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001):
+      // updateMany condicional + releitura substituem o update com saldo absoluto.
+      updateMany: async ({ where, data }: any) => {
+        const gte = where.saldoAtual?.gte
+        if (gte !== undefined && credit.saldo < gte) return { count: 0 }
+        const dec = data.saldoAtual?.decrement
+        if (typeof dec !== "number") return { count: 0 }
+        credit.saldo = Math.round((credit.saldo - dec) * 100) / 100
         credit.updates += 1
+        return { count: 1 }
+      },
+      findUnique: async () => ({
+        id: "credito-1",
+        saldoAtual: credit.saldo,
+        status: "ativo",
+      }),
+      update: async ({ data }: any) => {
+        if (typeof data.status === "string") credit.status = data.status
         return data
       },
     },
