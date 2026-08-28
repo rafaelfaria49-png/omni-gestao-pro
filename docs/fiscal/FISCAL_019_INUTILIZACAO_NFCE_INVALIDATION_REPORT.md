@@ -3,10 +3,20 @@
 ## Identificação
 
 - GOAL: `FISCAL-NFCE-INVALIDATION-019`
-- Branch: `goal/fiscal-019-nfce-inutilizacao`
-- Worktree: `C:/Projetos/omni-gestao-fiscal-019-inutilizacao`
-- Trilha AEP: `fiscal` (ativada com `scripts/track.mjs init` + `import` + `open`)
-- Base: `origin/main` (`a2bf6b0179b1b4f1468fd0f023ce569326d30dfe`)
+- Branch: `goal/fiscal-019-reconcile-current-main-117`
+- Worktree: `C:/Projetos/omni-gestao-fiscal-019-reconcile-117`
+- Trilha AEP: `fiscal` (ativada com `scripts/track.mjs import` + `open`)
+- Base: `origin/main` (`ce1b993591d9953b5960de654cb172074bb2fb3d`, pós-GOAL-018)
+
+## Reconciliação (2026-08-27)
+
+Este ciclo **substitui a PR #114** (branch `goal/fiscal-019-nfce-inutilizacao`, base
+`a2bf6b0`, divergida da main). Os 7 commits de implementação do 019 (`cbd2650`..`f15b71a`)
+foram reaplicados semanticamente sobre a main atual; os 2 commits de bootstrap AEP antigo
+NÃO foram transplantados. Estado AEP da main preservado: 018 = DONE, ledger com 1 linha,
+current_goal = FISCAL-NFCE-INVALIDATION-019. Nenhuma capacidade do cancelamento 018 foi
+removida; nenhum guard do 019 foi enfraquecido. **Sem merge neste GOAL** — a PR nova aguarda
+decisão humana.
 
 ## Doutrina fechada
 

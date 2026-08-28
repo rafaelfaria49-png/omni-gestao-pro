@@ -2,12 +2,22 @@
 
 Trilha `fiscal` · GOAL 019 · inutilização NFC-e.
 
-- Branch: `goal/fiscal-019-nfce-inutilizacao`
-- Worktree: `C:/Projetos/omni-gestao-fiscal-019-inutilizacao`
-- Base: `a2bf6b0179b1b4f1468fd0f023ce569326d30dfe`
+- Branch: `goal/fiscal-019-reconcile-current-main-117`
+- Worktree: `C:/Projetos/omni-gestao-fiscal-019-reconcile-117`
+- Base: `ce1b993591d9953b5960de654cb172074bb2fb3d` (main pós-GOAL-018)
 - Relatório: `docs/fiscal/FISCAL_019_INUTILIZACAO_NFCE_INVALIDATION_REPORT.md`
 - G-C7: FECHAVEL_INTERNO
 - Homologação SEFAZ ao vivo: pendente (H-9/H-10)
+
+## Reconciliação (2026-08-27)
+
+Reconstrução do GOAL 019 sobre a main atual (`ce1b993`), substituindo a PR #114 (base
+`a2bf6b0`, divergida). Os 7 commits de implementação foram reaplicados em ordem via
+cherry-pick com resolução semântica de conflitos (assinaturas do provider 018+019
+coexistem; superfície inerte recalibrada); os módulos-base criados no bootstrap antigo
+foram materializados no conteúdo final `f15b71a`. Estado AEP canônico da main preservado
+(018 DONE · ledger 1 linha · current_goal 019). Gate externo de homologação SEFAZ
+permanece fechado.
 
 ## Closeout (2026-08-27)
 
