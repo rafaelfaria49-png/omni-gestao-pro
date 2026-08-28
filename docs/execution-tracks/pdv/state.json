@@ -1,0 +1,18 @@
+{
+  "aep": "1.0-R2",
+  "track": "pdv",
+  "status": "RUNNING",
+  "risk_tier": "ALTO",
+  "current_goal": "PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001",
+  "next_goal": null,
+  "bootstrap_commit": null,
+  "counters": {
+    "goals_done": 0,
+    "goals_blocked": 0,
+    "goals_imported": 0,
+    "ledger_lines": 0
+  },
+  "last_goal": null,
+  "last_result": null,
+  "last_ratified_at": null
+}
