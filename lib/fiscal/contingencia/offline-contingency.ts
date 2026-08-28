@@ -255,6 +255,9 @@ export async function enterManualOfflineContingency(
   const prepared = await dependencies.preparer.prepare(locator, {
     dhCont,
     xJust: text(input.xJust),
+    // Primeira entrada: o estado persistido ainda deriva tpEmis=1; a
+    // contingência offline deste GOAL é sempre tpEmis=9.
+    tpEmis: OFFLINE_CONTINGENCY_TP_EMIS,
   })
   if (
     prepared.storeId !== locator.storeId ||

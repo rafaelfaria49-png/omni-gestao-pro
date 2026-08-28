@@ -167,7 +167,7 @@ export function createFinalizedNfcePreparer(
       }
 
       const certificado = await resolveCertificateMaterial(deps)
-      const tpEmis = source.tpEmis ?? 1
+      const tpEmis = options?.tpEmis ?? source.tpEmis ?? 1
       const qrOnlineV3: NfceQrOnlineV3Config | undefined =
         tpEmis === 9 ? undefined : { qrCodeBaseUrl: urls.qrCodeBaseUrl, urlChave: urls.urlChave }
       const qrOfflineV3: NfceQrOfflineV3Config | undefined =

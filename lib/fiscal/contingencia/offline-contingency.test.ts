@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest"
-import { dryRunSnapshot } from "../dry-run"
+import { DRY_RUN_TEST_CERT, dryRunSnapshot } from "../dry-run"
 import { buildNfceXmlAssinavel, buildNfceXmlAssinavelResult } from "../xml"
+import { createFinalizedNfcePreparer } from "../emission/finalized-nfce-preparer"
 import {
   IN_MEMORY_ONLY_FISCAL_PROVIDER,
   transmitWithUncertainStateSafety,
@@ -172,6 +173,51 @@ describe("GOAL 020 — contingência offline manual", () => {
       where: expect.objectContaining({ id: locator.notaFiscalId, vendaId: locator.vendaId }),
       data: expect.objectContaining({ tipoEmissao: "CONTINGENCIA_OFFLINE" }),
     }))
+  })
+
+  it("bootstrap da primeira entrada com a cadeia canônica: tpEmis=9 vem das opções antes do flip de tipoEmissao", async () => {
+    // Fonte no estado REAL de primeira entrada: tipoEmissao ainda não é
+    // CONTINGENCIA_OFFLINE, logo o resolver canônico deriva tpEmis=1. Sem
+    // options.tpEmis o builder recusaria dhCont/xJust — a entrada inteira
+    // jamais bootstrapava contra o preparer canônico (só passava com stub).
+    const canonicalPreparer = createFinalizedNfcePreparer({
+      resolveSource: async () => ({
+        ...locator,
+        modelo: "NFCE" as const,
+        ambiente: "HOMOLOGACAO" as const,
+        serie: 1,
+        numero: 42,
+        snapshot: dryRunSnapshot("simples"),
+        tpEmis: 1,
+      }),
+      certificado: DRY_RUN_TEST_CERT,
+      qrUrls: {
+        qrCodeBaseUrl: "https://qr.example.test/nfce",
+        urlChave: "https://qr.example.test/consulta",
+      },
+    })
+    const store = persistence()
+    const result = await enterManualOfflineContingency(
+      {
+        ...locator,
+        operador: "admin@teste",
+        manualConfirmation: true,
+        fiscalEnabled: true,
+        ambiente: "HOMOLOGACAO",
+        provider: "SEFAZ_DIRETO",
+        dhCont: "2026-08-28T13:00:00Z",
+        emissaoAt: "2026-08-28T12:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+        now: new Date("2026-08-28T13:00:00Z"),
+      },
+      { preparer: canonicalPreparer, persistence: store },
+    )
+    expect(result).toMatchObject({ ok: true, tpEmis: 9, idempotent: false })
+    const persistedXml = (store.persist as ReturnType<typeof vi.fn>).mock.calls[0][0].document
+      .xmlAssinado as string
+    expect(persistedXml).toContain("<tpEmis>9</tpEmis>")
+    expect(persistedXml).toContain("<dhCont>2026-08-28T10:00:00-03:00</dhCont>")
+    expect(persistedXml).toContain("<xJust>Falha de comunicação com a SEFAZ</xJust>")
   })
 
   it("recusa produção e justificativa fora do intervalo", async () => {

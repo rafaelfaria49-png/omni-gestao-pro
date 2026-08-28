@@ -72,6 +72,13 @@ export type FinalizedFiscalDocument = FiscalDocumentIdentity & {
 }
 
 export type FinalizedDocumentPrepareOptions = {
+  /**
+   * Modalidade de emissão do documento construído. GOAL 020: a primeira
+   * entrada em contingência passa 9 porque `NotaFiscal.tipoEmissao` só é
+   * flipado para `CONTINGENCIA_OFFLINE` depois do prepare; sem isso o builder
+   * recusaria dhCont/xJust para o tpEmis=1 derivado do estado persistido.
+   */
+  tpEmis?: number
   dhCont?: string | Date
   xJust?: string
 }

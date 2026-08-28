@@ -533,7 +533,9 @@ export function createPrismaUncertainStatePersistence(
               storeId: document.storeId,
               vendaId: document.vendaId,
               notaFiscalId: document.notaFiscalId,
-              tipo: "EMISSAO",
+              // Consulta que autoriza encerra tanto a emissão original quanto
+              // a transmissão posterior de contingência (GOAL 020) estacionada.
+              tipo: { in: ["EMISSAO", "CONTINGENCIA_TRANSMISSAO"] },
               status: { in: ["PROCESSANDO", "AGUARDANDO_RETRY", "PENDENTE"] },
             },
             data: {
