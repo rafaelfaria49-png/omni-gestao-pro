@@ -7,4 +7,4 @@ Semáforo: 🟢 rodando · 🟡 esperando humano · 🔴 bloqueado ou check falh
 | Trilha | Semáforo | Status | Risco | GOAL atual | Próximo | DONE | BLOCKED | Última ratificação |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | contador | 🟡 amarelo | PAUSED | MEDIO | — | — | 17 | 0 | 2026-08-20T20:16:31.782Z |
-| pdv | 🟢 verde | RUNNING | ALTO | PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001 | PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002 | 1 | 0 | 2026-08-28T00:06:26.872Z |
+| pdv | 🟢 verde | RUNNING | ALTO | PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002 | — | 1 | 0 | 2026-08-28T00:06:26.872Z |
