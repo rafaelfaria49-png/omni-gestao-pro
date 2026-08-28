@@ -315,6 +315,11 @@ export interface FinalizedDocumentPreparer {
 
 export interface UncertainStatePersistence {
   load(locator: FiscalDocumentLocator): Promise<PersistedFiscalDocument | null>
+  /** Promove uma nota contingenciada, já persistida, para TRANSMITINDO sem tocar nos bytes. */
+  beginTransmission?(input: {
+    document: PersistedFiscalDocument
+    now: Date
+  }): Promise<PersistedFiscalDocument>
   /**
    * Persiste identidade, numeração, chave, XML assinado, SHA-256 dos
    * exactBytes e metadados QR (`digestValue`/`qrCodeData`/`urlConsulta`) e
@@ -430,6 +435,7 @@ export type SafeEmissionOutcomeKind =
         | "PERSISTED_BYTES_MISSING"
         | "PERSISTED_BYTES_MISMATCH"
         | "SCOPE_MISMATCH"
+        | "CONTINGENCY_TRANSMISSION_PORT_UNAVAILABLE"
         /**
          * Execução de provider EXTERNO sem capability concedida (correção 002 · bloqueio 2).
          * Substitui `REAL_PROVIDER_BLOCKED`, cujo nome e mecânica ligavam a autorização ao

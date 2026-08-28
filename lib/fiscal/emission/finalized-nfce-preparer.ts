@@ -53,6 +53,8 @@ export type NfceFinalizationSource = {
   snapshot: VendaFiscalSnapshot
   tpEmis?: number
   dataEmissao?: string | Date
+  dhCont?: string | Date
+  xJust?: string
   uf?: string
   correlationId?: string
 }
@@ -175,6 +177,8 @@ export function createFinalizedNfcePreparer(
         numero: source.numero,
         tpEmis,
         dataEmissao: source.dataEmissao,
+        dhCont: source.dhCont,
+        xJust: source.xJust,
         qrOnlineV3,
         qrOfflineV3,
       })

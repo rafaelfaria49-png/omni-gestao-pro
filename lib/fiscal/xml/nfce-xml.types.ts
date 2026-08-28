@@ -26,6 +26,10 @@ export type NfceXmlContext = {
   tpEmis?: number
   /** Data/hora de emissão. Default: `snapshot.venda.data`. */
   dataEmissao?: string | Date
+  /** Data/hora em que a contingência offline foi acionada (`tpEmis=9`). */
+  dhCont?: string | Date
+  /** Justificativa da entrada em contingência offline (`xJust`, 15–256 chars). */
+  xJust?: string
   /** Natureza da operação. Default "VENDA AO CONSUMIDOR". */
   naturezaOperacao?: string
   /** verProc. Default `NFCE_VER_PROC`. */
@@ -94,6 +98,7 @@ export type NfceXmlErrorCode =
   | "qr_online_invalido"
   | "qr_offline_invalido"
   | "qr_modo_incompativel"
+  | "contingencia_invalida"
   | "pagamento_ausente"
   | "pagamento_formato_invalido"
   | "pagamento_valor_invalido"

@@ -357,6 +357,8 @@ function buildIdeNode(args: {
   cDV: string
   tpAmb: number
   verProc: string
+  dhCont?: string
+  xJust?: string
 }): XmlNode {
   return group("ide", [
     leafRequired("cUF", args.cUF),
@@ -378,6 +380,9 @@ function buildIdeNode(args: {
     leafRequired("indPres", "1"), // 1 = presencial
     leafRequired("procEmi", "0"), // 0 = aplicativo do contribuinte
     leafRequired("verProc", args.verProc),
+    ...(args.dhCont && args.xJust
+      ? [leafRequired("dhCont", args.dhCont), leafRequired("xJust", args.xJust)]
+      : []),
   ])
 }
 
@@ -472,6 +477,30 @@ function buildInternal(
 
   const vNF = round2(vProdTotal - vDescTotal)
   const dhEmi = formatDhEmi(dataEmissao)
+  const dhContValue = contexto?.dhCont
+  const dhContDate =
+    dhContValue == null
+      ? null
+      : new Date(typeof dhContValue === "string" ? dhContValue : dhContValue.getTime())
+  const dhCont =
+    dhContDate && Number.isFinite(dhContDate.getTime()) ? formatDhEmi(dhContDate) : undefined
+  const xJust = typeof contexto?.xJust === "string" ? contexto.xJust.trim() : ""
+  if (tpEmis === 9 && (dhCont || xJust) && (!dhCont || xJust.length < 15 || xJust.length > 256)) {
+    throw new NfceXmlError(
+      "contingencia_invalida",
+      "tpEmis=9 exige dhCont e xJust entre 15 e 256 caracteres.",
+      null,
+      !dhCont ? "dhCont" : "xJust",
+    )
+  }
+  if (tpEmis !== 9 && (dhCont || xJust)) {
+    throw new NfceXmlError(
+      "contingencia_invalida",
+      "dhCont/xJust só podem ser informados em tpEmis=9.",
+      null,
+      "tpEmis",
+    )
+  }
 
   const ide = buildIdeNode({
     cUF,
@@ -485,6 +514,8 @@ function buildInternal(
     cDV,
     tpAmb,
     verProc,
+    dhCont,
+    xJust: xJust || undefined,
   })
   const emitNode = buildEmitNode(snapshot)
   const destNode = buildDestNode(snapshot)
