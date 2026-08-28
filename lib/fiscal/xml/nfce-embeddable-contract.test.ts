@@ -189,6 +189,8 @@ describe("buildNfceXmlAssinavel · produtor do caminho de assinatura/transmissã
     const xml = buildNfceXmlAssinavel(dryRunSnapshot("simples"), {
       ...CTX,
       tpEmis: 9,
+      dhCont: "2026-08-28T13:00:00Z",
+      xJust: "Falha de comunicação com a SEFAZ",
       qrOfflineV3: {
         qrCodeBaseUrl: "https://qr.example.test/nfce",
         urlChave: "https://qr.example.test/consulta",
@@ -350,6 +352,8 @@ describe("e2e QR offline v3 · infNFeSupl presente → XMLDSig → bytes finais 
   const ctxOff = {
     ...CTX,
     tpEmis: 9,
+    dhCont: "2026-08-28T13:00:00Z",
+    xJust: "Falha de comunicação com a SEFAZ",
     qrOfflineV3: {
       qrCodeBaseUrl: "https://qr.example.test/nfce",
       urlChave: "https://qr.example.test/consulta",

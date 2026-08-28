@@ -80,7 +80,7 @@ async function findEmissionJob(
       storeId: locator.storeId,
       vendaId: locator.vendaId,
       notaFiscalId: locator.notaFiscalId,
-      tipo: "EMISSAO",
+      tipo: { in: ["EMISSAO", "CONTINGENCIA_TRANSMISSAO"] },
     },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: { id: true, status: true, payload: true },
@@ -201,6 +201,40 @@ export function createPrismaUncertainStatePersistence(
   return {
     load: (locator) => loadDocument(client, locator),
 
+    beginTransmission: async ({ document, now }) => {
+      const updated = await client.notaFiscal.updateMany({
+        where: {
+          id: document.notaFiscalId,
+          storeId: document.storeId,
+          vendaId: document.vendaId,
+          modelo: "NFCE",
+          ambiente: "HOMOLOGACAO",
+          status: "CONTINGENCIA",
+        },
+        data: { status: "TRANSMITINDO", ultimoErro: null },
+      })
+      if (updated.count !== 1) {
+        const current = await loadDocument(client, document)
+        if (current?.status === "TRANSMITINDO") return current
+        throw new Error("Transição de contingência para transmissão recusada; estado mudou.")
+      }
+      await client.fiscalLog.create({
+        data: {
+          storeId: document.storeId,
+          vendaId: document.vendaId,
+          notaFiscalId: document.notaFiscalId,
+          nivel: "INFO",
+          acao: "fiscal.contingencia.transmission_started",
+          mensagem: "Transmissão posterior iniciada com os bytes persistidos da contingência.",
+          operador: "fiscal-goal-020",
+          detalhe: { bytesSha256: document.xmlBytesSha256, startedAt: now.toISOString() },
+        },
+      })
+      const persisted = await loadDocument(client, document)
+      if (!persisted) throw new Error("Nota desapareceu ao iniciar transmissão posterior.")
+      return persisted
+    },
+
     persistBeforeTransmission: async ({ document, bytesSha256, now }) => {
       await client.$transaction(async (tx) => {
         const updated = await tx.notaFiscal.updateMany({
@@ -210,7 +244,7 @@ export function createPrismaUncertainStatePersistence(
             vendaId: document.vendaId,
             modelo: "NFCE",
             ambiente: "HOMOLOGACAO",
-            status: { in: ["RASCUNHO", "VALIDANDO", "ASSINADA"] },
+            status: { in: ["RASCUNHO", "VALIDANDO", "ASSINADA", "CONTINGENCIA"] },
           },
           data: {
             serie: document.serie,
@@ -220,7 +254,9 @@ export function createPrismaUncertainStatePersistence(
             digestValue: document.digestValue ?? null,
             qrCodeData: document.qrCodeData ?? null,
             urlConsulta: document.urlConsulta ?? null,
-            status: "TRANSMITINDO",
+            status: document.xmlAssinado.includes("<tpEmis>9</tpEmis>")
+              ? "CONTINGENCIA"
+              : "TRANSMITINDO",
             ultimoErro: null,
           },
         })
@@ -497,7 +533,9 @@ export function createPrismaUncertainStatePersistence(
               storeId: document.storeId,
               vendaId: document.vendaId,
               notaFiscalId: document.notaFiscalId,
-              tipo: "EMISSAO",
+              // Consulta que autoriza encerra tanto a emissão original quanto
+              // a transmissão posterior de contingência (GOAL 020) estacionada.
+              tipo: { in: ["EMISSAO", "CONTINGENCIA_TRANSMISSAO"] },
               status: { in: ["PROCESSANDO", "AGUARDANDO_RETRY", "PENDENTE"] },
             },
             data: {

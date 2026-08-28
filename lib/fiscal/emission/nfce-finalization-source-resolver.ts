@@ -9,7 +9,10 @@
  */
 import { reconstructSnapshotFromNota, type NotaFiscalRow } from "./snapshot-reader"
 import type { NfceFinalizationSource } from "./finalized-nfce-preparer"
-import type { FiscalDocumentLocator } from "./uncertain-state.types"
+import type {
+  FinalizedDocumentPrepareOptions,
+  FiscalDocumentLocator,
+} from "./uncertain-state.types"
 
 export type NfceFinalizationSourceErrorCode =
   | "nota_nao_encontrada"
@@ -88,8 +91,11 @@ function asNotaRow(row: UnknownRecord): NotaFiscalRow {
 
 export function createPersistedNfceFinalizationSourceResolver(
   client: SourceResolverClient,
-): (locator: FiscalDocumentLocator) => Promise<NfceFinalizationSource> {
-  return async (locator) => {
+): (
+  locator: FiscalDocumentLocator,
+  options?: FinalizedDocumentPrepareOptions,
+) => Promise<NfceFinalizationSource> {
+  return async (locator, options) => {
     const raw = record(
       await client.notaFiscal.findFirst({
         where: {
@@ -108,6 +114,8 @@ export function createPersistedNfceFinalizationSourceResolver(
           serie: true,
           numero: true,
           tipoEmissao: true,
+          dataContingencia: true,
+          justContingencia: true,
           localKey: true,
           snapshotEmitente: true,
           snapshotDestinatario: true,
@@ -193,6 +201,16 @@ export function createPersistedNfceFinalizationSourceResolver(
       numero,
       snapshot,
       tpEmis: tpEmisFromTipoEmissao(raw.tipoEmissao),
+      ...(options?.dhCont !== undefined
+        ? { dhCont: options.dhCont }
+        : raw.dataContingencia
+          ? { dhCont: raw.dataContingencia as string | Date }
+          : {}),
+      ...(options?.xJust !== undefined
+        ? { xJust: options.xJust }
+        : text(raw.justContingencia)
+          ? { xJust: text(raw.justContingencia) }
+          : {}),
       ...(dataEmissao ? { dataEmissao } : {}),
       ...(uf ? { uf } : {}),
       ...(correlationId ? { correlationId } : {}),

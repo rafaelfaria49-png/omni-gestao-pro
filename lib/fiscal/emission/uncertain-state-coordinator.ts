@@ -301,6 +301,19 @@ async function runTransmission(
         message: "Consulta obrigatória antes de qualquer retransmissão.",
       }
     }
+  } else if (document?.status === "CONTINGENCIA") {
+    const invalid = assertPersistedDocument(input.locator, document)
+    if (invalid) return invalid
+    if (!input.persistence.beginTransmission) {
+      return {
+        kind: "blocked",
+        code: "CONTINGENCY_TRANSMISSION_PORT_UNAVAILABLE",
+        message: "Nota em contingência sem porta de transição para transmissão.",
+      }
+    }
+    document = await input.persistence.beginTransmission({ document, now })
+    const transitioned = assertPersistedDocument(input.locator, document)
+    if (transitioned) return transitioned
   } else {
     const prepared = await input.preparer.prepare(input.locator)
     if (

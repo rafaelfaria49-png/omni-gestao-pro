@@ -31,6 +31,7 @@ import {
 import type { VendaFiscalSnapshot } from "@/lib/fiscal/venda-fiscal-snapshot"
 
 import type {
+  FinalizedDocumentPrepareOptions,
   FinalizedDocumentPreparer,
   FinalizedFiscalDocument,
   FiscalDocumentLocator,
@@ -53,6 +54,8 @@ export type NfceFinalizationSource = {
   snapshot: VendaFiscalSnapshot
   tpEmis?: number
   dataEmissao?: string | Date
+  dhCont?: string | Date
+  xJust?: string
   uf?: string
   correlationId?: string
 }
@@ -60,7 +63,10 @@ export type NfceFinalizationSource = {
 export type FinalizedNfceCertificateResolver = () => Promise<FiscalCertificateMaterial>
 
 export type FinalizedNfcePreparerDependencies = {
-  resolveSource: (locator: FiscalDocumentLocator) => Promise<NfceFinalizationSource>
+  resolveSource: (
+    locator: FiscalDocumentLocator,
+    options?: FinalizedDocumentPrepareOptions,
+  ) => Promise<NfceFinalizationSource>
   /**
    * Material A1 já em memória. Contrato atual: testes isolados e dry-run
    * passam fixture. Quando presente, o resolver lazy não é chamado.
@@ -147,9 +153,12 @@ export function createFinalizedNfcePreparer(
   deps: FinalizedNfcePreparerDependencies,
 ): FinalizedDocumentPreparer {
   return {
-    async prepare(locator: FiscalDocumentLocator): Promise<FinalizedFiscalDocument> {
+    async prepare(
+      locator: FiscalDocumentLocator,
+      options?: FinalizedDocumentPrepareOptions,
+    ): Promise<FinalizedFiscalDocument> {
       const urls = requireInjectedQrUrls(deps.qrUrls)
-      const source = await deps.resolveSource(locator)
+      const source = await deps.resolveSource(locator, options)
       if (!sameLocator(locator, source)) {
         throw new NfceXmlError(
           "snapshot_invalido",
@@ -158,7 +167,7 @@ export function createFinalizedNfcePreparer(
       }
 
       const certificado = await resolveCertificateMaterial(deps)
-      const tpEmis = source.tpEmis ?? 1
+      const tpEmis = options?.tpEmis ?? source.tpEmis ?? 1
       const qrOnlineV3: NfceQrOnlineV3Config | undefined =
         tpEmis === 9 ? undefined : { qrCodeBaseUrl: urls.qrCodeBaseUrl, urlChave: urls.urlChave }
       const qrOfflineV3: NfceQrOfflineV3Config | undefined =
@@ -175,6 +184,8 @@ export function createFinalizedNfcePreparer(
         numero: source.numero,
         tpEmis,
         dataEmissao: source.dataEmissao,
+        dhCont: options?.dhCont ?? source.dhCont,
+        xJust: options?.xJust ?? source.xJust,
         qrOnlineV3,
         qrOfflineV3,
       })

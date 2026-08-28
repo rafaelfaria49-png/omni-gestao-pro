@@ -71,6 +71,18 @@ export type FinalizedFiscalDocument = FiscalDocumentIdentity & {
   urlConsulta?: string | null
 }
 
+export type FinalizedDocumentPrepareOptions = {
+  /**
+   * Modalidade de emissão do documento construído. GOAL 020: a primeira
+   * entrada em contingência passa 9 porque `NotaFiscal.tipoEmissao` só é
+   * flipado para `CONTINGENCIA_OFFLINE` depois do prepare; sem isso o builder
+   * recusaria dhCont/xJust para o tpEmis=1 derivado do estado persistido.
+   */
+  tpEmis?: number
+  dhCont?: string | Date
+  xJust?: string
+}
+
 /**
  * Consequências fiscais EXPLÍCITAS de uma rejeição (GOAL-016D-B · D12).
  *
@@ -310,11 +322,19 @@ export interface UncertainStateFiscalProvider {
  * + QR v3 + XMLDSig na mesma construção. Stubs de teste podem omitir QR.
  */
 export interface FinalizedDocumentPreparer {
-  prepare(locator: FiscalDocumentLocator): Promise<FinalizedFiscalDocument>
+  prepare(
+    locator: FiscalDocumentLocator,
+    options?: FinalizedDocumentPrepareOptions,
+  ): Promise<FinalizedFiscalDocument>
 }
 
 export interface UncertainStatePersistence {
   load(locator: FiscalDocumentLocator): Promise<PersistedFiscalDocument | null>
+  /** Promove uma nota contingenciada, já persistida, para TRANSMITINDO sem tocar nos bytes. */
+  beginTransmission?(input: {
+    document: PersistedFiscalDocument
+    now: Date
+  }): Promise<PersistedFiscalDocument>
   /**
    * Persiste identidade, numeração, chave, XML assinado, SHA-256 dos
    * exactBytes e metadados QR (`digestValue`/`qrCodeData`/`urlConsulta`) e
@@ -430,6 +450,7 @@ export type SafeEmissionOutcomeKind =
         | "PERSISTED_BYTES_MISSING"
         | "PERSISTED_BYTES_MISMATCH"
         | "SCOPE_MISMATCH"
+        | "CONTINGENCY_TRANSMISSION_PORT_UNAVAILABLE"
         /**
          * Execução de provider EXTERNO sem capability concedida (correção 002 · bloqueio 2).
          * Substitui `REAL_PROVIDER_BLOCKED`, cujo nome e mecânica ligavam a autorização ao

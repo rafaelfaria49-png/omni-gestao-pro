@@ -401,7 +401,11 @@ describe("createFinalizedNfcePreparer · QR v3 online", () => {
 describe("createFinalizedNfcePreparer · QR v3 offline tpEmis=9", () => {
   it("usa qrOfflineV3, persiste metadados estruturais e mantém duas assinaturas independentes", async () => {
     const doc = await createFinalizedNfcePreparer({
-      resolveSource: async () => source({ tpEmis: 9 }),
+      resolveSource: async () => source({
+        tpEmis: 9,
+        dhCont: "2026-08-28T13:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+      }),
       certificado: DRY_RUN_TEST_CERT,
       qrUrls: QR_URLS,
     }).prepare(LOCATOR)
@@ -435,6 +439,34 @@ describe("createFinalizedNfcePreparer · QR v3 offline tpEmis=9", () => {
 
     const mesmoMaterial = createQrV3OfflinePemSigner(DRY_RUN_TEST_CERT.privateKeyPem)
     expect(mesmoMaterial(canonical)).toBe(assinaturaQr)
+  })
+
+  it("options.tpEmis=9 sobre fonte ainda online (primeira entrada GOAL 020) produz XML de contingência", async () => {
+    const doc = await createFinalizedNfcePreparer({
+      resolveSource: async () => source({ tpEmis: 1 }),
+      certificado: DRY_RUN_TEST_CERT,
+      qrUrls: QR_URLS,
+    }).prepare(LOCATOR, {
+      tpEmis: 9,
+      dhCont: "2026-08-28T13:00:00Z",
+      xJust: "Falha de comunicação com a SEFAZ",
+    })
+    expect(doc.xmlAssinado).toContain("<tpEmis>9</tpEmis>")
+    expect(doc.xmlAssinado).toContain("<dhCont>2026-08-28T10:00:00-03:00</dhCont>")
+    expect(doc.xmlAssinado).toContain("<xJust>Falha de comunicação com a SEFAZ</xJust>")
+  })
+
+  it("dhCont/xJust sem options.tpEmis sobre fonte online continuam recusados", async () => {
+    await expect(
+      createFinalizedNfcePreparer({
+        resolveSource: async () => source({ tpEmis: 1 }),
+        certificado: DRY_RUN_TEST_CERT,
+        qrUrls: QR_URLS,
+      }).prepare(LOCATOR, {
+        dhCont: "2026-08-28T13:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+      }),
+    ).rejects.toThrow(/dhCont\/xJust só podem ser informados em tpEmis=9/)
   })
 })
 
@@ -614,7 +646,11 @@ describe("zero rede / zero SEFAZ / fontes do GOAL", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
     await preparerDe().prepare(LOCATOR)
     await createFinalizedNfcePreparer({
-      resolveSource: async () => source({ tpEmis: 9 }),
+      resolveSource: async () => source({
+        tpEmis: 9,
+        dhCont: "2026-08-28T13:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+      }),
       certificado: DRY_RUN_TEST_CERT,
       qrUrls: QR_URLS,
     }).prepare(LOCATOR)

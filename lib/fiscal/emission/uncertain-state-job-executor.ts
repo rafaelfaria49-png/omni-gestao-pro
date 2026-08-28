@@ -267,7 +267,7 @@ export function createUncertainStateJobExecutor(
         },
       }
     }
-    if (job.tipo !== "EMISSAO") {
+    if (job.tipo !== "EMISSAO" && job.tipo !== "CONTINGENCIA_TRANSMISSAO") {
       return {
         kind: "terminal",
         code: "tipo_nao_suportado_goal012",

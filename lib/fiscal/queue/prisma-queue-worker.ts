@@ -16,6 +16,7 @@ import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
 import { stubHomologacaoProvider } from "../provider/stub-homologacao"
 import type { FiscalProvider } from "../provider/types"
 import { sanitizeFiscalQueueError } from "./queue-policy"
+import { offlineContingencyAlarmFromPayload } from "../contingencia/offline-contingency"
 import type {
   FiscalQueueAuditEvent,
   FiscalQueueExecutionResult,
@@ -345,7 +346,7 @@ async function executeFiscalJob(
       provider: inutilizacaoProvider as FiscalProvider,
     })
   }
-  if (!["EMISSAO", "CONSULTA"].includes(job.tipo)) {
+  if (!["EMISSAO", "CONTINGENCIA_TRANSMISSAO", "CONSULTA"].includes(job.tipo)) {
     return {
       kind: "terminal",
       code: "tipo_nao_suportado",
@@ -365,6 +366,26 @@ async function executeFiscalJob(
       mensagem: "Job bloqueado: somente NFCE/HOMOLOGACAO habilitado é permitido.",
       simulado: true,
       externalTransmissionAttempted: false,
+    }
+  }
+  if (job.tipo === "CONTINGENCIA_TRANSMISSAO") {
+    const alarm = offlineContingencyAlarmFromPayload(record(job.payload), new Date())
+    if (alarm === "APPROACHING" || alarm === "EXPIRED") {
+      await client.fiscalLog.create({
+        data: {
+          storeId: job.storeId,
+          vendaId: job.vendaId,
+          notaFiscalId: job.notaFiscalId,
+          jobId: job.id,
+          nivel: alarm === "EXPIRED" ? "ERROR" : "WARN",
+          acao: `fiscal.contingencia.deadline_${alarm.toLowerCase()}`,
+          mensagem: alarm === "EXPIRED"
+            ? "Prazo legal de transmissão posterior da contingência expirado."
+            : "Prazo legal de transmissão posterior da contingência se aproximando.",
+          operador: "fiscal-goal-020",
+          detalhe: { deadlineAt: record(job.payload).deadlineAt, alarm },
+        },
+      }).catch(() => undefined)
     }
   }
   if (config.provider !== "STUB_HOMOLOGACAO" && config.provider !== "SEFAZ_DIRETO") {
@@ -414,7 +435,7 @@ async function executeFiscalJob(
 
   const payloadVersion = Number(record(job.payload).version ?? 1)
   const sefazDireto = config.provider === "SEFAZ_DIRETO"
-  if (sefazDireto || job.tipo === "CONSULTA" || payloadVersion >= 2) {
+  if (sefazDireto || job.tipo === "CONSULTA" || job.tipo === "CONTINGENCIA_TRANSMISSAO" || payloadVersion >= 2) {
     if (!executeGoal012) {
       return {
         kind: "terminal",
