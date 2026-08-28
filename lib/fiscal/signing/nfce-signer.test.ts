@@ -485,7 +485,14 @@ const QR_OFFLINE_V3 = {
 function nfceXmlQrOffline(): string {
   const r = buildVendaFiscalSnapshot(snapshotInput())
   if (!r.ok) throw new Error(`snapshot inválido: ${r.code}`)
-  return buildNfceXmlAssinavel(r.snapshot, { serie: 1, numero: 42, tpEmis: 9, qrOfflineV3: { ...QR_OFFLINE_V3 } })
+  return buildNfceXmlAssinavel(r.snapshot, {
+    serie: 1,
+    numero: 42,
+    tpEmis: 9,
+    dhCont: "2026-08-28T13:00:00Z",
+    xJust: "Falha de comunicação com a SEFAZ",
+    qrOfflineV3: { ...QR_OFFLINE_V3 },
+  })
 }
 
 describe("signNfceXml · infNFeSupl QR v3 offline não entra no digest", () => {

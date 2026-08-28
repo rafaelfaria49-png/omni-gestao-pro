@@ -187,6 +187,8 @@ export function buildPersistedDanfceFixture(kind: DanfceFixtureKind): DanfcePers
         serie: 1,
         numero: 42,
         tpEmis: 9,
+        dhCont: "2026-08-28T13:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
         qrOfflineV3: {
           qrCodeBaseUrl: urls.qrCodeBaseUrl,
           urlChave: urls.urlChave,
