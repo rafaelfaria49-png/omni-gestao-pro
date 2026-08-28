@@ -3,16 +3,16 @@
   "track": "pdv",
   "status": "RUNNING",
   "risk_tier": "ALTO",
-  "current_goal": "PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001",
+  "current_goal": "PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002",
   "next_goal": null,
-  "bootstrap_commit": null,
+  "bootstrap_commit": "2b223705a3a2d6982a50b2fbb1d025cedc8541d5",
   "counters": {
-    "goals_done": 0,
+    "goals_done": 1,
     "goals_blocked": 0,
-    "goals_imported": 0,
-    "ledger_lines": 0
+    "goals_imported": 1,
+    "ledger_lines": 1
   },
-  "last_goal": null,
-  "last_result": null,
-  "last_ratified_at": null
+  "last_goal": "PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001",
+  "last_result": "DONE",
+  "last_ratified_at": "2026-08-28T00:06:26.872Z"
 }

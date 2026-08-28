@@ -1,16 +1,16 @@
 # Reconciliação de importação — trilha `pdv`
 
-- importação nº 3 · 2026-08-27T18:16:49.576Z
-- plano: `PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001` (plan_rev 1)
+- importação nº 5 · 2026-08-28T00:10:11.548Z
+- plano: `PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001` (plan_rev 2)
 - bootstrap_commit declarado: `2b223705a3a2d6982a50b2fbb1d025cedc8541d5`
-- manifesto (proveniência): `docs/execution-tracks/pdv/_closed/reports/IMPORT-3-MANIFEST.json`
+- manifesto (proveniência): `docs/execution-tracks/pdv/_closed/reports/IMPORT-5-MANIFEST.json`
 - o diretório `import/` é gitignored; o manifesto bruto NÃO é commitado.
 
 ## 0. Delta desta importação (projeção last-wins por GOAL)
 
-- delta: 1 NOVO · 0 ALTERADO · 0 INALTERADO
+- delta: 1 NOVO · 0 ALTERADO · 1 INALTERADO
 - linhas anexadas ao LEDGER.jsonl: 0 (o ledger é append-only; nada foi reescrito)
-- `PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
+- `PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002` — **NOVO**: (inexistente) → READY · caminho quente, sem linha de ledger
 
 ### Deltas sensíveis
 
@@ -22,7 +22,8 @@ _(nenhum)_
 
 ## 1. Confirmados (DONE com prova no Git)
 
-_(nenhum)_
+- `PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001` → DONE · commit `dc7e1e60a5acfbad7910a521e3872dda1f2f3e9e` · branch `goal/pdv-001-trocas-busca-vale-credito`
+  - evidência: `git merge-base --is-ancestor dc7e1e60a5acfbad7910a521e3872dda1f2f3e9e goal/pdv-001-trocas-busca-vale-credito` → commit existe e está na branch declarada
 
 ## 2. Divergentes (BLOCKED — nunca presumidos DONE)
 
@@ -42,4 +43,4 @@ _(nenhum)_
 
 ## 6. Caminho quente após a importação
 
-- `PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001` → `docs/execution-tracks/pdv/goals/PDV-TROCAS-DEVOLUCOES-BUSCA-VALE-CREDITO-001.md` (READY)
+- `PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002` → `docs/execution-tracks/pdv/goals/PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002.md` (READY)
