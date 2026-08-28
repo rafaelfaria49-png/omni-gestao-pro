@@ -16,9 +16,12 @@ governa_codigo: prisma EventoFiscal/FiscalEmissaoJob, lib/fiscal/provider/*
 > **Princípios:** `docs/decisions/ADR-0008-fiscal-architecture.md` (P2 fila, P4 XML imutável).
 > **Dados:** `docs/architecture/FISCAL_SCHEMA_DESIGN.md` · **Fluxo:** `NFCE_ARCHITECTURE.md`.
 >
-> ⚠️ Hoje só o **provider STUB** responde a `cancelar`/`inutilizar` (simulado); **não existe**
-> serviço que grava `EventoFiscal` real nem worker que drena a fila. Isto é a arquitetura-alvo
-> das fases **F9 (eventos)** e **F7/F10 (fila/contingência)**.
+> Cancelamento fiscal de NFC-e autorizada (GOAL 018): evento `NFeRecepcaoEvento4` idempotente
+> por `(notaFiscalId, tipo, sequencia)`, prazo SP de 30 min (Portaria SRE 40/2024 / Ajuste SINIEF
+> 19/16; CAT 12/2015 revogada), persistência somente com resposta **não simulada** e `cStat 135`.
+> `101` é status de documento na consulta, não do webservice de eventos. Transições
+> `NotaFiscal.CANCELADA` / `Venda.CANCELADA_FISCAL`. **Inutilização** permanece fora deste GOAL.
+> O worker da fila de emissão já existe; não é o caminho síncrono administrativo de cancelamento.
 
 ---
 
@@ -70,7 +73,7 @@ sequenceDiagram
   Svc->>DB: cria EventoFiscal CANCELAMENTO seq=n (PENDENTE) [idempotente]
   Svc->>Prov: cancelar(chave, protocolo, justificativa)
   Prov->>SEFAZ: transmite evento
-  SEFAZ-->>Prov: cStat (135=registrado / erro)
+  SEFAZ-->>Prov: cStat (135=evento registrado / 573=duplicidade / rejeição)
   Prov-->>Svc: resultado
   alt autorizado
     Svc->>DB: EventoFiscal AUTORIZADO + NotaFiscal CANCELADA + Venda CANCELADA_FISCAL

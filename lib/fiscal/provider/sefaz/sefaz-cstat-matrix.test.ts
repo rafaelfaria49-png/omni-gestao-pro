@@ -99,13 +99,28 @@ describe("matriz de cStat — cobertura obrigatória", () => {
   it("104 instrui descida ao protocolo e não é desfecho de documento", () => {
     expect(entrada("104").outcome).toBe("LOTE_PROCESSADO")
   })
+
+  it("101 não autoriza NFeRecepcaoEvento4 — sucesso do evento é 135", () => {
+    const evento = lookupSefazCStat("101", "NFeRecepcaoEvento4")
+    expect(evento.ok).toBe(false)
+    if (!evento.ok) expect(evento.reason).toBe("SERVICE_MISMATCH")
+    const consulta = entrada("101", "NFeConsultaProtocolo4")
+    expect(consulta.reason).toBe("CANCELAMENTO_HOMOLOGADO")
+    expect(lookupSefazCStat("101", "NFeAutorizacao4").ok).toBe(false)
+  })
+
+  it("135 é evento registrado SOMENTE em NFeRecepcaoEvento4", () => {
+    const e = entrada("135", "NFeRecepcaoEvento4")
+    expect(e.outcome).toBe("AUTHORIZED")
+    expect(e.reason).toBe("EVENTO_REGISTRADO")
+    expect(lookupSefazCStat("135", "NFeAutorizacao4").ok).toBe(false)
+  })
 })
 
 describe("matriz de cStat — default fail-closed", () => {
   it("qualquer código fora da matriz é UNKNOWN, nunca rejeição", () => {
     const foraDaMatriz = [
       "000",
-      "101",
       "102",
       "106",
       "107",
@@ -154,7 +169,7 @@ describe("matriz de cStat — default fail-closed", () => {
 
 describe("matriz de cStat — imutabilidade e versionamento", () => {
   it("expõe uma versão estável", () => {
-    expect(SEFAZ_CSTAT_MATRIX_VERSION).toBe("016D-B.1")
+    expect(SEFAZ_CSTAT_MATRIX_VERSION).toBe("018.2")
   })
 
   it("entradas, listas de serviço e consequências estão congeladas", () => {
