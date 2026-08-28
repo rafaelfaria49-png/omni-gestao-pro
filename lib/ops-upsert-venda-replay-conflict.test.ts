@@ -167,7 +167,9 @@ function makeDb(options?: { createP2002?: boolean; sessionStatus?: "ABERTA" | "F
         status: "ativo",
       }),
       update: async ({ data }: any) => {
-        if (typeof data.status === "string") credit.status = data.status
+        if (typeof data.status === "string") {
+          ;(credit as { status?: string }).status = data.status
+        }
         return data
       },
     },

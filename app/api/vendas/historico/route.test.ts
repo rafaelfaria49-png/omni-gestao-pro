@@ -81,11 +81,12 @@ const h = vi.hoisted(() => {
     if (itens) {
       const some = (itens.some ?? {}) as Row
       const nome = some.nome as Row | undefined
-      if (nome && typeof nome.contains === "string") {
+      const nomeBusca = nome?.contains
+      if (typeof nomeBusca === "string") {
         const nomes = (row.itensBusca as Array<{ nome?: string }>).map((i) =>
           (i.nome ?? "").toLowerCase(),
         )
-        return nomes.some((n) => n.includes(nome.contains!.toLowerCase()))
+        return nomes.some((n) => n.includes(nomeBusca.toLowerCase()))
       }
       const inv = some.inventoryId as Row | undefined
       if (inv && Array.isArray(inv.in)) {

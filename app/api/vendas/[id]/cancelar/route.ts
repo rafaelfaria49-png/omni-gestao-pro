@@ -149,9 +149,60 @@ export async function POST(
 
     let estoqueRepostoCount = 0
     let estornoVendaRealizado = false
+    /** Trilha do estorno de Crédito/Vale (lida na resposta e persistida no payload). */
+    const estornoCreditoTrail: Array<{
+      usoId: string
+      creditoId: string
+      valor: number
+      saldoAntes: number
+      saldoDepois: number
+    }> = []
 
     await prisma.$transaction(async (tx) => {
-      // 1. Marca a venda como cancelada
+      // 0. Estorno do Crédito/Vale consumido (PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002).
+      // Restaura EXATAMENTE a soma dos `UsoCreditoCliente` desta venda — numa compra
+      // mista, somente a parcela de crédito/vale. Nada entra nem sai do caixa: vale
+      // não é dinheiro (nenhuma MovimentacaoFinanceira é criada aqui). Idempotente:
+      // o guard de status no topo (409 p/ já cancelada) impede que um replay rode
+      // esta transação de novo, então o crédito nunca é devolvido duas vezes.
+      const usosCredito = await tx.usoCreditoCliente.findMany({
+        where: { storeId, vendaId: pedidoId },
+        select: { id: true, creditoId: true, valor: true },
+      })
+      for (const uso of usosCredito) {
+        // Incremento atômico condicionado à loja — sem write-down de outras lojas.
+        const upd = await tx.clienteCredito.updateMany({
+          where: { id: uso.creditoId, storeId },
+          data: { saldoAtual: { increment: uso.valor } },
+        })
+        if (upd.count === 0) continue
+        const credito = await tx.clienteCredito.findUnique({
+          where: { id: uso.creditoId },
+          select: { saldoAtual: true, status: true },
+        })
+        const saldoDepois = arredonda2(credito?.saldoAtual ?? 0)
+        const saldoAntes = arredonda2(saldoDepois - uso.valor)
+        // Vale com saldo restaurado volta a ser utilizável (ex.: zerado → ativo).
+        if (credito && credito.status !== "ativo" && saldoDepois > 0.001) {
+          await tx.clienteCredito.update({
+            where: { id: uso.creditoId },
+            data: { status: "ativo" },
+          })
+        }
+        estornoCreditoTrail.push({
+          usoId: uso.id,
+          creditoId: uso.creditoId,
+          valor: arredonda2(uso.valor),
+          saldoAntes,
+          saldoDepois,
+        })
+      }
+
+      // 1. Marca a venda como cancelada — o payload ganha a trilha de estorno do vale.
+      const payloadAtual =
+        venda.payload && typeof venda.payload === "object" && !Array.isArray(venda.payload)
+          ? (venda.payload as Record<string, unknown>)
+          : {}
       await tx.venda.update({
         where: { id: venda.id },
         data: {
@@ -159,6 +210,18 @@ export async function POST(
           canceladaEm: now,
           canceladaPor: operadorCancelamento,
           motivoCancelamento: motivo.trim(),
+          ...(estornoCreditoTrail.length > 0
+            ? {
+                payload: {
+                  ...payloadAtual,
+                  estornoCreditoVale: {
+                    at: now.toISOString(),
+                    operador: operadorLedger,
+                    usos: estornoCreditoTrail,
+                  },
+                },
+              }
+            : {}),
         },
       })
 
@@ -328,6 +391,12 @@ export async function POST(
       estornoFinanceiro: estornoReceber || estornoVendaRealizado,
       titulosAprazoCancelados: titulosCancelados,
       devolucoesMantidas: devolucoes.length,
+      // Estorno do crédito/vale consumido (parcela de Crédito/Vale do pagamento).
+      estornoCreditoVale: {
+        usos: estornoCreditoTrail.length,
+        valor:
+          Math.round(estornoCreditoTrail.reduce((s, e) => s + e.valor, 0) * 100) / 100,
+      },
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)

@@ -43,6 +43,23 @@ function makeFakeTx() {
       updateMany: async () => ({ count: 1 }),
     },
     movimentacaoEstoque: { findFirst: async () => null, create: async () => ({}) },
+    // Crédito/Vale é fail-closed (PDV-TROCAS-VALE-HARDENING-002): o fake fornece
+    // um crédito ativo com saldo amplo para os testes que usam creditoVale.
+    clienteCredito: {
+      findMany: async () => [
+        { id: "cred-1", saldoAtual: 10_000, status: "ativo", createdAt: 0 },
+      ],
+      updateMany: async ({ where }: any) => {
+        if (where.id !== "cred-1") return { count: 0 }
+        if (where.saldoAtual?.gte !== undefined && 10_000 < where.saldoAtual.gte) return { count: 0 }
+        return { count: 1 }
+      },
+      findUnique: async () => ({ id: "cred-1", saldoAtual: 9_999, status: "ativo" }),
+      update: async () => ({}),
+    },
+    usoCreditoCliente: {
+      create: async ({ data }: any) => data,
+    },
     movimentacaoFinanceira: {
       findFirst: async () => null,
       create: async ({ data }: any) => {
@@ -72,6 +89,8 @@ function avulsoSale(over: Partial<SalePayload> = {}): SalePayload {
     id: "PED-HANDOFF-1",
     total: 50,
     customerName: "Cliente Teste",
+    // Titular obrigatório: crédito/vale é fail-closed (PDV-TROCAS-VALE-HARDENING-002).
+    customerCpf: "12345678900",
     lines: [{ inventoryId: "__avulso__1", name: "Item", quantity: 1, unitPrice: 50, isAvulso: true }],
     ...over,
   }

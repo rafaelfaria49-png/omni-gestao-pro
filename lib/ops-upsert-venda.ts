@@ -97,6 +97,39 @@ export class CaixaOriginalFechadoError extends Error {
 }
 
 /**
+ * Crédito/Vale é FAIL-CLOSED (PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002): uma venda
+ * que contabiliza `creditoVale` sem o saldo ter sido efetivamente debitado NUNCA
+ * conclui. Cobre saldo insuficiente, vale inexistente/esgotado, conflito concorrente
+ * (outro caixa consumiu o saldo entre a leitura e o débito atômico) e titular
+ * ausente (`customerCpf` vazio — não há a quem debitar). A transação inteira é
+ * revertida: sem venda, itens, estoque, financeiro, títulos ou `UsoCreditoCliente`.
+ *
+ * Recuperável: o caller (`venda-persist`) traduz para HTTP 409 `code:
+ * "CREDITO_VALE_INSUFICIENTE"`; o client mantém a venda `syncPending` com
+ * `syncBlockedCode` e o operador reaplica o pagamento (saldo atualizado via lookup
+ * de crédito ou outra forma) e reenvia. Vendas que NÃO usam crédito/vale nunca
+ * passam por este gate.
+ */
+export class CreditoValeInsuficienteError extends Error {
+  readonly code = "CREDITO_VALE_INSUFICIENTE"
+  readonly detail: {
+    pedidoId: string
+    clienteDoc: string
+    /** Valor de `creditoVale` contabilizado na venda. */
+    solicitado: number
+    /** Parte que não pôde ser debitada de nenhum crédito ativo do titular. */
+    faltante: number
+  }
+  constructor(detail: CreditoValeInsuficienteError["detail"]) {
+    super(
+      "Saldo de crédito/vale insuficiente para esta venda (ou consumido por outro caixa). A venda não foi concluída — reaplique o pagamento.",
+    )
+    this.name = "CreditoValeInsuficienteError"
+    this.detail = detail
+  }
+}
+
+/**
  * Lançada quando o `pedidoId` recebido JÁ EXISTE no banco pertencendo a OUTRA loja.
  *
  * `Venda.pedidoId` é `@unique` GLOBAL, mas o número `VDA-YYYY-NNNN` é gerado por um
@@ -980,9 +1013,23 @@ export async function upsertVendaInTransaction(
   // condição no banco após a espera por lock (READ COMMITTED), então duas vendas
   // concorrentes nunca conseguem gastar o mesmo saldo duas vezes — a segunda
   // recebe count 0 e passa para o próximo crédito (FIFO).
+  // FAIL-CLOSED (PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002): se ao final restou
+  // crédito sem lastro (saldo insuficiente, vale esgotado ou consumido por outro
+  // caixa na janela da corrida), a venda NÃO conclui — lança
+  // `CreditoValeInsuficienteError` e reverte tudo. Nunca fica venda paga com
+  // crédito não debitado nem saldo negativo.
   const creditoValeUsado = arredonda2(pb?.creditoVale ?? 0)
   const cpfNorm = typeof sale.customerCpf === "string" ? sale.customerCpf.replace(/\D/g, "") : ""
-  if (creditoValeUsado > 0 && cpfNorm) {
+  if (creditoValeUsado > 0) {
+    if (!cpfNorm) {
+      // Sem titular não há a quem debitar — concluir seria contabilizar crédito inexistente.
+      throw new CreditoValeInsuficienteError({
+        pedidoId,
+        clienteDoc: "",
+        solicitado: creditoValeUsado,
+        faltante: creditoValeUsado,
+      })
+    }
     const creditos = await tx.clienteCredito.findMany({
       where: { storeId: lojaId, clienteDoc: cpfNorm, status: "ativo", saldoAtual: { gt: 0 } },
       orderBy: { createdAt: "asc" },
@@ -1034,7 +1081,20 @@ export async function upsertVendaInTransaction(
       restante = arredonda2(restante - debit)
     }
     if (restante > 0.001) {
-      console.warn("[upsert-venda] credito-sub-debitado", { pedidoId, cpfNorm, creditoValeUsado, restante })
+      // Fail-closed: a venda inteira reverte (transação aborta). A pendência fica
+      // no client com `syncBlockedCode: CREDITO_VALE_INSUFICIENTE` — recuperável.
+      console.warn("[upsert-venda] credito-sub-debitado-fail-closed", {
+        pedidoId,
+        cpfNorm,
+        creditoValeUsado,
+        restante,
+      })
+      throw new CreditoValeInsuficienteError({
+        pedidoId,
+        clienteDoc: cpfNorm,
+        solicitado: creditoValeUsado,
+        faltante: restante,
+      })
     }
   }
 
