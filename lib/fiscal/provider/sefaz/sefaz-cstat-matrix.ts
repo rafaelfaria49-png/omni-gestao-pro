@@ -39,7 +39,7 @@ import type { SefazServico } from "./sefaz-endpoint-catalog"
  * alterada — vai para a trilha de auditoria junto com a classificação, de modo que se saiba
  * QUAL matriz classificou um documento.
  */
-export const SEFAZ_CSTAT_MATRIX_VERSION = "016D-B.1" as const
+export const SEFAZ_CSTAT_MATRIX_VERSION = "018.2" as const
 
 /**
  * Desfecho canônico de um `cStat`.
@@ -67,6 +67,10 @@ export type SefazCStatOutcome =
 export type SefazResponseReason =
   /** `100` com protocolo e XML autorizado verificáveis. */
   | "AUTORIZADO"
+  /** `101` em NFeRecepcaoEvento4 — Cancelamento de NF-e homologado (Q-05). */
+  | "CANCELAMENTO_HOMOLOGADO"
+  /** `135` em NFeRecepcaoEvento4 — Evento registrado e vinculado à NF-e. */
+  | "EVENTO_REGISTRADO"
   /** Rejeição definitiva lida e reconhecida na matriz. */
   | "REJEICAO_TERMINAL"
   /** `103`/`105` — lote com a SEFAZ, aguardando processamento. */
@@ -176,6 +180,9 @@ const SERVICOS_DE_LOTE: readonly SefazServico[] = Object.freeze([
 /** Consulta por chave — o único lugar onde "não consta" é resposta legítima. */
 const SERVICOS_DE_CONSULTA: readonly SefazServico[] = Object.freeze(["NFeConsultaProtocolo4"])
 
+/** Evento de cancelamento/CC-e — NFeRecepcaoEvento4. Não herda códigos de autorização. */
+const SERVICOS_DE_EVENTO: readonly SefazServico[] = Object.freeze(["NFeRecepcaoEvento4"])
+
 const ENTRADAS: readonly SefazCStatEntry[] = Object.freeze([
   Object.freeze({
     cStat: "100",
@@ -187,6 +194,28 @@ const ENTRADAS: readonly SefazCStatEntry[] = Object.freeze([
     exigeXmlAutorizado: true,
     exigeRecibo: false,
     // Documento autorizado: número definitivamente consumido, nada a inutilizar, nada a consultar.
+    consequencias: consequencias({ terminal: true, numeroConsumido: true }),
+  }),
+  Object.freeze({
+    cStat: "101",
+    outcome: "AUTHORIZED",
+    reason: "CANCELAMENTO_HOMOLOGADO",
+    rotulo: "Cancelamento de NF-e homologado (consulta de documento; não autoriza RecepcaoEvento4)",
+    servicos: SERVICOS_DE_CONSULTA,
+    exigeProtocolo: true,
+    exigeXmlAutorizado: false,
+    exigeRecibo: false,
+    consequencias: consequencias({ terminal: true, numeroConsumido: true }),
+  }),
+  Object.freeze({
+    cStat: "135",
+    outcome: "AUTHORIZED",
+    reason: "EVENTO_REGISTRADO",
+    rotulo: "Evento registrado e vinculado a NF-e",
+    servicos: SERVICOS_DE_EVENTO,
+    exigeProtocolo: true,
+    exigeXmlAutorizado: false,
+    exigeRecibo: false,
     consequencias: consequencias({ terminal: true, numeroConsumido: true }),
   }),
   Object.freeze({
