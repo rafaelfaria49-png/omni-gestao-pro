@@ -24,6 +24,16 @@ export type NfceXmlContext = {
   cNF?: string
   /** Tipo de emissão (1 = normal). Default 1. */
   tpEmis?: number
+  /**
+   * Data/hora de entrada em contingência (`TDateTimeUTC`). Só é serializado quando
+   * `tpEmis ≠ 1` e `xJust` também está presente — o grupo XSD é atômico.
+   */
+  dhCont?: string
+  /**
+   * Justificativa da contingência (XSD `xJust` 15–256). Só é serializado junto com `dhCont`
+   * quando `tpEmis ≠ 1`. A obrigatoriedade de aplicação é da camada 020B, não deste serializer.
+   */
+  xJust?: string
   /** Data/hora de emissão. Default: `snapshot.venda.data`. */
   dataEmissao?: string | Date
   /** Natureza da operação. Default "VENDA AO CONSUMIDOR". */

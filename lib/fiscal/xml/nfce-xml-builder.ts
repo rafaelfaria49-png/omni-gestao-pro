@@ -357,7 +357,16 @@ function buildIdeNode(args: {
   cDV: string
   tpAmb: number
   verProc: string
+  dhCont?: string | null
+  xJust?: string | null
 }): XmlNode {
+  const dhCont = typeof args.dhCont === "string" ? args.dhCont.trim() : ""
+  const xJust = typeof args.xJust === "string" ? args.xJust : ""
+  // Sequência XSD atômica (minOccurs=0): dhCont + xJust juntos, somente tpEmis ≠ 1.
+  const contingencia =
+    args.tpEmis !== 1 && dhCont.length > 0 && xJust.length > 0
+      ? [leafRequired("dhCont", dhCont), leafRequired("xJust", xJust)]
+      : []
   return group("ide", [
     leafRequired("cUF", args.cUF),
     leafRequired("cNF", args.cNF),
@@ -378,6 +387,7 @@ function buildIdeNode(args: {
     leafRequired("indPres", "1"), // 1 = presencial
     leafRequired("procEmi", "0"), // 0 = aplicativo do contribuinte
     leafRequired("verProc", args.verProc),
+    ...contingencia,
   ])
 }
 
@@ -485,6 +495,8 @@ function buildInternal(
     cDV,
     tpAmb,
     verProc,
+    dhCont: contexto?.dhCont,
+    xJust: contexto?.xJust,
   })
   const emitNode = buildEmitNode(snapshot)
   const destNode = buildDestNode(snapshot)
