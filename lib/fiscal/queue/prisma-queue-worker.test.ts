@@ -318,6 +318,46 @@ describe("adapter Prisma da fila fiscal", () => {
     expect(legacyEmit).not.toHaveBeenCalled()
   })
 
+  it("job de contingência nunca cai no emissor legado mesmo em payload v1 e STUB", async () => {
+    const state = casClient(
+      jobRow({
+        tipo: "CONTINGENCIA_TRANSMISSAO",
+        status: "PROCESSANDO",
+        lockOwner: "worker-a",
+        lockExpiresAt: new Date("2026-07-23T00:01:00.000Z"),
+        payload: { version: 1, operation: "CONTINGENCIA_TRANSMISSAO", transmission: { exactBytes: true } },
+      }),
+    )
+    state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue({
+      provider: "STUB_HOMOLOGACAO",
+      ambiente: "HOMOLOGACAO",
+      modeloFiscal: "NFCE",
+      fiscalEnabled: true,
+    })
+    state.client.notaFiscal.findFirst.mockResolvedValue({
+      id: "nota-1",
+      modelo: "NFCE",
+      ambiente: "HOMOLOGACAO",
+    })
+    const legacyEmit = vi.fn()
+    const goal012 = vi.fn(async () => ({
+      kind: "terminal" as const,
+      code: "external_execution_not_authorized",
+      mensagem: "capability negada",
+      simulado: true as const,
+      externalTransmissionAttempted: false,
+      providerInvoked: false,
+    }))
+    const ports = createPrismaFiscalQueueWorkerPorts(state.client as never, legacyEmit as never, goal012)
+
+    await expect(ports.execute(state.current())).resolves.toMatchObject({
+      kind: "terminal",
+      code: "external_execution_not_authorized",
+    })
+    expect(goal012).toHaveBeenCalledTimes(1)
+    expect(legacyEmit).not.toHaveBeenCalled()
+  })
+
   it("SEFAZ_DIRETO sem executor GOAL-012 é bloqueado e não cai no legado", async () => {
     const state = casClient(jobRow())
     state.client.configuracaoFiscalLoja.findUnique.mockResolvedValue({

@@ -109,6 +109,11 @@ function formatContingencyDate(value: Date): string {
   return `${shifted.getUTCFullYear()}-${p2(shifted.getUTCMonth() + 1)}-${p2(shifted.getUTCDate())}T${p2(shifted.getUTCHours())}:${p2(shifted.getUTCMinutes())}:${p2(shifted.getUTCSeconds())}-03:00`
 }
 
+function normalizeExistingContingencyDate(value: Date | string | null): string | null {
+  const parsed = asValidDate(value ?? undefined, new Date(Number.NaN))
+  return parsed ? formatContingencyDate(parsed) : null
+}
+
 function dateOnlyUtc(value: Date): Date {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()))
 }
@@ -213,8 +218,9 @@ export async function enterManualOfflineContingency(
   const existing = await dependencies.persistence.loadExisting(locator)
   if (
     existing &&
+    existing.status === "CONTINGENCIA" &&
     text(existing.justContingencia) === text(input.xJust) &&
-    existing.dataContingencia != null
+    normalizeExistingContingencyDate(existing.dataContingencia) === dhCont
   ) {
     const prepared = await dependencies.preparer.prepare(locator)
     const bytesSha256 = fiscalBytesSha256(exactBytes(prepared.xmlAssinado))
@@ -246,17 +252,10 @@ export async function enterManualOfflineContingency(
     }
   }
 
-  const metadataSaved = await dependencies.persistence.setMetadata({
-    locator,
+  const prepared = await dependencies.preparer.prepare(locator, {
     dhCont,
     xJust: text(input.xJust),
-    operador: text(input.operador),
   })
-  if (!metadataSaved) {
-    return { ok: false, code: "estado_concorrente", error: "Estado da nota mudou antes da entrada em contingência." }
-  }
-
-  const prepared = await dependencies.preparer.prepare(locator)
   if (
     prepared.storeId !== locator.storeId ||
     prepared.vendaId !== locator.vendaId ||
@@ -274,6 +273,15 @@ export async function enterManualOfflineContingency(
       !prepared.xmlAssinado.includes(`<dhCont>${dhCont}</dhCont>`) ||
       !prepared.xmlAssinado.includes(`<xJust>${escapeXmlText(text(input.xJust))}</xJust>`)) {
     return { ok: false, code: "xml_contingencia_invalido", error: "XML offline não contém tpEmis=9, dhCont e xJust." }
+  }
+  const metadataSaved = await dependencies.persistence.setMetadata({
+    locator,
+    dhCont,
+    xJust: text(input.xJust),
+    operador: text(input.operador),
+  })
+  if (!metadataSaved) {
+    return { ok: false, code: "estado_concorrente", error: "Estado da nota mudou antes da entrada em contingência." }
   }
   const bytesSha256 = fiscalBytesSha256(exactBytes(prepared.xmlAssinado))
   const persisted = await dependencies.persistence.persist({

@@ -485,7 +485,7 @@ function buildInternal(
   const dhCont =
     dhContDate && Number.isFinite(dhContDate.getTime()) ? formatDhEmi(dhContDate) : undefined
   const xJust = typeof contexto?.xJust === "string" ? contexto.xJust.trim() : ""
-  if (tpEmis === 9 && (dhCont || xJust) && (!dhCont || xJust.length < 15 || xJust.length > 256)) {
+  if (tpEmis === 9 && destino === "embutivel" && (!dhCont || xJust.length < 15 || xJust.length > 256)) {
     throw new NfceXmlError(
       "contingencia_invalida",
       "tpEmis=9 exige dhCont e xJust entre 15 e 256 caracteres.",

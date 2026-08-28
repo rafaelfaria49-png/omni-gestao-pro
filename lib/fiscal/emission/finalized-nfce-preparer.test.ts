@@ -401,7 +401,11 @@ describe("createFinalizedNfcePreparer · QR v3 online", () => {
 describe("createFinalizedNfcePreparer · QR v3 offline tpEmis=9", () => {
   it("usa qrOfflineV3, persiste metadados estruturais e mantém duas assinaturas independentes", async () => {
     const doc = await createFinalizedNfcePreparer({
-      resolveSource: async () => source({ tpEmis: 9 }),
+      resolveSource: async () => source({
+        tpEmis: 9,
+        dhCont: "2026-08-28T13:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+      }),
       certificado: DRY_RUN_TEST_CERT,
       qrUrls: QR_URLS,
     }).prepare(LOCATOR)
@@ -614,7 +618,11 @@ describe("zero rede / zero SEFAZ / fontes do GOAL", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
     await preparerDe().prepare(LOCATOR)
     await createFinalizedNfcePreparer({
-      resolveSource: async () => source({ tpEmis: 9 }),
+      resolveSource: async () => source({
+        tpEmis: 9,
+        dhCont: "2026-08-28T13:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+      }),
       certificado: DRY_RUN_TEST_CERT,
       qrUrls: QR_URLS,
     }).prepare(LOCATOR)

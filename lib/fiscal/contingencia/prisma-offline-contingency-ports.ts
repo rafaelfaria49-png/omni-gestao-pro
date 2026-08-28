@@ -12,6 +12,21 @@ import {
 
 type Row = Record<string, unknown>
 
+type OfflineContingencyDb = {
+  notaFiscal: {
+    findFirst: (args: unknown) => Promise<unknown | null>
+    updateMany: (args: unknown) => Promise<{ count: number }>
+  }
+  venda: {
+    updateMany: (args: unknown) => Promise<{ count: number }>
+  }
+  fiscalEmissaoJob: {
+    findFirst: (args: unknown) => Promise<unknown | null>
+    upsert: (args: unknown) => Promise<unknown>
+  }
+  fiscalLog: { create: (args: unknown) => Promise<unknown> }
+}
+
 function record(value: unknown): Row {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Row)
@@ -27,16 +42,17 @@ function bytesHash(xml: string | null, payload: unknown): string | null {
   return persisted ?? (xml ? fiscalBytesSha256(new TextEncoder().encode(xml)) : null)
 }
 
-export type OfflineContingencyPrismaClient = {
-  notaFiscal: {
-    findFirst: (args: unknown) => Promise<unknown | null>
-    updateMany: (args: unknown) => Promise<{ count: number }>
-  }
-  fiscalEmissaoJob: {
-    findFirst: (args: unknown) => Promise<unknown | null>
-    upsert: (args: unknown) => Promise<unknown>
-  }
-  fiscalLog: { create: (args: unknown) => Promise<unknown> }
+export type OfflineContingencyPrismaClient = OfflineContingencyDb & {
+  $transaction?: <T>(fn: (tx: OfflineContingencyDb) => Promise<T>) => Promise<T>
+}
+
+class MetadataConcurrencyError extends Error {}
+
+async function inTransaction<T>(
+  client: OfflineContingencyPrismaClient,
+  fn: (tx: OfflineContingencyDb) => Promise<T>,
+): Promise<T> {
+  return client.$transaction ? client.$transaction(fn) : fn(client)
 }
 
 function documentPayload(document: FinalizedFiscalDocument, bytesSha256: string) {
@@ -102,23 +118,41 @@ export function createPrismaOfflineContingencyPersistence(
     },
 
     async setMetadata({ locator, dhCont, xJust }) {
-      const updated = await client.notaFiscal.updateMany({
-        where: {
-          id: locator.notaFiscalId,
-          storeId: locator.storeId,
-          vendaId: locator.vendaId,
-          modelo: "NFCE",
-          ambiente: "HOMOLOGACAO",
-          status: { in: ["RASCUNHO", "VALIDANDO", "ASSINADA"] },
-          xmlAssinado: null,
-        },
-        data: {
-          tipoEmissao: "CONTINGENCIA_OFFLINE",
-          dataContingencia: new Date(dhCont),
-          justContingencia: xJust,
-        },
-      })
-      return updated.count === 1
+      try {
+        return await inTransaction(client, async (tx) => {
+          const venda = await tx.venda.updateMany({
+            where: {
+              id: locator.vendaId,
+              storeId: locator.storeId,
+              fiscalStatus: { in: ["NAO_FISCAL", "PENDENTE", "EMITINDO", "EM_CONTINGENCIA"] },
+            },
+            data: { fiscalStatus: "EM_CONTINGENCIA" },
+          })
+          if (venda.count !== 1) return false
+
+          const updated = await tx.notaFiscal.updateMany({
+            where: {
+              id: locator.notaFiscalId,
+              storeId: locator.storeId,
+              vendaId: locator.vendaId,
+              modelo: "NFCE",
+              ambiente: "HOMOLOGACAO",
+              status: { in: ["RASCUNHO", "VALIDANDO", "ASSINADA"] },
+              xmlAssinado: null,
+            },
+            data: {
+              tipoEmissao: "CONTINGENCIA_OFFLINE",
+              dataContingencia: new Date(dhCont),
+              justContingencia: xJust,
+            },
+          })
+          if (updated.count !== 1) throw new MetadataConcurrencyError()
+          return true
+        })
+      } catch (error) {
+        if (error instanceof MetadataConcurrencyError) return false
+        throw error
+      }
     },
 
     async persist({ locator, document, dhCont, xJust, deadlineAt, requestedBy, now }) {

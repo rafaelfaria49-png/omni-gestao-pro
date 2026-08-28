@@ -71,6 +71,11 @@ export type FinalizedFiscalDocument = FiscalDocumentIdentity & {
   urlConsulta?: string | null
 }
 
+export type FinalizedDocumentPrepareOptions = {
+  dhCont?: string | Date
+  xJust?: string
+}
+
 /**
  * Consequências fiscais EXPLÍCITAS de uma rejeição (GOAL-016D-B · D12).
  *
@@ -310,7 +315,10 @@ export interface UncertainStateFiscalProvider {
  * + QR v3 + XMLDSig na mesma construção. Stubs de teste podem omitir QR.
  */
 export interface FinalizedDocumentPreparer {
-  prepare(locator: FiscalDocumentLocator): Promise<FinalizedFiscalDocument>
+  prepare(
+    locator: FiscalDocumentLocator,
+    options?: FinalizedDocumentPrepareOptions,
+  ): Promise<FinalizedFiscalDocument>
 }
 
 export interface UncertainStatePersistence {

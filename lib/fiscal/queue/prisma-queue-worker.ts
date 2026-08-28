@@ -435,7 +435,7 @@ async function executeFiscalJob(
 
   const payloadVersion = Number(record(job.payload).version ?? 1)
   const sefazDireto = config.provider === "SEFAZ_DIRETO"
-  if (sefazDireto || job.tipo === "CONSULTA" || payloadVersion >= 2) {
+  if (sefazDireto || job.tipo === "CONSULTA" || job.tipo === "CONTINGENCIA_TRANSMISSAO" || payloadVersion >= 2) {
     if (!executeGoal012) {
       return {
         kind: "terminal",

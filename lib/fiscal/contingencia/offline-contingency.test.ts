@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import { dryRunSnapshot } from "../dry-run"
-import { buildNfceXmlAssinavelResult } from "../xml"
+import { buildNfceXmlAssinavel, buildNfceXmlAssinavelResult } from "../xml"
 import {
   IN_MEMORY_ONLY_FISCAL_PROVIDER,
   transmitWithUncertainStateSafety,
@@ -14,6 +14,7 @@ import {
   offlineContingencyAlarm,
   type OfflineContingencyPersistence,
 } from "./offline-contingency"
+import { createPrismaOfflineContingencyPersistence } from "./prisma-offline-contingency-ports"
 
 const locator = { storeId: "loja-a", vendaId: "venda-a", notaFiscalId: "nota-a" }
 const XML = "<NFe><infNFe><ide><tpEmis>9</tpEmis><dhCont>2026-08-28T10:00:00-03:00</dhCont><xJust>Falha de comunicação com a SEFAZ</xJust></ide></infNFe></NFe>"
@@ -77,6 +78,14 @@ describe("GOAL 020 — contingência offline manual", () => {
     expect(built.xml).toMatch(/<tpEmis>9<\/tpEmis>[\s\S]*<dhCont>[^<]+<\/dhCont>[\s\S]*<xJust>Falha de comunicação com a SEFAZ<\/xJust>/)
   })
 
+  it("recusa XML assinado de tpEmis=9 sem dhCont/xJust", () => {
+    expect(() => buildNfceXmlAssinavel(dryRunSnapshot("simples"), {
+      serie: 1,
+      numero: 42,
+      tpEmis: 9,
+    })).toThrow(/tpEmis=9 exige dhCont e xJust/)
+  })
+
   it("exige entrada manual, loja habilitada, SEFAZ_DIRETO e HOMOLOGACAO", async () => {
     const base = {
       ...locator,
@@ -116,6 +125,53 @@ describe("GOAL 020 — contingência offline manual", () => {
       detail: expect.objectContaining({ autoContingency: false, bytesSha256: fiscalBytesSha256(new TextEncoder().encode(XML)) }),
     }))
     expect((store.persist as ReturnType<typeof vi.fn>).mock.calls[0][0].document.xmlAssinado).toBe(XML)
+  })
+
+  it("não grava metadados se a preparação falhar", async () => {
+    const store = persistence()
+    const failedPreparer = { prepare: vi.fn(async () => { throw new Error("snapshot inválido") }) }
+    await expect(enterManualOfflineContingency(
+      {
+        ...locator,
+        operador: "admin@teste",
+        manualConfirmation: true,
+        fiscalEnabled: true,
+        ambiente: "HOMOLOGACAO",
+        provider: "SEFAZ_DIRETO",
+        dhCont: "2026-08-28T13:00:00Z",
+        emissaoAt: "2026-08-28T12:00:00Z",
+        xJust: "Falha de comunicação com a SEFAZ",
+        now: new Date("2026-08-28T13:00:00Z"),
+      },
+      { preparer: failedPreparer, persistence: store },
+    )).rejects.toThrow("snapshot inválido")
+    expect(store.setMetadata).not.toHaveBeenCalled()
+  })
+
+  it("atualiza Venda e NotaFiscal atomicamente para EM_CONTINGENCIA", async () => {
+    const vendaUpdate = vi.fn(async () => ({ count: 1 }))
+    const notaUpdate = vi.fn(async () => ({ count: 1 }))
+    const transaction = vi.fn(async (fn: (tx: unknown) => Promise<boolean>) => fn({
+      venda: { updateMany: vendaUpdate },
+      notaFiscal: { updateMany: notaUpdate },
+    }))
+    const store = createPrismaOfflineContingencyPersistence({ $transaction: transaction } as never)
+
+    await expect(store.setMetadata({
+      locator,
+      dhCont: "2026-08-28T10:00:00-03:00",
+      xJust: "Falha de comunicação com a SEFAZ",
+      operador: "admin@teste",
+    })).resolves.toBe(true)
+    expect(transaction).toHaveBeenCalledTimes(1)
+    expect(vendaUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: locator.vendaId, storeId: locator.storeId }),
+      data: { fiscalStatus: "EM_CONTINGENCIA" },
+    }))
+    expect(notaUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: locator.notaFiscalId, vendaId: locator.vendaId }),
+      data: expect.objectContaining({ tipoEmissao: "CONTINGENCIA_OFFLINE" }),
+    }))
   })
 
   it("recusa produção e justificativa fora do intervalo", async () => {
