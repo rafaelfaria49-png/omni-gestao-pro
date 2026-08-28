@@ -90,6 +90,13 @@ function parseMoneyString(value: string): number {
   return parseInt(clean, 10) / 100
 }
 
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(value)
+}
+
 /** CPF (11) ou CNPJ (14) só com dígitos. */
 function documentoClienteValido(raw: string): boolean {
   const d = normalizeDocDigits(raw)
@@ -173,6 +180,15 @@ interface PaymentModalProps {
       discountPercent?: number
       pixQrKind?: PixQrKind
       cashTendered?: number
+      /**
+       * Titular do crédito/vale usado, quando localizado pelo lookup do modal
+       * (CPF/CNPJ só dígitos). O shell deve enviar a venda com esse documento
+       * para o servidor debitar o ClienteCredito correto.
+       */
+      creditDoc?: string
+      creditNome?: string
+      /** Saldo total informado pelo servidor na localização (auditoria/semente local). */
+      creditSaldo?: number
     }
   ) => boolean | void | Promise<boolean | void>
   /** Quando definido ao abrir, adiciona automaticamente uma linha quitando o total restante com essa forma (pagamento “full” em um toque). */
@@ -295,6 +311,17 @@ export function PaymentModal({
   const [supervisorBusy, setSupervisorBusy] = useState(false)
   const [supervisorErr, setSupervisorErr] = useState<string | null>(null)
   const [highlightedFormaId, setHighlightedFormaId] = useState<FormaPagamentoConfigId | null>(null)
+  // ── Crédito/Vale: localização por doc/código (GOAL PDV-TROCAS-VALE-001) ─────
+  const [valeBusca, setValeBusca] = useState("")
+  const [valeBuscando, setValeBuscando] = useState(false)
+  const [valeErro, setValeErro] = useState<string | null>(null)
+  const [locatedCredit, setLocatedCredit] = useState<{
+    doc: string
+    nome: string
+    saldo: number
+    codigo?: string
+    vendaOrigemId?: string
+  } | null>(null)
   const formaBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null)
   const confirmBtnRef = useRef<HTMLButtonElement | null>(null)
@@ -393,6 +420,201 @@ export function PaymentModal({
     const p = Number(discountPercent) || 0
     return r > 0.009 || p > 0.009
   }, [discountPercent, discountReais])
+
+  // ── Crédito/Vale — saldo disponível e localização ────────────────────────────
+  // Saldo efetivo: crédito localizado via lookup tem precedência (é a resposta
+  // do servidor); o valor já aplicado nesta venda é subtraído por derivação
+  // (sem estado duplicado — evita dessincronizar sob re-render estrito).
+  const valeJaAplicado = payments.reduce((s, p) => (p.type === "credito_vale" ? s + p.value : s), 0)
+  const saldoValeDisponivel = Math.max(
+    0,
+    Math.round(
+      ((locatedCredit ? locatedCredit.saldo : customerStoreCredit) - valeJaAplicado) * 100,
+    ) / 100,
+  )
+
+  const localizarCreditoVale = useCallback(async () => {
+    const raw = valeBusca.trim()
+    if (!raw || valeBuscando) return
+    setValeErro(null)
+    setValeBuscando(true)
+    try {
+      const digits = raw.replace(/\D/g, "")
+      const storeId = storeIdForPdv || ""
+      const byDoc = digits.length === 11 || digits.length === 14
+      const params = new URLSearchParams({ ...(storeId ? { lojaId: storeId } : {}) })
+      if (byDoc) params.set("doc", digits)
+      else params.set("codigo", raw.toUpperCase())
+      const res = await fetch(`/api/ops/credito-cliente?${params.toString()}`, {
+        credentials: "include",
+        cache: "no-store",
+      })
+      const j = (await res.json().catch(() => null)) as
+        | {
+            creditos?: Record<string, { nome: string; saldo: number }>
+            detalhes?: Array<{
+              codigo?: string
+              vendaOrigemId?: string
+              clienteDoc?: string
+            }>
+            credito?: {
+              codigo?: string
+              clienteDoc?: string
+              clienteNome?: string
+              saldoTotal?: number
+              saldoAtual?: number
+              vendaOrigemId?: string
+            }
+            error?: string
+          }
+        | null
+      if (!res.ok || !j) {
+        setValeErro(j?.error || "Crédito não encontrado. Confira CPF/CNPJ ou código do vale.")
+        return
+      }
+      if (j.credito) {
+        const c = j.credito
+        if (!c.clienteDoc || (c.saldoTotal ?? c.saldoAtual ?? 0) <= 0.009) {
+          setValeErro("Este vale não possui saldo disponível.")
+          return
+        }
+        setLocatedCredit({
+          doc: c.clienteDoc,
+          nome: c.clienteNome || "Cliente",
+          saldo: Math.round((c.saldoTotal ?? c.saldoAtual ?? 0) * 100) / 100,
+          ...(c.codigo ? { codigo: c.codigo } : {}),
+          ...(c.vendaOrigemId ? { vendaOrigemId: c.vendaOrigemId } : {}),
+        })
+      } else if (j.creditos && Object.keys(j.creditos).length > 0) {
+        const doc = Object.keys(j.creditos)[0]
+        const info = j.creditos[doc]
+        setLocatedCredit({
+          doc,
+          nome: info?.nome || "Cliente",
+          saldo: Math.round((info?.saldo ?? 0) * 100) / 100,
+          ...(j.detalhes?.[0]?.codigo ? { codigo: j.detalhes[0].codigo } : {}),
+          ...(j.detalhes?.[0]?.vendaOrigemId ? { vendaOrigemId: j.detalhes[0].vendaOrigemId } : {}),
+        })
+      } else {
+        setValeErro("Nenhum crédito ativo para este documento.")
+      }
+    } catch {
+      setValeErro("Falha ao consultar o crédito. Tente novamente.")
+    } finally {
+      setValeBuscando(false)
+    }
+  }, [valeBusca, valeBuscando, storeIdForPdv])
+
+  /** Aplica um valor explícito de crédito/vale (clamp: menor entre saldo e restante). */
+  const aplicarCreditoVale = useCallback(
+    (valor: number) => {
+      const v = Math.round(valor * 100) / 100
+      if (v <= 0.009) return
+      setPayments((prev) => {
+        const paid = prev.reduce((s, p) => s + p.value, 0)
+        const rem = Math.max(0, total - paid)
+        const value = Math.min(v, rem, saldoValeDisponivel)
+        if (value <= 0.009) return prev
+        return [
+          ...prev,
+          {
+            id: `${Date.now()}-cv-${Math.random().toString(16).slice(2)}`,
+            type: "credito_vale" as const,
+            value,
+          },
+        ]
+      })
+      setCurrentValue("")
+      setSelectedType(null)
+    },
+    [saldoValeDisponivel, total],
+  )
+
+  // Card de Crédito/Vale — renderizado nos dois layouts (enterprise e clássico).
+  // Lookup por CPF/CNPJ ou código do vale; nunca cria crédito manual.
+  const creditoValeCard =
+    selectedType === "credito_vale" && faltaPagar > 0 ? (
+      <Card className="border-emerald-500/50 bg-emerald-500/5">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Wallet className="w-5 h-5 text-emerald-500" />
+            Crédito / Vale
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {!locatedCredit && customerStoreCredit > 0.009 && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">
+              Crédito em haver de <strong>{selectedCustomer?.name || "cliente selecionado"}</strong>:{" "}
+              <strong className="text-primary">{formatCurrency(customerStoreCredit)}</strong>
+            </div>
+          )}
+          {locatedCredit && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 space-y-0.5 text-sm">
+              <p>
+                <strong>{locatedCredit.nome}</strong> — doc <span className="font-mono">{locatedCredit.doc}</span>
+              </p>
+              {(locatedCredit.codigo || locatedCredit.vendaOrigemId) && (
+                <p className="text-xs text-muted-foreground">
+                  Origem: vale {locatedCredit.codigo || "—"} · venda {locatedCredit.vendaOrigemId || "—"}
+                </p>
+              )}
+              <p>
+                Saldo disponível:{" "}
+                <strong className="text-primary">{formatCurrency(saldoValeDisponivel)}</strong>
+              </p>
+            </div>
+          )}
+          {!locatedCredit && (
+            <div className="space-y-2">
+              <Label className="text-xs text-muted-foreground">
+                Localizar crédito por CPF/CNPJ ou código do vale
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  value={valeBusca}
+                  onChange={(e) => setValeBusca(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      void localizarCreditoVale()
+                    }
+                  }}
+                  placeholder="000.000.000-00 ou DEV-2026-0001"
+                  className="h-9 bg-background"
+                  autoComplete="off"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 shrink-0"
+                  disabled={valeBuscando || !valeBusca.trim()}
+                  onClick={() => void localizarCreditoVale()}
+                >
+                  {valeBuscando ? "Buscando…" : "Localizar"}
+                </Button>
+              </div>
+              {valeErro && <p className="text-xs text-destructive">{valeErro}</p>}
+              <p className="text-[11px] text-muted-foreground">
+                Não é possível criar crédito aqui — vales nascem de Troca/Devolução.
+              </p>
+            </div>
+          )}
+          {saldoValeDisponivel > 0.009 && faltaPagar > 0.009 && (
+            <Button
+              type="button"
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
+              onClick={() => aplicarCreditoVale(Math.min(saldoValeDisponivel, faltaPagar))}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Aplicar {formatCurrency(Math.min(saldoValeDisponivel, faltaPagar))} em crédito
+            </Button>
+          )}
+          {locatedCredit && saldoValeDisponivel <= 0.009 && (
+            <p className="text-xs text-muted-foreground">Saldo do vale já aplicado nesta venda.</p>
+          )}
+        </CardContent>
+      </Card>
+    ) : null
 
   /** Habilita o botão Confirmar (twoColumn): só quando o pagamento pode realmente ser fechado. */
   const podeConfirmar =
@@ -498,6 +720,7 @@ export function PaymentModal({
           const cashTendered = sumCashTendered(payments)
           const normalized = normalizePaymentsToMatchTotal(payments, total)
           const adminIdForAudit = descontoManualAtivo ? (authorizedAdmin?.id || undefined) : undefined
+          const usouVale = payments.some((p) => p.type === "credito_vale")
           const success = await onConfirm?.(normalized, {
             cashierId,
             discountAuthorizedByAdminId: descontoManualAtivo ? adminIdForAudit : undefined,
@@ -505,6 +728,15 @@ export function PaymentModal({
             discountPercent: Number(discountPercent) || 0,
             ...(pixTotal > 0.02 && isPixQrKind(pixQrKind) ? { pixQrKind } : {}),
             ...(cashTendered > 0.02 ? { cashTendered } : {}),
+            // Vale localizado por doc/código: o titular pode diferir do cliente
+            // selecionado — a venda precisa carregar o doc que o servidor debita.
+            ...(usouVale && locatedCredit
+              ? {
+                  creditDoc: locatedCredit.doc,
+                  creditNome: locatedCredit.nome,
+                  creditSaldo: locatedCredit.saldo,
+                }
+              : {}),
           })
           if (success === false) {
             finalConfirmBusyRef.current = false
@@ -524,7 +756,7 @@ export function PaymentModal({
         }
       })()
     }, 50)
-  }, [isConfirming, payments, total, pixTotal, pixQrKind, descontoManualAtivo, authorizedAdmin, onConfirm, cashierId, discountReais, discountPercent, onClose, returnFocusToPaymentConfirm, toast])
+  }, [isConfirming, payments, total, pixTotal, pixQrKind, descontoManualAtivo, authorizedAdmin, locatedCredit, onConfirm, cashierId, discountReais, discountPercent, onClose, returnFocusToPaymentConfirm, toast])
 
   // ── Computações à prazo ──────────────────────────────────────────────────────
   const aPrazoBundleTotal = Math.min(
@@ -566,6 +798,10 @@ export function PaymentModal({
       setAPrazoParcelas("1")
       setAPrazoPrimeiroVencDate("")
       setAPrazoObs("")
+      setValeBusca("")
+      setValeBuscando(false)
+      setValeErro(null)
+      setLocatedCredit(null)
     }
   }, [isOpen])
 
@@ -626,7 +862,9 @@ export function PaymentModal({
 
         let max = rem
         if (type === "credito_vale") {
-          max = Math.min(rem, Math.max(0, customerStoreCredit))
+          // Aplica até o MENOR entre saldo do vale e restante da venda;
+          // pagamento misto completa com as outras formas.
+          max = Math.min(rem, saldoValeDisponivel)
         }
         const parsed = parseMoneyString(currentValue)
         const parsedOk = Number.isFinite(parsed) && parsed > 0
@@ -658,7 +896,7 @@ export function PaymentModal({
     [
       carneInstallments,
       currentValue,
-      customerStoreCredit,
+      saldoValeDisponivel,
       guardFormaRules,
       maquininhaPdvId,
       maquininhasAtivasPdv,
@@ -719,13 +957,6 @@ export function PaymentModal({
 
   const handleQuickValue = (value: number) => {
     setCurrentValue(formatMoneyInput((value * 100).toFixed(0)))
-  }
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: "BRL"
-    }).format(value)
   }
 
   const gerarParcelasCarne = (valorTotal: number, qtd: number) => {
@@ -860,25 +1091,28 @@ export function PaymentModal({
       const isCartao = runtime === "cartao_debito" || runtime === "cartao_credito"
       // Formas que exigem cliente NÃO ficam desabilitadas sem cliente: o clique abre
       // o seletor de cliente (com cadastro rápido) via onRequireCustomer.
+      // Crédito/Vale nunca fica desabilitado por falta de saldo: o clique abre o
+      // lookup por CPF/CNPJ ou código do vale (nunca cria crédito manual).
       const disabled =
         (isCartao && !cartaoLiberado) ||
-        (runtime === "credito_vale" && customerStoreCredit <= 0) ||
         (forma.exigirAutorizacao && !adminSessionOk)
       const title =
         isCartao && !cartaoLiberado
           ? "Ative pelo menos uma maquininha em Configurações → Financeiro (cartões)"
-          : runtime === "a_prazo" && !selectedCustomer
-            ? "Selecione/cadastre o cliente para liberar venda à prazo"
-            : runtime === "carne" && !selectedCustomer
-              ? "Selecione/cadastre o cliente para carnê ou boleto"
-              : forma.exigirAutorizacao && !adminSessionOk
-                ? "Exige autorização do supervisor"
-                : runtime === "a_prazo"
-                  ? "Configura parcelas e vencimento — gera título em Contas a Receber"
-                  : undefined
+          : runtime === "credito_vale" && saldoValeDisponivel <= 0
+            ? "Localize o crédito pelo CPF/CNPJ do cliente ou pelo código do vale"
+            : runtime === "a_prazo" && !selectedCustomer
+              ? "Selecione/cadastre o cliente para liberar venda à prazo"
+              : runtime === "carne" && !selectedCustomer
+                ? "Selecione/cadastre o cliente para carnê ou boleto"
+                : forma.exigirAutorizacao && !adminSessionOk
+                  ? "Exige autorização do supervisor"
+                  : runtime === "a_prazo"
+                    ? "Configura parcelas e vencimento — gera título em Contas a Receber"
+                    : undefined
       return [{ forma, runtime, Icon, disabled, title }]
     })
-  }, [formasModal, cartaoLiberado, customerStoreCredit, selectedCustomer, adminSessionOk])
+  }, [formasModal, cartaoLiberado, saldoValeDisponivel, selectedCustomer, adminSessionOk])
 
   const enabledFormaList = useMemo(
     () => formaRuntimeList.filter((f) => !f.disabled),
@@ -902,6 +1136,11 @@ export function PaymentModal({
         setSelectedType("carne")
         return
       }
+      if (runtime === "credito_vale" && saldoValeDisponivel <= 0.009) {
+        // Sem saldo conhecido: abre o lookup por doc/código (não cria crédito).
+        setSelectedType("credito_vale")
+        return
+      }
       if (runtime === "dinheiro" && !multipayHint) {
         setSelectedType("dinheiro")
         return
@@ -909,7 +1148,7 @@ export function PaymentModal({
       setSelectedType(runtime)
       handleAddPayment(runtime, forma.id)
     },
-    [guardFormaRules, aPrazoPrimeiroVencDate, multipayHint, handleAddPayment],
+    [guardFormaRules, aPrazoPrimeiroVencDate, multipayHint, saldoValeDisponivel, handleAddPayment],
   )
 
   /** Navegação por setas na lista de formas (layout enterprise / twoColumn). */
@@ -1426,6 +1665,8 @@ export function PaymentModal({
 
               <PixQrKindPicker pixTotal={pixTotal} value={pixQrKind} onChange={setPixQrKind} />
 
+              {creditoValeCard}
+
               {aPrazoFormaAtiva && faltaPagar > 0.02 && selectedType !== "a_prazo" && selectedType !== "carne" && (
                 <button
                   type="button"
@@ -1921,6 +2162,8 @@ export function PaymentModal({
 
           <PixQrKindPicker pixTotal={pixTotal} value={pixQrKind} onChange={setPixQrKind} />
 
+          {creditoValeCard}
+
           {/* Input de Valor */}
           {faltaPagar > 0 && (
             <div className="space-y-3">
@@ -2049,22 +2292,25 @@ export function PaymentModal({
                   const isCartao = runtime === "cartao_debito" || runtime === "cartao_credito"
                   // Sem cliente, à prazo/carnê continuam clicáveis: o clique abre o
                   // seletor de cliente (com cadastro rápido) via onRequireCustomer.
+                  // Crédito/Vale nunca fica desabilitado por falta de saldo: o clique
+                  // abre o lookup por CPF/CNPJ ou código do vale.
                   const disabled =
                     (isCartao && !cartaoLiberado) ||
-                    (runtime === "credito_vale" && customerStoreCredit <= 0) ||
                     (forma.exigirAutorizacao && !adminSessionOk)
                   const title =
                     isCartao && !cartaoLiberado
                       ? "Ative pelo menos uma maquininha em Configurações → Financeiro (cartões)"
-                      : runtime === "a_prazo" && !selectedCustomer
-                        ? "Selecione/cadastre o cliente para liberar venda à prazo"
-                        : runtime === "carne" && !selectedCustomer
-                          ? "Selecione/cadastre o cliente para carnê ou boleto"
-                          : forma.exigirAutorizacao && !adminSessionOk
-                            ? "Exige autorização do supervisor"
-                            : runtime === "a_prazo"
-                              ? "Configura parcelas e vencimento — gera título em Contas a Receber"
-                              : undefined
+                      : runtime === "credito_vale" && saldoValeDisponivel <= 0
+                        ? "Localize o crédito pelo CPF/CNPJ do cliente ou pelo código do vale"
+                        : runtime === "a_prazo" && !selectedCustomer
+                          ? "Selecione/cadastre o cliente para liberar venda à prazo"
+                          : runtime === "carne" && !selectedCustomer
+                            ? "Selecione/cadastre o cliente para carnê ou boleto"
+                            : forma.exigirAutorizacao && !adminSessionOk
+                              ? "Exige autorização do supervisor"
+                              : runtime === "a_prazo"
+                                ? "Configura parcelas e vencimento — gera título em Contas a Receber"
+                                : undefined
 
                   return (
                     <button
@@ -2085,6 +2331,11 @@ export function PaymentModal({
                         }
                         if (runtime === "carne") {
                           setSelectedType("carne")
+                          return
+                        }
+                        if (runtime === "credito_vale" && saldoValeDisponivel <= 0.009) {
+                          // Sem saldo conhecido: abre o lookup por doc/código.
+                          setSelectedType("credito_vale")
                           return
                         }
                         if (runtime === "dinheiro" && !multipayHint) {

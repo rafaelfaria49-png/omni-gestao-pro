@@ -8,3 +8,4 @@ Semáforo: 🟢 rodando · 🟡 esperando humano · 🔴 bloqueado ou check falh
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | contador | 🟡 amarelo | PAUSED | MEDIO | — | — | 17 | 0 | 2026-08-20T20:16:31.782Z |
 | fiscal | 🟢 verde | RUNNING | ALTO | FISCAL-NFCE-INVALIDATION-019 | — | 1 | 0 | 2026-08-27T18:30:10.917Z |
+| pdv | 🟡 amarelo | PAUSED | ALTO | — | — | 2 | 0 | 2026-08-28T01:27:00.901Z |
