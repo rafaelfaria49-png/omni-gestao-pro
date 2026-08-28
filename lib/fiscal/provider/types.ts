@@ -163,6 +163,10 @@ export type FiscalProviderContexto = {
   /** Numeração fiscal alocada (GOAL_008): presente a partir de `emitir`; null/ausente antes. */
   serie?: number | null
   numero?: number | null
+  /** UF do emitente — exigida pelos guards D4 no cancelamento SEFAZ. */
+  uf?: string | null
+  /** Correlação idempotente da execução (ADR-0020) — exigida pelos guards D4. */
+  correlationId?: string | null
 }
 
 /** Requisição canônica das operações que dependem do snapshot congelado da venda. */
