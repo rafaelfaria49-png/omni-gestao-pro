@@ -90,17 +90,4 @@
 
 ## Critério de pronto
 
-- Reconciliação sobre `ce1b993` (main pós-GOAL-018) dos 7 commits do 019, sem transplantar
-  o bootstrap AEP antigo nem estado AEP stale da PR #114.
-- Preservação integral do cancelamento 018 (SEFAZ_DIRETO real, `NFeRecepcaoEvento4`, A1
-  fail-closed, cStat 135, anti-race 573, idempotência do EventoFiscal, zero Financeiro/Caixa).
-- Preservação integral das correções finais do 019 (`SIMULATED_CAN_AUTHORIZE=false`, cUF IBGE,
-  série 0..999, worker `INUTILIZACAO`, lacunas → enqueue, `NUMBER_REUSE_COUNT=0`, XMLDSig
-  estrutural com uma `Reference`, bytes assinados == bytes no SOAP, CAS da marca, INUTILIZADO
-  não retransmite, vínculo evento/faixa, isenção pontual do freio GOAL-011, enqueue
-  compensatório não aborta emissão).
-- Gates verdes: testes focados 018+019, provider/sefaz, queue, numbering, XMLDSig/C14N,
-  typecheck, ESLint dos afetados, build, `git diff --check`.
-- Revisão independente read-only sobre `origin/main..HEAD` sem P0/P1 em aberto.
-- Zero schema/migration, zero chamada SEFAZ real, zero homologação externa.
-- PR nova contra `main` aberta substituindo a #114; **sem merge** neste GOAL.
+- <PREENCHER>
