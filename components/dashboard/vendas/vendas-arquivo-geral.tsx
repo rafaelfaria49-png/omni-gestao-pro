@@ -588,15 +588,17 @@ export function VendasArquivoGeral() {
           const op = (sanitizeOperatorLabel(s.cashierId) || "").toLowerCase()
           if (!op.includes(operadorTrim)) return false
         }
+        // Busca textual local (vendidos pendentes de sync): cupom, cliente ou
+        // nome de item vendido — espelha o que o servidor passa a cobrir.
+        if (buscaTrim) {
+          const idMatch = s.id.toLowerCase().includes(buscaTrim)
+          const clienteMatch = (s.customerName || "").toLowerCase().includes(buscaTrim)
+          const itemMatch = s.lines.some((l) => (l.name || "").toLowerCase().includes(buscaTrim))
+          if (!idMatch && !clienteMatch && !itemMatch) return false
+        }
         return true
       })
       .map(saleRecordToVendaItem)
-      .filter(
-        (v) =>
-          !buscaTrim ||
-          v.id.toLowerCase().includes(buscaTrim) ||
-          v.cliente.toLowerCase().includes(buscaTrim),
-      )
 
     const merged = [...vendas, ...extraLocal].sort(
       (a, b) => new Date(b.at).getTime() - new Date(a.at).getTime(),
@@ -1357,7 +1359,7 @@ export function VendasArquivoGeral() {
               <Input
                 ref={searchInputRef}
                 className="pl-9 h-10 bg-background"
-                placeholder="Buscar por cupom, cliente ou ID da venda…"
+                placeholder="Buscar por cupom, cliente, produto/SKU ou ID da venda…"
                 value={buscaInput}
                 onChange={(e) => setBuscaInput(e.target.value)}
               />

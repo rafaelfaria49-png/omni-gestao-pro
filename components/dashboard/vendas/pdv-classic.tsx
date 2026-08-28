@@ -241,7 +241,7 @@ export function PdvClassic({
   // Caixa: apenas leitura do CaixaStatusBar/CaixaProvider via outros consumers.
   // `useCaixa()` legado (adicionarEntrada/Saida/sessaoId) só era usado pelo
   // `saveOperation` removido — fluxo migrado para o CaixaStatusBar compartilhado.
-  const { inventory, setInventory, finalizeSaleTransaction, getSaldoCreditoCliente, ordens } = useOperationsStore()
+  const { inventory, setInventory, finalizeSaleTransaction, getSaldoCreditoCliente, sincronizarCreditoLocal, ordens } = useOperationsStore()
   const cashierId = useMemo(() => getOrCreatePdvOperatorId(), [])
   const { data: session } = useSession()
   const operadorNomeAbertura = usePdvOperadorNome(lojaKey)
@@ -1861,6 +1861,21 @@ export function PdvClassic({
               ...(item.accessorySelection ? { accessorySelection: item.accessorySelection } : {}),
             }))
           // Capturar dados de impressão ANTES de limpar o cart
+          // Vale usado com titular localizado por doc/código no PaymentModal: a
+          // venda precisa carregar o documento que o servidor vai debitar
+          // (ClienteCredito é chaveado por CPF/CNPJ) — pode diferir do cliente
+          // selecionado. O saldo local é semeado com o valor reportado pelo
+          // servidor para o guard do finalize não rejeitar em navegador frio.
+          const usouValeLoc = !!meta?.creditDoc && payments.some((p) => p.type === "credito_vale")
+          const cpfDaVenda =
+            usouValeLoc && meta?.creditDoc ? meta.creditDoc : selectedCustomer?.cpf
+          const nomeDaVenda =
+            usouValeLoc && meta?.creditDoc
+              ? meta.creditNome || selectedCustomer?.name
+              : selectedCustomer?.name
+          if (usouValeLoc && meta?.creditDoc) {
+            sincronizarCreditoLocal(meta.creditDoc, meta.creditNome ?? "", meta.creditSaldo ?? 0)
+          }
           const _rp = buildReceiptPrintPayload()
           const _printInput: PdvReceiptInput = {
             nomeFantasia: _rp.nome,
@@ -1868,8 +1883,8 @@ export function PdvClassic({
             enderecoLinha: getEnderecoDocumentos(),
             receiptFooter: _rp.footer,
             operador: operatorLabel,
-            clienteNome: selectedCustomer?.name,
-            clienteCpf: selectedCustomer?.cpf,
+            clienteNome: nomeDaVenda,
+            clienteCpf: cpfDaVenda,
             itens: _rp.itens,
             subtotal,
             taxes: impostoEstimado,
@@ -1917,9 +1932,9 @@ export function PdvClassic({
               discountReais: meta?.discountReais ?? discountReais,
               discountPercent: meta?.discountPercent ?? discountPercent,
             },
-            customerCpf: selectedCustomer?.cpf,
-            customerName: selectedCustomer?.name,
-            clienteId: selectedCustomer?.id || undefined,
+            customerCpf: cpfDaVenda,
+            customerName: nomeDaVenda,
+            clienteId: usouValeLoc ? undefined : selectedCustomer?.id || undefined,
             aPrazoConfig,
             pixQrKind: meta?.pixQrKind,
             cashTendered: meta?.cashTendered,

@@ -101,6 +101,11 @@
       "dir": "fiscal",
       "risk_tier": "ALTO",
       "titulo": "Fiscal NFC-e SEFAZ-SP (homologação)"
+    },
+    "pdv": {
+      "dir": "pdv",
+      "risk_tier": "ALTO",
+      "titulo": "<PREENCHER>"
     }
   },
   "remote_layer": {
