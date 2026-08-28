@@ -11,6 +11,10 @@ import {
   createUncertainStateJobExecutor,
   type UncertainStateJobExecutorDependencies,
 } from "../emission/uncertain-state-job-executor"
+import { executeInutilizacaoJob } from "../inutilizacao/execute"
+import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
+import { stubHomologacaoProvider } from "../provider/stub-homologacao"
+import type { FiscalProvider } from "../provider/types"
 import { sanitizeFiscalQueueError } from "./queue-policy"
 import type {
   FiscalQueueAuditEvent,
@@ -290,16 +294,8 @@ async function executeFiscalJob(
     operador?: string | null
   }) => Promise<EmissionOutcome>,
   executeGoal012?: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>,
+  inutilizacaoProvider?: FiscalProvider,
 ): Promise<FiscalQueueExecutionResult> {
-  if (!["EMISSAO", "CONSULTA"].includes(job.tipo)) {
-    return {
-      kind: "terminal",
-      code: "tipo_nao_suportado",
-      mensagem: `GOAL-012 processa somente EMISSAO/CONSULTA; recebido ${job.tipo}.`,
-      simulado: true,
-      externalTransmissionAttempted: false,
-    }
-  }
   const config = record(await client.configuracaoFiscalLoja.findUnique({
     where: { storeId: job.storeId },
     select: {
@@ -309,6 +305,55 @@ async function executeFiscalJob(
       fiscalEnabled: true,
     },
   }))
+  if (job.tipo === "INUTILIZACAO") {
+    if (config.ambiente !== "HOMOLOGACAO" || config.modeloFiscal !== "NFCE") {
+      return {
+        kind: "terminal",
+        code: "contexto_simulado_obrigatorio",
+        mensagem: "Inutilização bloqueada: somente NFCE/HOMOLOGACAO.",
+        simulado: true,
+        externalTransmissionAttempted: false,
+      }
+    }
+    if (config.provider === "SEFAZ_DIRETO" && !inutilizacaoProvider) {
+      return {
+        kind: "terminal",
+        code: "inutilizacao_provider_nao_configurado",
+        mensagem:
+          "SEFAZ_DIRETO exige provider de inutilização injetado; stub silencioso é proibido.",
+        simulado: true,
+        externalTransmissionAttempted: false,
+      }
+    }
+    if (config.provider !== "STUB_HOMOLOGACAO" && config.provider !== "SEFAZ_DIRETO") {
+      return {
+        kind: "terminal",
+        code: "contexto_simulado_obrigatorio",
+        mensagem: "Inutilização bloqueada: provider da loja não suportado.",
+        simulado: true,
+        externalTransmissionAttempted: false,
+      }
+    }
+    if (config.provider === "STUB_HOMOLOGACAO") {
+      return executeInutilizacaoJob(job, {
+        ports: createPrismaInutilizacaoPorts(client as never),
+        provider: stubHomologacaoProvider,
+      })
+    }
+    return executeInutilizacaoJob(job, {
+      ports: createPrismaInutilizacaoPorts(client as never),
+      provider: inutilizacaoProvider as FiscalProvider,
+    })
+  }
+  if (!["EMISSAO", "CONSULTA"].includes(job.tipo)) {
+    return {
+      kind: "terminal",
+      code: "tipo_nao_suportado",
+      mensagem: `GOAL-012 processa somente EMISSAO/CONSULTA; recebido ${job.tipo}.`,
+      simulado: true,
+      externalTransmissionAttempted: false,
+    }
+  }
   const homologacaoNfceHabilitada =
     config.ambiente === "HOMOLOGACAO" &&
     config.modeloFiscal === "NFCE" &&
@@ -431,6 +476,7 @@ export function createPrismaFiscalQueueWorkerPorts(
     operador?: string | null
   }) => Promise<EmissionOutcome> = emitirNotaFiscalVenda,
   executeGoal012?: (job: FiscalQueueJob) => Promise<FiscalQueueExecutionResult>,
+  inutilizacaoProvider?: FiscalProvider,
 ): FiscalQueueWorkerPorts {
   return {
     readPauseSnapshot: () => readFiscalQueuePauseSnapshot(client),
@@ -684,7 +730,7 @@ export function createPrismaFiscalQueueWorkerPorts(
       }
       return updated.count === 1
     },
-    execute: (job) => executeFiscalJob(client, job, emit, executeGoal012),
+    execute: (job) => executeFiscalJob(client, job, emit, executeGoal012, inutilizacaoProvider),
     audit: (event) => bestEffortAudit(client, event),
   }
 }
@@ -694,6 +740,14 @@ export function createPrismaFiscalQueueWorkerPorts(
  * injetados; a factory legada continua fail-closed para payload v2 sem wiring.
  * SEFAZ_DIRETO só alcança este executor — nunca o pipeline legado.
  */
+function asInutilizacaoProvider(
+  provider: UncertainStateJobExecutorDependencies["provider"],
+): FiscalProvider | undefined {
+  const candidate = provider as Partial<FiscalProvider>
+  if (typeof candidate.inutilizar !== "function") return undefined
+  return candidate as FiscalProvider
+}
+
 export function createPrismaGoal012FiscalQueueWorkerPorts(
   dependencies: UncertainStateJobExecutorDependencies,
   client: QueuePrismaClient = prisma as unknown as QueuePrismaClient,
@@ -702,5 +756,6 @@ export function createPrismaGoal012FiscalQueueWorkerPorts(
     client,
     emitirNotaFiscalVenda,
     createUncertainStateJobExecutor(dependencies),
+    asInutilizacaoProvider(dependencies.provider),
   )
 }

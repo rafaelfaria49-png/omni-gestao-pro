@@ -32,6 +32,7 @@ import {
 } from "@/lib/fiscal/emission/uncertain-state.types"
 import { NfceSignError } from "@/lib/fiscal/signing"
 import { SefazDiretoProvider } from "@/lib/fiscal/provider/sefaz/sefaz-direto-provider"
+import { signInutilizacaoXml } from "@/lib/fiscal/inutilizacao/sign-boundary"
 import type { SefazGuardPorts } from "@/lib/fiscal/provider/sefaz/sefaz-guards"
 import {
   sefazOfflineRefusingTransport,
@@ -140,6 +141,10 @@ export function createNfceHomologationPilotWiring(
   const provider = new SefazDiretoProvider({
     ports: options.sefazGuardPorts ?? createDormantSefazGuardPorts(client),
     transport,
+    signInutilizacaoXml: async (xml) => {
+      const material = await resolveCertificate()
+      return signInutilizacaoXml(xml, material).xml
+    },
   })
   const ports = createPrismaGoal012FiscalQueueWorkerPorts(
     {

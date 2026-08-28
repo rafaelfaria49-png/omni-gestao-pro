@@ -15,7 +15,10 @@ import type {
   FiscalProviderResultado,
 } from "../provider/types"
 import type { VendaFiscalSnapshot } from "../venda-fiscal-snapshot"
-import type { FiscalNumberAllocationOutcome } from "../numbering/numbering.types"
+import type {
+  FiscalNumberAllocationOutcome,
+  FiscalNumberingGap,
+} from "../numbering/numbering.types"
 
 export type EmissionInput = {
   storeId: string
@@ -115,6 +118,8 @@ export type EmissionPorts = {
     modelo: string
     ambiente: string
   }) => Promise<FiscalNumberAllocationOutcome>
+  /** Persiste lacunas de numeração como jobs INUTILIZACAO (GOAL 019). */
+  recordLacunasParaInutilizacao?: (lacunas: FiscalNumberingGap[]) => Promise<void>
   /** Relógio injetável (testes determinísticos). */
   now?: () => number
 }

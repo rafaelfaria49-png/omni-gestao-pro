@@ -99,11 +99,15 @@ sequenceDiagram
 - **Quando:** quebra de sequência de numeração (um número foi **pulado** e nunca virou nota).
 - **Entradas:** `serie`, `numeroInicial`, `numeroFinal`, `justificativa`
   (`FiscalProviderInutilizacaoParams`).
-- **Processo (alvo):** valida a faixa, cria `EventoFiscal INUTILIZACAO`, transmite, marca a faixa
-  como queimada (não pode ser reaproveitada).
-- **Saída:** evento `AUTORIZADO`; nenhuma `NotaFiscal` associada (não há documento).
-- **Falhas:** faixa já usada por nota autorizada → bloqueio; faixa inválida → `parametros_invalidos`.
-- **Idempotência:** por `(serie, numeroInicial, numeroFinal)` + `@@unique` do evento.
+- **Processo (GOAL-019):** valida a faixa/justificativa, cria job `INUTILIZACAO` com marca
+  `A_INUTILIZAR`, transmite via `FiscalProvider.inutilizar` / `NFeInutilizacao4`, grava
+  `EventoFiscal INUTILIZACAO` quando há nota vinculada e persiste o protocolo.
+- **Baixa da marca:** somente após `cStat 102` com protocolo válido. Falha/rejeição do pedido
+  **não** devolve o número ao pool.
+- **Saída:** evento `AUTORIZADO` + job `CONCLUIDO`; a faixa permanece queimada.
+- **Falhas:** faixa já usada (`cStat 241`) → bloqueio; faixa inválida → `parametros_invalidos`.
+- **Idempotência:** `dedupeKey` `fiscal:inutilizacao:v1:{store}:{modelo}:{ambiente}:{serie}:{ini}:{fim}`
+  + `@@unique([notaFiscalId, tipo, sequencia])` do evento.
 
 > **Prevenção é melhor que inutilização:** a numeração (`numbering/*`) só reserva número **ao
 > emitir** e é atômica/idempotente — minimiza buracos de sequência por construção.

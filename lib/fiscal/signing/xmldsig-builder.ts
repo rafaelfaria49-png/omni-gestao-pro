@@ -84,7 +84,7 @@ export function canonicalizeSignedInfo(
 ): string {
   const signatureXml = `<Signature xmlns="${inheritedNs}">${signedInfoXml}</Signature>`
   const contextualXml = enclosingNfeXml
-    ? insertSignatureIntoNFe(enclosingNfeXml, signatureXml)
+    ? insertSignatureAsLastChild(enclosingNfeXml, signatureXml)
     : signatureXml
   const documentRoot = parseXml(contextualXml)
   const signature = enclosingNfeXml
@@ -118,12 +118,18 @@ export function buildSignatureXml(args: {
   )
 }
 
-/** Insere o `<Signature>` como último filho de `<NFe>` (envelopada). */
-export function insertSignatureIntoNFe(xml: string, signatureXml: string): string {
+/** Insere o `<Signature>` como último filho da raiz (envelopada). */
+export function insertSignatureAsLastChild(xml: string, signatureXml: string): string {
   const root = parseXml(xml)
-  if (root.name !== "NFe") throw new Error("Documento sem raiz NFe para envelopar a assinatura.")
   const closingTag = `</${root.qualifiedName}>`
   const idx = xml.lastIndexOf(closingTag)
   if (idx < 0) throw new Error(`Documento sem ${closingTag} para envelopar a assinatura.`)
   return xml.slice(0, idx) + signatureXml + xml.slice(idx)
+}
+
+/** Insere o `<Signature>` como último filho de `<NFe>` (envelopada). */
+export function insertSignatureIntoNFe(xml: string, signatureXml: string): string {
+  const root = parseXml(xml)
+  if (root.name !== "NFe") throw new Error("Documento sem raiz NFe para envelopar a assinatura.")
+  return insertSignatureAsLastChild(xml, signatureXml)
 }

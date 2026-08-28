@@ -357,7 +357,9 @@ operacionalmente** conforme `fiscalStatus` (gates `assert*` em 6 rotas `corrigir
 - Somente `CONSULTA=NOT_FOUND` cria uma autorização consumível para uma retransmissão. A retomada
   relê `xmlAssinado`, verifica SHA-256 e não executa builder, XSD, assinatura nem numeração.
 - `CONSULTA=AUTHORIZED` conclui sem retransmitir. `CONSULTA=REJECTED` preserva o número consumido e
-  marca a demanda de inutilização futura (GOAL-019).
+  enfileira `FiscalJobTipo.INUTILIZACAO` (GOAL-019) quando a matriz exige inutilização.
+  Reemissão da mesma venda cria nova `NotaFiscal` vigente com número novo; a rejeitada permanece
+  histórica (`vigente=false`).
 
 ### 7.3 Estado incerto e reconciliação (GOAL-012)
 

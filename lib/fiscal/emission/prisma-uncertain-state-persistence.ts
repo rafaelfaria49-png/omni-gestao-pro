@@ -4,6 +4,9 @@ import { prisma } from "@/lib/prisma"
 
 import { resolveXmlStorageMirror } from "../storage/mirror-vault"
 import type { XmlStorageMirror } from "../storage/types"
+import { enqueueInutilizacao, JUSTIFICATIVA_REJEICAO_PADRAO } from "../inutilizacao/enqueue"
+import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
+import { serieInutilizacaoValida } from "../inutilizacao/validation"
 import {
   AuthorizedDivergenceError,
   type FiscalDocumentLocator,
@@ -24,6 +27,7 @@ type UncertainPrismaClient = {
   }
   fiscalEmissaoJob: {
     findFirst: (args: unknown) => Promise<unknown | null>
+    findUnique: (args: unknown) => Promise<unknown | null>
     update: (args: unknown) => Promise<unknown>
     updateMany: (args: unknown) => Promise<{ count: number }>
     upsert: (args: unknown) => Promise<unknown>
@@ -658,7 +662,7 @@ export function createPrismaUncertainStatePersistence(
             // mas NÃO pede inutilização, e afirmar o contrário no log contradiria o próprio
             // `detalhe.requiresInutilizacao` do mesmo evento.
             mensagem: requiresInutilizacao
-              ? "Número consumido; não reutilizar. Inutilização futura no GOAL-019."
+              ? "Número consumido; não reutilizar. Inutilização será enfileirada após o commit."
               : "Número consumido; não reutilizar. Inutilização NÃO se aplica a esta rejeição.",
             operador: "fiscal-goal-012",
             detalhe: {
@@ -670,6 +674,45 @@ export function createPrismaUncertainStatePersistence(
           },
         })
       })
+      if (
+        requiresInutilizacao &&
+        Number.isInteger(document.serie) &&
+        serieInutilizacaoValida(document.serie) &&
+        Number.isInteger(document.numero) &&
+        document.numero > 0
+      ) {
+        try {
+          await enqueueInutilizacao(
+            {
+              storeId: document.storeId,
+              vendaId: document.vendaId,
+              notaFiscalId: document.notaFiscalId,
+              serie: document.serie,
+              numeroInicial: document.numero,
+              numeroFinal: document.numero,
+              justificativa: JUSTIFICATIVA_REJEICAO_PADRAO,
+              motivo: "rejeicao_definitiva",
+              operador: "fiscal-goal-012",
+              now,
+            },
+            createPrismaInutilizacaoPorts(client as never),
+          )
+        } catch {
+          await client.fiscalLog.create({
+            data: {
+              storeId: document.storeId,
+              vendaId: document.vendaId,
+              notaFiscalId: document.notaFiscalId,
+              nivel: "ERROR",
+              acao: "fiscal.inutilizacao.enqueue_failed_after_rejection",
+              mensagem:
+                "Rejeição persistida; enqueue de inutilização falhou e será retentado administrativamente.",
+              operador: "fiscal-goal-012",
+              detalhe: { serie: document.serie, numero: document.numero },
+            },
+          }).catch(() => undefined)
+        }
+      }
     },
 
     authorizeExactRetransmission: async ({ document, now }) => {

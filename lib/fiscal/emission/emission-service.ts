@@ -16,6 +16,8 @@ import { resolveFiscalProvider } from "../provider/resolver"
 import type { FiscalProvider, FiscalProviderConfigInput } from "../provider/types"
 import { allocateFiscalNumber } from "../numbering/allocate-fiscal-number"
 import { createPrismaFiscalNumberingPorts } from "../numbering/prisma-numbering-ports"
+import { enqueueInutilizacao, JUSTIFICATIVA_LACUNA_PADRAO } from "../inutilizacao/enqueue"
+import { createPrismaInutilizacaoPorts } from "../inutilizacao/prisma-ports"
 import { runEmissionPipeline } from "./emission-pipeline"
 import { recordFiscalEmissionLog } from "./emission-log"
 import { reconstructSnapshotFromNota, type NotaFiscalRow } from "./snapshot-reader"
@@ -181,6 +183,50 @@ export async function emitirNotaFiscalVenda(input: EmissionInput): Promise<Emiss
     },
     allocateNumero: async (ctx) =>
       allocateFiscalNumber({ storeId: ctx.storeId, notaFiscalId: ctx.notaFiscalId ?? "" }, numberingPorts),
+    recordLacunasParaInutilizacao: async (lacunas) => {
+      const portsInut = createPrismaInutilizacaoPorts()
+      for (const gap of lacunas) {
+        if (!gap.requerInutilizacao) continue
+        // Lacuna não pode abortar a emissão: o número já está consumido no contador e
+        // permanece fora do pool; a inutilização é retentada administrativamente.
+        try {
+          await enqueueInutilizacao(
+            {
+              storeId: gap.storeId,
+              vendaId,
+              notaFiscalId: gap.notaFiscalId,
+              serie: gap.serie,
+              numeroInicial: gap.numero,
+              numeroFinal: gap.numero,
+              justificativa: JUSTIFICATIVA_LACUNA_PADRAO,
+              motivo: "lacuna_numeracao",
+              operador: operador ?? "fiscal-numbering",
+            },
+            portsInut,
+          )
+        } catch (error) {
+          await portsInut
+            .createLog({
+              storeId: gap.storeId,
+              vendaId,
+              notaFiscalId: gap.notaFiscalId,
+              jobId: null,
+              eventoFiscalId: null,
+              nivel: "ERROR",
+              acao: "fiscal.inutilizacao.enqueue_failed_after_gap",
+              mensagem:
+                "Emissão prosseguiu; enqueue de inutilização da lacuna falhou e será retentado administrativamente.",
+              operador: operador ?? "fiscal-numbering",
+              detalhe: {
+                serie: gap.serie,
+                numero: gap.numero,
+                motivoFalha: error instanceof Error ? error.message : String(error),
+              },
+            })
+            .catch(() => undefined)
+        }
+      }
+    },
   }
 
   // 6) Pipeline puro.

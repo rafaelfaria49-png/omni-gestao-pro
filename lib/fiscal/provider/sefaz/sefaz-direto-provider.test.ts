@@ -21,8 +21,15 @@ import type {
 import { SefazAdapterBlockedError, SefazDiretoProvider } from "./sefaz-direto-provider"
 import type { SefazGuardPorts } from "./sefaz-guards"
 import type { SefazTransport } from "./sefaz-transport.types"
+import { createInutilizacaoXmlSigner } from "@/lib/fiscal/inutilizacao/sefaz-inutilizar"
+import { assertInutilizacaoXmlDsig } from "@/lib/fiscal/inutilizacao/xmldsig-structure"
 import { loadCertificateMaterialFromPem } from "@/lib/fiscal/signing/nfce-signer"
 import { TEST_CERT_PEM, TEST_KEY_PLAIN_PEM } from "@/lib/fiscal/signing/__fixtures__/test-cert"
+
+const INUT_CERT = loadCertificateMaterialFromPem(TEST_KEY_PLAIN_PEM, TEST_CERT_PEM)
+const INUT_SIGN = createInutilizacaoXmlSigner(INUT_CERT, "", {
+  agora: new Date("2027-06-01T12:00:00.000Z"),
+})
 
 const LOJA_PILOTO = "store-piloto-real"
 const CHAVE = "3".repeat(44)
@@ -309,13 +316,12 @@ describe("REGISTRY de P1 permanece sem SEFAZ_DIRETO (ADR-0020 §2.2 · D11 regra
 describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
   const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
 
-  it("emitir/prepararEmissao/validarSnapshot/consultar/inutilizar ⇒ operacao_nao_suportada", async () => {
+  it("emitir/prepararEmissao/validarSnapshot/consultar ⇒ operacao_nao_suportada", async () => {
     const respostas = [
       provider.prepararEmissao({} as never),
       provider.validarSnapshot(null),
       await provider.emitir({} as never),
       await provider.consultar({} as never),
-      await provider.inutilizar({} as never),
     ]
     for (const r of respostas) {
       expect(r.ok).toBe(false)
@@ -323,6 +329,14 @@ describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
       expect(r.dados).toBeNull()
       expect(r.statusNota).toBeNull()
     }
+  })
+
+  it("inutilizar rejeita parâmetros vazios sem inventar protocolo", async () => {
+    const r = await provider.inutilizar({} as never)
+    expect(r.ok).toBe(false)
+    expect(r.operacao).toBe("inutilizar")
+    expect(r.dados).toBeNull()
+    expect(r.erros.length).toBeGreaterThan(0)
   })
 
   it("statusServico fica bloqueado pelo transporte offline — sem fingir 107", async () => {
@@ -401,6 +415,146 @@ describe("superfície P1 — inerte, sem rede/venda/série/NotaFiscal", () => {
       uf: "SP",
     })
     expect(desligado.ok).toBe(true)
+  })
+})
+
+describe("P1 inutilizar — NFeInutilizacao4 via transporte injetado", () => {
+  const params = {
+    contexto: {
+      storeId: LOJA_PILOTO,
+      notaFiscalId: "nota-1",
+      modelo: "NFCE",
+      ambiente: "HOMOLOGACAO",
+      serie: 1,
+      numero: 1,
+    },
+    serie: 1,
+    numeroInicial: 1,
+    numeroFinal: 1,
+    justificativa: "Numero NFC-e rejeitado pela SEFAZ; faixa inutilizada para nao reutilizar.",
+    cnpj: "11222333000181",
+    cUF: "35",
+    ano: "26",
+  }
+
+  it("sem XMLDSig recusa o envio e não chama o transporte", async () => {
+    const transport: SefazTransport = { permiteRede: true, send: vi.fn() }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(false)
+    expect(r.mensagem).toMatch(/XMLDSig/i)
+    expect(r.dados?.cStat ?? null).not.toBe("102")
+    expect(transport.send).not.toHaveBeenCalled()
+  })
+
+  it("transporte offline não inventa cStat 102", async () => {
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      signInutilizacaoXml: INUT_SIGN,
+    })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(false)
+    expect(r.dados?.cStat ?? null).not.toBe("102")
+    expect(r.simulado).toBe(false)
+  })
+
+  it("resposta 102 com TProt persiste como homologada", async () => {
+    const ret =
+      `<retInutNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">` +
+      `<infInut><tpAmb>2</tpAmb><verAplic>SP</verAplic><cStat>102</cStat>` +
+      `<xMotivo>Inutilizacao de numero homologado</xMotivo><cUF>35</cUF>` +
+      `<nProt>135260000000001</nProt></infInut></retInutNFe>`
+    const transport: SefazTransport = {
+      permiteRede: true,
+      send: vi.fn(async () => ({
+        ok: true as const,
+        classification: "RESPONSE_RECEIVED" as const,
+        httpStatus: 200,
+        contentType: "application/soap+xml",
+        bodyBytes: new TextEncoder().encode(ret),
+        externalTransmissionAttempted: true as const,
+      })),
+    }
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: INUT_SIGN,
+    })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(true)
+    expect(r.dados?.cStat).toBe("102")
+    expect(r.dados?.protocolo).toBe("135260000000001")
+    expect(transport.send).toHaveBeenCalledTimes(1)
+    const sent = vi.mocked(transport.send).mock.calls[0]?.[0]
+    const soap = new TextDecoder().decode(sent!.bodyBytes)
+    expect(assertInutilizacaoXmlDsig(soap.slice(soap.indexOf("<inutNFe"), soap.indexOf("</inutNFe>") + "</inutNFe>".length)).ok).toBe(true)
+  })
+
+  it("Signature deslocada ou Reference errada não chama o transporte", async () => {
+    const transport: SefazTransport = { permiteRede: true, send: vi.fn() }
+    const displaced = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: async (xml) => {
+        const signed = await INUT_SIGN(xml)
+        return signed.replace(
+          /(<inutNFe[^>]*>)([\s\S]*?)(<Signature[\s\S]*<\/Signature>)(<\/inutNFe>)/,
+          "$1$3$2$4",
+        )
+      },
+    })
+    const r1 = await displaced.inutilizar(params)
+    expect(r1.ok).toBe(false)
+    expect(transport.send).not.toHaveBeenCalled()
+
+    const wrongRef = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: async (xml) => {
+        const signed = await INUT_SIGN(xml)
+        return signed.replace(/URI="#ID/, 'URI="#XX')
+      },
+    })
+    const r2 = await wrongRef.inutilizar(params)
+    expect(r2.ok).toBe(false)
+    expect(transport.send).not.toHaveBeenCalled()
+
+    const textual = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: async (xml) =>
+        xml.replace("</inutNFe>", `<!-- <Signature xmlns="http://www.w3.org/2000/09/xmldsig#">fake</Signature> --></inutNFe>`),
+    })
+    const r3 = await textual.inutilizar(params)
+    expect(r3.ok).toBe(false)
+    expect(transport.send).not.toHaveBeenCalled()
+  })
+
+  it("cStat 241 não baixa protocolo homologado", async () => {
+    const ret =
+      `<retInutNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">` +
+      `<infInut><tpAmb>2</tpAmb><verAplic>SP</verAplic><cStat>241</cStat>` +
+      `<xMotivo>Um numero da faixa ja foi utilizado</xMotivo><cUF>35</cUF></infInut></retInutNFe>`
+    const transport: SefazTransport = {
+      permiteRede: true,
+      send: vi.fn(async () => ({
+        ok: true as const,
+        classification: "RESPONSE_RECEIVED" as const,
+        httpStatus: 200,
+        contentType: "application/soap+xml",
+        bodyBytes: new TextEncoder().encode(ret),
+        externalTransmissionAttempted: true as const,
+      })),
+    }
+    const provider = new SefazDiretoProvider({
+      ports: portasAprovadas(),
+      transport,
+      signInutilizacaoXml: INUT_SIGN,
+    })
+    const r = await provider.inutilizar(params)
+    expect(r.ok).toBe(false)
+    expect(r.resultado).toBe("rejeitado")
+    expect(r.dados?.cStat).toBe("241")
   })
 })
 

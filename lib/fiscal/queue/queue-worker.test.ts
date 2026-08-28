@@ -451,6 +451,44 @@ describe("worker fiscal · retry, dead-letter e trava de transmissão", () => {
     expect(second.acquired).toBe(0)
     expect(state.execute).toHaveBeenCalledTimes(1)
   })
+
+  it("INUTILIZACAO real não é reescrita pelo freio do GOAL-011 (GOAL 019)", async () => {
+    const state = memoryQueue(
+      [job({ tipo: "INUTILIZACAO", dedupeKey: "fiscal:inutilizacao:v1:store-matriz-fixture:NFCE:HOMOLOGACAO:1:19:19" })],
+      {
+        kind: "success",
+        code: "inutilizacao_homologada",
+        mensagem: "Inutilização homologada com protocolo válido.",
+        simulado: false,
+        externalTransmissionAttempted: true,
+        detalhe: { protocolo: "135260000000001", cStat: "102" },
+      },
+    )
+    const report = await drainFiscalQueue(
+      { workerId: "worker-inut", batchSize: 1 },
+      state.ports,
+    )
+    expect(report.completed).toBe(1)
+    const finished = state.jobs.get("job-1")!
+    expect(finished.status).toBe("CONCLUIDO")
+    expect(finished.ultimoErro).toBeNull()
+    const lastExecution = (finished.payload as { lastExecution?: { code?: string } }).lastExecution
+    expect(lastExecution?.code).toBe("inutilizacao_homologada")
+  })
+
+  it("EMISSAO real continua freada pelo GOAL-011", async () => {
+    const state = memoryQueue([job()], {
+      kind: "success",
+      code: "autorizada",
+      mensagem: "Emissão real concluída.",
+      simulado: false,
+      externalTransmissionAttempted: true,
+    })
+    await drainFiscalQueue({ workerId: "worker-freio", batchSize: 1 }, state.ports)
+    const finished = state.jobs.get("job-1")!
+    expect(finished.status).toBe("FALHA")
+    expect(finished.ultimoErro).toContain("GOAL-011 bloqueia provider ou transmissão real")
+  })
 })
 
 describe("worker fiscal · pausa global e por loja", () => {
