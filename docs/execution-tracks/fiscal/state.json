@@ -1,9 +1,9 @@
 {
   "aep": "1.0-R2",
   "track": "fiscal",
-  "status": "PAUSED",
+  "status": "RUNNING",
   "risk_tier": "ALTO",
-  "current_goal": null,
+  "current_goal": "FISCAL-NFCE-CONTINGENCY-020",
   "next_goal": null,
   "bootstrap_commit": null,
   "counters": {
