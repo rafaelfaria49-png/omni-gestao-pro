@@ -2633,7 +2633,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                           <span>{brl(l.price)} × {l.qty}</span>
                           {l.accessorySelection ? (
                             <span className="truncate text-[10px] text-primary/80 font-medium">
-                              ({[l.accessorySelection.modelo, l.accessorySelection.cor].filter(Boolean).join(" · ")})
+                              ({[l.accessorySelection.deviceModelName, l.accessorySelection.colorLabel ?? l.accessorySelection.customColorLabel].filter(Boolean).join(" · ")})
                             </span>
                           ) : null}
                         </div>

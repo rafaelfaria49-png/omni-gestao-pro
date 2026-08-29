@@ -3,10 +3,10 @@ import {
   buildAssistenciaPayMethods,
   defaultFormasPagamento,
 } from "@/lib/pdv-formas-pagamento"
+import type { PdvCatalogProduct } from "@/lib/pdv-catalog"
 import {
   resolveActiveShortcutItems,
   type PdvAtalhoSaved,
-  type PdvCatalogProduct,
   type PdvServicoCatalogItem,
   SERVICO_STOCK_SENTINEL,
 } from "@/lib/pdv-assistencia-shortcuts"
