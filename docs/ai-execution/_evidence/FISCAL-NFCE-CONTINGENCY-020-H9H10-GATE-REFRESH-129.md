@@ -58,3 +58,15 @@ Asserts de teste: `fetch` spy não chamado (janela/resolver) e seams de `acquire
 - ESLint focado (wsdl lib + rota): OK
 - `npm run build`: OK
 - `git diff --check`: OK
+
+## Revisão independente (2026-08-29 · outra família, read-only sobre origin/main..HEAD)
+
+Veredito **APROVADO** · P0=0 · P1=0 · P2=5.
+
+- P2 (1): catch colapsa outage de banco com already_consumed num código só — fail-closed correto, causa indistinguível ao operador.
+- P2 (2): `findFirst` por dedupeKey sem índice dedicado (seq scan sob advisory lock) — irrelevante em janela one-shot de 15 min.
+- P2 (3): piloto resolvida duas vezes (rota + consumo) com TOCTOU teórico — benigno; consumo revalida e one-shot é por activation.
+- P2 (4): `fiscalEnabled=true` vive só na rota (documentado); refactor futuro pode extrair helper compartilhado.
+- P2 (5): alegada lacuna de teste de rota para `unavailable`/distinção `pilot_store_unresolved`×`ambiguous` — contradita em parte: o `it.each` de resolução da piloto em `route.test.ts` cobre zero candidatas, múltiplas e falha de leitura (todos → 409 `pilot_store_unresolved`, colapsados por desenho).
+
+Revisor também confirmou: 79/79 testes dos módulos tocados, typecheck limpo, sem segredo exposto, sem ampliação de escopo, gate null sem caminho de rede, Production-only intacto.
