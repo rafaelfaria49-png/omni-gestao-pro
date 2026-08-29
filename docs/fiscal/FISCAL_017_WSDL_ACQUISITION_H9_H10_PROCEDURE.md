@@ -7,6 +7,14 @@ testada e revisada. **Nenhuma chamada externa foi feita neste GOAL.**
 permanecem **ABERTAS**. Este documento descreve a ferramenta que poderá fechá-las e o
 procedimento do gate humano que o próximo GOAL deve seguir.
 
+> **ATUALIZAÇÃO (2026-08-29 · GOAL 020):** o gate segue DORMENTE (`null/null/null`) — a janela
+> de 24/08 é evidência histórica apenas. A loja-piloto não é mais o literal `"loja-1"`: é
+> resolvida dinamicamente de `ConfiguracaoFiscalLoja` (HOMOLOGACAO + NFCE + SEFAZ_DIRETO +
+> certificado ativo, exatamente uma candidata; zero ou múltiplas bloqueiam). O preflight exige
+> `fiscalEnabled=true` da piloto resolvida. O one-shot global é garantido por advisory lock +
+> verificação cross-store dentro da transação de consumo (sem schema novo). Detalhe no doc do
+> gate 019.
+
 ---
 
 ## 1. Por que uma ferramenta, e não um `curl`
