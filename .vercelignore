@@ -1,0 +1,9 @@
+.git/
+.qwen/
+.worktrees/
+.vercel/
+.next/
+node_modules/
+test-results/
+playwright-report/
+components/pdv-github-original/
