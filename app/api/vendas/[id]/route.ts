@@ -54,6 +54,12 @@ function extractDiscount(payload: unknown): number {
   return typeof d === "number" ? d : 0
 }
 
+function extractCashTendered(payload: unknown): number | null {
+  if (!payload || typeof payload !== "object") return null
+  const value = Number((payload as Record<string, unknown>).cashTendered)
+  return Number.isFinite(value) && value >= 0 ? value : null
+}
+
 function extractCustomerCpf(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null
   const cpf = (payload as Record<string, unknown>).customerCpf
@@ -262,6 +268,7 @@ export async function GET(
         clienteCpf: extractCustomerCpf(venda.payload),
         total: venda.total,
         desconto: extractDiscount(venda.payload),
+        cashTendered: extractCashTendered(venda.payload),
         status: venda.status,
         operador: venda.operador || null,
         canceladaEm: venda.canceladaEm?.toISOString() ?? null,

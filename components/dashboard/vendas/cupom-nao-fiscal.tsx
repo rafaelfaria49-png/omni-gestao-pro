@@ -1,7 +1,7 @@
 "use client"
 
-import { useCallback } from "react"
-import { Printer, Copy, X } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { Printer, Copy, X, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -13,6 +13,9 @@ import { Separator } from "@/components/ui/separator"
 import { useToast } from "@/hooks/use-toast"
 import { escapeHtml, openThermalHtmlPrint } from "@/lib/thermal-print"
 import { sanitizeOperatorLabel } from "@/lib/pdv-operator-label"
+import { useStoreSettings } from "@/lib/store-settings-provider"
+import { printPdvSaleReceipt, type PrintJobResult } from "@/lib/pdv-print-runtime"
+import type { PdvReceiptInput } from "@/lib/escpos"
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -43,7 +46,11 @@ export interface CupomData {
   itens: CupomItem[]
   pagamentos: CupomPagamento[]
   total: number
+  subtotal?: number
+  taxes?: number
   desconto?: number
+  cashTendered?: number
+  troco?: number
   status?: string
   tipoVenda?: string
   observacaoGeral?: string
@@ -53,6 +60,8 @@ interface CupomNaoFiscalProps {
   isOpen: boolean
   onClose: () => void
   data: CupomData
+  /** Usado pelo pós-venda da Venda Completa; histórico mantém ação manual. */
+  autoPrint?: boolean
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -187,15 +196,89 @@ function buildHtml(d: CupomData): string {
   `
 }
 
+function toPdvReceiptInput(d: CupomData): PdvReceiptInput {
+  const desconto = Math.max(0, Number(d.desconto) || 0)
+  const subtotal = Math.max(
+    0,
+    Number(d.subtotal) || d.itens.reduce((sum, item) => sum + item.lineTotal, 0) + desconto,
+  )
+  return {
+    nomeFantasia: d.lojaNome,
+    cnpj: d.lojaCnpj || "",
+    enderecoLinha: d.lojaEndereco,
+    numeroVenda: d.numeroPedido,
+    operador: d.operador || undefined,
+    clienteNome: d.clienteNome || undefined,
+    clienteCpf: d.clienteCpf || undefined,
+    itens: d.itens.map((item) => ({
+      name: item.nome,
+      quantity: item.quantidade,
+      unitPrice: item.precoUnitario,
+      lineTotal: item.lineTotal,
+    })),
+    pagamentos: d.pagamentos,
+    subtotal,
+    taxes: Math.max(0, Number(d.taxes) || 0),
+    discount: desconto,
+    total: d.total,
+    cashTendered: d.cashTendered,
+    troco: d.troco,
+    dataHora: d.at,
+  }
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function CupomNaoFiscal({ isOpen, onClose, data }: CupomNaoFiscalProps) {
+export function CupomNaoFiscal({ isOpen, onClose, data, autoPrint = false }: CupomNaoFiscalProps) {
   const { toast } = useToast()
+  const { impressaoConfig } = useStoreSettings()
   const isCancelada = data.status === "cancelada"
   const operador = sanitizeOperatorLabel(data.operador)
+  const printInput = useMemo(() => toPdvReceiptInput(data), [data])
+  const [printing, setPrinting] = useState(false)
+  const [printError, setPrintError] = useState("")
+  const [printed, setPrinted] = useState(false)
 
-  const handleImprimir = useCallback(() => {
-    openThermalHtmlPrint(buildHtml(data), `Cupom ${data.numeroPedido}`)
+  const handleImprimir = useCallback(async (forceBrowserFallback = false) => {
+    setPrinting(true)
+    setPrintError("")
+    let result: PrintJobResult
+    try {
+      result = await printPdvSaleReceipt({
+        config: impressaoConfig,
+        input: printInput,
+        allowBrowserFallback: false,
+        forceBrowserFallback,
+      })
+    } catch (e) {
+      result = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    } finally {
+      setPrinting(false)
+    }
+    if (result.ok) {
+      setPrinted(true)
+      toast({
+        title: result.via === "proxy" ? "Comprovante enviado" : "Impressão do navegador aberta",
+        description: `Venda ${data.numeroPedido} permanece confirmada.`,
+      })
+      if (autoPrint && result.via === "proxy") onClose()
+    } else {
+      setPrintError(result.error || "Não foi possível imprimir o comprovante.")
+    }
+  }, [autoPrint, data.numeroPedido, impressaoConfig, onClose, printInput, toast])
+
+  useEffect(() => {
+    if (!isOpen || !autoPrint || isCancelada) return
+    setPrinted(false)
+    setPrintError("")
+    void handleImprimir()
+  }, [autoPrint, handleImprimir, isCancelada, isOpen])
+
+  const handleBrowserPreview = useCallback(() => {
+    const opened = openThermalHtmlPrint(buildHtml(data), `Cupom ${data.numeroPedido}`)
+    if (!opened) {
+      setPrintError("O navegador bloqueou a janela de impressão. Permita pop-ups para esta tela.")
+    }
   }, [data])
 
   const handleCopiar = useCallback(async () => {
@@ -308,17 +391,21 @@ export function CupomNaoFiscal({ isOpen, onClose, data }: CupomNaoFiscalProps) {
 
               {/* Totals */}
               <div className="space-y-0.5 text-[11px]">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Subtotal:</span>
+                  <span>{fmt(data.subtotal ?? data.total + (data.desconto ?? 0))}</span>
+                </div>
+                {(data.taxes ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Imposto estimado:</span>
+                    <span>{fmt(data.taxes ?? 0)}</span>
+                  </div>
+                )}
                 {(data.desconto ?? 0) > 0 && (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Subtotal:</span>
-                      <span>{fmt(data.total + (data.desconto ?? 0))}</span>
-                    </div>
-                    <div className="flex justify-between text-destructive">
-                      <span>Desconto:</span>
-                      <span>-{fmt(data.desconto ?? 0)}</span>
-                    </div>
-                  </>
+                  <div className="flex justify-between text-destructive">
+                    <span>Desconto:</span>
+                    <span>-{fmt(data.desconto ?? 0)}</span>
+                  </div>
                 )}
                 <div className="flex justify-between font-bold text-sm text-foreground">
                   <span>TOTAL:</span>
@@ -341,6 +428,18 @@ export function CupomNaoFiscal({ isOpen, onClose, data }: CupomNaoFiscalProps) {
                     </div>
                   ))
                 )}
+                {data.cashTendered != null && data.cashTendered > 0.005 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Dinheiro recebido:</span>
+                    <span>{fmt(data.cashTendered)}</span>
+                  </div>
+                )}
+                {data.troco != null && data.troco > 0.005 && (
+                  <div className="flex justify-between font-semibold text-foreground">
+                    <span>Troco:</span>
+                    <span>{fmt(data.troco)}</span>
+                  </div>
+                )}
               </div>
 
               <Separator className="border-dashed my-2" />
@@ -350,15 +449,33 @@ export function CupomNaoFiscal({ isOpen, onClose, data }: CupomNaoFiscalProps) {
 
           {/* Actions */}
           <div className="shrink-0 border-t border-border px-5 py-4">
+            {printError && (
+              <div className="mb-3 flex items-start gap-2 rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{printError}</span>
+              </div>
+            )}
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
-                variant="outline"
+                variant={printError ? "default" : "outline"}
                 className="h-10 flex-1 gap-2 border-border text-sm"
-                onClick={handleImprimir}
+                disabled={printing}
+                onClick={() => void handleImprimir()}
               >
-                <Printer className="h-4 w-4" />
-                Imprimir cupom
+                {printing ? <Loader2 className="h-4 w-4 animate-spin" /> : printed ? <CheckCircle2 className="h-4 w-4" /> : <Printer className="h-4 w-4" />}
+                {printing ? "Enviando…" : printed ? "Imprimir 2ª via" : "Enviar para térmica"}
               </Button>
+              {printError && (
+                <Button
+                  variant="outline"
+                  className="h-10 flex-1 gap-2 border-border text-sm"
+                  disabled={printing}
+                  onClick={handleBrowserPreview}
+                >
+                  <Printer className="h-4 w-4" />
+                  Abrir impressão do navegador
+                </Button>
+              )}
               <Button
                 variant="outline"
                 className="h-10 flex-1 gap-2 border-border text-sm"
@@ -371,6 +488,7 @@ export function CupomNaoFiscal({ isOpen, onClose, data }: CupomNaoFiscalProps) {
             <Button
               variant="ghost"
               className="mt-2 h-9 w-full text-sm text-muted-foreground"
+              disabled={printing}
               onClick={onClose}
             >
               <X className="mr-2 h-4 w-4" />

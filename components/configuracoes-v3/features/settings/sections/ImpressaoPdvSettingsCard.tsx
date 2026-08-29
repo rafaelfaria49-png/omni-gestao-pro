@@ -168,11 +168,11 @@ export function ImpressaoPdvSettingsCard() {
   return (
     <SettingsCard
       title="Impressão operacional"
-      description="Preferências por unidade consumidas pelo PDV, OS e crediário. Envio web via API /api/print/raw (TCP 9100 ou bridge HTTP). Sem driver nativo."
+      description="Preferências da estação/unidade consumidas pelo PDV, OS e crediário. O cupom usa ESC/POS pela API /api/print/raw (TCP 9100 ou bridge HTTP)."
     >
       <div className="grid gap-5 sm:grid-cols-2">
         <div className="space-y-2 min-w-0 sm:col-span-2">
-          <Label htmlFor="imp-host">Impressora padrão (host/IP)</Label>
+          <Label htmlFor="imp-host">Impressora de comprovante (host/IP)</Label>
           <Input
             id="imp-host"
             placeholder="Ex.: 192.168.0.50 ou deixe vazio para THERMAL_PRINT_HOST do servidor"
@@ -181,7 +181,7 @@ export function ImpressaoPdvSettingsCard() {
             disabled={busy || noLoja}
           />
           <p className="text-xs text-muted-foreground">
-            Porta raw padrão 9100. O caixa usa este destino em cada cupom; fallback HTML 58/80mm se o proxy falhar.
+            Porta raw padrão 9100. Com host configurado, o caixa envia direto para esta térmica; o navegador só é aberto quando o operador escolhe o fallback.
           </p>
         </div>
 

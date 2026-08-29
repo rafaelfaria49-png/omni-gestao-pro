@@ -112,10 +112,10 @@ import {
   acharProdutoPorCodigoExato,
 } from "@/lib/pdv-produtos-a-cadastrar"
 import { AUDIT_DISCOUNT_ALERT_PCT } from "@/lib/audit-constants"
-import { printPdvSaleReceipt } from "@/lib/pdv-print-runtime"
 import { resolveCupomRodape } from "@/lib/pdv-impressao-config"
 import { buildPagamentosResumo, type PdvReceiptInput } from "@/lib/escpos"
 import { PdvPostSaleDialog } from "./pdv-post-sale-dialog"
+import { PdvAutoPrintFeedback } from "./pdv-auto-print-feedback"
 import { VendaEsperaModal } from "./venda-espera-modal"
 import {
   getHeldSales,
@@ -914,6 +914,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   const cartPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [postSalePrintOpen, setPostSalePrintOpen] = useState(false)
   const [postSalePrintInput, setPostSalePrintInput] = useState<PdvReceiptInput | null>(null)
+  const [autoPrintInput, setAutoPrintInput] = useState<PdvReceiptInput | null>(null)
 
   // Somente itens reais do estoque — única fonte de catálogo no PDV Assistência
   const realCatalog = useMemo((): PdvCatalogProduct[] => {
@@ -1807,6 +1808,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
         pix,
         cartaoDebito,
         cartaoCredito,
+        carne,
         aPrazo,
         creditoVale,
       }),
@@ -1816,6 +1818,13 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       discount: desconto,
       total,
       dataHora: new Date().toLocaleString("pt-BR"),
+    }
+    if (meta?.cashTendered != null && dinheiro > 0.005) {
+      const cashTendered = Number(meta.cashTendered)
+      if (Number.isFinite(cashTendered) && cashTendered >= dinheiro) {
+        _printInput.cashTendered = Math.round(cashTendered * 100) / 100
+        _printInput.troco = Math.max(0, Math.round((cashTendered - dinheiro) * 100) / 100)
+      }
     }
     const _hadItems = cart.length > 0
 
@@ -1922,7 +1931,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
 
     // Pós-venda: impressão automática ou popup de oferta
     if (impressaoConfig.imprimirAutomatico && _hadItems) {
-      void printPdvSaleReceipt({ config: impressaoConfig, receiptFooter: _footer, input: _printInput })
+      setAutoPrintInput(_printInput)
     } else if (_hadItems) {
       setPostSalePrintInput(_printInput)
       setPostSalePrintOpen(true)
@@ -2914,6 +2923,12 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
         printInput={postSalePrintInput}
         impressaoConfig={impressaoConfig}
         onAfterClose={() => queueMicrotask(() => inputRef.current?.focus())}
+      />
+
+      <PdvAutoPrintFeedback
+        printInput={autoPrintInput}
+        impressaoConfig={impressaoConfig}
+        onDismiss={() => setAutoPrintInput(null)}
       />
 
       <HelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />

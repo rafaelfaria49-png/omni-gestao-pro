@@ -172,8 +172,8 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
   // `CAIXA_FECHADO`, virando pendência local (F-02 da readiness 002A).
   const { sessaoId } = useCaixa()
   const { garantirSessao } = useGarantirSessaoCaixa()
-  const { empresaDocumentos, lojaAtivaId } = useLojaAtiva()
-  const { pdvParams } = useStoreSettings()
+  const { empresaDocumentos, lojaAtivaId, getEnderecoDocumentos } = useLojaAtiva()
+  const { pdvParams, impressaoConfig } = useStoreSettings()
   const { toast } = useToast()
   const cashierId = useMemo(() => getOrCreatePdvOperatorId(), [])
   const { data: session } = useSession()
@@ -762,10 +762,16 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
         (empresaDocumentos.nomeFantasia || configPadrao.empresa.nomeFantasia || "Loja").trim() || "Loja"
 
       const tipoVendaLabel = TIPOS_VENDA.find((t) => t.value === tipoVenda)?.label
+      const dinheiroPago = payments
+        .filter((payment) => payment.type === "dinheiro")
+        .reduce((sum, payment) => sum + payment.value, 0)
+      const cashTendered = typeof meta?.cashTendered === "number" ? meta.cashTendered : undefined
       const cupom: CupomData = {
         numeroPedido: displaySaleNumber(result.saleId, result.pending),
         at: new Date().toISOString(),
         lojaNome: storeDisplayName,
+        lojaCnpj: empresaDocumentos.cnpj || undefined,
+        lojaEndereco: getEnderecoDocumentos() || undefined,
         clienteNome: selectedCliente.name,
         clienteCpf: selectedCliente.document ?? null,
         operador: operatorLabel,
@@ -779,7 +785,13 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
         })),
         pagamentos: payments.map((p) => ({ label: pagamentoLabelMethod(p), valor: p.value })),
         total,
-        desconto: discountReais > 0 ? discountReais : undefined,
+        subtotal: subtotal + totalPerLineDiscount,
+        taxes: impostoEstimado,
+        desconto: totalPerLineDiscount + discountReais > 0 ? totalPerLineDiscount + discountReais : undefined,
+        cashTendered,
+        troco: cashTendered != null && cashTendered >= dinheiroPago
+          ? Math.max(0, Math.round((cashTendered - dinheiroPago) * 100) / 100)
+          : undefined,
       }
 
       setCupomData(cupom)
@@ -1652,6 +1664,7 @@ export function VendaCompletaEnterprise({ onBack }: { onBack: () => void }) {
           isOpen={cupomOpen}
           onClose={() => setCupomOpen(false)}
           data={cupomData}
+          autoPrint={impressaoConfig.imprimirAutomatico}
         />
       )}
     </div>

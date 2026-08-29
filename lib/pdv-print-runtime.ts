@@ -32,6 +32,10 @@ export type ExecutePrintOptions = {
   htmlTitle?: string
   /** Corpo HTML interno (sem wrapper de largura). */
   buildHtmlBody?: () => string
+  /** Não abre o diálogo do navegador após uma falha no envio direto. */
+  allowBrowserFallback?: boolean
+  /** Abre o navegador somente quando o operador escolheu esse fallback. */
+  forceBrowserFallback?: boolean
 }
 
 function printTarget(config: PdvImpressaoConfig): { host?: string; port?: number } {
@@ -68,8 +72,16 @@ export async function printWithFallback(
   bytes: Uint8Array,
   opts: ExecutePrintOptions,
 ): Promise<PrintJobResult> {
+  if (opts.forceBrowserFallback) {
+    return openBrowserFallback(opts)
+  }
+
   const proxy = await executeEscPosPrint(bytes, opts.config, { openDrawer: true })
   if (proxy.ok) return proxy
+
+  if (opts.allowBrowserFallback === false) {
+    return proxy
+  }
 
   const hasRealBridge = opts.config.impressoraHost.trim().length > 0
   if (hasRealBridge) {
@@ -78,18 +90,24 @@ export async function printWithFallback(
   }
 
   // Sem bridge térmica: fallback HTML (A4 / impressão do navegador)
-  if (opts.buildHtmlBody) {
-    const width = opts.config.bobinaTamanho === "58mm" ? "58mm" : "80mm"
-    const inner = opts.buildHtmlBody()
-    const logo =
-      opts.config.logoNoCupom && opts.logoUrl?.trim()
-        ? `<div style="text-align:center;margin-bottom:6px"><img src="${escapeHtml(opts.logoUrl.trim())}" alt="" style="max-width:90%;max-height:48px;object-fit:contain" /></div>`
-        : ""
-    openThermalHtmlPrint(`${logo}${inner}`, opts.htmlTitle ?? "Cupom", { bobina: width })
-    return { ok: true, via: "html" }
+  return openBrowserFallback(opts, proxy.error)
+}
+
+function openBrowserFallback(opts: ExecutePrintOptions, error?: string): PrintJobResult {
+  if (!opts.buildHtmlBody) {
+    return { ok: false, via: "download", error: error || "Fallback do navegador indisponível." }
   }
 
-  return { ok: false, via: "download", error: proxy.error }
+  const width = opts.config.bobinaTamanho === "58mm" ? "58mm" : "80mm"
+  const inner = opts.buildHtmlBody()
+  const logo =
+    opts.config.logoNoCupom && opts.logoUrl?.trim()
+      ? `<div style="text-align:center;margin-bottom:6px"><img src="${escapeHtml(opts.logoUrl.trim())}" alt="" style="max-width:90%;max-height:48px;object-fit:contain" /></div>`
+      : ""
+  const opened = openThermalHtmlPrint(`${logo}${inner}`, opts.htmlTitle ?? "Cupom", { bobina: width })
+  return opened
+    ? { ok: true, via: "html" }
+    : { ok: false, via: "html", error: "O navegador bloqueou a janela de impressão. Permita pop-ups para esta tela." }
 }
 
 export async function printPdvSaleReceipt(params: {
@@ -97,6 +115,8 @@ export async function printPdvSaleReceipt(params: {
   receiptFooter?: string | null
   logoUrl?: string | null
   input: PdvReceiptInput
+  allowBrowserFallback?: boolean
+  forceBrowserFallback?: boolean
 }): Promise<PrintJobResult> {
   const footer = resolveCupomRodape(params.config, params.receiptFooter)
   const maxChars = BOBINA_CHARS[params.config.bobinaTamanho]
@@ -146,6 +166,8 @@ export async function printPdvSaleReceipt(params: {
     logoUrl: params.logoUrl,
     filename: "recibo-pdv.bin",
     htmlTitle: "Recibo PDV",
+    allowBrowserFallback: params.allowBrowserFallback,
+    forceBrowserFallback: params.forceBrowserFallback,
     buildHtmlBody: () => `
       <div style="text-align:center;font-weight:700;margin-bottom:6px">${escapeHtml(i.nomeFantasia)}</div>
       <div style="text-align:center;font-size:11px;margin-bottom:4px">CNPJ ${escapeHtml(i.cnpj)}</div>
@@ -160,6 +182,8 @@ export async function printPdvSaleReceipt(params: {
       ${i.discount > 0 ? `<p>Desconto: ${br.format(i.discount)}</p>` : ""}
       <p style="font-weight:700">Total: ${br.format(i.total)}</p>
       ${pagamentosHtml}
+      ${i.cashTendered != null && i.cashTendered > 0.005 ? `<p>Dinheiro recebido: ${br.format(i.cashTendered)}</p>` : ""}
+      ${i.troco != null && i.troco > 0.005 ? `<p style="font-weight:700">Troco: ${br.format(i.troco)}</p>` : ""}
       ${footer ? `<div style="font-size:10px;margin-top:8px;white-space:pre-wrap">${escapeHtml(footer)}</div>` : ""}
     `,
   })

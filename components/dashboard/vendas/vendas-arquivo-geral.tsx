@@ -156,6 +156,7 @@ type VendaDetalhe = {
   clienteCpf: string | null
   total: number
   desconto: number
+  cashTendered: number | null
   status: string
   operador: string | null
   canceladaEm: string | null
@@ -970,6 +971,15 @@ export function VendasArquivoGeral() {
     const lojaNome = empresaDocumentos.nomeFantasia || empresaDocumentos.razaoSocial || "Loja"
     const lojaCnpj = empresaDocumentos.cnpj || undefined
     const lojaEndereco = getEnderecoDocumentos() || undefined
+    const desconto = Math.max(0, Number(d.desconto) || 0)
+    const subtotalBase = d.itens.reduce((sum, item) => sum + item.lineTotal, 0)
+    const subtotal = subtotalBase + desconto
+    const dinheiro = d.pagamentos
+      .filter((payment) => /dinheiro/i.test(payment.label))
+      .reduce((sum, payment) => sum + payment.valor, 0)
+    const troco = d.cashTendered != null && dinheiro > 0.005
+      ? Math.max(0, Math.round((d.cashTendered - dinheiro) * 100) / 100)
+      : undefined
 
     setCupomData({
       numeroPedido: d.id,
@@ -984,11 +994,15 @@ export function VendasArquivoGeral() {
       itens: d.itens,
       pagamentos: d.pagamentos,
       total: d.total,
-      desconto: d.desconto,
+      subtotal,
+      taxes: Math.max(0, d.total + desconto - subtotalBase),
+      desconto,
+      cashTendered: d.cashTendered ?? undefined,
+      troco,
       status: d.status,
     })
     setCupomOpen(true)
-  }, [empresaDocumentos])
+  }, [empresaDocumentos, getEnderecoDocumentos])
 
   const openCupomFromRow = useCallback(async (vendaId: string, kind?: LocalSaleSyncKind) => {
     if (blocksConfirmedSaleAction(vendaId, kind)) {

@@ -70,9 +70,9 @@ export function openThermalHtmlPrint(
   htmlBodyInner: string,
   title = "Cupom",
   opts?: { bobina?: "58mm" | "80mm" },
-) {
+): boolean {
   const w = window.open("", "_blank")
-  if (!w) return
+  if (!w) return false
   const bobina = opts?.bobina === "58mm" ? "58mm" : "80mm"
   const wrapWidth = bobina === "58mm" ? "52mm" : "72mm"
   const doc = `<!DOCTYPE html>
@@ -122,6 +122,7 @@ export function openThermalHtmlPrint(
   w.document.open()
   w.document.write(doc)
   w.document.close()
+  return true
 }
 
 export function escapeHtml(s: string): string {

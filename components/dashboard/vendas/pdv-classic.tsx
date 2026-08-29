@@ -124,6 +124,7 @@ import {
   acharProdutoPorCodigoExato,
 } from "@/lib/pdv-produtos-a-cadastrar"
 import { PdvPostSaleDialog } from "./pdv-post-sale-dialog"
+import { PdvAutoPrintFeedback } from "./pdv-auto-print-feedback"
 import { filterPdvCatalogBySearch } from "@/lib/pdv-product-search"
 import { useClienteSearch } from "@/lib/hooks/use-cliente-search"
 import { VendaEsperaModal } from "./venda-espera-modal"
@@ -316,6 +317,7 @@ export function PdvClassic({
   /** Fluxo pós-venda: oferecer impressão após a venda ser persistida. */
   const [postSalePrintOpen, setPostSalePrintOpen] = useState(false)
   const [postSalePrintInput, setPostSalePrintInput] = useState<PdvReceiptInput | null>(null)
+  const [autoPrintInput, setAutoPrintInput] = useState<PdvReceiptInput | null>(null)
 
   useEffect(() => {
     const id = (lojaAtivaId || "").trim()
@@ -1913,6 +1915,14 @@ export function PdvClassic({
           _printInput.pagamentos = buildPagamentosResumo({
             dinheiro, pix, cartaoDebito, cartaoCredito, carne, aPrazo, creditoVale,
           })
+          if (meta?.cashTendered != null && dinheiro > 0.005) {
+            const cashTendered = Number(meta.cashTendered)
+            const troco = Math.max(0, Math.round((cashTendered - dinheiro) * 100) / 100)
+            if (Number.isFinite(cashTendered) && cashTendered >= dinheiro) {
+              _printInput.cashTendered = Math.round(cashTendered * 100) / 100
+              _printInput.troco = troco
+            }
+          }
           const result = await finalizeSaleTransaction({
             lines: saleLines,
             total,
@@ -1971,12 +1981,7 @@ export function PdvClassic({
           }
           const _hadItems = cart.length > 0
           if (impressaoConfig.imprimirAutomatico && _hadItems) {
-            void printPdvSaleReceipt({
-              config: impressaoConfig,
-              receiptFooter: _rp.footer,
-              logoUrl: storeLogoUrl,
-              input: _printInput,
-            })
+            setAutoPrintInput(_printInput)
           } else if (_hadItems) {
             setPostSalePrintInput(_printInput)
             setPostSalePrintOpen(true)
@@ -2159,6 +2164,13 @@ export function PdvClassic({
         impressaoConfig={impressaoConfig}
         logoUrl={storeLogoUrl}
         onAfterClose={focusShellBipe}
+      />
+
+      <PdvAutoPrintFeedback
+        printInput={autoPrintInput}
+        impressaoConfig={impressaoConfig}
+        logoUrl={storeLogoUrl}
+        onDismiss={() => setAutoPrintInput(null)}
       />
 
       {/* Lote 4: dialog `operationType` + painel `cashHistory` REMOVIDOS.

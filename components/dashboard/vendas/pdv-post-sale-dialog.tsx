@@ -1,7 +1,7 @@
 "use client"
 
-import { useRef, useState } from "react"
-import { Receipt, Loader2 } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { Receipt, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -33,9 +33,18 @@ export function PdvPostSaleDialog({
 }: PdvPostSaleDialogProps) {
   const { toast } = useToast()
   const [printing, setPrinting] = useState(false)
+  const [printError, setPrintError] = useState("")
+  const [printed, setPrinted] = useState(false)
   // Refs das duas ações para navegação por teclado (foco/seta) — escopo: só teclado/foco.
   const confirmRef = useRef<HTMLButtonElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (open && printInput) {
+      setPrinted(false)
+      setPrintError("")
+    }
+  }, [open, printInput])
 
   function close() {
     onOpenChange(false)
@@ -44,6 +53,7 @@ export function PdvPostSaleDialog({
 
   async function handlePrint() {
     if (!printInput) { close(); return }
+    setPrintError("")
     setPrinting(true)
     let result: PrintJobResult
     try {
@@ -52,6 +62,9 @@ export function PdvPostSaleDialog({
         receiptFooter: printInput.receiptFooter ?? undefined,
         logoUrl: logoUrl ?? null,
         input: printInput,
+        // Primeiro tenta somente a térmica. O navegador é uma escolha explícita
+        // quando o envio direto não estiver disponível.
+        allowBrowserFallback: false,
       })
     } catch (e) {
       result = { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -60,21 +73,45 @@ export function PdvPostSaleDialog({
     }
 
     if (result.ok) {
-      const viaMsg =
-        result.via === "proxy"
-          ? `${impressaoConfig.impressoraHost.trim() || "Impressora"} · ${impressaoConfig.viasCupom} via(s).`
-          : impressaoConfig.impressoraHost.trim()
-            ? "Falha na térmica — abrindo impressão A4."
-            : "Impressão do navegador aberta."
-      toast({ title: "Comprovante enviado", description: viaMsg })
+      setPrinted(true)
+      toast({
+        title: "Comprovante enviado",
+        description: `${impressaoConfig.impressoraHost.trim() || "Impressora configurada"} · ${impressaoConfig.viasCupom} via(s).`,
+      })
     } else {
-      const errMsg =
-        impressaoConfig.impressoraHost.trim()
-          ? `Impressora ${impressaoConfig.impressoraHost.trim()} inacessível. Verifique a conexão ou configure A4 em Configurações → PDV.`
-          : result.error || "Não foi possível imprimir."
-      toast({ title: "Falha na impressão", description: errMsg, variant: "destructive" })
+      const target = impressaoConfig.impressoraHost.trim()
+      const errMsg = target
+        ? `Impressora ${target}:${impressaoConfig.impressoraPorta} inacessível. ${result.error || "Verifique a conexão."}`
+        : result.error || "Nenhuma impressora térmica respondeu."
+      setPrintError(errMsg)
+      toast({ title: "Falha na impressão", description: "A venda continua confirmada. Escolha uma ação para o comprovante.", variant: "destructive" })
     }
-    close()
+  }
+
+  async function handleBrowserPrint() {
+    if (!printInput) { close(); return }
+    setPrintError("")
+    setPrinting(true)
+    let result: PrintJobResult
+    try {
+      result = await printPdvSaleReceipt({
+        config: impressaoConfig,
+        receiptFooter: printInput.receiptFooter ?? undefined,
+        logoUrl: logoUrl ?? null,
+        input: printInput,
+        forceBrowserFallback: true,
+      })
+    } catch (e) {
+      result = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    } finally {
+      setPrinting(false)
+    }
+    if (result.ok) {
+      setPrinted(true)
+      toast({ title: "Impressão do navegador aberta", description: "A venda permanece confirmada." })
+    } else {
+      setPrintError(result.error || "Não foi possível abrir a impressão do navegador.")
+    }
   }
 
   return (
@@ -107,13 +144,23 @@ export function PdvPostSaleDialog({
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base font-bold text-foreground">
-            <Receipt className="h-5 w-5 text-primary" />
-            Imprimir comprovante?
+            {printError ? <AlertTriangle className="h-5 w-5 text-destructive" /> : printed ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : <Receipt className="h-5 w-5 text-primary" />}
+            {printError ? "Impressão não enviada" : printed ? "Comprovante enviado" : "Comprovante não fiscal"}
           </DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground -mt-2">
-          Venda registrada com sucesso. Deseja imprimir o comprovante não fiscal?
+          {printError
+            ? "A venda foi confirmada e não será repetida. Você pode tentar a térmica ou abrir a impressão do navegador."
+            : printed
+              ? "O comprovante foi enviado. Se necessário, emita uma segunda via do mesmo comprovante."
+              : "Venda registrada com sucesso. Envie o comprovante direto para a térmica."
+          }
         </p>
+        {printError && (
+          <div className="rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive" role="alert">
+            {printError}
+          </div>
+        )}
         <div className="flex gap-3 pt-1">
           <Button
             ref={confirmRef}
@@ -127,18 +174,41 @@ export function PdvPostSaleDialog({
             ) : (
               <Receipt className="h-4 w-4" />
             )}
-            {printing ? "Imprimindo…" : "Sim, imprimir"}
+            {printing ? "Enviando…" : printError ? "Tentar novamente" : printed ? "Imprimir 2ª via" : "Imprimir agora"}
           </Button>
-          <Button
-            ref={cancelRef}
-            type="button"
-            variant="outline"
-            className="flex-1 h-11 border-border"
-            disabled={printing}
-            onClick={close}
-          >
-            Não, obrigado
-          </Button>
+          {printError && (
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 flex-1 border-border text-xs"
+              disabled={printing}
+              onClick={() => void handleBrowserPrint()}
+            >
+              Abrir impressão do navegador
+            </Button>
+          )}
+          {printed && !printError && (
+            <Button type="button" variant="outline" className="h-11 flex-1 border-border" disabled={printing} onClick={close}>
+              Fechar
+            </Button>
+          )}
+          {!printed && !printError && (
+            <Button
+              ref={cancelRef}
+              type="button"
+              variant="outline"
+              className="flex-1 h-11 border-border"
+              disabled={printing}
+              onClick={close}
+            >
+              Agora não
+            </Button>
+          )}
+          {printError && (
+            <Button type="button" variant="ghost" className="h-11" disabled={printing} onClick={close}>
+              Fechar
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

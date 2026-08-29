@@ -101,6 +101,10 @@ export type PdvReceiptInput = {
   clienteCpf?: string
   /** Formas de pagamento agregadas (label + valor). */
   pagamentos?: PdvReceiptPagamento[]
+  /** Dinheiro fisicamente entregue pelo cliente, quando houve troco. */
+  cashTendered?: number
+  /** Troco calculado sobre o dinheiro aplicado na venda. */
+  troco?: number
   itens: Array<{ name: string; quantity: number; unitPrice: number; lineTotal: number }>
   subtotal: number
   taxes: number
@@ -202,6 +206,14 @@ export function buildPdvReceiptEscPos(
     for (const pg of pagamentos) {
       parts.push(line(truncateField(`  ${pg.label}: ${br.format(pg.valor)}`, maxChars)))
     }
+  }
+  if (input.cashTendered != null && input.cashTendered > 0.005) {
+    parts.push(line(`Dinheiro recebido: ${br.format(input.cashTendered)}`))
+  }
+  if (input.troco != null && input.troco > 0.005) {
+    parts.push(escposBold(true))
+    parts.push(line(`Troco: ${br.format(input.troco)}`))
+    parts.push(escposBold(false))
   }
   parts.push(line(""))
   const footer = (input.receiptFooter || "").trim()

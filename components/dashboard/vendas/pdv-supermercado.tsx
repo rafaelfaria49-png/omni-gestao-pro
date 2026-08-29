@@ -91,10 +91,10 @@ import { VendaEsperaModal } from "./venda-espera-modal"
 import { TrocasDevolucao } from "./trocas-devolucao"
 import { appendAuditLog } from "@/lib/audit-log"
 import { AUDIT_DISCOUNT_ALERT_PCT } from "@/lib/audit-constants"
-import { printPdvSaleReceipt } from "@/lib/pdv-print-runtime"
 import { resolveCupomRodape } from "@/lib/pdv-impressao-config"
 import { buildPagamentosResumo, type PdvReceiptInput } from "@/lib/escpos"
 import { PdvPostSaleDialog } from "./pdv-post-sale-dialog"
+import { PdvAutoPrintFeedback } from "./pdv-auto-print-feedback"
 import {
   getHeldSales,
   saveHeldSale,
@@ -224,6 +224,7 @@ export function PdvSupermercado({
 
   const [postSalePrintOpen, setPostSalePrintOpen] = useState(false)
   const [postSalePrintInput, setPostSalePrintInput] = useState<PdvReceiptInput | null>(null)
+  const [autoPrintInput, setAutoPrintInput] = useState<PdvReceiptInput | null>(null)
 
   const [weightDialogOpen, setWeightDialogOpen] = useState(false)
   const [weightProduct, setWeightProduct] = useState<Product | null>(null)
@@ -1440,6 +1441,13 @@ export function PdvSupermercado({
           _printInput.pagamentos = buildPagamentosResumo({
             dinheiro, pix, cartaoDebito, cartaoCredito, carne, aPrazo, creditoVale,
           })
+          if (meta?.cashTendered != null && dinheiro > 0.005) {
+            const cashTendered = Number(meta.cashTendered)
+            if (Number.isFinite(cashTendered) && cashTendered >= dinheiro) {
+              _printInput.cashTendered = Math.round(cashTendered * 100) / 100
+              _printInput.troco = Math.max(0, Math.round((cashTendered - dinheiro) * 100) / 100)
+            }
+          }
 
           const result = await finalizeSaleTransaction({
             lines: saleLines,
@@ -1541,7 +1549,7 @@ export function PdvSupermercado({
 
           // Pós-venda: impressão automática ou popup de oferta
           if (impressaoConfig.imprimirAutomatico && _hadItems) {
-            void printPdvSaleReceipt({ config: impressaoConfig, receiptFooter: _footer, input: _printInput })
+            setAutoPrintInput(_printInput)
           } else if (_hadItems) {
             setPostSalePrintInput(_printInput)
             setPostSalePrintOpen(true)
@@ -1610,6 +1618,12 @@ export function PdvSupermercado({
         printInput={postSalePrintInput}
         impressaoConfig={impressaoConfig}
         onAfterClose={() => queueMicrotask(hardFocusSearch)}
+      />
+
+      <PdvAutoPrintFeedback
+        printInput={autoPrintInput}
+        impressaoConfig={impressaoConfig}
+        onDismiss={() => setAutoPrintInput(null)}
       />
 
       <AttrProductDialog
