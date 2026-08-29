@@ -18,6 +18,7 @@ import {
   Hash,
   Loader2,
   PackageOpen,
+  PauseCircle,
   Receipt,
   Search,
   User2,
@@ -272,6 +273,8 @@ export type PdvOmniClassicShellProps = {
   onAddProductFromSearch: (product: PdvCatalogProduct) => void
   /** PDV rápido: menos cromo (atalhos visíveis, painel lateral, infos decorativas). */
   isModoRapido?: boolean
+  /** Quantidade de holds do tipo Classic no terminal atual. */
+  heldSalesCount: number
 }
 
 export function PdvOmniClassicShell(props: PdvOmniClassicShellProps) {
@@ -467,6 +470,20 @@ export function PdvOmniClassicShell(props: PdvOmniClassicShellProps) {
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => props.onShortcutAction("F7")}
+            aria-label={`Abrir vendas em espera${props.heldSalesCount > 0 ? ` (${props.heldSalesCount})` : ""}`}
+            title="Vendas em espera (F7)"
+            className="inline-flex min-w-0 shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary transition-colors hover:bg-primary/20"
+          >
+            <PauseCircle className="h-3.5 w-3.5 shrink-0" />
+            <span className="hidden sm:inline">Em espera</span>
+            {props.heldSalesCount > 0 ? (
+              <span className="rounded bg-primary/15 px-1.5 py-0.5 tabular-nums">{props.heldSalesCount}</span>
+            ) : null}
+            <kbd className="hidden rounded border border-primary/30 bg-primary/10 px-1 py-px text-[9px] font-bold sm:inline">F7</kbd>
+          </button>
           {!isModoRapido ? (
             <>
               <span className="hidden items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary md:inline-flex">

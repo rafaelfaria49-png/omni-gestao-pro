@@ -129,7 +129,7 @@ import { filterPdvCatalogBySearch } from "@/lib/pdv-product-search"
 import { useClienteSearch } from "@/lib/hooks/use-cliente-search"
 import { VendaEsperaModal } from "./venda-espera-modal"
 import {
-  getHeldSales,
+  useHeldSales,
   saveHeldSale,
   removeHeldSale,
   newHoldId,
@@ -1480,7 +1480,7 @@ export function PdvClassic({
   }
 
   const terminalIdForHold = readSelectedTerminal(lojaKey)?.id ?? "default"
-  const heldSales = getHeldSales(lojaKey, terminalIdForHold)
+  const heldSales = useHeldSales(lojaKey, terminalIdForHold, "classic")
 
   function handleHoldSale() {
     const held: HeldSale = {
@@ -1494,7 +1494,9 @@ export function PdvClassic({
         price: i.price,
         quantity: i.quantity,
         isAvulso: i.isAvulso,
+        complementos: i.complementos,
         atributosLabel: i.atributosLabel,
+        lineDetail: i.lineDetail,
         vendaPorPeso: i.vendaPorPeso,
         custoUnitario: i.custoUnitario,
         codigoAvulso: i.codigoAvulso,
@@ -1525,7 +1527,9 @@ export function PdvClassic({
         price: i.price,
         quantity: i.quantity,
         isAvulso: i.isAvulso,
+        complementos: i.complementos,
         atributosLabel: i.atributosLabel,
+        lineDetail: i.lineDetail,
         vendaPorPeso: i.vendaPorPeso,
         custoUnitario: i.custoUnitario,
         codigoAvulso: i.codigoAvulso,
@@ -1540,10 +1544,13 @@ export function PdvClassic({
         cpf: sale.customer.cpf ?? "",
         phone: sale.customer.phone ?? "",
       })
+    } else {
+      setSelectedCustomer(null)
     }
     setDiscountReais(sale.discountReais ?? 0)
     setDiscountPercent(sale.discountPercent ?? 0)
     removeHeldSale(lojaKey, terminalIdForHold, sale.id)
+    return true
   }
 
   function handleDiscardHeldSale(id: string) {
@@ -1672,6 +1679,7 @@ export function PdvClassic({
               onSellerChange={setShellSeller}
               info={shellInfo}
               onShortcutAction={openShellShortcut}
+              heldSalesCount={heldSales.length}
               onFinalizeClick={() => openShellShortcut("F1")}
               products={products}
               productSearchOpen={shellProductSearchOpen}

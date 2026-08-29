@@ -9,7 +9,7 @@
  * dependência) para exercitar o código real de `pdv-hold.ts`, não uma cópia dele.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { getHeldSales, removeHeldSale, saveHeldSale, type HeldSale } from "./pdv-hold"
+import { getHeldSales, nextHoldLabel, removeHeldSale, saveHeldSale, type HeldSale } from "./pdv-hold"
 
 function installLocalStorageShim() {
   const store = new Map<string, string>()
@@ -84,6 +84,47 @@ describe("pdv-hold — venda em espera preserva accessorySelection", () => {
     expect(remaining).toHaveLength(1)
     expect(remaining[0]!.id).toBe("hold-2")
     expect(remaining[0]!.items[0]!.accessorySelection).toEqual(heldSaleWithAccessory.items[0]!.accessorySelection)
+  })
+
+  it("mantém múltiplos holds isolados por loja e terminal e filtra por tipo de PDV", () => {
+    const supermercado: HeldSale = { ...heldSaleWithAccessory, id: "hold-super", pdvType: "supermercado" }
+    saveHeldSale("loja-1", "PDV1", heldSaleWithAccessory)
+    saveHeldSale("loja-1", "PDV1", supermercado)
+    saveHeldSale("loja-2", "PDV1", { ...heldSaleWithAccessory, id: "hold-other-store" })
+    saveHeldSale("loja-1", "PDV2", { ...heldSaleWithAccessory, id: "hold-other-terminal" })
+
+    expect(getHeldSales("loja-1", "PDV1")).toHaveLength(2)
+    expect(getHeldSales("loja-1", "PDV1", "classic").map((sale) => sale.id)).toEqual(["hold-1"])
+    expect(getHeldSales("loja-1", "PDV1", "supermercado").map((sale) => sale.id)).toEqual(["hold-super"])
+    expect(getHeldSales("loja-2", "PDV1").map((sale) => sale.id)).toEqual(["hold-other-store"])
+    expect(getHeldSales("loja-1", "PDV2").map((sale) => sale.id)).toEqual(["hold-other-terminal"])
+  })
+
+  it("gera rótulo livre sem colidir com holds existentes", () => {
+    expect(nextHoldLabel([
+      { ...heldSaleWithAccessory, label: "Venda 1" },
+      { ...heldSaleWithAccessory, id: "hold-2", label: "Venda 3" },
+    ])).toBe("Venda 4")
+  })
+
+  it("preserva metadados de serviço e linha no round-trip", () => {
+    const sale: HeldSale = {
+      ...heldSaleWithAccessory,
+      id: "hold-service",
+      pdvType: "assistencia",
+      items: [{
+        ...heldSaleWithAccessory.items[0]!,
+        itemType: "servico",
+        serviceId: "service-1",
+        serviceCategory: "Telas",
+        warrantyDays: 90,
+        serviceTerms: "Garantia 90 dias",
+        complementos: ["Película"],
+        lineDetail: "IMEI informado",
+      }],
+    }
+    saveHeldSale("loja-1", "PDV1", sale)
+    expect(getHeldSales("loja-1", "PDV1", "assistencia")[0]).toEqual(sale)
   })
 
   it("sem window (SSR), getHeldSales retorna vazio sem lançar", () => {
