@@ -269,7 +269,7 @@ export function CaixaStatusBar({
         <div
           className={cn(
             "bg-warning/10 border border-warning/30 rounded-lg p-4 mb-4",
-            variant === "pdv" && "rounded-none border-x-0 border-t-0 mb-0 px-2 py-2.5 sm:px-3"
+            variant === "pdv" && "rounded-none border-x-0 border-t-0 mb-0 px-2 py-1.5 sm:px-3 sm:py-2"
           )}
         >
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -348,7 +348,7 @@ export function CaixaStatusBar({
             <div
               className={cn(
                 "flex flex-col gap-3 p-3 xl:flex-row xl:items-center",
-                variant === "pdv" && "px-2 py-2.5 sm:px-3"
+                variant === "pdv" && "px-2 py-1.5 sm:px-3 sm:py-2"
               )}
             >
               {/* Identidade do caixa */}
@@ -449,7 +449,7 @@ export function CaixaStatusBar({
           <div
             className={cn(
               "flex flex-col sm:flex-row items-center justify-between gap-3 p-3",
-              variant === "pdv" && "px-2 py-2.5 sm:px-3"
+              variant === "pdv" && "px-2 py-1.5 sm:px-3 sm:py-2"
             )}
           >
             <div className="flex items-center gap-2.5 min-w-0">
