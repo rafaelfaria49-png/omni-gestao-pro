@@ -10,17 +10,26 @@
  * de contingência autorizado da loja-piloto sob gate efêmero vigente.
  *
  * Ordem canônica de cada execução (todas antes de qualquer rede):
- *  1. job EXATAMENTE `CONTINGENCIA_TRANSMISSAO`, com jobId/storeId coerentes;
+ *  1. job EXATAMENTE `CONTINGENCIA_TRANSMISSAO`, com jobId/storeId coerentes
+ *     (jobs `CONSULTA` do MESMO documento seguem o caminho escopado próprio,
+ *     leitura only, sem one-shot);
  *  2. loja-piloto RESOLVIDA do registro fiscal (nunca literal);
  *  3. configuração NFCE + HOMOLOGACAO + SEFAZ_DIRETO + fiscalEnabled;
  *  4. gate efêmero específico da contingência VIGENTE;
  *  5. documento já persistido em CONTINGENCIA com SHA-256 conferido;
+ *  5a. endpoint determinístico do catálogo (NFeAutorizacao4/HOMOLOGACAO/SP);
+ *  5b. certificado ativo por REFERÊNCIA (resolução, nunca material);
+ *  5c. XSD pré-one-shot: os MESMOS bytes pelo worker XSD canônico —
+ *      `VALIDACAO_APROVADA`, pacote/manifest esperados, atestação vinculada ao
+ *      mesmo SHA-256 e REUSADA pelo guard 8 na mesma execução. Worker ausente,
+ *      timeout, resposta divergente ou XML inválido ⇒ fail-closed SEM consumir
+ *      o one-shot;
  *  6. consumo one-shot persistente da ativação (activationId + job + loja);
  *  7. capability positiva POR EXECUÇÃO, do binding opaco;
  *  8. executor GOAL-012/coordenador: bytes exatos persistidos, `prepare`
  *     jamais chamado, numeração jamais criada — os dez guards D4
  *     (`runSefazPreTransportGuards`) rodam de novo dentro do provider,
- *     imediatamente antes do envelope/transporte.
+ *     imediatamente antes do envelope/transporte (anti-TOCTOU).
  */
 import { prisma } from "@/lib/prisma"
 import { resolveActiveCertificate } from "@/lib/fiscal/certificate/resolve-active-certificate"
@@ -29,7 +38,18 @@ import { NfceSignError } from "@/lib/fiscal/signing"
 import { SefazDiretoProvider } from "@/lib/fiscal/provider/sefaz/sefaz-direto-provider"
 import { SefazSoapTransport } from "@/lib/fiscal/provider/sefaz/sefaz-soap-transport"
 import type { SefazGuardPorts, SefazXsdAttestation } from "@/lib/fiscal/provider/sefaz/sefaz-guards"
+import {
+  SEFAZ_LAYOUT_VERSAO,
+  selectSefazEndpoint,
+} from "@/lib/fiscal/provider/sefaz/sefaz-endpoint-catalog"
 import type { SefazTransport } from "@/lib/fiscal/provider/sefaz/sefaz-transport.types"
+import { validarXsd } from "@/lib/fiscal/dry-run/dry-run-validation"
+import {
+  XSD_SCHEMA_PACKAGE,
+  type XsdValidationAdapter,
+  type XsdValidationOutcome,
+} from "@/lib/fiscal/xsd"
+import { OFFICIAL_XSD_MANIFEST_SHA256 } from "@/lib/fiscal/xsd/official-package"
 import { drainFiscalQueue } from "@/lib/fiscal/queue/queue-worker"
 import {
   createPrismaFiscalQueueWorkerPorts,
@@ -54,6 +74,7 @@ import {
   CONTINGENCY_HOMOLOGATION_WINDOW,
   consumeContingencyDrillActivation,
   contingencyDrillCapability,
+  contingencyDrillConsultationCapability,
   evaluateContingencyHomologationWindow,
   type ContingencyDrillLedgerClient,
   type ContingencyHomologationWindowConfig,
@@ -61,6 +82,18 @@ import {
 import { fiscalBytesSha256 } from "./offline-contingency"
 
 type Row = Record<string, unknown>
+
+/** Outcomes XSD de INFRAESTRUTURA — nunca significam XML inválido (o lado é sempre fail-closed). */
+const XSD_OUTCOMES_INFRA: ReadonlySet<XsdValidationOutcome> = new Set([
+  "FALHA_TRANSITORIA",
+  "FALHA_PERMANENTE",
+  "TIMEOUT",
+  "WORKER_INDISPONIVEL",
+  "RESPOSTA_INCERTA",
+  "HASH_DIVERGENTE",
+  "PACOTE_XSD_AUSENTE",
+  "VERSAO_NAO_PERMITIDA",
+])
 
 type DrillPrismaClient = {
   $transaction: <T>(fn: (tx: never) => Promise<T>) => Promise<T>
@@ -182,6 +215,12 @@ export type ContingencyDrillWiringDeps = {
   readonly transport?: SefazTransport
   readonly readXsdAttestation?: SefazGuardPorts["readXsdAttestation"]
   readonly resolveCertificate?: (params: { storeId: string }) => Promise<ResolveActiveCertificateResult>
+  /**
+   * Adapter do worker XSD canônico (GOAL 020 · relatório 127). Omitido ⇒ o cliente configurado
+   * do ambiente (`FISCAL_XSD_WORKER_URL`); sem worker, o pre-flight falha FECHADO sem consumir
+   * o one-shot. Não existe segundo validador XSD.
+   */
+  readonly xsdAdapter?: XsdValidationAdapter
 }
 
 export type ContingencyDrillWiring = {
@@ -195,10 +234,15 @@ export type ContingencyDrillWiring = {
  * Wiring POR EXECUÇÃO: nasce preso ao par (jobId, storeId) autorizado e a
  * capability positiva — quando existir — nasce do consumo one-shot dentro de
  * `execute`. Nenhuma instância é global; nada é reutilizável entre jobs.
+ *
+ * `notaFiscalId` (opcional) é o documento do drill, já conhecido pelo runner a
+ * partir do job autorizado; quando ausente, a consulta escopada o resolve
+ * preguiçosamente do próprio job (uma única leitura por instância).
  */
 export function createContingencyHomologationDrillWiring(input: {
   readonly jobId: string
   readonly storeId: string
+  readonly notaFiscalId?: string
   readonly deps?: ContingencyDrillWiringDeps
 }): ContingencyDrillWiring {
   const client = input.deps?.client ?? (prisma as unknown as DrillPrismaClient)
@@ -206,6 +250,24 @@ export function createContingencyHomologationDrillWiring(input: {
   const windowConfig = input.deps?.window ?? CONTINGENCY_HOMOLOGATION_WINDOW
   const clock = input.deps?.clock ?? (() => new Date())
   const basePersistence = input.deps?.persistence ?? createPrismaUncertainStatePersistence(client as never)
+  /**
+   * Atestação XSD DESTA execução (GOAL 020 · relatório 127): nasce do pre-flight
+   * pré-one-shot, vinculada aos MESMOS bytes persistidos, e é REUSADA pelo guard 8 do
+   * provider na mesma execução — aprovação nunca é presumida e o hash nunca é trocado.
+   */
+  let atestacaoDaExecucao: SefazXsdAttestation | null = null
+  let notaFiscalIdDoDrill: string | null = input.notaFiscalId?.trim() || null
+  const resolverNotaFiscalIdDoDrill = async (): Promise<string | null> => {
+    if (notaFiscalIdDoDrill) return notaFiscalIdDoDrill
+    const jobRow = record(
+      await client.fiscalEmissaoJob.findUnique({
+        where: { id: input.jobId },
+        select: { notaFiscalId: true },
+      }),
+    )
+    notaFiscalIdDoDrill = jobRow.notaFiscalId == null ? null : String(jobRow.notaFiscalId)
+    return notaFiscalIdDoDrill
+  }
   /**
    * `uf` e `correlationId` são metadados de GUARDE de transporte (D4 itens 4/4b),
    * nunca bytes fiscais: `uf` vem da configuração fiscal da loja e o
@@ -240,13 +302,71 @@ export function createContingencyHomologationDrillWiring(input: {
       : undefined,
   }
   const guardPorts = createContingencyDrillSefazGuardPorts(client, input.storeId, {
-    readXsdAttestation: input.deps?.readXsdAttestation,
+    readXsdAttestation:
+      input.deps?.readXsdAttestation ??
+      (async (): Promise<SefazXsdAttestation | null> => atestacaoDaExecucao),
     resolveCertificate: input.deps?.resolveCertificate,
   })
   const provider = new SefazDiretoProvider({
     ports: guardPorts,
     transport: input.deps?.transport ?? new SefazSoapTransport(),
   })
+
+  /**
+   * Consulta ESCOPADA ao documento do drill (relatório 127 · B-4): reconciliação executável
+   * pós-drill — LEITURA only, sem one-shot, com capability nascida da JANELA vigente por
+   * execução e presa ao (loja, notaFiscalId do drill). Qualquer consulta fora deste escopo é
+   * terminal negada; o drain genérico permanece incapaz de consulta externa.
+   */
+  const executarConsultaEscopada = async (
+    job: FiscalQueueJob,
+  ): Promise<FiscalQueueExecutionResult> => {
+    const negadoConsulta = (code: string, mensagem: string): FiscalQueueExecutionResult => ({
+      kind: "terminal",
+      code,
+      mensagem,
+      simulado: false,
+      externalTransmissionAttempted: false,
+      providerInvoked: false,
+    })
+    const notaFiscalId = await resolverNotaFiscalIdDoDrill()
+    if (
+      job.storeId !== input.storeId ||
+      !notaFiscalId ||
+      String(job.notaFiscalId ?? "") !== notaFiscalId
+    ) {
+      return negadoConsulta(
+        "drill_consulta_fora_do_escopo",
+        "Consulta não pertence ao documento autorizado do drill.",
+      )
+    }
+    const windowStatus = evaluateContingencyHomologationWindow(windowConfig, clock())
+    if (!windowStatus.active) {
+      return negadoConsulta(
+        `drill_gate_${windowStatus.reason}`,
+        "Gate efêmero da contingência não está vigente; consulta externa bloqueada.",
+      )
+    }
+    const capability = contingencyDrillConsultationCapability(
+      windowConfig,
+      { jobId: input.jobId, storeId: input.storeId, notaFiscalId },
+      clock,
+    )
+    if (!capability || !capability.allowExternalProviderExecution) {
+      return negadoConsulta(
+        "drill_capability_indisponivel",
+        "Capability de consulta não nasceu da janela vigente; bloqueado.",
+      )
+    }
+    const executor = createUncertainStateJobExecutor({
+      persistence,
+      preparer: REFUSING_DRILL_PREPARER,
+      provider,
+      now: clock,
+      capability,
+    })
+    return executor(job)
+  }
 
   const execute = async (job: FiscalQueueJob): Promise<FiscalQueueExecutionResult> => {
     const negado = (code: string, mensagem: string): FiscalQueueExecutionResult => ({
@@ -258,6 +378,9 @@ export function createContingencyHomologationDrillWiring(input: {
       providerInvoked: false,
     })
     // 1 — tipo e coerência jobId/storeId (o caller só identifica o job).
+    if (job.tipo === "CONSULTA") {
+      return executarConsultaEscopada(job)
+    }
     if (job.tipo !== "CONTINGENCIA_TRANSMISSAO") {
       return negado("drill_tipo_nao_suportado", "Drill executa somente CONTINGENCIA_TRANSMISSAO.")
     }
@@ -320,6 +443,63 @@ export function createContingencyHomologationDrillWiring(input: {
         "SHA-256 do payload diverge dos bytes persistidos; transmissão recusada.",
       )
     }
+    // 5a — endpoint determinístico do catálogo (pré-rede, pré-one-shot).
+    const endpoint = selectSefazEndpoint({
+      uf: "SP",
+      ambiente: "HOMOLOGACAO",
+      servico: "NFeAutorizacao4",
+      versao: SEFAZ_LAYOUT_VERSAO,
+    })
+    if (!endpoint.ok) {
+      return negado("drill_endpoint_indisponivel", endpoint.mensagem)
+    }
+    // 5b — certificado ativo POR REFERÊNCIA (resolução, nunca material).
+    const certificado = await guardPorts.resolveActiveCertificate({ storeId: job.storeId })
+    if (!certificado.ok) {
+      return negado(
+        "certificado_indisponivel",
+        "Certificado A1 ativo indisponível para a loja-piloto; drill fail-closed.",
+      )
+    }
+    // 5c — XSD pré-one-shot (relatório 127): os MESMOS bytes, o worker canônico, atestação
+    // vinculada. Worker ausente, timeout, resposta divergente ou XML inválido ⇒ fail-closed
+    // SEM consumir o one-shot. Nenhum segundo validador existe.
+    const xsd = await validarXsd(document.xmlAssinado, {
+      adapter: input.deps?.xsdAdapter,
+      storeId: job.storeId,
+      jobId: `contingencia-drill:${job.id}`,
+      correlationId: `contingencia-drill:${job.id}`,
+    })
+    if (xsd.outcome !== "VALIDACAO_APROVADA" || xsd.status !== "xsd_ok") {
+      return negado(
+        XSD_OUTCOMES_INFRA.has(xsd.outcome) ? "drill_xsd_worker_indisponivel" : "drill_xsd_rejeitado",
+        `Validação XSD prévia falhou fechada (${xsd.outcome}); ativação NÃO foi consumida.`,
+      )
+    }
+    const engineOk =
+      xsd.engine !== null &&
+      xsd.engine.schemaPackage === XSD_SCHEMA_PACKAGE &&
+      xsd.engine.schemaManifestHash === OFFICIAL_XSD_MANIFEST_SHA256
+    if (!engineOk) {
+      return negado(
+        "drill_xsd_resposta_divergente",
+        "Resposta do worker XSD diverge do pacote/manifest esperados; ativação NÃO foi consumida.",
+      )
+    }
+    // Vinculação da atestação aos MESMOS bytes validados e transmitidos (hash recomputado;
+    // nunca presumido, nunca trocado). Reusada pelo guard 8 da mesma execução.
+    const hashValidado = fiscalBytesSha256(new TextEncoder().encode(document.xmlAssinado))
+    if (hashValidado !== actualHash) {
+      return negado(
+        "drill_bytes_divergentes",
+        "Atestação XSD divergiu dos bytes persistidos; ativação NÃO foi consumida.",
+      )
+    }
+    atestacaoDaExecucao = Object.freeze({
+      outcome: "VALIDACAO_APROVADA",
+      xmlSha256: hashValidado,
+      schemaVersion: XSD_SCHEMA_PACKAGE,
+    })
     // 6 — consumo one-shot ANTES da rede (replay/cold start/concorrência não retransmitem).
     const consumed = await consumeContingencyDrillActivation(
       ledgerClient,
@@ -373,10 +553,53 @@ export function createContingencyHomologationDrillWiring(input: {
     },
     execute,
   )
+  /**
+   * Aquisição da CONSULTA escopada (fallback): CAS sobre UM job escolhido antes, com as
+   * MESMAS condições de elegibilidade da fila, fixado a (loja, tipo CONSULTA,
+   * notaFiscalId do drill). Só alcançado quando o job de transmissão não é elegível — o
+   * drill aponta SEMPRE primeiro para o job autorizado.
+   */
+  const adquirirConsultaEscopada = async (
+    acquireInput: { now: Date; pausedStoreIds: string[]; workerId: string; leaseMs: number },
+  ) => {
+    if (!evaluateContingencyHomologationWindow(windowConfig, clock()).active) return null
+    const notaFiscalId = await resolverNotaFiscalIdDoDrill()
+    if (!notaFiscalId) return null
+    const candidato = await client.fiscalEmissaoJob.findFirst({
+      where: {
+        AND: [
+          { storeId: input.storeId, tipo: "CONSULTA", notaFiscalId },
+          eligibleWhere(acquireInput.now, acquireInput.pausedStoreIds),
+        ],
+      },
+      select: { id: true },
+      orderBy: [{ prioridade: "asc" }, { createdAt: "asc" }],
+    })
+    const candidatoId = record(candidato).id
+    if (typeof candidatoId !== "string" || !candidatoId) return null
+    const acquired = await client.fiscalEmissaoJob.updateMany({
+      where: {
+        AND: [
+          { id: candidatoId, storeId: input.storeId, tipo: "CONSULTA", notaFiscalId },
+          eligibleWhere(acquireInput.now, acquireInput.pausedStoreIds),
+        ],
+      },
+      data: {
+        status: "PROCESSANDO",
+        lockOwner: acquireInput.workerId,
+        lockedAt: acquireInput.now,
+        lockExpiresAt: new Date(acquireInput.now.getTime() + acquireInput.leaseMs),
+        tentativas: { increment: 1 },
+      },
+    })
+    if (acquired.count !== 1) return null
+    return candidatoId
+  }
   const scopedPorts: FiscalQueueWorkerPorts = {
     ...ports,
     // Aquisição restrita: CAS com as MESMAS condições de elegibilidade da fila,
-    // fixado ao (id, storeId, tipo) autorizado. Nenhum outro job é tocado.
+    // fixado ao (id, storeId, tipo) autorizado. Nenhum outro job é tocado. Fallback:
+    // a CONSULTA do MESMO documento do drill (leitura only, com janela vigente).
     acquireNextJob: async (acquireInput) => {
       const where = {
         AND: [
@@ -394,10 +617,16 @@ export function createContingencyHomologationDrillWiring(input: {
           tentativas: { increment: 1 },
         },
       })
-      if (acquired.count !== 1) return null
+      let jobIdBloqueado: string | null = null
+      if (acquired.count === 1) {
+        jobIdBloqueado = input.jobId
+      } else {
+        jobIdBloqueado = await adquirirConsultaEscopada(acquireInput)
+      }
+      if (!jobIdBloqueado) return null
       const locked = record(
         await client.fiscalEmissaoJob.findUnique({
-          where: { id: input.jobId },
+          where: { id: jobIdBloqueado },
           select: DRILL_JOB_SELECT,
         }),
       )
@@ -479,7 +708,12 @@ export async function executeContingencyHomologationDrillTransmission(
     }
   }
 
-  const wiring = createContingencyHomologationDrillWiring({ jobId, storeId, deps })
+  const wiring = createContingencyHomologationDrillWiring({
+    jobId,
+    storeId,
+    notaFiscalId: jobRow.notaFiscalId == null ? undefined : String(jobRow.notaFiscalId),
+    deps,
+  })
   const report = await drainFiscalQueue(
     {
       workerId:

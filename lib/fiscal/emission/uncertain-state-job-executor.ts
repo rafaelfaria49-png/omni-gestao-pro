@@ -80,6 +80,29 @@ function mensagemDeErroSegura(error: unknown): string {
 }
 
 /**
+ * Prova TIPADA de autorização externa do drill (GOAL 020 · relatório 127).
+ *
+ * Só existe quando a capability DESTA execução autoriza provider externo, o provider de fato
+ * foi invocado (proveniência tipada — não autodeclaração) e o desfecho é autorização com
+ * evidência fiscal completa já persistida. Execuções idempotentes (documento já autorizado,
+ * provider nem invocado) NÃO produzem prova: nenhum transporte externo aconteceu nelas.
+ */
+function provaDeAutorizacaoReal(input: {
+  job: FiscalQueueJob
+  capability: FiscalExternalExecutionCapability | undefined
+  providerInvoked: boolean
+}): Pick<
+  NonNullable<FiscalQueueExecutionResult["contingencyExternalAuthorization"]>,
+  "concedidaPor"
+> | null {
+  const capability = input.capability
+  if (!capability || capability.allowExternalProviderExecution !== true) return null
+  if (!input.providerInvoked) return null
+  if (input.job.tipo !== "CONTINGENCIA_TRANSMISSAO" && input.job.tipo !== "CONSULTA") return null
+  return { concedidaPor: capability.concedidaPor }
+}
+
+/**
  * Converte uma exceção do coordenador em desfecho de fila **preservando a proveniência real**
  * (bloqueio 2 da revisão cruzada do PR #44).
  *
@@ -246,6 +269,19 @@ export function createUncertainStateJobExecutor(
           detalhe: { consultationOutcome: "UNCERTAIN", uncertainCode: outcome.code },
         }
       }
+      /**
+       * Prova tipada (GOAL 020): só autorização REAL de consulta — provider invocado sob
+       * capability desta execução e evidência fiscal persistida — atravessa o freio GOAL-011.
+       * `not_found` e `rejected` NÃO produzem prova: o freio os trata como sempre tratou.
+       */
+      const prova =
+        outcome.kind === "authorized"
+          ? provaDeAutorizacaoReal({
+              job,
+              capability: dependencies.capability,
+              providerInvoked: auditoria.providerInvoked === true,
+            })
+          : null
       return {
         kind: "success",
         code: `consulta_${outcome.kind}`,
@@ -265,6 +301,17 @@ export function createUncertainStateJobExecutor(
             ? { requiresInutilizacao: outcome.requiresInutilizacao }
             : {}),
         },
+        ...(prova && outcome.kind === "authorized"
+          ? {
+              contingencyExternalAuthorization: {
+                kind: "consulta_autorizada" as const,
+                jobId: job.id,
+                storeId: job.storeId,
+                notaFiscalId: String(job.notaFiscalId ?? ""),
+                concedidaPor: prova.concedidaPor,
+              },
+            }
+          : {}),
       }
     }
     if (job.tipo !== "EMISSAO" && job.tipo !== "CONTINGENCIA_TRANSMISSAO") {
@@ -386,14 +433,40 @@ export function createUncertainStateJobExecutor(
         detalhe,
       }
     }
+    /**
+     * Prova tipada (GOAL 020): autorização REAL desta execução — provider invocado sob
+     * capability nascida do consumo one-shot da ativação do drill. O atalho idempotente
+     * (`idempotent`) não invoca provider e NÃO produz prova.
+     */
+    const provaAutorizacao =
+      outcome.kind === "authorized" && !outcome.idempotent
+        ? provaDeAutorizacaoReal({
+            job,
+            capability: dependencies.capability,
+            providerInvoked: invocado.providerInvoked === true,
+          })
+        : null
     return {
       kind: "success",
       code: outcome.idempotent ? "ja_autorizada" : "autorizada",
       mensagem: outcome.idempotent
         ? "Documento já autorizado."
-        : "Autorização simulada concluída.",
+        : invocado.simulado
+          ? "Autorização simulada concluída."
+          : "Autorização real concluída com evidência fiscal completa.",
       ...invocado,
       detalhe,
+      ...(provaAutorizacao
+        ? {
+            contingencyExternalAuthorization: {
+              kind: "transmissao_autorizada" as const,
+              jobId: job.id,
+              storeId: job.storeId,
+              notaFiscalId: String(job.notaFiscalId ?? ""),
+              concedidaPor: provaAutorizacao.concedidaPor,
+            },
+          }
+        : {}),
     }
   }
 }

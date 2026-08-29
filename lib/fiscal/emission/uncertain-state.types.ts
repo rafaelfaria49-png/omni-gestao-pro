@@ -311,6 +311,13 @@ export interface UncertainStateFiscalProvider {
   }): Promise<FiscalTransmissionResult>
   consult(input: {
     document: FiscalDocumentIdentity
+    /**
+     * NFe assinada PERSISTIDA do documento em curso (GOAL 020 · B-3, aditivo e opcional).
+     * Habilita a composição canônica de `nfeProc` quando a resposta de consulta traz apenas
+     * `protNFe`; nunca reconstrói o documento — são os mesmos bytes persistidos e conferidos.
+     */
+    xmlAssinado?: string | null
+    /** Coletor desta execução. Ausente ⇒ o provider não tem onde reportar contato externo. */
     provenance?: FiscalExecutionProvenanceSink
   }): Promise<FiscalConsultationResult>
 }

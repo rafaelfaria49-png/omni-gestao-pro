@@ -67,6 +67,15 @@ import {
   type SefazTransportErrorCode,
 } from "./sefaz-transport.types"
 import type { SefazServico } from "./sefaz-endpoint-catalog"
+import { composeEnviNFeRequest } from "./sefaz-lote-envinfe"
+import type { SefazEnviNFeRejectionCode } from "./sefaz-lote-envinfe"
+import { buildConsSitNFePayload } from "./sefaz-consulta-payload"
+import type { SefazConsultaPayloadRejectionCode } from "./sefaz-consulta-payload"
+import {
+  parseSefazSoapResponse,
+  toFiscalConsultationResult,
+  toFiscalTransmissionResult,
+} from "./sefaz-response-parser"
 import {
   executarInutilizacaoSefaz,
   type InutilizacaoSignPort,
@@ -85,9 +94,15 @@ export const SEFAZ_DEFAULT_TIMEOUT_MS = SEFAZ_DEFAULT_CONNECTION_TIMEOUT_MS
  * é a única saída honesta: envelopar bytes vazios produziria uma requisição sem conteúdo
  * fiscal, e fabricar o payload seria implementar o slice seguinte por antecipação.
  */
+/**
+ * Códigos de recusa ESPECÍFICOS do provider (GOAL 020 · relatório 127). Os antigos
+ * `resposta_sem_parser_neste_slice`/`consulta_sem_payload_neste_slice` foram eliminados: o
+ * parser oficial existente classifica a resposta recebida e o payload de consulta é o
+ * `consSitNFe` canônico — uma resposta HTTP não é mais descartada por omissão.
+ */
 export type SefazAdapterProviderCode =
-  | "consulta_sem_payload_neste_slice"
-  | "resposta_sem_parser_neste_slice"
+  | SefazEnviNFeRejectionCode
+  | SefazConsultaPayloadRejectionCode
 
 export type SefazAdapterBlockCode =
   | SefazGuardCode
@@ -170,6 +185,15 @@ function texto(v: unknown): string {
   return typeof v === "string" ? v.trim() : ""
 }
 
+/** Decodificação ESTRITA para leitura dos bytes persistidos (nunca transformação). */
+function decodificarUtf8Estrito(bytes: Uint8Array): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes)
+  } catch {
+    return null
+  }
+}
+
 export class SefazDiretoProvider implements UncertainStateFiscalProvider, FiscalProvider {
   readonly tipo = PROVIDER
   /**
@@ -211,37 +235,33 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
   // ── P2 — superfície de transmissão (ADR-0017/0020) ────────────────────────────────────
 
   /**
-   * Roda os guards D4, monta o envelope e entrega ao transporte. Com o transporte offline
-   * (default) SEMPRE termina em `SefazAdapterBlockedError` — nunca em desfecho fabricado.
+   * Roda os guards D4, compõe o `enviNFe` oficial (NFe assinada byte-idêntica no interior),
+   * monta o envelope e entrega ao transporte. A resposta recebida é CLASSIFICADA pelo parser
+   * oficial (`parseSefazSoapResponse`, serviço explícito, chave esperada, corpo bounded,
+   * matriz cStat) — uma resposta HTTP nunca é mais descartada por omissão.
    */
   async transmit(
     input: Parameters<UncertainStateFiscalProvider["transmit"]>[0],
   ): Promise<FiscalTransmissionResult> {
-    await this.executarAteOTransporte({
+    return this.executarAteOTransporte({
       document: input.document,
       exactBytes: input.exactBytes,
       bytesSha256: input.bytesSha256,
       servico: "NFeAutorizacao4",
       provenance: input.provenance,
     })
-    // Código morto INTENCIONAL: `executarAteOTransporte` devolve `Promise<never>` e sempre
-    // lança. Este `throw` existe apenas para satisfazer a assinatura `FiscalTransmissionResult`
-    // sem fabricar um desfecho — quando 016D-B/016D-C trouxerem parser e rede, é AQUI que o
-    // desfecho real passa a ser construído.
-    throw new SefazAdapterBlockedError(
-      "transporte_offline_bloqueado",
-      "Transmissão SEFAZ indisponível no slice offline 016D-A.",
-    )
   }
 
   /**
-   * Consulta por chave. Mesma disciplina: guards aplicáveis → transporte offline ⇒ erro
-   * estável. Nenhum `cStat` é interpretado aqui (a matriz pertence ao 016D-B).
+   * Consulta POR CHAVE (`NFeConsultaProtocolo4`): guards (modo consulta) → payload
+   * `consSitNFe` canônico (apenas chave + tpAmb 2 + xServ; nenhuma numeração, nenhum documento
+   * reconstruído) → envelope → transporte → parser oficial → `toFiscalConsultationResult`.
+   * `217` é `NOT_FOUND` — jamais retransmissão; timeout/incerteza segue a máquina existente.
    */
   async consult(
     input: Parameters<UncertainStateFiscalProvider["consult"]>[0],
   ): Promise<FiscalConsultationResult> {
-    // Guards D4 primeiro: a recusa por falta de payload nunca pode mascarar um documento fora
+    // Guards D4 primeiro: a recusa por payload nunca pode mascarar um documento fora
     // do piloto, de ambiente errado ou sem certificado.
     const guards = await runSefazPreTransportGuards({
       document: input.document,
@@ -252,21 +272,53 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     if (!guards.ok) {
       throw new SefazAdapterBlockedError(guards.codigo, guards.mensagem)
     }
-    /**
-     * Sem construtor de `consSitNFe` (016D-B), não existem bytes fiscais a envelopar. Envelopar
-     * vazio produziria `<nfeDadosMsg/>` — uma requisição sem conteúdo — e fabricar o payload
-     * seria antecipar o slice seguinte. A recusa é o desfecho honesto; nenhum socket é aberto
-     * em nenhum dos casos.
-     */
-    throw new SefazAdapterBlockedError(
-      "consulta_sem_payload_neste_slice",
-      "Consulta SEFAZ indisponível no slice offline 016D-A: o payload consSitNFe pertence ao 016D-B.",
-    )
+    const payload = buildConsSitNFePayload({ chaveAcesso: input.document.chaveAcesso })
+    if (!payload.ok) {
+      throw new SefazAdapterBlockedError(payload.codigo, payload.mensagem)
+    }
+    const envelope = buildSefazSoap12Envelope({
+      servico: "NFeConsultaProtocolo4",
+      exactBytes: payload.bytes,
+    })
+    if (!envelope.ok) {
+      throw new SefazAdapterBlockedError(envelope.codigo, envelope.mensagem)
+    }
+    const outcome = await this.transport.send({
+      endpoint: guards.endpoint,
+      contentType: envelope.envelope.contentType,
+      bodyBytes: envelope.envelope.bytes,
+      correlationId: guards.correlationId,
+      certificate: {
+        storeId: input.document.storeId,
+        blobRef: guards.certificado.blobRef,
+        senhaRef: guards.certificado.senhaRef,
+      },
+      connectionTimeoutMs: this.connectionTimeoutMs,
+      totalDeadlineMs: this.totalDeadlineMs,
+    })
+    if (outcome.externalTransmissionAttempted) {
+      input.provenance?.recordExternalTransmissionAttempted()
+    }
+    if (!outcome.ok) {
+      throw new SefazAdapterBlockedError(
+        outcome.codigo,
+        outcome.mensagem,
+        outcome.externalTransmissionAttempted,
+      )
+    }
+    const classificacao = parseSefazSoapResponse({
+      servico: "NFeConsultaProtocolo4",
+      body: outcome.bodyBytes,
+      chaveAcessoEsperada: input.document.chaveAcesso,
+      nfeXmlAssinado: input.xmlAssinado ?? null,
+    })
+    return toFiscalConsultationResult(classificacao)
   }
 
   /**
-   * Caminho comum: guards D4 → envelope SOAP → transporte. Lança no primeiro bloqueio.
-   * Nenhum efeito colateral: não persiste, não consome numeração, não toca venda.
+   * Caminho comum: guards D4 → `enviNFe` (transmissão) → envelope SOAP → transporte →
+   * parser oficial da resposta. Bloqueio antes do transporte lança; resposta recebida é
+   * SEMPRE classificada pelo contrato existente — nunca descartada por omissão.
    */
   private async executarAteOTransporte(input: {
     document: Parameters<UncertainStateFiscalProvider["transmit"]>[0]["document"]
@@ -275,7 +327,7 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     servico: SefazServico
     modo?: SefazGuardMode
     provenance?: FiscalExecutionProvenanceSink
-  }): Promise<never> {
+  }): Promise<FiscalTransmissionResult> {
     const guards = await runSefazPreTransportGuards({
       document: input.document,
       exactBytes: input.exactBytes,
@@ -288,11 +340,32 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
       throw new SefazAdapterBlockedError(guards.codigo, guards.mensagem)
     }
 
+    // Wire oficial do leiaute 4.00 (B-1): NFeAutorizacao4 exige `enviNFe`. A NFe assinada
+    // entra BYTE-IDÊNTICA no interior — scaffolding de requisição, nunca realimenta os bytes
+    // persistidos nem o hash conferido pelos guards.
+    const bytesFiscais = input.exactBytes ?? new Uint8Array()
+    let bytesNoEnvelope: Uint8Array = bytesFiscais
+    let nfeXmlAssinado: string | null = null
+    if (input.servico === "NFeAutorizacao4") {
+      const envi = composeEnviNFeRequest({ exactBytes: bytesFiscais })
+      if (!envi.ok) {
+        throw new SefazAdapterBlockedError(envi.codigo, envi.mensagem)
+      }
+      bytesNoEnvelope = envi.bytes
+      nfeXmlAssinado = decodificarUtf8Estrito(bytesFiscais)
+      if (nfeXmlAssinado === null) {
+        throw new SefazAdapterBlockedError(
+          "envinfe_bytes_nao_utf8",
+          "Bytes fiscais não são UTF-8 válido; composição recusada.",
+        )
+      }
+    }
+
     // Envelope fail-closed: bytes com BOM, não-UTF8 ou com declaração XML são RECUSADOS,
     // nunca "consertados" — consertar mudaria os bytes persistidos (ADR-0017/0018).
     const envelope = buildSefazSoap12Envelope({
       servico: input.servico,
-      exactBytes: input.exactBytes ?? new Uint8Array(),
+      exactBytes: bytesNoEnvelope,
     })
     if (!envelope.ok) {
       throw new SefazAdapterBlockedError(envelope.codigo, envelope.mensagem)
@@ -316,20 +389,28 @@ export class SefazDiretoProvider implements UncertainStateFiscalProvider, Fiscal
     if (outcome.externalTransmissionAttempted) {
       input.provenance?.recordExternalTransmissionAttempted()
     }
-    if (outcome.ok) {
-      // O foundation 003 prova somente o canal. Sem contrato WSDL/parser oficial (H-9/H-10),
-      // uma resposta recebida não pode ser transformada em desfecho fiscal.
+    if (!outcome.ok) {
+      // Falha técnica de transporte não é rejeição fiscal: o desfecho segue incerto pela
+      // máquina de estado (consulta deduplicada garante a resolução).
       throw new SefazAdapterBlockedError(
-        "resposta_sem_parser_neste_slice",
-        "Resposta HTTPS recebida, mas interpretação fiscal permanece bloqueada por H-9/H-10.",
-        true,
+        outcome.codigo,
+        outcome.mensagem,
+        outcome.externalTransmissionAttempted,
       )
     }
-    throw new SefazAdapterBlockedError(
-      outcome.codigo,
-      outcome.mensagem,
-      outcome.externalTransmissionAttempted,
-    )
+    /**
+     * Contrato oficial suportado ⇒ a resposta é classificada AGORA. `AUTHORIZED` só nasce com
+     * evidência fiscal completa (cStat + protocolo + XML autorizado vinculado — nativo ou
+     * composto canonicamente); rejeição, `103/105`, throttle e incerteza seguem a matriz cStat
+     * existente e a máquina de estados.
+     */
+    const classificacao = parseSefazSoapResponse({
+      servico: input.servico,
+      body: outcome.bodyBytes,
+      chaveAcessoEsperada: input.document.chaveAcesso,
+      nfeXmlAssinado,
+    })
+    return toFiscalTransmissionResult(classificacao)
   }
 
   // ── P1 — configuração e status por instanciação direta (ADR-0020 §2.4) ────────────────

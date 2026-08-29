@@ -376,6 +376,43 @@ export function contingencyDrillCapability(
   }
 }
 
+/**
+ * Capability de CONSULTA do drill (GOAL 020 · relatório 127 · B-4) — LEITURA only.
+ *
+ * Diferente da capability de transmissão em dois pontos deliberados:
+ *  - NÃO consome o one-shot: consulta por chave não transmite, não consome
+ *    numeração e é a autoridade de reconciliação da máquina 017 — cobrar a
+ *    ativação tornaria o pós-drill incerto irrecuperável;
+ *  - nasce da JANELA vigente por execução (dormente ⇒ null), escopada ao
+ *    (job do drill, loja, notaFiscalId do documento) — nunca global.
+ *
+ * A operação que ela autoriza continua presa aos guards D4 (modo consulta), ao
+ * transporte injetado e ao freio GOAL-011 — consulta autorizada só atravessa
+ * com a prova tipada do executor.
+ */
+export function contingencyDrillConsultationCapability(
+  config: ContingencyHomologationWindowConfig,
+  input: {
+    readonly jobId: string
+    readonly storeId: string
+    readonly notaFiscalId: string
+  },
+  clock: () => Date = () => new Date(),
+): FiscalExternalExecutionCapability | null {
+  const status = evaluateContingencyHomologationWindow(config, clock())
+  if (!status.active) return null
+  const jobId = input.jobId.trim()
+  const storeId = input.storeId.trim()
+  const notaFiscalId = input.notaFiscalId.trim()
+  if (!jobId || !storeId || !notaFiscalId) return null
+  return {
+    allowExternalProviderExecution: true,
+    concedidaPor:
+      `contingencia-drill:v1:consulta:` +
+      sha256Hex(`${status.window.activationId}:${jobId}:${notaFiscalId}`).slice(0, 12),
+  }
+}
+
 /** Seam somente de teste: config e relógio controlados, mesmo ledger. */
 export function createContingencyDrillGateTestHarness(options: {
   readonly client: ContingencyDrillLedgerClient

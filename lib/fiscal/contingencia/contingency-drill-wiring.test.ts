@@ -22,6 +22,13 @@ import {
   contingencyDrillDedupeKey,
   type ContingencyHomologationWindowConfig,
 } from "./contingency-homologation-gate"
+import {
+  XSD_SCHEMA_PACKAGE,
+  type XsdValidationAdapter,
+  type XsdValidationOutcome,
+  type XsdValidationRequest,
+} from "@/lib/fiscal/xsd"
+import { OFFICIAL_XSD_MANIFEST_SHA256 } from "@/lib/fiscal/xsd/official-package"
 
 type Row = Record<string, unknown>
 
@@ -107,6 +114,7 @@ function createFakeClient(options: {
   notaStatus?: string
   configOverrides?: Row
   jobOverrides?: Row
+  notaOverrides?: Row
 } = {}) {
   const configRow: Row = {
     storeId: LOJA_PILOTO,
@@ -136,6 +144,7 @@ function createFakeClient(options: {
       digestValue: null,
       qrCodeData: null,
       urlConsulta: null,
+      ...options.notaOverrides,
     },
   ]
   const jobs: Row[] = [
@@ -321,15 +330,47 @@ function captureTransport() {
   }
 }
 
+/** Adapter XSD APROVADO — ecoa o envelope do request com o pacote/manifest oficiais. */
+function xsdAdapterAprovado(): XsdValidationAdapter {
+  const validate = vi.fn<XsdValidationAdapter["validate"]>(async () => ({
+    valid: true,
+    outcome: "VALIDACAO_APROVADA",
+    issues: [],
+    durationMs: 1,
+    engine: {
+      name: "xmllint",
+      xmllintVersion: "teste",
+      libxml2Version: "teste",
+      binaryHash: "a".repeat(64),
+      schemaPackage: XSD_SCHEMA_PACKAGE,
+      schemaManifestHash: OFFICIAL_XSD_MANIFEST_SHA256,
+    },
+  }))
+  return { validate }
+}
+
+/** Adapter XSD com desfecho de INFRAESTRUTURA (worker ausente/timeout/divergente). */
+function xsdAdapterInfraestrutura(outcome: XsdValidationOutcome = "WORKER_INDISPONIVEL"): XsdValidationAdapter {
+  return {
+    validate: vi.fn(async () => ({
+      valid: false as const,
+      outcome,
+      issues: [{ message: "falha de infraestrutura de teste", category: "INFRASTRUCTURE" as const }],
+      durationMs: 0,
+      engine: null,
+    })),
+  }
+}
+
 function drillDeps(fake: FakeClient, overrides: Row = {}): ContingencyDrillWiringDeps {
   return {
     client: fake as never,
     ledgerClient: fake as never,
     window: JANELA_ATIVA,
     clock: () => AGORA,
-    readXsdAttestation: async () => ({
+    readXsdAttestation: async (i: { bytesSha256: string }) => ({
       outcome: "VALIDACAO_APROVADA",
-      xmlSha256: XML_SHA256,
+      xmlSha256: i.bytesSha256,
       schemaVersion: "PL_010e_v1.02/NFe/nfe_v4.00.xsd",
     }),
     resolveCertificate: async () => ({
@@ -341,6 +382,7 @@ function drillDeps(fake: FakeClient, overrides: Row = {}): ContingencyDrillWirin
       provider: "env-piloto-teste",
     }),
     transport: captureTransport() as never,
+    xsdAdapter: xsdAdapterAprovado(),
     ...overrides,
   }
 }
@@ -509,32 +551,129 @@ describe("createContingencyHomologationDrillWiring — guards por execução", (
     expect((wiring as unknown as { ports: { execute: unknown } }).ports).toBeTruthy()
   })
 
-  it("XSD ausente: guard 8 bloqueia SEM transporte (consumo one-shot já ocorreu)", async () => {
+  it("XSD REJEITADO no pre-flight: fail-closed SEM consumir o one-shot e SEM rede (relatório 127)", async () => {
     const { client, tables } = createFakeClient()
     const transport = captureTransport()
     const wiring = createContingencyHomologationDrillWiring({
       jobId: "job-drill-1",
       storeId: LOJA_PILOTO,
-      deps: drillDeps(client, { transport: transport as never, readXsdAttestation: undefined }),
+      deps: drillDeps(client, {
+        transport: transport as never,
+        xsdAdapter: {
+          validate: vi.fn(async () => ({
+            valid: false as const,
+            outcome: "XML_INVALIDO" as const,
+            issues: [{ message: "Elemento não esperado", category: "XSD_VALIDATION" as const }],
+            durationMs: 1,
+            engine: {
+              name: "xmllint" as const,
+              xmllintVersion: "t",
+              libxml2Version: "t",
+              binaryHash: "a".repeat(64),
+              schemaPackage: XSD_SCHEMA_PACKAGE,
+              schemaManifestHash: OFFICIAL_XSD_MANIFEST_SHA256,
+            },
+          })),
+        },
+      }),
     })
     const result = await wiring.execute(JOB_OK as never)
-    // O provider foi invocado e lançou antes do transporte: desfecho incerto
-    // conservador (consulta 019 é a única autoridade), com a mensagem do guard.
     expect(result).toMatchObject({
-      kind: "uncertain",
-      code: "execucao_fiscal_interrompida",
+      kind: "terminal",
+      code: "drill_xsd_rejeitado",
       externalTransmissionAttempted: false,
-      mensagem: expect.stringContaining("validação XSD"),
     })
+    expect(transport.send).not.toHaveBeenCalled()
+    // ⛔ NENHUM consumo de ativação: o one-shot permanece intacto.
+    const ledger = (tables.fiscalEmissaoJob as Row[]).filter(
+      (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
+    )
+    expect(ledger).toHaveLength(0)
+    // A falha pré-one-shot NÃO destrói o drill: com XSD aprovado, a ativação é consumível.
+    const segunda = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      deps: drillDeps(client, { transport: transport as never }),
+    })
+    await segunda.execute(JOB_OK as never)
+    expect(transport.send).toHaveBeenCalledTimes(1)
+  })
+
+  it("worker XSD INDISPONÍVEL no pre-flight: fail-closed SEM consumir o one-shot", async () => {
+    const { client, tables } = createFakeClient()
+    const transport = captureTransport()
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      deps: drillDeps(client, {
+        transport: transport as never,
+        xsdAdapter: xsdAdapterInfraestrutura("WORKER_INDISPONIVEL"),
+      }),
+    })
+    const result = await wiring.execute(JOB_OK as never)
+    expect(result).toMatchObject({ kind: "terminal", code: "drill_xsd_worker_indisponivel" })
     expect(transport.send).not.toHaveBeenCalled()
     const ledger = (tables.fiscalEmissaoJob as Row[]).filter(
       (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
     )
-    expect(ledger).toHaveLength(1)
+    expect(ledger).toHaveLength(0)
   })
 
-  it("A1 ausente: guard 10 bloqueia SEM transporte", async () => {
+  it("resposta do worker XSD DIVERGENTE do pacote esperado: fail-closed SEM consumir o one-shot", async () => {
+    const { client, tables } = createFakeClient()
+    const transport = captureTransport()
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      deps: drillDeps(client, {
+        transport: transport as never,
+        xsdAdapter: {
+          validate: vi.fn(async () => ({
+            valid: true as const,
+            outcome: "VALIDACAO_APROVADA" as const,
+            issues: [],
+            durationMs: 1,
+            engine: {
+              name: "xmllint" as const,
+              xmllintVersion: "t",
+              libxml2Version: "t",
+              binaryHash: "a".repeat(64),
+              schemaPackage: "PACOTE-ERRADO",
+              schemaManifestHash: OFFICIAL_XSD_MANIFEST_SHA256,
+            },
+          })),
+        },
+      }),
+    })
+    const result = await wiring.execute(JOB_OK as never)
+    expect(result).toMatchObject({ kind: "terminal", code: "drill_xsd_resposta_divergente" })
+    expect(transport.send).not.toHaveBeenCalled()
+    const ledger = (tables.fiscalEmissaoJob as Row[]).filter(
+      (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
+    )
+    expect(ledger).toHaveLength(0)
+  })
+
+  it("XSD aprovado ANTES do one-shot: request ao worker carrega os MESMOS bytes/hash", async () => {
     const { client } = createFakeClient()
+    const transport = captureTransport()
+    const adapter = xsdAdapterAprovado()
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      deps: drillDeps(client, { transport: transport as never, xsdAdapter: adapter }),
+    })
+    await wiring.execute(JOB_OK as never)
+    const mockValidate = adapter.validate as unknown as { mock: { calls: unknown[][] } }
+    const request = mockValidate.mock.calls[0]?.[0] as XsdValidationRequest
+    expect(request.xmlPayload).toBe(XML_CONTINGENCIA)
+    expect(request.xmlSha256).toBe(XML_SHA256)
+    expect(request.schemaVersion).toBe(XSD_SCHEMA_PACKAGE)
+    expect(request.schemaManifestHash).toBe(OFFICIAL_XSD_MANIFEST_SHA256)
+  })
+
+  it("A1 indisponível no pre-flight: fail-closed ANTES do one-shot (sem rede, sem ledger)", async () => {
+    const { client, tables } = createFakeClient()
     const transport = captureTransport()
     const wiring = createContingencyHomologationDrillWiring({
       jobId: "job-drill-1",
@@ -546,11 +685,16 @@ describe("createContingencyHomologationDrillWiring — guards por execução", (
     })
     const result = await wiring.execute(JOB_OK as never)
     expect(result).toMatchObject({
-      kind: "uncertain",
-      code: "execucao_fiscal_interrompida",
-      mensagem: expect.stringContaining("Certificado A1 ativo indisponível"),
+      kind: "terminal",
+      code: "certificado_indisponivel",
+      externalTransmissionAttempted: false,
+      providerInvoked: false,
     })
     expect(transport.send).not.toHaveBeenCalled()
+    const ledger = (tables.fiscalEmissaoJob as Row[]).filter(
+      (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
+    )
+    expect(ledger).toHaveLength(0)
   })
 })
 
@@ -661,5 +805,308 @@ describe("executeContingencyHomologationDrillTransmission — runner + aquisiç�
     expect(outros?.status).toBe("PENDENTE")
     expect(outros?.lockOwner).toBeNull()
     expect(outros?.tentativas).toBe(0)
+  })
+})
+
+/* ========================================================================== *
+ * GOAL 020 · relatório 127 — e2e autorizado + consulta escopada do drill
+ * ========================================================================== */
+
+const CHAVE_DRILL = "3".repeat(44)
+const XML_AUTORIZAVEL =
+  `<NFe xmlns="http://www.portalfiscal.inf.br/nfe">` +
+  `<infNFe Id="NFe${CHAVE_DRILL}" versao="4.00">` +
+  `<ide><tpAmb>2</tpAmb><tpEmis>9</tpEmis></ide>` +
+  `</infNFe></NFe>`
+const XML_AUTORIZAVEL_SHA = createHash("sha256").update(XML_AUTORIZAVEL).digest("hex")
+
+function soapAutorizacaoMock(): string {
+  return (
+    `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body>` +
+    `<nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">` +
+    `<retEnviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">` +
+    `<tpAmb>2</tpAmb><cStat>104</cStat><xMotivo>Lote processado</xMotivo>` +
+    `<protNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><infProt>` +
+    `<chNFe>${CHAVE_DRILL}</chNFe><cStat>100</cStat>` +
+    `<xMotivo>Autorizado o uso da NF-e</xMotivo><nProt>135260000000001</nProt>` +
+    `</infProt></protNFe></retEnviNFe>` +
+    `</nfeResultMsg></env:Body></env:Envelope>`
+  )
+}
+
+function soapConsultaAutorizadaMock(): string {
+  return (
+    `<env:Envelope xmlns:env="http://www.w3.org/2003/05/soap-envelope"><env:Body>` +
+    `<nfeResultMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeConsultaProtocolo4">` +
+    `<retConsSitNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">` +
+    `<tpAmb>2</tpAmb><xServ>CONSULTAR</xServ>` +
+    `<cStat>100</cStat><xMotivo>Autorizado o uso da NF-e</xMotivo>` +
+    `<protNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><infProt>` +
+    `<chNFe>${CHAVE_DRILL}</chNFe><cStat>100</cStat>` +
+    `<xMotivo>Autorizado o uso da NF-e</xMotivo><nProt>135260000000001</nProt>` +
+    `</infProt></protNFe></retConsSitNFe>` +
+    `</nfeResultMsg></env:Body></env:Envelope>`
+  )
+}
+
+function transportComResposta(body: string) {
+  return {
+    permiteRede: true as const,
+    send: vi.fn(async () => ({
+      ok: true as const,
+      classification: "RESPONSE_RECEIVED" as const,
+      httpStatus: 200,
+      contentType: "application/soap+xml; charset=utf-8",
+      bodyBytes: new TextEncoder().encode(body),
+      externalTransmissionAttempted: true as const,
+    })),
+  }
+}
+
+describe("GOAL 020 · drill e2e autorizado — freio atravessado SOMENTE com prova tipada", () => {
+  it("resposta autorizada realística ⇒ job CONCLUIDO, nota AUTORIZADA, bytes e número intactos", async () => {
+    const { client, tables } = createFakeClient({
+      notaOverrides: { xmlAssinado: XML_AUTORIZAVEL },
+      jobOverrides: {
+        payload: {
+          version: 1,
+          operation: "CONTINGENCIA_TRANSMISSAO",
+          document: { bytesSha256: XML_AUTORIZAVEL_SHA },
+        },
+      },
+    })
+    const transport = transportComResposta(soapAutorizacaoMock())
+    const report = await executeContingencyHomologationDrillTransmission(
+      { jobId: "job-drill-1", storeId: LOJA_PILOTO },
+      drillDeps(client, { transport: transport as never }),
+    )
+    expect(report.ok).toBe(true)
+    expect(report.outcome?.status).toBe("concluido")
+    expect(transport.send).toHaveBeenCalledTimes(1)
+
+    const nota = (tables.notaFiscal as Row[])[0]
+    expect(nota.status).toBe("AUTORIZADA")
+    expect(nota.protocolo).toBe("135260000000001")
+    // SAME_XML_BYTES: os bytes persistidos não mudaram; o XML autorizado é o nfeProc
+    // canônico contendo a NFe assinada byte-idêntica.
+    expect(nota.xmlAssinado).toBe(XML_AUTORIZAVEL)
+    expect(String(nota.xmlAutorizado).includes(XML_AUTORIZAVEL)).toBe(true)
+    // Zero renumeração: numero/serie nunca foram tocados.
+    expect(nota.numero).toBe(42)
+    expect(nota.serie).toBe(1)
+
+    // One-shot consumido EXATAMENTE uma vez.
+    const ledger = (tables.fiscalEmissaoJob as Row[]).filter(
+      (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
+    )
+    expect(ledger).toHaveLength(1)
+    const jobRow = (tables.fiscalEmissaoJob as Row[]).find((j) => j.id === "job-drill-1")
+    expect(jobRow?.status).toBe("CONCLUIDO")
+  })
+
+  it("pós-one-shot falho: replay na MESMA ativação e em NOVA ativação NÃO retransmitem (fail-closed)", async () => {
+    const { client, tables } = createFakeClient()
+    // Primeira ativação: one-shot consumido; o transporte recusa (falha pré-rede pós-consumo).
+    const primeira = await executeContingencyHomologationDrillTransmission(
+      { jobId: "job-drill-1", storeId: LOJA_PILOTO },
+      drillDeps(client),
+    )
+    expect(primeira.outcome?.status).toBe("falha")
+    const ledgerAntes = (tables.fiscalEmissaoJob as Row[]).filter(
+      (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
+    )
+    expect(ledgerAntes).toHaveLength(1)
+
+    // MESMA ativação, nova instância (cold start): one-shot já consumido ⇒ nada é tocado.
+    const replayTransport = captureTransport()
+    const replay = await executeContingencyHomologationDrillTransmission(
+      { jobId: "job-drill-1", storeId: LOJA_PILOTO },
+      drillDeps(client, { transport: replayTransport as never }),
+    )
+    expect(replayTransport.send).not.toHaveBeenCalled()
+    expect(replay.ok).toBe(false)
+
+    // NOVA ativação (novo activationId): a transmissão está FALHA e o documento TRANSMITINDO.
+    // O único item que se move é a CONSULTA do documento (leitura) — nenhuma retransmissão.
+    const novaAtivacaoTransport = captureTransport()
+    const nova = await executeContingencyHomologationDrillTransmission(
+      { jobId: "job-drill-1", storeId: LOJA_PILOTO },
+      drillDeps(client, {
+        transport: novaAtivacaoTransport as never,
+        window: {
+          activationId: "contingencia-drill-20260901-1205z-abcdef654321",
+          notBeforeUtc: "2026-09-01T12:04:00Z",
+          expiresAtUtc: "2026-09-01T12:09:00Z",
+        },
+      } as ContingencyDrillWiringDeps),
+    )
+    expect(nova.ok).toBe(false)
+    expect(novaTransportNaoRetransmitiu(nova, novaAtivacaoTransport))
+    const ledgerDepois = (tables.fiscalEmissaoJob as Row[]).filter(
+      (j) => typeof j.dedupeKey === "string" && j.dedupeKey.startsWith("fiscal:contingencia:drill:v1:"),
+    )
+    expect(ledgerDepois).toHaveLength(1)
+  })
+
+  function novaTransportNaoRetransmitiu(
+    report: { ok: boolean; outcome: { status: string } | null },
+    transport: { send: ReturnType<typeof vi.fn> },
+  ): boolean {
+    expect(report.ok).toBe(false)
+    expect(report.outcome?.status).not.toBe("concluido")
+    expect(transport.send).not.toHaveBeenCalled()
+    return true
+  }
+})
+
+describe("GOAL 020 · consulta escopada do drill — reconciliação executável", () => {
+  function jobConsulta(overrides: Row = {}): Row {
+    return {
+      id: "job-consulta-1",
+      storeId: LOJA_PILOTO,
+      vendaId: "venda-drill",
+      notaFiscalId: "nota-drill",
+      tipo: "CONSULTA",
+      status: "PENDENTE",
+      tentativas: 0,
+      maxTentativas: 5,
+      proximaTentativaEm: null,
+      prioridade: 0,
+      lockOwner: null,
+      lockedAt: null,
+      lockExpiresAt: null,
+      dedupeKey: "fiscal:consulta:v1:nota:nota-drill",
+      payload: { version: 1 },
+      ultimoErro: null,
+      concluidoEm: null,
+      createdAt: new Date("2026-09-01T12:05:30Z"),
+      updatedAt: new Date("2026-09-01T12:05:30Z"),
+      ...overrides,
+    }
+  }
+
+  it("CONSULTA do MESMO documento com resposta autorizada ⇒ CONCLUIDO (prova de consulta)", async () => {
+    const { client, tables } = createFakeClient({
+      notaStatus: "TRANSMITINDO",
+      notaOverrides: { xmlAssinado: XML_AUTORIZAVEL },
+      jobOverrides: {
+        status: "CONCLUIDO",
+        concluidoEm: new Date("2026-09-01T12:05:20Z"),
+        payload: {
+          version: 1,
+          operation: "CONTINGENCIA_TRANSMISSAO",
+          document: { bytesSha256: XML_AUTORIZAVEL_SHA },
+        },
+      },
+    })
+    ;(tables.fiscalEmissaoJob as Row[]).push(jobConsulta())
+
+    const transport = transportComResposta(soapConsultaAutorizadaMock())
+    const report = await executeContingencyHomologationDrillTransmission(
+      { jobId: "job-drill-1", storeId: LOJA_PILOTO },
+      drillDeps(client, { transport: transport as never }),
+    )
+    // O job de transmissão não é elegível; o fallback drenou a CONSULTA do MESMO documento.
+    expect(report.ok).toBe(true)
+    expect(transport.send).toHaveBeenCalledTimes(1)
+    const consultaRow = (tables.fiscalEmissaoJob as Row[]).find((j) => j.id === "job-consulta-1")
+    expect(consultaRow?.status).toBe("CONCLUIDO")
+    const nota = (tables.notaFiscal as Row[])[0]
+    expect(nota.status).toBe("AUTORIZADA")
+    expect(nota.xmlAssinado).toBe(XML_AUTORIZAVEL)
+  })
+
+  it("CONSULTA de OUTRO documento é terminal negada (fora do escopo do drill)", async () => {
+    const { client } = createFakeClient()
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      notaFiscalId: "nota-drill",
+      deps: drillDeps(client),
+    })
+    const result = await wiring.execute(jobConsulta({ notaFiscalId: "nota-OUTRA" }) as never)
+    expect(result).toMatchObject({ kind: "terminal", code: "drill_consulta_fora_do_escopo" })
+  })
+
+  it("CONSULTA do documento com gate DORMENTE é terminal negada (sem rede)", async () => {
+    const { client } = createFakeClient()
+    const transport = captureTransport()
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      notaFiscalId: "nota-drill",
+      deps: {
+        client: client as never,
+        ledgerClient: client as never,
+        window: CONTINGENCY_HOMOLOGATION_WINDOW,
+        clock: () => AGORA,
+        transport: transport as never,
+        xsdAdapter: xsdAdapterAprovado(),
+      },
+    })
+    const result = await wiring.execute(jobConsulta() as never)
+    expect(result).toMatchObject({ kind: "terminal", code: "drill_gate_disabled" })
+    expect(transport.send).not.toHaveBeenCalled()
+  })
+
+  it("aquisição fallback: transmissão não elegível ⇒ CONSULTA do mesmo documento é adquirida", async () => {
+    const { client, tables } = createFakeClient({
+      notaStatus: "TRANSMITINDO",
+      notaOverrides: { xmlAssinado: XML_AUTORIZAVEL },
+      jobOverrides: {
+        status: "CONCLUIDO",
+        concluidoEm: new Date("2026-09-01T12:05:20Z"),
+        payload: {
+          version: 1,
+          operation: "CONTINGENCIA_TRANSMISSAO",
+          document: { bytesSha256: XML_AUTORIZAVEL_SHA },
+        },
+      },
+    })
+    ;(tables.fiscalEmissaoJob as Row[]).push(jobConsulta())
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      notaFiscalId: "nota-drill",
+      deps: drillDeps(client),
+    })
+    const lease = await wiring.ports.acquireNextJob({
+      workerId: "w-drill",
+      now: AGORA,
+      leaseMs: 30_000,
+      pausedStoreIds: [],
+    })
+    expect(lease?.job.id).toBe("job-consulta-1")
+    expect(lease?.job.tipo).toBe("CONSULTA")
+  })
+
+  it("aquisição fallback com gate DORMENTE não adquire consulta", async () => {
+    const { client, tables } = createFakeClient({
+      jobOverrides: {
+        status: "CONCLUIDO",
+        concluidoEm: new Date("2026-09-01T12:00:30Z"),
+      },
+    })
+    ;(tables.fiscalEmissaoJob as Row[]).push(jobConsulta())
+    const wiring = createContingencyHomologationDrillWiring({
+      jobId: "job-drill-1",
+      storeId: LOJA_PILOTO,
+      notaFiscalId: "nota-drill",
+      deps: {
+        client: client as never,
+        ledgerClient: client as never,
+        window: CONTINGENCY_HOMOLOGATION_WINDOW,
+        clock: () => AGORA,
+        transport: captureTransport() as never,
+        xsdAdapter: xsdAdapterAprovado(),
+      },
+    })
+    const lease = await wiring.ports.acquireNextJob({
+      workerId: "w-drill",
+      now: AGORA,
+      leaseMs: 30_000,
+      pausedStoreIds: [],
+    })
+    expect(lease).toBeNull()
   })
 })

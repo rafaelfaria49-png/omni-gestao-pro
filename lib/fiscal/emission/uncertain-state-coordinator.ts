@@ -501,7 +501,13 @@ async function runConsultation(
   if (invalid) throw new Error(invalid.message)
 
   recorder.markProviderInvoked(input.provider.simulado)
-  const result = await input.provider.consult({ document, provenance: recorder })
+  const result = await input.provider.consult({
+    document,
+    // Os MESMOS bytes persistidos e conferidos — insumo da composição canônica de nfeProc
+    // quando a resposta traz apenas protNFe. Nunca reconstruídos nem realimentados.
+    xmlAssinado: document.xmlAssinado,
+    provenance: recorder,
+  })
   if (result.outcome === "AUTHORIZED") {
     await input.persistence.markAuthorized({
       document,

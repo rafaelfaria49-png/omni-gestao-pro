@@ -40,11 +40,16 @@
  * carregando o `nfeProc` do documento B autorizaria A com o XML de B, que `markAuthorized`
  * grava de forma **imutável** (achado BLOQUEANTE da revisão independente).
  *
- * ⚠️ **Consequência honesta e conhecida:** nenhum dos Web Services do piloto devolve `nfeProc`
- * na resposta — devolvem `protNFe`. Logo, com respostas reais, um `100` classifica hoje como
- * `INCOMPLETE_AUTHORIZATION`. A montagem do `nfeProc` (bytes assinados + protocolo) é trabalho
- * do slice que fizer o transporte real (016D-C/016D-D) e exige GOAL próprio; antecipá-la aqui
- * seria exatamente "inventar XML autorizado".
+ * ## Composição canônica de `nfeProc` (GOAL 020 · relatório 127 · B-3)
+ *
+ * Nenhum dos Web Services do piloto devolve `nfeProc` — devolvem `protNFe`. O chamador pode
+ * fornecer a NFe assinada PERSISTIDA (`nfeXmlAssinado`, os mesmos bytes que transmitiu) e o
+ * parser compõe o menor `nfeProc` canônico: recorte **verbatim** da NFe assinada + recorte
+ * **verbatim** do ÚNICO `protNFe` da resposta, sem re-serialização de nenhum dos dois. A
+ * composição só é aceita quando o produto final passa pelas MESMAS verificações de vínculo
+ * (mesma chave, mesmo `cStat`, mesmo `nProt`, `infNFe/@Id` igual a `NFe`+chave). Sem o XML do
+ * chamador, ou falhando qualquer vínculo, o `100` continua `INCOMPLETE_AUTHORIZATION` — o
+ * parser nunca reconstrói a NFe e nunca promove sem prova completa.
  *
  * ## Escopo do documento é do CHAMADOR
  *
@@ -80,7 +85,7 @@ import {
   type SefazFiscalConsequences,
   type SefazResponseReason,
 } from "./sefaz-cstat-matrix"
-import { sefazServiceNamespace, type SefazServico } from "./sefaz-endpoint-catalog"
+import { sefazServiceNamespace, SEFAZ_LAYOUT_VERSAO, type SefazServico } from "./sefaz-endpoint-catalog"
 
 const SOAP12_NS = "http://www.w3.org/2003/05/soap-envelope"
 const SOAP11_NS = "http://schemas.xmlsoap.org/soap/envelope/"
@@ -332,8 +337,20 @@ function extrairXmlAutorizadoVinculado(input: {
 
 /** Recorte literal do `nfeProc`. Ambiguidade textual (zero ou duas ocorrências) ⇒ `null`. */
 function recortarNfeProcVerbatim(texto: string): string | null {
-  const aberturas = [...texto.matchAll(/<nfeProc(?=[\s/>])/g)]
-  const fechamentos = [...texto.matchAll(/<\/nfeProc\s*>/g)]
+  return recortarElementoVerbatim(texto, "nfeProc", NFE_NS)
+}
+
+/**
+ * Recorte literal por índice de UM elemento com exatamente uma abertura e um
+ * fecho no texto inteiro. Zero, dois ou marcação inconsistente ⇒ `null` — a
+ * ambiguidade nunca é resolvida por "o primeiro".
+ *
+ * O recorte é re-parseado e o nome/namespace da raiz são conferidos: um trecho
+ * que apenas PAREÇA o elemento não passa.
+ */
+function recortarElementoVerbatim(texto: string, nome: string, ns: string): string | null {
+  const aberturas = [...texto.matchAll(new RegExp(`<${nome}(?=[\\s/>])`, "g"))]
+  const fechamentos = [...texto.matchAll(new RegExp(`</${nome}\\s*>`, "g"))]
   if (aberturas.length !== 1 || fechamentos.length !== 1) return null
   const inicio = aberturas[0]!.index
   const fim = fechamentos[0]!.index
@@ -341,11 +358,86 @@ function recortarNfeProcVerbatim(texto: string): string | null {
   const recorte = texto.slice(inicio, fim + fechamentos[0]![0].length)
   try {
     const raiz = parseXml(recorte)
-    if (raiz.name !== "nfeProc" || raiz.namespaceUri !== NFE_NS) return null
+    if (raiz.name !== nome || raiz.namespaceUri !== ns) return null
   } catch {
     return null
   }
   return recorte
+}
+
+/**
+ * As MESMAS verificações de vínculo do `nfeProc` nativo (`extrairXmlAutorizadoVinculado`),
+ * aplicadas à raiz do COMPOSTO — que já é o `nfeProc` em si, e não o pai dele.
+ */
+function nfeProcCompostoVinculado(input: {
+  raiz: C14nElement
+  cStat: string
+  protocolo: string
+  chaveAcesso: string
+}): boolean {
+  const protNFe = unico(input.raiz, "protNFe", NFE_NS)
+  if (!protNFe.ok) return false
+  const infProt = unico(protNFe.elemento, "infProt", NFE_NS)
+  if (!infProt.ok) return false
+  if (numeroFiscal(textoNoCaminho(infProt.elemento, ["nProt"])) !== input.protocolo) return false
+  if (textoNoCaminho(infProt.elemento, ["chNFe"]) !== input.chaveAcesso) return false
+  if (textoNoCaminho(infProt.elemento, ["cStat"]) !== input.cStat) return false
+
+  const nfe = unico(input.raiz, "NFe", NFE_NS)
+  if (!nfe.ok) return false
+  const infNFe = unico(nfe.elemento, "infNFe", NFE_NS)
+  if (!infNFe.ok) return false
+  return attrOf(infNFe.elemento, "Id") === `NFe${input.chaveAcesso}`
+}
+
+/**
+ * Menor compositor canônico de `nfeProc` (B-3): NFe assinada DO CHAMADOR
+ * (recorte verbatim dos bytes persistidos) + `protNFe` RECEBIDO (recorte
+ * verbatim da resposta). Nenhum dos dois é re-serializado, reconstruído ou
+ * "consertado"; a NFe entra byte-idêntica.
+ *
+ * O produto só é devolvido depois de passar pelas MESMAS verificações de
+ * vínculo do `nfeProc` nativo da resposta — mesma chave, mesmo `cStat`, mesmo
+ * `nProt`, `infNFe/@Id` igual a `NFe`+chave. Qualquer divergência ⇒ `null`, e o
+ * desfecho permanece `INCOMPLETE_AUTHORIZATION`.
+ */
+function comporNfeProcVinculado(input: {
+  nfeXmlAssinado: string
+  textoResposta: string
+  cStat: string
+  protocolo: string
+  chaveAcesso: string
+}): string | null {
+  if (input.nfeXmlAssinado.charCodeAt(0) === 0xfeff) return null
+  const nfeVerbatim = recortarElementoVerbatim(input.nfeXmlAssinado, "NFe", NFE_NS)
+  if (!nfeVerbatim) return null
+  const protNFeVerbatim = recortarElementoVerbatim(input.textoResposta, "protNFe", NFE_NS)
+  if (!protNFeVerbatim) return null
+
+  const composto =
+    `<nfeProc xmlns="${NFE_NS}" versao="${SEFAZ_LAYOUT_VERSAO}">` +
+    nfeVerbatim +
+    protNFeVerbatim +
+    `</nfeProc>`
+
+  let raiz: C14nElement
+  try {
+    raiz = parseXml(composto)
+  } catch {
+    return null
+  }
+  if (raiz.name !== "nfeProc" || raiz.namespaceUri !== NFE_NS) return null
+  if (
+    !nfeProcCompostoVinculado({
+      raiz,
+      cStat: input.cStat,
+      protocolo: input.protocolo,
+      chaveAcesso: input.chaveAcesso,
+    })
+  ) {
+    return null
+  }
+  return composto
 }
 
 /**
@@ -366,6 +458,13 @@ export function parseSefazSoapResponse(input: {
    * ela é apenas conferida contra esta.
    */
   chaveAcessoEsperada: string
+  /**
+   * NFe assinada PERSISTIDA do documento em curso (GOAL 020 · B-3) — os mesmos bytes que o
+   * chamador transmitiu. Presente e vinculável, habilita a composição canônica de `nfeProc`
+   * quando a resposta traz apenas `protNFe`. Ausente ⇒ o `100` sem `nfeProc` permanece
+   * `INCOMPLETE_AUTHORIZATION` (comportamento anterior, preservado).
+   */
+  nfeXmlAssinado?: string | null
 }): SefazResponseClassification {
   const { servico } = input
 
@@ -536,7 +635,14 @@ export function parseSefazSoapResponse(input: {
     )
   }
 
-  return classificarPayload({ servico, contrato, payload, texto, chaveAcessoEsperada })
+  return classificarPayload({
+    servico,
+    contrato,
+    payload,
+    texto,
+    chaveAcessoEsperada,
+    nfeXmlAssinado: input.nfeXmlAssinado ?? null,
+  })
 }
 
 function classificarPayload(input: {
@@ -545,6 +651,7 @@ function classificarPayload(input: {
   payload: C14nElement
   texto: string
   chaveAcessoEsperada: string
+  nfeXmlAssinado: string | null
 }): SefazResponseClassification {
   const { servico, contrato, payload } = input
 
@@ -593,6 +700,7 @@ function classificarPayload(input: {
       texto: input.texto,
       cStatLote,
       chaveAcessoEsperada: input.chaveAcessoEsperada,
+      nfeXmlAssinado: input.nfeXmlAssinado,
     })
   }
 
@@ -604,6 +712,7 @@ function classificarPayload(input: {
     escopo: payload,
     cStat: cStatLote,
     chaveAcessoEsperada: input.chaveAcessoEsperada,
+    nfeXmlAssinado: input.nfeXmlAssinado,
   })
 }
 
@@ -621,6 +730,7 @@ function classificarProtocoloDoLote(input: {
   texto: string
   cStatLote: string
   chaveAcessoEsperada: string
+  nfeXmlAssinado: string | null
 }): SefazResponseClassification {
   const { servico, payload } = input
   const protNFe = unico(payload, "protNFe", NFE_NS)
@@ -670,6 +780,7 @@ function classificarProtocoloDoLote(input: {
     escopo: infProt.elemento,
     cStat: cStatDocumento,
     chaveAcessoEsperada: input.chaveAcessoEsperada,
+    nfeXmlAssinado: input.nfeXmlAssinado,
   })
 }
 
@@ -695,6 +806,7 @@ function finalizar(input: {
   escopo: C14nElement
   cStat: string
   chaveAcessoEsperada: string
+  nfeXmlAssinado: string | null
 }): SefazResponseClassification {
   const { servico, contrato, payload, escopo, cStat } = input
   const xMotivo = lerXMotivo(escopo)
@@ -782,6 +894,20 @@ function finalizar(input: {
           chaveAcesso: input.chaveAcessoEsperada,
         })
       : null
+    if (!xmlAutorizado && chaveAcesso && input.nfeXmlAssinado) {
+      /**
+       * B-3: respostas reais do piloto trazem apenas `protNFe`. Com a NFe assinada PERSISTIDA
+       * do chamador, compõe-se o menor `nfeProc` canônico — recortes verbatim, mesmas
+       * verificações de vínculo. Falhando a composição, o desfecho permanece incerto.
+       */
+      xmlAutorizado = comporNfeProcVinculado({
+        nfeXmlAssinado: input.nfeXmlAssinado,
+        textoResposta: input.texto,
+        cStat,
+        protocolo: protocolo!,
+        chaveAcesso: input.chaveAcessoEsperada,
+      })
+    }
     if (!xmlAutorizado) {
       return incerto(
         servico,

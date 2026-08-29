@@ -527,10 +527,25 @@ async function processLease(input: {
     execution.kind === "unresolved" ||
     (execution.kind === "uncertain" && execution.externalTransmissionAttempted)
   const inutilizacaoRealAutorizada = job.tipo === "INUTILIZACAO"
+  /**
+   * Prova tipada do drill de contingência (GOAL 020 · relatório 127): o executor só a produz
+   * com capability desta execução + provider invocado + autorização com evidência fiscal
+   * persistida. Aqui ela é CONFERIDA contra o job em processamento (id/store/notaFiscal) —
+   * prova órfã, de outro job ou de outro tipo não atravessa.
+   */
+  const prova = execution.contingencyExternalAuthorization
+  const provaTipadaCoerente =
+    !!prova &&
+    prova.jobId === job.id &&
+    prova.storeId === job.storeId &&
+    prova.notaFiscalId === String(job.notaFiscalId ?? "") &&
+    ((job.tipo === "CONTINGENCIA_TRANSMISSAO" && prova.kind === "transmissao_autorizada") ||
+      (job.tipo === "CONSULTA" && prova.kind === "consulta_autorizada"))
   if (
     !maisRestritivoQueTerminal &&
     !repeticaoDeConsultaSegura &&
     !inutilizacaoRealAutorizada &&
+    !provaTipadaCoerente &&
     !execution.simulado
   ) {
     execution = {

@@ -89,16 +89,26 @@ describe("transporte default — sempre bloqueado", () => {
     expect((erro as SefazAdapterBlockedError).externalTransmissionAttempted).toBe(false)
   })
 
-  it("consult recusa por falta de payload — sem envelopar vazio nem inventar consSitNFe", async () => {
+  it("consult monta o consSitNFe canônico e chega ao transporte offline (GOAL 020 · B-4)", async () => {
     /**
-     * O construtor de `consSitNFe` pertence ao 016D-B. Envelopar bytes vazios produziria
-     * `<nfeDadosMsg/>` — uma requisição sem conteúdo fiscal — e fabricar o payload seria
-     * antecipar o slice seguinte. Nenhum socket é aberto em qualquer dos casos.
+     * O payload de consulta por chave agora é o `consSitNFe` oficial (chave + tpAmb 2 +
+     * xServ CONSULTAR). Com o transporte default (offline), a chamada termina bloqueada
+     * pelo transporte — nenhum socket, nenhum desfecho inventado.
      */
     const provider = new SefazDiretoProvider({ ports: portasAprovadas() })
     const erro = await provider.consult({ document: documento() }).catch((e: unknown) => e)
     expect(erro).toBeInstanceOf(SefazAdapterBlockedError)
-    expect((erro as SefazAdapterBlockedError).codigo).toBe("consulta_sem_payload_neste_slice")
+    expect((erro as SefazAdapterBlockedError).codigo).toBe("transporte_offline_bloqueado")
+  })
+
+  it("consult com chave inválida recusa antes do transporte", async () => {
+    const transport: SefazTransport = { permiteRede: false, send: vi.fn() }
+    const provider = new SefazDiretoProvider({ ports: portasAprovadas(), transport })
+    const erro = await provider
+      .consult({ document: documento({ chaveAcesso: "3".repeat(43) }) })
+      .catch((e: unknown) => e)
+    expect((erro as SefazAdapterBlockedError).codigo).toBe("consulta_chave_invalida")
+    expect(transport.send).not.toHaveBeenCalled()
   })
 
   it("consult ainda roda os guards D4 ANTES de recusar por payload", async () => {
