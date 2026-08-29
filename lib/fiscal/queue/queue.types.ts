@@ -106,6 +106,29 @@ export type FiscalQueueExecutionResult = {
    */
   providerInvoked?: boolean
   detalhe?: Record<string, unknown>
+  /**
+   * Prova TIPADA de autorização externa do drill de contingência (GOAL 020 · relatório 127).
+   *
+   * Nasce EXCLUSIVAMENTE no executor GOAL-012 e somente quando TODAS as condições coexistem:
+   *  - a capability DESTA execução tem `allowExternalProviderExecution === true` (no drill,
+   *    capability que nasce do consumo one-shot da ativação — nunca de env/banco/provider);
+   *  - a proveniência tipada diz `providerInvoked` (o provider de fato executou);
+   *  - o desfecho é autorização com evidência fiscal completa já persistida (`markAuthorized`:
+   *    cStat + protocolo + XML autorizado vinculado à chave, classificados pelo parser oficial).
+   *
+   * O freio GOAL-011 só atravessa um resultado real com esta prova COERENTE com o job
+   * (id/store/notaFiscal). Campo autodeclarado do provider, `simulado=false`,
+   * `externalTransmissionAttempted=true` ou job de outro tipo NÃO produzem prova. O drain
+   * genérico (capability negada) jamais a produz — continua incapaz de sucesso externo.
+   */
+  contingencyExternalAuthorization?: {
+    readonly kind: "transmissao_autorizada" | "consulta_autorizada"
+    readonly jobId: string
+    readonly storeId: string
+    readonly notaFiscalId: string
+    /** Procedência da capability que gerou a prova — trilha de auditoria, sem segredo. */
+    readonly concedidaPor: string
+  }
 }
 
 export type FiscalQueueAuditEvent = {
