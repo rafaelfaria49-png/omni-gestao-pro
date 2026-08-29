@@ -152,8 +152,8 @@ type CartPersisted = {
 
 const SHORTCUTS_STORAGE_KEY = (storeId: string) => `omnigestao:pdv-shortcuts:${storeId}`
 
-const MAX_SVC = 8
-const MAX_PRD = 8
+const MAX_SVC = 9
+const MAX_PRD = 9
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -269,36 +269,34 @@ function QuickCard({
   return (
     <Card
       className={cn(
-        "group cursor-pointer rounded-2xl border border-border bg-card p-4 shadow-sm",
-        "transition-all duration-150",
+        "group cursor-pointer rounded-2xl border border-border bg-card p-3 sm:p-3.5 shadow-sm",
+        "transition-all duration-150 flex flex-col justify-between min-h-[94px]",
         "hover:border-primary/30 hover:bg-accent/60 hover:shadow-md",
-        "active:scale-[0.97] active:shadow-sm",
+        "active:scale-[0.98] active:shadow-sm",
         isPickHighlight && "ring-2 ring-primary ring-offset-2 ring-offset-background",
         outOfStock && "opacity-55 hover:opacity-70"
       )}
       onClick={() => onAdd(item)}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">{item.name}</p>
-          <p className="mt-0.5 text-[10px] font-medium text-muted-foreground">
-            {isService ? item.serviceCategory : item.category}
-          </p>
-        </div>
-        <Badge
-          variant="secondary"
-          className="shrink-0 rounded-xl px-2 py-0.5 text-xs font-bold tabular-nums"
+      <div className="min-w-0 flex-1">
+        <p
+          className="line-clamp-2 text-sm font-semibold leading-snug text-foreground break-words"
+          title={item.name}
         >
-          {brl(item.price)}
-        </Badge>
+          {item.name}
+        </p>
+        <p className="mt-0.5 truncate text-[10px] font-medium text-muted-foreground">
+          {isService ? item.serviceCategory : item.category}
+        </p>
       </div>
-      <div className="mt-3 flex items-center justify-between">
+
+      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/40 pt-1.5">
         <span className={cn(
-          "text-[10px] font-medium",
+          "truncate text-[10px] font-medium",
           outOfStock
-            ? "text-destructive/80"
+            ? "text-destructive/80 font-semibold"
             : lowStock
-              ? "text-amber-500 dark:text-amber-300"
+              ? "text-amber-500 dark:text-amber-300 font-semibold"
               : hasReservation
                 ? "text-primary/70"
                 : "text-muted-foreground"
@@ -313,14 +311,22 @@ function QuickCard({
                   ? `${availableStock} disp. · ${reservedQty} res.`
                   : `${availableStock} em estoque`}
         </span>
-        <span className={cn(
-          "grid h-6 w-6 place-items-center rounded-lg transition-all duration-150",
-          outOfStock
-            ? "bg-muted/60 text-muted-foreground/40"
-            : "bg-primary/10 text-primary opacity-0 group-hover:opacity-100"
-        )}>
-          <Plus className="h-3.5 w-3.5" />
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge
+            variant="secondary"
+            className="shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold tabular-nums"
+          >
+            {brl(item.price)}
+          </Badge>
+          <span className={cn(
+            "grid h-5 w-5 place-items-center rounded-md transition-all duration-150",
+            outOfStock
+              ? "hidden"
+              : "bg-primary/10 text-primary opacity-0 group-hover:opacity-100"
+          )}>
+            <Plus className="h-3 w-3" />
+          </span>
+        </div>
       </div>
     </Card>
   )
@@ -342,43 +348,49 @@ function ServicoCard({
   return (
     <Card
       className={cn(
-        "group cursor-pointer rounded-2xl border border-border bg-card p-4 shadow-sm",
-        "transition-all duration-150",
+        "group cursor-pointer rounded-2xl border border-border bg-card p-3 sm:p-3.5 shadow-sm",
+        "transition-all duration-150 flex flex-col justify-between min-h-[94px]",
         "hover:border-primary/30 hover:bg-accent/60 hover:shadow-md",
-        "active:scale-[0.97] active:shadow-sm",
+        "active:scale-[0.98] active:shadow-sm",
       )}
       onClick={() => onAdd(item)}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-foreground">{item.name}</p>
-          {descricao && (
-            <p className="mt-0.5 truncate text-[10px] font-medium text-muted-foreground">{descricao}</p>
-          )}
-        </div>
-        <Badge
-          variant="secondary"
-          className="shrink-0 rounded-xl px-2 py-0.5 text-xs font-bold tabular-nums"
+      <div className="min-w-0 flex-1">
+        <p
+          className="line-clamp-2 text-sm font-semibold leading-snug text-foreground break-words"
+          title={item.name}
         >
-          {semPreco ? "sem preço" : brl(item.price)}
-        </Badge>
+          {item.name}
+        </p>
+        {descricao && (
+          <p className="mt-0.5 truncate text-[10px] font-medium text-muted-foreground">{descricao}</p>
+        )}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+
+      <div className="mt-2.5 flex items-center justify-between gap-2 border-t border-border/40 pt-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
           <Badge
             variant="outline"
-            className="shrink-0 rounded-lg border-primary/30 px-1.5 py-0 text-[9px] font-semibold text-primary"
+            className="shrink-0 rounded-md border-primary/30 px-1.5 py-0 text-[9px] font-semibold text-primary"
           >
             <Wrench className="mr-1 h-2.5 w-2.5" />
             Serviço
           </Badge>
           {garantia > 0 && (
-            <span className="truncate text-[10px] text-muted-foreground">Garantia padrão: {garantia} dias</span>
+            <span className="truncate text-[10px] text-muted-foreground">{garantia}d gar.</span>
           )}
         </div>
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary opacity-0 transition-all duration-150 group-hover:opacity-100">
-          <Plus className="h-3.5 w-3.5" />
-        </span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Badge
+            variant="secondary"
+            className="shrink-0 rounded-lg px-2 py-0.5 text-xs font-bold tabular-nums"
+          >
+            {semPreco ? "sem preço" : brl(item.price)}
+          </Badge>
+          <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary/10 text-primary opacity-0 transition-all duration-150 group-hover:opacity-100">
+            <Plus className="h-3 w-3" />
+          </span>
+        </div>
       </div>
     </Card>
   )
@@ -2059,14 +2071,14 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       {/* ── Header: fluxo normal (evita recorte com position absolute + padding no body) ── */}
       <header
         className={cn(
-          "relative z-10 flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card/80 px-3 py-2 backdrop-blur-xl sm:px-4",
-          modoRapido ? "min-h-11" : "min-h-14"
+          "relative z-10 flex shrink-0 items-center justify-between gap-2 border-b border-border bg-card/80 px-3 py-1.5 backdrop-blur-xl sm:px-4",
+          modoRapido ? "min-h-11" : "min-h-12"
         )}
       >
         {/* Left: brand */}
-        <div className="flex shrink-0 items-center gap-2.5">
-          <span className="grid h-8 w-8 place-items-center rounded-xl bg-primary text-primary-foreground shadow-md">
-            <Wrench className="h-4 w-4" />
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm sm:h-8 sm:w-8 sm:rounded-xl">
+            <Wrench className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
           </span>
           {!modoRapido ? (
             <div className="hidden leading-tight sm:block">
@@ -2085,7 +2097,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 appendAuditLog({ action: "pdv_troca_aberta", userLabel: cashierId.slice(0, 8), detail: "Painel de trocas/devoluções aberto" })
                 setTrocasOpen(true)
               }}
-              className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-all hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+              className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-xs font-semibold text-muted-foreground transition-all hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               Trocas
@@ -2093,7 +2105,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           ) : null}
           {/* Cart summary chip — visible when cart has items */}
           {cart.length > 0 && (
-            <div className="hidden items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 py-1.5 sm:flex">
+            <div className="hidden items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 sm:flex">
               <ShoppingCart className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs tabular-nums text-muted-foreground">
                 <span className="font-bold text-foreground">{cart.length}</span>
@@ -2108,7 +2120,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
         <div className="flex shrink-0 items-center gap-2">
           {/* Caixa status indicator */}
           <div className={cn(
-            "hidden items-center gap-1.5 rounded-xl border px-2.5 py-1.5 sm:flex",
+            "hidden items-center gap-1.5 rounded-lg border px-2 py-1 sm:flex",
             caixa.isOpen
               ? "border-emerald-500/30 bg-emerald-500/8"
               : "border-amber-500/30 bg-amber-500/8"
@@ -2125,14 +2137,14 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
             </span>
           </div>
           {!modoRapido ? (
-            <div className="hidden items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 sm:flex">
+            <div className="hidden items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 sm:flex">
               <User className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">
                 Op: <span className="font-semibold text-foreground">{operatorLabel}</span>
               </span>
             </div>
           ) : null}
-          <div className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 py-1.5 sm:px-3">
+          <div className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1 sm:px-2.5">
             <Clock className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-xs font-semibold tabular-nums text-foreground">
               {now.toLocaleTimeString("pt-BR", {
@@ -2156,9 +2168,9 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
         <main className="flex min-h-0 min-w-0 max-h-full flex-1 flex-col overflow-hidden border-r border-border bg-background">
 
           {/* Search */}
-          <div className="shrink-0 p-4">
+          <div className="shrink-0 px-4 pt-2.5 pb-1.5">
             <div className="relative">
-              <Barcode className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
+              <Barcode className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 ref={inputRef}
                 value={search}
@@ -2210,28 +2222,27 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 }}
                 placeholder="Bipe o produto ou busque por nome / código  [F3]"
                 autoComplete="off"
-                className="h-14 w-full rounded-2xl border border-border bg-card text-base font-medium text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/25"
-                style={{ paddingLeft: "3rem", paddingRight: "2.5rem" }}
+                className="h-11 w-full rounded-xl border border-border bg-card pl-10 pr-9 text-sm font-medium text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/25"
               />
               {search ? (
                 <button
                   type="button"
                   onClick={() => setSearch("")}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X className="h-4 w-4" />
                 </button>
               ) : (
                 !modoRapido ? (
-                  <kbd className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
+                  <kbd className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 text-[10px] font-bold text-muted-foreground">
                     F2
                   </kbd>
                 ) : null
               )}
             </div>
             {!modoRapido ? (
-              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-muted-foreground">
-                <span className="flex items-center gap-1">
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1 font-medium">
                   <Keyboard className="h-3 w-3" />
                   Atalhos:
                 </span>
@@ -2263,7 +2274,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           </div>
 
           {/* Grid — scroll só na área da grade */}
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-4">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-3">
             {search.trim() ? (
               <div className="flex min-h-0 flex-1 flex-col gap-2">
                 <p className="shrink-0 text-xs font-semibold text-muted-foreground">
@@ -2302,27 +2313,27 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
             <Tabs
               value={tab}
               onValueChange={(v) => setTab(v as "servicos" | "produtos" | "favoritos")}
-              className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+              className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden"
             >
                 {/* Tab header + Editar Atalhos */}
                 <div className="flex shrink-0 items-center gap-2">
-                  <TabsList className={cn("flex-1 grid rounded-2xl border border-border bg-muted/60 p-1", quickFavorites.length > 0 ? "grid-cols-3" : "grid-cols-2")}>
+                  <TabsList className={cn("flex-1 grid rounded-xl border border-border bg-muted/60 p-0.5 h-8.5 sm:h-9", quickFavorites.length > 0 ? "grid-cols-3" : "grid-cols-2")}>
                     <TabsTrigger
                       value="servicos"
-                      className="rounded-xl data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="rounded-lg py-1 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                     >
                       Serviços ({quickServices.length})
                     </TabsTrigger>
                     <TabsTrigger
                       value="produtos"
-                      className="rounded-xl data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                      className="rounded-lg py-1 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                     >
                       Produtos ({quickProducts.length})
                     </TabsTrigger>
                     {quickFavorites.length > 0 && (
                       <TabsTrigger
                         value="favoritos"
-                        className="rounded-xl data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
+                        className="rounded-lg py-1 text-xs data-[state=active]:bg-primary data-[state=active]:text-primary-foreground"
                       >
                         <Star className="mr-1 h-3 w-3 fill-current text-amber-500" />
                         Favoritos ({quickFavorites.length})
@@ -2333,7 +2344,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-10 shrink-0 rounded-xl border-border px-3 text-xs text-muted-foreground hover:text-foreground"
+                    className="h-8.5 sm:h-9 shrink-0 rounded-xl border-border px-2.5 sm:px-3 text-xs text-muted-foreground hover:text-foreground"
                     onClick={() => setEditAtalhosOpen(true)}
                     title="Editar Atalhos"
                   >
@@ -2347,7 +2358,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden outline-none data-[state=inactive]:hidden"
               >
                   <ScrollArea className="min-h-0 flex-1">
-                    <div className="grid gap-3 pr-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 pr-2">
                       {!servicosLoaded || !hydratedFromDb ? (
                         Array.from({ length: 6 }).map((_, i) => (
                           <div key={i} className="h-24 animate-pulse rounded-2xl border border-border bg-muted/40" />
@@ -2378,7 +2389,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden outline-none data-[state=inactive]:hidden"
               >
                   <ScrollArea className="min-h-0 flex-1">
-                    <div className="grid gap-3 pr-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 pr-2">
                       {!hydratedFromDb ? (
                         Array.from({ length: 6 }).map((_, i) => (
                           <div key={i} className="h-24 animate-pulse rounded-2xl border border-border bg-muted/40" />
@@ -2410,7 +2421,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                   className="mt-0 flex min-h-0 flex-1 flex-col overflow-hidden outline-none data-[state=inactive]:hidden"
                 >
                   <ScrollArea className="min-h-0 flex-1">
-                    <div className="grid gap-3 pr-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 pr-2">
                       {quickFavorites.map((p) => <QuickCard key={p.id} item={p} onAdd={addItem} reservedQty={cartQtyByInventoryId[p.id] ?? 0} />)}
                     </div>
                   </ScrollArea>
@@ -2426,18 +2437,18 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           className={cn(
             "flex min-h-0 min-w-0 max-h-full shrink-0 flex-col overflow-hidden border-l border-border bg-card self-stretch",
             modoRapido
-              ? "w-[min(100%,400px)] min-w-[260px] max-w-[420px]"
-              : "w-[420px] min-w-[360px] max-w-[480px]"
+              ? "w-[min(100%,400px)] min-w-[280px] max-w-[420px]"
+              : "w-[360px] md:w-[380px] lg:w-[32%] xl:w-[30%] min-w-[320px] max-w-[500px]"
           )}
         >
 
           {/* Customer input */}
-          <div className="shrink-0 border-b border-border px-4 py-3">
+          <div className="shrink-0 border-b border-border px-3.5 py-2">
             <div className="relative">
               {buscandoCliente ? (
-                <Loader2 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                <Loader2 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
               ) : (
-                <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <User className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               )}
               <input
                 ref={customerInputRef}
@@ -2470,13 +2481,12 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 }}
                 placeholder="Cliente — A Prazo/Fiado  [F2]"
                 autoComplete="off"
-                className="h-9 w-full rounded-xl border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/25"
-                style={{ paddingLeft: "2.25rem", paddingRight: "3.5rem" }}
+                className="h-8.5 w-full rounded-xl border border-border bg-background text-xs sm:text-sm text-foreground placeholder:text-muted-foreground outline-none focus:border-primary/50 focus:ring-2 focus:ring-primary/25 pl-8 pr-8"
               />
               {customerName.trim() ? (
                 <button
                   type="button"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
                     setCustomerName("")
@@ -2490,13 +2500,13 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                   <X className="h-3.5 w-3.5" />
                 </button>
               ) : (
-                <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground">
+                <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 text-[9px] font-bold text-muted-foreground">
                   F2
                 </kbd>
               )}
               {/* Crédito disponível */}
               {customerCredit > 0 && (
-                <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-600 dark:text-emerald-400">
+                <div className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">
                   <span className="font-semibold">{brl(customerCredit)}</span>
                   <span className="text-muted-foreground">em crédito disponível</span>
                 </div>
@@ -2548,9 +2558,9 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           </div>
 
           {/* Cart header */}
-          <div className="shrink-0 border-b border-border px-4 py-2.5">
+          <div className="shrink-0 border-b border-border px-3.5 py-2">
             <div className="flex items-center justify-between">
-              <p className="font-bold text-foreground">
+              <p className="text-sm font-bold text-foreground">
                 Carrinho
                 {cart.length > 0 && (
                   <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">
@@ -2567,7 +2577,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 type="button"
                 variant="ghost"
                 size="sm"
-                className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-destructive"
+                className="h-6.5 gap-1.5 text-xs text-muted-foreground hover:text-destructive px-2"
                 onClick={() => {
                   if (cart.length > 0) setClearConfirmOpen(true)
                 }}
@@ -2585,8 +2595,8 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {cart.length === 0 ? (
               <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-                <div className="grid h-14 w-14 place-items-center rounded-2xl bg-muted/60 text-muted-foreground/50">
-                  <ShoppingCart className="h-7 w-7" />
+                <div className="grid h-12 w-12 place-items-center rounded-2xl bg-muted/60 text-muted-foreground/50">
+                  <ShoppingCart className="h-6 w-6" />
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm font-semibold text-foreground">Carrinho vazio</p>
@@ -2604,68 +2614,84 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                       key={l.lineId}
                       onClick={() => setSelectedLineId((prev) => prev === l.lineId ? null : l.lineId)}
                       className={cn(
-                        "flex cursor-default select-none items-center gap-2 rounded-lg px-1 py-2.5 -mx-1 transition-colors duration-100",
+                        "flex cursor-default select-none items-center justify-between gap-2 rounded-xl px-2 py-2 transition-colors duration-100",
                         selectedLineId === l.lineId
-                          ? "bg-primary/8 ring-1 ring-inset ring-primary/20"
+                          ? "bg-primary/10 ring-1 ring-inset ring-primary/25"
                           : "hover:bg-muted/40",
                         modoRapido && rapidoFlashLineId === l.lineId && "pdv-rapido-row-flash"
                       )}
                     >
-                      {/* Title — limited width so controls always show */}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold text-foreground">{l.title}</p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{brl(l.price)} × {l.qty}</p>
+                      {/* Title — up to 2 lines, wraps properly, tooltip with full name */}
+                      <div className="min-w-0 flex-1 pr-1">
+                        <p
+                          className="line-clamp-2 text-xs sm:text-sm font-semibold leading-snug text-foreground break-words"
+                          title={l.title}
+                        >
+                          {l.title}
+                        </p>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                          <span>{brl(l.price)} × {l.qty}</span>
+                          {l.accessorySelection ? (
+                            <span className="truncate text-[10px] text-primary/80 font-medium">
+                              ({[l.accessorySelection.deviceModelName, l.accessorySelection.colorLabel ?? l.accessorySelection.customColorLabel].filter(Boolean).join(" · ")})
+                            </span>
+                          ) : null}
                         </div>
-
-                      {/* Qty controls — shrink-0 keeps them always visible */}
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => changeQty(l.lineId, -1)}
-                          className="grid h-6 w-6 place-items-center rounded-lg border border-border bg-background text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-                        >
-                          <Minus className="h-3 w-3" />
-                        </button>
-                        <span className="w-5 text-center text-xs font-bold tabular-nums text-foreground">
-                          {l.qty}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => changeQty(l.lineId, 1)}
-                          className="grid h-6 w-6 place-items-center rounded-lg border border-border bg-background text-muted-foreground transition hover:border-primary/40 hover:text-primary"
-                        >
-                          <Plus className="h-3 w-3" />
-                        </button>
                       </div>
 
-                      {/* Line total */}
-                      <p className="w-20 shrink-0 text-right text-sm font-bold tabular-nums text-foreground">
-                        {brl(l.price * l.qty)}
-                      </p>
+                      {/* Fixed controls — shrink-0 keeps them always visible */}
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <div className="flex items-center rounded-lg border border-border bg-background p-0.5">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); changeQty(l.lineId, -1) }}
+                            className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                            title="Diminuir quantidade"
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                          <span className="min-w-[1.25rem] text-center text-xs font-bold tabular-nums text-foreground">
+                            {l.qty}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); changeQty(l.lineId, 1) }}
+                            className="grid h-6 w-6 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                            title="Aumentar quantidade"
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        </div>
 
-                      {/* Alterar preço — só para linha de serviço real (Fase 2) */}
-                      {l.serviceId && (
+                        {/* Line total */}
+                        <span className="w-16 sm:w-20 shrink-0 text-right text-xs sm:text-sm font-bold tabular-nums text-foreground">
+                          {brl(l.price * l.qty)}
+                        </span>
+
+                        {/* Alterar preço — só para linha de serviço real (Fase 2) */}
+                        {l.serviceId && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); openServicoPrecoEdit(l) }}
+                            aria-label={`Alterar preço de ${l.title}`}
+                            title="Alterar preço do serviço"
+                            className="shrink-0 grid h-6 w-6 place-items-center rounded-lg border border-border bg-background text-muted-foreground hover:border-primary/40 hover:bg-primary/10 hover:text-primary transition"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+
+                        {/* Delete — always visible (X) */}
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); openServicoPrecoEdit(l) }}
-                          aria-label={`Alterar preço de ${l.title}`}
-                          title="Alterar preço do serviço"
-                          className="shrink-0 grid h-7 w-7 place-items-center rounded-xl border border-border bg-background text-muted-foreground transition hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                          onClick={(e) => { e.stopPropagation(); removeLine(l.lineId) }}
+                          aria-label={`Remover ${l.title}`}
+                          title="Remover item"
+                          className="shrink-0 grid h-6 w-6 place-items-center rounded-lg border border-border bg-background text-muted-foreground hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive transition"
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          <X className="h-3.5 w-3.5" />
                         </button>
-                      )}
-
-                      {/* Delete — always visible (X) */}
-                      <button
-                        type="button"
-                        onClick={() => removeLine(l.lineId)}
-                        aria-label={`Remover ${l.title}`}
-                        title="Remover item"
-                        className="shrink-0 grid h-7 w-7 place-items-center rounded-xl border border-border bg-background text-muted-foreground transition hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
+                      </div>
                     </div>
                   ))}
                   </div>
@@ -2675,15 +2701,15 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
           </div>
 
           {/* Totals + payment */}
-          <div className="shrink-0 space-y-3 border-t border-border bg-card p-4">
+          <div className="shrink-0 space-y-2.5 border-t border-border bg-card p-3.5 sm:p-4">
             {/* Subtotal & discount */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-sm">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-xs sm:text-sm">
                 <span className="text-muted-foreground">Subtotal</span>
                 <span className="font-semibold tabular-nums text-foreground">{brl(subtotal)}</span>
               </div>
               {!modoRapido && desconto > 0.009 && (
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between text-xs sm:text-sm">
                   <span className="text-muted-foreground">
                     Desconto{discountType === "percent" ? ` (${discountPercent}%)` : ""}
                   </span>
@@ -2691,7 +2717,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 </div>
               )}
               {impostoEstimado > 0.009 ? (
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between text-xs sm:text-sm">
                   <span className="text-muted-foreground">Imposto estimado</span>
                   <span className="font-semibold tabular-nums text-foreground">{brl(impostoEstimado)}</span>
                 </div>
@@ -2700,9 +2726,9 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                 <p className="text-xs text-destructive">Desconto acima do subtotal — ajuste antes de finalizar (F7).</p>
               )}
               <Separator className="bg-border" />
-              <div className="flex items-baseline justify-between">
-                <span className="text-sm font-semibold text-muted-foreground">TOTAL A PAGAR</span>
-                <span className="text-3xl font-black tabular-nums tracking-tight text-emerald-500">
+              <div className="flex items-baseline justify-between pt-0.5">
+                <span className="text-xs sm:text-sm font-semibold text-muted-foreground">TOTAL A PAGAR</span>
+                <span className="text-2xl sm:text-3xl font-black tabular-nums tracking-tight text-emerald-500">
                   {brl(total)}
                 </span>
               </div>
@@ -2710,14 +2736,14 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
 
             {/* Caixa fechado — aviso */}
             {!caixa.isOpen && cart.length > 0 && (
-              <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+              <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
                 <Lock className="h-3.5 w-3.5 shrink-0" />
                 Caixa fechado — abra o caixa para finalizar.
               </div>
             )}
 
             {/* Payment buttons — 3×2 grid */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
               {payMethods.map((m) => (
               <Button
                   key={m.id}
@@ -2725,18 +2751,18 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
                   disabled={cart.length === 0 || !caixa.isOpen || discountOverTotal}
                   onClick={() => openPaymentModal(m.id)}
                 className={cn(
-                    "relative rounded-2xl text-xs font-bold text-white",
+                    "relative rounded-xl text-xs font-bold text-white",
                     "transition-all duration-150 ease-out",
                     "active:scale-[0.95] active:brightness-90",
                     "disabled:cursor-not-allowed disabled:opacity-30 disabled:shadow-none",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:ring-offset-1 focus-visible:ring-offset-transparent",
-                    modoRapido ? "h-11" : "h-12",
+                    modoRapido ? "h-10 sm:h-10.5" : "h-10.5 sm:h-11",
                     m.color,
                   )}
                 >
                   <span className="flex flex-col items-center gap-0.5 leading-tight">
                     <span className="flex items-center gap-1">
-                      <m.Icon className="h-4 w-4 shrink-0" />
+                      <m.Icon className="h-3.5 w-3.5 shrink-0" />
                       <span className="tracking-wide">{m.shortLabel}</span>
                     </span>
                     {m.hotkey && (
