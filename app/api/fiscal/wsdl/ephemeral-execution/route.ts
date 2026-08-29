@@ -2,8 +2,18 @@
  * POST /api/fiscal/wsdl/ephemeral-execution
  *
  * Superfície administrativa dormente para uma futura coleta única dos seis WSDLs oficiais. A
- * janela é versionada em código e nasce desabilitada. O request só identifica explicitamente a
- * loja piloto; não aceita payload, serviço, URL, destino, relógio, contagem ou retry.
+ * janela é versionada em código e nasce desativada (restaurada a `null` no refresh do GOAL 020;
+ * a ativação de 24/08 é apenas evidência histórica). O request não aceita payload, serviço, URL,
+ * destino, relógio, contagem ou retry. A loja-piloto é resolvida DINAMICAMENTE de
+ * `ConfiguracaoFiscalLoja` (ADR-0016, fail-closed) — nunca de um literal — e a request
+ * autenticada deve pertencer exatamente à candidata resolvida.
+ *
+ * `fiscalEnabled`: o gate legado exigia `false` (era um proxy de "esta loja não emite") de uma
+ * fase em que não existia pipeline fiscal. Com o GOAL 020 o pipeline de homologação NFC-e é
+ * operacional e a piloto resolvida é justamente a loja que o opera — o preflight exige
+ * `fiscalEnabled = true`. Isto NÃO habilita emissão nem transmissão: esta superfície é GET de
+ * metadados (sem corpo, sem SOAP, alvos fechados do catálogo); emissão continua retida pelos
+ * guards próprios do pipeline.
  */
 import { NextResponse } from "next/server"
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
@@ -12,10 +22,10 @@ import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { resolveActiveCertificate } from "@/lib/fiscal/certificate/resolve-active-certificate"
 import { loadA1MtlsSecureContext } from "@/lib/fiscal/certificate/a1-mtls-material"
 import {
-  WSDL_EXECUTION_PILOT_STORE_ID,
   configuredWsdlExecutionWindowStatus,
   consumeConfiguredWsdlExecutionActivation,
 } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window"
+import { resolveWsdlPilotStore } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver"
 import { runConfiguredWsdlEphemeralBatch } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-batch"
 import { isWsdlCanonicalProductionSurface } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-canonical-production-surface"
 
@@ -127,10 +137,17 @@ export async function POST(request: Request) {
   if (!acl.ok) return response(acl.status, { ok: false, code: "access_denied" })
 
   try {
-    if (
-      acl.storeId !== WSDL_EXECUTION_PILOT_STORE_ID ||
-      !(await requestIsClosed(request, acl.storeId))
-    ) {
+    if (!(await requestIsClosed(request, acl.storeId))) {
+      return response(400, { ok: false, code: "request_not_allowed" })
+    }
+
+    // Loja-piloto resolvida do registro REAL. Zero candidatas, múltiplas candidatas (exige
+    // decisão humana) ou falha de leitura bloqueiam antes de qualquer preparo.
+    const pilot = await resolveWsdlPilotStore()
+    if (!pilot.ok) {
+      return response(409, { ok: false, code: "pilot_store_unresolved" })
+    }
+    if (acl.storeId !== pilot.storeId) {
       return response(400, { ok: false, code: "request_not_allowed" })
     }
 
@@ -143,6 +160,7 @@ export async function POST(request: Request) {
           storeId: true,
           ambiente: true,
           modeloFiscal: true,
+          provider: true,
           fiscalEnabled: true,
           certificadoAtivoId: true,
         },
@@ -154,7 +172,8 @@ export async function POST(request: Request) {
     if (
       config.ambiente !== "HOMOLOGACAO" ||
       config.modeloFiscal !== "NFCE" ||
-      config.fiscalEnabled !== false ||
+      config.provider !== "SEFAZ_DIRETO" ||
+      config.fiscalEnabled !== true ||
       !String(config.certificadoAtivoId ?? "").trim()
     ) {
       return response(409, { ok: false, code: "preflight_blocked" })

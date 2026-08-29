@@ -36,6 +36,10 @@ function sharedClient(keys = new Set<string>()): WsdlActivationLedgerClient {
     $transaction: async (operation) =>
       operation({
         fiscalEmissaoJob: {
+          findFirst: async (args: unknown) => {
+            const key = (args as { where: { dedupeKey: string } }).where.dedupeKey
+            return keys.has(key) ? { id: "existing" } : null
+          },
           create: async (args: unknown) => {
             const key = String((args as { data: { dedupeKey: string } }).data.dedupeKey)
             if (keys.has(key)) throw new Error("unique")
@@ -44,6 +48,7 @@ function sharedClient(keys = new Set<string>()): WsdlActivationLedgerClient {
           },
         },
         fiscalLog: { create: async () => ({}) },
+        lockActivationScope: async () => {},
       }),
   }
 }
@@ -57,6 +62,7 @@ async function activation(options: {
     client: options.client ?? sharedClient(),
     config: options.config ?? ACTIVE_CONFIG,
     clock: options.clock ?? (() => new Date("2026-08-13T12:05:00Z")),
+    resolvePilotStoreId: async () => "loja-1",
   })
   const result = await gate.consume({ storeId: "loja-1", operatorId: "admin" })
   if (!result.ok) throw new Error(`activation fixture falhou: ${result.code}`)
@@ -244,8 +250,18 @@ describe("batch efêmero fechado H-9/H-10", () => {
     const client = sharedClient(keys)
     const clock = () => new Date("2026-08-13T12:05:00Z")
     const gates = [
-      createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock }),
-      createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock }),
+      createWsdlExecutionGateTestHarness({
+        client,
+        config: ACTIVE_CONFIG,
+        clock,
+        resolvePilotStoreId: async () => "loja-1",
+      }),
+      createWsdlExecutionGateTestHarness({
+        client,
+        config: ACTIVE_CONFIG,
+        clock,
+        resolvePilotStoreId: async () => "loja-1",
+      }),
     ]
     const acquire = vi.fn(async ({ target }) => successOutcome(target.servico))
     const runner = createWsdlEphemeralBatchTestRunner({

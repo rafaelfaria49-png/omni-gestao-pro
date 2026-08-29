@@ -1,16 +1,30 @@
 /**
  * Janela efêmera versionada para a futura coleta oficial de WSDL (H-9/H-10).
  *
- * Não existe flag de ambiente. Ativar exige alterar as três constantes abaixo em commit
- * revisado; deployments antigos tornam-se inertes quando `expiresAtUtc` passa. Este GOAL só
- * ANTECIPA a janela H-9/H-10 para 24/08 — a activation de 25/08 (PR #107) está comprovadamente
- * não consumida no ledger (0/0) e é substituída como superseded, nunca reutilizada. Nenhuma
- * execução é autorizada por este commit; Gate 2 permanece humano e separado.
+ * Estado atual (GOAL 020 · refresh do gate): **DORMENTE** — `activationId`, `notBeforeUtc` e
+ * `expiresAtUtc` são `null`. A janela de 24/08 (`wsdl-h9h10-20260824-1800z-*`) expirou sem
+ * consumo e permanece APENAS como evidência histórica; não é configuração executável e jamais
+ * deve ser re-materializada. Ativar exige alterar as três constantes em commit revisado;
+ * deployments antigos tornam-se inertes quando `expiresAtUtc` passa. Nenhuma execução é
+ * autorizada por este módulo; Gate 2 permanece humano e separado.
+ *
+ * A loja-piloto NÃO é mais literal (`WSDL_EXECUTION_PILOT_STORE_ID = "loja-1"` foi removido).
+ * Ela é resolvida dinamicamente por `resolveWsdlPilotStore` (ADR-0016) e o consumo exige que a
+ * request autenticada pertença EXATAMENTE à candidata resolvida; zero ou múltiplas candidatas
+ * bloqueiam (fail-closed).
+ *
+ * One-shot GLOBAL preservado sem schema novo sobre o primitive existente
+ * `FiscalEmissaoJob.@@unique([storeId, dedupeKey])` (que é por-loja): a transação de consumo
+ * primeiro toma um advisory lock PostgreSQL (`pg_advisory_xact_lock`) escopado à dedupeKey —
+ * serializando consumidores entre lojas, instâncias e cold starts — e depois recusa se QUALQUER
+ * loja já tiver consumido a mesma activation (busca por `dedupeKey` sem escopo de loja). A
+ * unique por-loja permanece como retaguarda. Nenhuma migration é criada.
  */
 import "server-only"
 
 import { createHash } from "node:crypto"
 import { prisma } from "@/lib/prisma"
+import { resolveWsdlPilotStore } from "./wsdl-pilot-store-resolver"
 import {
   SEFAZ_WSDL_ACQUISITION_TARGETS,
   canonicalSefazWsdlTarget,
@@ -18,12 +32,11 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260824-1800z-8cd1649df764940e",
-  notBeforeUtc: "2026-08-24T18:00:00Z",
-  expiresAtUtc: "2026-08-24T18:10:00Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
-export const WSDL_EXECUTION_PILOT_STORE_ID = "loja-1" as const
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
 export const WSDL_EXECUTION_MAX_WINDOW_MS = 15 * 60 * 1_000
 
@@ -99,15 +112,41 @@ export function configuredWsdlExecutionWindowStatus(): WsdlExecutionWindowStatus
 
 type WsdlActivationTransaction = {
   fiscalEmissaoJob: {
+    findFirst: (args: unknown) => Promise<{ id: string } | null>
     create: (args: unknown) => Promise<{ id: string }>
   }
   fiscalLog: {
     create: (args: unknown) => Promise<unknown>
   }
+  /**
+   * Serialização cross-store do consumo de uma activation. Implementação produtiva:
+   * `pg_advisory_xact_lock(hashtext(dedupeKey))` — primitive do PostgreSQL, sem schema.
+   */
+  lockActivationScope: (dedupeKey: string) => Promise<void>
 }
 
 export type WsdlActivationLedgerClient = {
   $transaction: <T>(operation: (tx: WsdlActivationTransaction) => Promise<T>) => Promise<T>
+}
+
+function productiveActivationLedgerClient(): WsdlActivationLedgerClient {
+  return {
+    $transaction: (operation) =>
+      prisma.$transaction(async (tx) => {
+        const scoped = tx as unknown as {
+          fiscalEmissaoJob: WsdlActivationTransaction["fiscalEmissaoJob"]
+          fiscalLog: WsdlActivationTransaction["fiscalLog"]
+          $queryRaw: (query: TemplateStringsArray, ...values: unknown[]) => Promise<unknown>
+        }
+        return operation({
+          fiscalEmissaoJob: scoped.fiscalEmissaoJob,
+          fiscalLog: scoped.fiscalLog,
+          lockActivationScope: async (dedupeKey) => {
+            await scoped.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${dedupeKey}))`
+          },
+        })
+      }),
+  }
 }
 
 const WSDL_EXECUTION_ACTIVATION = Symbol("wsdl-execution-activation")
@@ -133,6 +172,7 @@ export type ConsumeWsdlExecutionActivationResult =
       readonly ok: false
       readonly code:
         | "window_unavailable"
+        | "pilot_store_unresolved"
         | "store_not_allowed"
         | "target_catalog_invalid"
         | "already_consumed_or_persistence_unavailable"
@@ -160,10 +200,15 @@ function activationHash(activationId: string): string {
 async function consumeActivation(
   client: WsdlActivationLedgerClient,
   config: WsdlExecutionWindowConfig,
+  resolvePilotStoreId: () => Promise<string | null>,
   input: { readonly storeId: string; readonly operatorId: string },
   clock: () => Date,
 ): Promise<ConsumeWsdlExecutionActivationResult> {
-  if (input.storeId !== WSDL_EXECUTION_PILOT_STORE_ID) {
+  // Loja-piloto resolvida do registro REAL — nunca literal. Zero candidatas, múltiplas
+  // candidatas ou falha de leitura devolvem o mesmo código fail-closed.
+  const pilotStoreId = await resolvePilotStoreId()
+  if (!pilotStoreId) return { ok: false, code: "pilot_store_unresolved" }
+  if (input.storeId !== pilotStoreId) {
     return { ok: false, code: "store_not_allowed" }
   }
   const status = evaluateWsdlExecutionWindow(config, clock())
@@ -176,6 +221,14 @@ async function consumeActivation(
   const now = clock()
   try {
     await client.$transaction(async (tx) => {
+      // Serializa consumidores de QUALQUER loja para a mesma activation antes de checar.
+      await tx.lockActivationScope(dedupeKey)
+      // Exclusividade GLOBAL: a activation já consumida por qualquer loja recusa.
+      const existing = await tx.fiscalEmissaoJob.findFirst({
+        where: { dedupeKey },
+        select: { id: true },
+      })
+      if (existing) throw new Error("wsdl_activation_already_consumed")
       const job = await tx.fiscalEmissaoJob.create({
         data: {
           storeId: input.storeId,
@@ -227,7 +280,8 @@ async function consumeActivation(
       })
     })
   } catch {
-    // Colapsa conflito de unicidade e indisponibilidade do banco. Ambos bloqueiam antes do A1/rede.
+    // Colapsa conflito de unicidade, consumo prévio (qualquer loja) e indisponibilidade do
+    // banco. Todos bloqueiam antes do A1/rede.
     return { ok: false, code: "already_consumed_or_persistence_unavailable" }
   }
 
@@ -256,8 +310,12 @@ export async function consumeConfiguredWsdlExecutionActivation(input: {
   readonly operatorId: string
 }): Promise<ConsumeWsdlExecutionActivationResult> {
   return consumeActivation(
-    prisma as unknown as WsdlActivationLedgerClient,
+    productiveActivationLedgerClient(),
     WSDL_EPHEMERAL_EXECUTION_WINDOW,
+    async () => {
+      const resolved = await resolveWsdlPilotStore()
+      return resolved.ok ? resolved.storeId : null
+    },
     input,
     () => new Date(),
   )
@@ -273,7 +331,7 @@ export function consumeWsdlTargetExecutionPermit(
 ): boolean {
   const binding = activationBindings.get(activation)
   const canonical = canonicalSefazWsdlTarget(candidate)
-  if (!binding || !canonical || binding.storeId !== WSDL_EXECUTION_PILOT_STORE_ID) return false
+  if (!binding || !canonical) return false
   const now = binding.clock().getTime()
   if (now < binding.notBeforeMs || now >= binding.expiresAtMs) return false
   const key = targetKey(canonical)
@@ -286,16 +344,17 @@ export function wsdlExecutionActivationStillActive(
   activation: WsdlExecutionActivation,
 ): boolean {
   const binding = activationBindings.get(activation)
-  if (!binding || binding.storeId !== WSDL_EXECUTION_PILOT_STORE_ID) return false
+  if (!binding) return false
   const now = binding.clock().getTime()
   return now >= binding.notBeforeMs && now < binding.expiresAtMs
 }
 
-/** Seam somente de teste: mesma transação/ledger, com config e relógio controlados. */
+/** Seam somente de teste: mesma transação/ledger, com config, relógio e piloto controlados. */
 export function createWsdlExecutionGateTestHarness(options: {
   readonly client: WsdlActivationLedgerClient
   readonly config: WsdlExecutionWindowConfig
   readonly clock: () => Date
+  readonly resolvePilotStoreId: () => Promise<string | null>
 }) {
   if (process.env.NODE_ENV !== "test") {
     throw new Error("Harness de janela WSDL disponível somente em testes.")
@@ -303,6 +362,12 @@ export function createWsdlExecutionGateTestHarness(options: {
   return {
     status: () => evaluateWsdlExecutionWindow(options.config, options.clock()),
     consume: (input: { readonly storeId: string; readonly operatorId: string }) =>
-      consumeActivation(options.client, options.config, input, options.clock),
+      consumeActivation(
+        options.client,
+        options.config,
+        options.resolvePilotStoreId,
+        input,
+        options.clock,
+      ),
   }
 }
