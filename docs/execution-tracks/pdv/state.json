@@ -1,9 +1,9 @@
 {
   "aep": "1.0-R2",
   "track": "pdv",
-  "status": "PAUSED",
+  "status": "RUNNING",
   "risk_tier": "ALTO",
-  "current_goal": null,
+  "current_goal": "PDV-VENDA-EM-ESPERA-RESTORE-001",
   "next_goal": null,
   "bootstrap_commit": "2b223705a3a2d6982a50b2fbb1d025cedc8541d5",
   "counters": {
