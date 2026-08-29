@@ -12,6 +12,7 @@ import { allocateFiscalNumber } from "@/lib/fiscal/numbering/allocate-fiscal-num
 import { createPrismaFiscalNumberingPorts } from "@/lib/fiscal/numbering/prisma-numbering-ports"
 import { enterManualOfflineContingency } from "@/lib/fiscal/contingencia/offline-contingency"
 import { createPrismaOfflineContingencyPersistence } from "@/lib/fiscal/contingencia/prisma-offline-contingency-ports"
+import { createContingencyEntryCertificateResolver } from "@/lib/fiscal/contingencia/contingency-homologation-gate"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -26,11 +27,6 @@ const schema = z.object({
 
 function errorResponse(error: string, status: number, code: string) {
   return NextResponse.json({ ok: false, error, code }, { status })
-}
-
-/** Gate deliberadamente fechado até o A1/gate de homologação ser liberado. */
-async function resolveCertificateBeforeExternalGate(): Promise<never> {
-  throw new NfceSignError("material_ausente", "EXTERNAL_HOMOLOGATION_PENDING: material A1 não liberado para este piloto.")
 }
 
 export async function POST(request: Request) {
@@ -51,8 +47,18 @@ export async function POST(request: Request) {
   if (config.provider !== "SEFAZ_DIRETO") return errorResponse("Contingência offline exige provider SEFAZ_DIRETO.", 409, "provider_invalido")
 
   const operador = auth.session.user?.email ?? auth.session.user?.id ?? "admin"
+  /**
+   * Resolver do A1 controlado pelo gate efêmero ESPECÍFICO da contingência
+   * (GOAL 020). Enquanto `CONTINGENCY_HOMOLOGATION_WINDOW` estiver dormente —
+   * ou parcial/inválida/futura/expirada — lança `EXTERNAL_HOMOLOGATION_PENDING`
+   * aqui: 503 sem reservar número, sem abrir cofre e sem persistir nada.
+   * Vigente, resolve somente o material da loja; a entrada segue sem transmitir.
+   */
+  const resolveEntryCertificate = createContingencyEntryCertificateResolver({
+    storeId: auth.storeId,
+  })
   try {
-    await resolveCertificateBeforeExternalGate()
+    await resolveEntryCertificate()
   } catch (error) {
     if (error instanceof NfceSignError) {
       return errorResponse("Homologação externa pendente; nenhum número foi reservado.", 503, "EXTERNAL_HOMOLOGATION_PENDING")
@@ -69,7 +75,7 @@ export async function POST(request: Request) {
   const urls = selectNfceSpPublicUrls("HOMOLOGACAO")
   const preparer = createFinalizedNfcePreparer({
     resolveSource: sourceResolver,
-    resolveCertificate: resolveCertificateBeforeExternalGate,
+    resolveCertificate: resolveEntryCertificate,
     qrUrls: { qrCodeBaseUrl: urls.qrCodeBaseUrl, urlChave: urls.urlChave },
   })
   try {
