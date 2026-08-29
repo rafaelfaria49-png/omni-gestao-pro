@@ -77,3 +77,11 @@ Restrições: nenhuma chamada SEFAZ/WSDL neste GOAL; janela `CONTINGENCY_HOMOLOG
 - **READY_FOR_EXTERNAL_GATE**: `true` — bloqueios internos fechados; pendências são apenas as externas H-9/H-10.
 - **READY_FOR_LIVE_EXECUTION**: `false` — depende de H-9/H-10 (SOAPAction/WSDL oficial) e da ativação humana da janela.
 - **GOAL_021_STARTED**: `false`.
+
+## 6. Revisão independente (read-only, outra família)
+
+Range revisado: `3973cf5..39f02da` · **APROVADO — P0 = 0 · P1 = 0 · P2 = 5**.
+
+Os 9 focos obrigatórios verificados adversarialmente: (1) nenhum vetor queime o one-shot por falha determinística de pre-flight; (2) nenhuma forma de forjar a prova tipada do freio (campo só nasce no executor sob capability real + proveniência tipada + autorização persistida; coerência reconferida no worker; generic drain e EMISSAO incapazes); (3) parsing vinculado à chave esperada e composição de `nfeProc` com NFe verbatim e fail-closed em ambiguidade; (4) consulta escopada com `217`⇒NOT_FOUND e `103/105`⇒reconsulta; (5) bytes imutáveis (concatenação pura, hash reconferido em guard 7/8); (6) produção inalcançável e janela dormente; (7) H-9/H-10 honestamente EXTERNAL_BLOCKER, sem SOAPAction inventada; (8) guards D4 re-run dentro do provider, depois do one-shot (anti-TOCTOU); (9) sem regressões (diff essencialmente aditivo; 210 testes das suítes afetadas verdes na revisão).
+
+P2 registrados (observações, sem bloqueio): isenção histórica `simulado=true` no freio (pré-existente, mitigada pelo gate de capability do coordenador); TOCTOU de borda de janela (janela ≤15min, consulta é leitura); override `readXsdAttestation` por-execução dependente de instância única; rótulo de trilha `HASH_DIVERGENTE` classificado como indisponibilidade de worker; ordem estilística capability-sujeito na consulta.
