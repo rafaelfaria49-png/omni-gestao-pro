@@ -2,6 +2,38 @@
 
 **Data:** 2026-08-13 · **Base:** `52b75dbb4ad478b2799a45a1b759f083828fc1cd`
 
+> **ATUALIZAÇÃO (2026-08-30 · GOAL 020 · decouple 132):** a regra de piloto da aquisição foi
+> INVERTIDA em relação ao parágrafo abaixo: **WSDL ≠ emissão**. A aquisição é metadado read-only
+> (GET mTLS, sem corpo, sem SOAP, alvos fechados) e agora EXIGE `fiscalEnabled=false`, com
+> `provider` em {`STUB_HOMOLOGACAO`, `SEFAZ_DIRETO`} (sempre com emissão desligada). Evidência
+> humana do banco real de produção (`omnigestao_prod`): a piloto `loja-1` está exatamente nesse
+> estado preparatório, com certificado A1 configurado/encontrado/ATIVO/vigente e refs presentes.
+> A habilitação (`SEFAZ_DIRETO` + `fiscalEnabled=true`) pertence ao gate posterior do live drill
+> de contingência. A semântica global de `fiscalEnabled` (snapshot/emissão) não muda. O
+> predicado canônico único (`candidataAquisicaoWsdl`) é compartilhado por resolver e rota.
+> Guarde 5 e 7 da seção 3 com esta nova leitura.
+
+> **ATUALIZAÇÃO (2026-08-29 · GOAL 020 · refresh do gate):** a janela foi RESTAURADA ao estado
+> dormente `null/null/null` — a ativação `wsdl-h9h10-20260824-1800z-*` (24/08) expirou sem
+> consumo e permanece somente como evidência histórica, não como configuração executável. O
+> literal de loja-piloto (`WSDL_EXECUTION_PILOT_STORE_ID = "loja-1"`) foi REMOVIDO: a piloto é
+> resolvida DINAMICAMENTE de `ConfiguracaoFiscalLoja` (`wsdl-pilot-store-resolver.ts`, ADR-0016),
+> fail-closed — zero candidatas, múltiplas candidatas (exige decisão humana) ou falha de leitura
+> bloqueiam; a request autenticada deve pertencer exatamente à candidata resolvida. Critérios de
+> candidatura: `ambiente=HOMOLOGACAO`, `modeloFiscal=NFCE`, `provider=SEFAZ_DIRETO`,
+> `certificadoAtivoId` válido. O one-shot GLOBAL foi reforçado sem schema/migration: a transação
+> de consumo toma `pg_advisory_xact_lock` escopado à `dedupeKey` (serializa entre lojas,
+> instâncias e cold starts) e recusa consumo prévio de QUALQUER loja; a unique
+> `(storeId, dedupeKey)` permanece como retaguarda. Regra `fiscalEnabled`: o antigo
+> `fiscalEnabled=false` era proxy de "loja não emite" de uma fase sem pipeline fiscal; com o
+> pipeline de homologação operacional do GOAL 020, o preflight exige `fiscalEnabled=true` da
+> candidata resolvida — sem habilitar emissão, pois a superfície é GET de metadados (sem corpo,
+> sem SOAP, alvos fechados do catálogo) e a emissão segue retida pelos guards do pipeline.
+> **[REVISTO EM 132: `fiscalEnabled=false` voltou a ser obrigatório — ver atualização acima.]**
+> Guard 5 da seção 3 deve ser lido como "Store exatamente a piloto RESOLVIDA" e o guard 7 como
+> "`HOMOLOGACAO`, `NFCE`, `provider` em {`STUB_HOMOLOGACAO`, `SEFAZ_DIRETO`},
+> `fiscalEnabled=false`".
+
 **Estado entregue:** **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` são `null`.
 
 **Rede SEFAZ neste GOAL:** **zero**. Nenhum WSDL, DNS, TLS, `.asmx`, `statusServico`, SOAP ou

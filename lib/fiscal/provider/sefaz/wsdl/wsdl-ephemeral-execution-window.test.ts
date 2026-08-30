@@ -12,8 +12,9 @@ import {
   type WsdlExecutionWindowConfig,
 } from "./wsdl-ephemeral-execution-window"
 
-const NEW_ACTIVATION_ID = "wsdl-h9h10-20260824-1800z-8cd1649df764940e"
-const FORBIDDEN_ACTIVATION_IDS = [
+/** Evidência HISTÓRICA — nenhuma delas pode voltar a ser a constante executável. */
+const HISTORICAL_ACTIVATION_IDS = [
+  "wsdl-h9h10-20260824-1800z-8cd1649df764940e",
   "wsdl-h9h10-20260825-1800z-8eb785376e4a4724",
   "wsdl-h9h10-20260820-1800z-a7a5d306e59b2fca",
   "wsdl-h9h10-20260818-1800z-0152a8c5b96f3ffc",
@@ -67,43 +68,70 @@ type SharedLedger = {
   keys: Set<string>
   jobs: Array<Record<string, unknown>>
   logs: Array<Record<string, unknown>>
+  lock: Promise<void>
 }
 
+/**
+ * Emula o ledger real: advisory lock serializado (fila por promessa), busca global por
+ * dedupeKey (qualquer loja) e a unique (storeId, dedupeKey) como retaguarda.
+ */
 function ledgerClient(shared: SharedLedger): WsdlActivationLedgerClient {
   return {
     $transaction: async (operation) => {
-      let insertedKey: string | null = null
-      const tx = {
-        fiscalEmissaoJob: {
-          create: async (args: unknown) => {
-            const data = (args as { data: Record<string, unknown> }).data
-            const key = String(data.dedupeKey)
-            if (shared.keys.has(key)) throw new Error("unique constraint")
-            shared.keys.add(key)
-            insertedKey = key
-            shared.jobs.push(data)
-            return { id: `job-${shared.jobs.length}` }
+      const run = shared.lock.then(() =>
+        operation({
+          fiscalEmissaoJob: {
+            findFirst: async (args: unknown) => {
+              const where = (args as { where: { dedupeKey: string } }).where
+              return shared.keys.has(where.dedupeKey) ? { id: "existing" } : null
+            },
+            create: async (args: unknown) => {
+              const data = (args as { data: Record<string, unknown> }).data
+              const key = String(data.dedupeKey)
+              if (shared.keys.has(key)) throw new Error("unique constraint")
+              shared.keys.add(key)
+              shared.jobs.push(data)
+              return { id: `job-${shared.jobs.length}` }
+            },
           },
-        },
-        fiscalLog: {
-          create: async (args: unknown) => {
-            shared.logs.push((args as { data: Record<string, unknown> }).data)
-            return {}
+          fiscalLog: {
+            create: async (args: unknown) => {
+              shared.logs.push((args as { data: Record<string, unknown> }).data)
+              return {}
+            },
           },
-        },
-      }
-      try {
-        return await operation(tx)
-      } catch (error) {
-        if (insertedKey) shared.keys.delete(insertedKey)
-        throw error
-      }
+          lockActivationScope: async () => {
+            // A serialização já é garantida pela fila `shared.lock`.
+          },
+        }),
+      )
+      shared.lock = run.then(
+        () => undefined,
+        () => undefined,
+      )
+      return run
     },
   }
 }
 
 function sharedLedger(): SharedLedger {
-  return { keys: new Set(), jobs: [], logs: [] }
+  return { keys: new Set(), jobs: [], logs: [], lock: Promise.resolve() }
+}
+
+function gate(
+  shared: SharedLedger,
+  options: {
+    config?: WsdlExecutionWindowConfig
+    clock?: () => Date
+    pilot?: string | null
+  } = {},
+) {
+  return createWsdlExecutionGateTestHarness({
+    client: ledgerClient(shared),
+    config: options.config ?? ACTIVE_CONFIG,
+    clock: options.clock ?? (() => new Date("2026-08-13T12:05:00Z")),
+    resolvePilotStoreId: async () => (options.pilot === undefined ? "loja-1" : options.pilot),
+  })
 }
 
 describe("janela efêmera WSDL versionada", () => {
@@ -114,61 +142,65 @@ describe("janela efêmera WSDL versionada", () => {
     })
   })
 
-  it("materializa a NOVA janela H-9/H-10 sem reutilizar activation histórica", () => {
+  it("constante versionada está e permanece DORMENTE (null/null/null) após o containment OFF de 30/08", () => {
     expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: NEW_ACTIVATION_ID,
-      notBeforeUtc: "2026-08-24T18:00:00Z",
-      expiresAtUtc: "2026-08-24T18:10:00Z",
+      activationId: null,
+      notBeforeUtc: null,
+      expiresAtUtc: null,
     })
-    for (const deadId of FORBIDDEN_ACTIVATION_IDS) {
+    expect(evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())).toEqual({
+      active: false,
+      reason: "disabled",
+    })
+  })
+
+  it("nenhuma activation — inclusive a janela consumida/falha de 30/08 — é configurável", () => {
+    for (const deadId of [...HISTORICAL_ACTIVATION_IDS, "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d"]) {
       expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
     }
-    expect(
-      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.expiresAtUtc!).getTime() -
-        new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.notBeforeUtc!).getTime(),
-    ).toBe(10 * 60 * 1_000)
   })
 
-  it("gera hash e dedupe próprios da nova activation, distintos da activation morta", () => {
-    const newHash = sha256Utf8(NEW_ACTIVATION_ID)
-    const deadHash = sha256Utf8("wsdl-h9h10-20260825-1800z-8eb785376e4a4724")
-    expect(newHash).toBe("7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650")
-    expect(deadHash).toBe("1a61ea4d234c20ce9332f8c43d99ed775601884663e754a4a44ee7e561a8699a")
-    expect(newHash).not.toBe(deadHash)
-    expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).toBe(
-      "fiscal:wsdl:h9-h10:v1:7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+  it("derivação de dedupeKey permanece estável (v1 + SHA-256 da activation)", () => {
+    const fixture = "FISCAL-017-GATE-019-TEST"
+    for (const deadId of HISTORICAL_ACTIVATION_IDS) {
+      expect(`fiscal:wsdl:h9-h10:v1:${sha256Utf8(fixture)}`).not.toBe(
+        `fiscal:wsdl:h9-h10:v1:${sha256Utf8(deadId)}`,
+      )
+    }
+    // A activation de 30/08 também é distinta de qualquer fixture.
+    expect(sha256Utf8("wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d")).not.toBe(
+      sha256Utf8(fixture),
     )
-    expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).not.toBe(`fiscal:wsdl:h9-h10:v1:${deadHash}`)
   })
 
-  it("avalia a janela materializada: not_started, active, expired em expiresAt e após", () => {
-    const config = WSDL_EPHEMERAL_EXECUTION_WINDOW
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T17:59:59Z"))).toEqual({
+  it("avalia janela fixture: not_started, active, expired em expiresAt e após", () => {
+    const config = ACTIVE_CONFIG
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-13T11:59:59Z"))).toEqual({
       active: false,
       reason: "not_started",
     })
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:00:00Z")).active).toBe(true)
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:05:00Z")).active).toBe(true)
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:09:59Z")).active).toBe(true)
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:10:00Z"))).toEqual({
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-13T12:00:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-13T12:05:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-13T12:09:59Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-13T12:10:00Z"))).toEqual({
       active: false,
       reason: "expired",
     })
-    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-24T18:10:01Z"))).toEqual({
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-13T12:10:01Z"))).toEqual({
       active: false,
       reason: "expired",
     })
   })
 
-  it("não dispara rede ao avaliar a janela materializada nem ao hashear a activation", () => {
+  it("não dispara rede ao avaliar janelas nem ao hashear activations", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-    evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-08-24T18:05:00Z"))
-    sha256Utf8(NEW_ACTIVATION_ID)
+    evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:05:00Z"))
+    sha256Utf8(ACTIVE_CONFIG.activationId!)
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
   })
 
-  it("aceita a constante versionada somente dormente ou integralmente configurada", () => {
+  it("aceita configuração somente dormente ou integralmente configurada", () => {
     expect(versionedConfigHasAllowedStructure(WSDL_EPHEMERAL_EXECUTION_WINDOW)).toBe(true)
     expect(versionedConfigHasAllowedStructure(DISABLED_CONFIG)).toBe(true)
     expect(versionedConfigHasAllowedStructure(ACTIVE_CONFIG)).toBe(true)
@@ -218,64 +250,98 @@ describe("janela efêmera WSDL versionada", () => {
     ).toEqual({ active: false, reason: "invalid" })
   })
 
-  it("avalia janela válida somente com relógios fixos", () => {
-    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T11:59:59Z"))).toEqual({
-      active: false,
-      reason: "not_started",
-    })
-    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:00:00Z")).active).toBe(
-      true,
-    )
-    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:05:00Z")).active).toBe(
-      true,
-    )
-    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:10:00Z"))).toEqual({
-      active: false,
-      reason: "expired",
-    })
-    expect(evaluateWsdlExecutionWindow(ACTIVE_CONFIG, new Date("2026-08-13T12:10:01Z"))).toEqual({
-      active: false,
-      reason: "expired",
-    })
+  it("janela parcial e janela expirada bloqueiam consumo fail-closed", async () => {
+    const parcial = sharedLedger()
+    expect(
+      await gate(parcial, {
+        config: { ...ACTIVE_CONFIG, expiresAtUtc: null },
+        pilot: "loja-1",
+      }).consume({ storeId: "loja-1", operatorId: "admin" }),
+    ).toEqual({ ok: false, code: "window_unavailable" })
+
+    const expirada = sharedLedger()
+    expect(
+      await gate(expirada, {
+        clock: () => new Date("2026-08-13T12:10:00Z"),
+        pilot: "loja-1",
+      }).consume({ storeId: "loja-1", operatorId: "admin" }),
+    ).toEqual({ ok: false, code: "window_unavailable" })
+    expect(parcial.jobs).toHaveLength(0)
+    expect(expirada.jobs).toHaveLength(0)
   })
 })
 
 describe("ledger persistente global one-shot", () => {
-  it("a nova activation persiste hash e dedupe próprios, sem a activation morta", async () => {
+  it("a piloto RESOLVIDA consome uma vez, com hash e dedupe próprios", async () => {
     const shared = sharedLedger()
-    const gate = createWsdlExecutionGateTestHarness({
-      client: ledgerClient(shared),
-      config: WSDL_EPHEMERAL_EXECUTION_WINDOW,
-      clock: () => new Date("2026-08-24T18:05:00Z"),
+    const consumed = await gate(shared, { pilot: "loja-piloto-real" }).consume({
+      storeId: "loja-piloto-real",
+      operatorId: "admin",
     })
-    const consumed = await gate.consume({ storeId: "loja-1", operatorId: "admin" })
     expect(consumed.ok).toBe(true)
     expect(shared.jobs).toHaveLength(1)
     expect(shared.jobs[0]).toMatchObject({
-      storeId: "loja-1",
-      vendaId: "wsdl-h9-h10:7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
-      dedupeKey:
-        "fiscal:wsdl:h9-h10:v1:7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+      storeId: "loja-piloto-real",
+      vendaId: `wsdl-h9-h10:${sha256Utf8(ACTIVE_CONFIG.activationId!)}`,
+      dedupeKey: `fiscal:wsdl:h9-h10:v1:${sha256Utf8(ACTIVE_CONFIG.activationId!)}`,
       tipo: "CONSULTA",
       status: "CONCLUIDO",
     })
     expect(shared.jobs[0]?.payload).toMatchObject({
-      activationHash: "7374cb215fde73e89584adf6a03c2c44872576c0f22d2538fc774d1692bf8650",
+      activationHash: sha256Utf8(ACTIVE_CONFIG.activationId!),
       targetCount: 6,
     })
-    expect(JSON.stringify(shared.jobs)).not.toContain("wsdl-h9h10-20260825-1800z-8eb785376e4a4724")
-    expect(JSON.stringify(shared.logs)).not.toContain("wsdl-h9h10-20260825-1800z-8eb785376e4a4724")
-    expect(JSON.stringify(shared.jobs)).not.toContain(
-      "1a61ea4d234c20ce9332f8c43d99ed775601884663e754a4a44ee7e561a8699a",
-    )
+  })
+
+  it("resolução sem piloto (zero candidatas, ambígua ou erro de leitura) bloqueia fail-closed", async () => {
+    const shared = sharedLedger()
+    expect(
+      await gate(shared, { pilot: null }).consume({ storeId: "loja-1", operatorId: "admin" }),
+    ).toEqual({ ok: false, code: "pilot_store_unresolved" })
+    expect(shared.jobs).toHaveLength(0)
+  })
+
+  it("não consome para loja diferente da piloto resolvida", async () => {
+    const shared = sharedLedger()
+    expect(await gate(shared).consume({ storeId: "loja-2", operatorId: "admin" })).toEqual({
+      ok: false,
+      code: "store_not_allowed",
+    })
+    expect(shared.jobs).toHaveLength(0)
+  })
+
+  it("one-shot GLOBAL entre lojas: loja que vier a ser a piloto não reconsome a activation", async () => {
+    const shared = sharedLedger()
+    expect(
+      await gate(shared, { pilot: "loja-a" }).consume({ storeId: "loja-a", operatorId: "a" }),
+    ).toEqual({ ok: true, activation: expect.anything() })
+
+    // A candidatura muda para outra loja dentro da mesma janela: a activation já foi
+    // consumida GLOBALMENTE (qualquer loja) — não há uma segunda ativação.
+    expect(
+      await gate(shared, { pilot: "loja-b" }).consume({ storeId: "loja-b", operatorId: "b" }),
+    ).toEqual({ ok: false, code: "already_consumed_or_persistence_unavailable" })
+    expect(shared.jobs).toHaveLength(1)
+    expect(shared.logs).toHaveLength(1)
   })
 
   it("duas invocations concorrentes consomem exatamente uma vez", async () => {
     const shared = sharedLedger()
     const client = ledgerClient(shared)
     const clock = () => new Date("2026-08-13T12:05:00Z")
-    const gateA = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
-    const gateB = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+    const resolvePilot = async () => "loja-1"
+    const gateA = createWsdlExecutionGateTestHarness({
+      client,
+      config: ACTIVE_CONFIG,
+      clock,
+      resolvePilotStoreId: resolvePilot,
+    })
+    const gateB = createWsdlExecutionGateTestHarness({
+      client,
+      config: ACTIVE_CONFIG,
+      clock,
+      resolvePilotStoreId: resolvePilot,
+    })
 
     const results = await Promise.all([
       gateA.consume({ storeId: "loja-1", operatorId: "admin-a" }),
@@ -302,10 +368,21 @@ describe("ledger persistente global one-shot", () => {
     const shared = sharedLedger()
     const client = ledgerClient(shared)
     const clock = () => new Date("2026-08-13T12:05:00Z")
-    const firstProcess = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+    const resolvePilot = async () => "loja-1"
+    const firstProcess = createWsdlExecutionGateTestHarness({
+      client,
+      config: ACTIVE_CONFIG,
+      clock,
+      resolvePilotStoreId: resolvePilot,
+    })
     expect((await firstProcess.consume({ storeId: "loja-1", operatorId: "admin-a" })).ok).toBe(true)
 
-    const coldStart = createWsdlExecutionGateTestHarness({ client, config: ACTIVE_CONFIG, clock })
+    const coldStart = createWsdlExecutionGateTestHarness({
+      client,
+      config: ACTIVE_CONFIG,
+      clock,
+      resolvePilotStoreId: resolvePilot,
+    })
     expect(await coldStart.consume({ storeId: "loja-1", operatorId: "admin-b" })).toEqual({
       ok: false,
       code: "already_consumed_or_persistence_unavailable",
@@ -313,39 +390,13 @@ describe("ledger persistente global one-shot", () => {
     expect(shared.jobs).toHaveLength(1)
   })
 
-  it("não consome para outra loja nem fora da janela", async () => {
-    const shared = sharedLedger()
-    const client = ledgerClient(shared)
-    const active = createWsdlExecutionGateTestHarness({
-      client,
-      config: ACTIVE_CONFIG,
-      clock: () => new Date("2026-08-13T12:05:00Z"),
-    })
-    expect(await active.consume({ storeId: "loja-2", operatorId: "admin" })).toEqual({
-      ok: false,
-      code: "store_not_allowed",
-    })
-    const expired = createWsdlExecutionGateTestHarness({
-      client,
-      config: ACTIVE_CONFIG,
-      clock: () => new Date("2026-08-13T12:10:00Z"),
-    })
-    expect(await expired.consume({ storeId: "loja-1", operatorId: "admin" })).toEqual({
-      ok: false,
-      code: "window_unavailable",
-    })
-    expect(shared.jobs).toHaveLength(0)
-  })
-
   it("capability pós-ledger oferece exatamente seis alvos, uma vez cada, e expira em uso", async () => {
     const shared = sharedLedger()
     let now = new Date("2026-08-13T12:05:00Z")
-    const gate = createWsdlExecutionGateTestHarness({
-      client: ledgerClient(shared),
-      config: ACTIVE_CONFIG,
-      clock: () => now,
+    const consumed = await gate(shared, { clock: () => now }).consume({
+      storeId: "loja-1",
+      operatorId: "admin",
     })
-    const consumed = await gate.consume({ storeId: "loja-1", operatorId: "admin" })
     if (!consumed.ok) throw new Error("fixture deveria consumir")
 
     expect(SEFAZ_WSDL_ACQUISITION_TARGETS).toHaveLength(WSDL_EXECUTION_EXPECTED_TARGETS)
@@ -355,16 +406,14 @@ describe("ledger persistente global one-shot", () => {
     }
 
     const secondShared = sharedLedger()
-    const expiring = createWsdlExecutionGateTestHarness({
-      client: ledgerClient(secondShared),
-      config: ACTIVE_CONFIG,
-      clock: () => now,
+    const second = await gate(secondShared, { clock: () => now }).consume({
+      storeId: "loja-1",
+      operatorId: "admin",
     })
-    const second = await expiring.consume({ storeId: "loja-1", operatorId: "admin" })
     if (!second.ok) throw new Error("fixture deveria consumir")
     now = new Date("2026-08-13T12:10:00Z")
-    expect(consumeWsdlTargetExecutionPermit(second.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[0]!)).toBe(
-      false,
-    )
+    expect(
+      consumeWsdlTargetExecutionPermit(second.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[0]!),
+    ).toBe(false)
   })
 })

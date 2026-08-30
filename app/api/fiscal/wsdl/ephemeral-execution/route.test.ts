@@ -22,6 +22,7 @@ const h = vi.hoisted(() => {
     prisma,
     prismaEnsureConnected: vi.fn(async () => undefined),
     storeResolver: vi.fn((): string | null => STORE),
+    resolvePilot: vi.fn(),
     requireFiscalAdmin: vi.fn(),
     windowStatus: vi.fn(),
     consumeActivation: vi.fn(),
@@ -45,10 +46,15 @@ vi.mock("@/lib/fiscal/certificate/a1-mtls-material", () => ({
   loadA1MtlsSecureContext: h.loadSecureContext,
 }))
 vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window", () => ({
-  WSDL_EXECUTION_PILOT_STORE_ID: "loja-1",
   configuredWsdlExecutionWindowStatus: h.windowStatus,
   consumeConfiguredWsdlExecutionActivation: h.consumeActivation,
 }))
+vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver")
+  >()
+  return { ...actual, resolveWsdlPilotStore: h.resolvePilot }
+})
 vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-batch", () => ({
   runConfiguredWsdlEphemeralBatch: h.runBatch,
 }))
@@ -60,6 +66,7 @@ function fiscalConfig(overrides: Record<string, unknown> = {}) {
     storeId: STORE,
     ambiente: "HOMOLOGACAO",
     modeloFiscal: "NFCE",
+    provider: "SEFAZ_DIRETO",
     fiscalEnabled: false,
     certificadoAtivoId: CERT,
     ...overrides,
@@ -95,6 +102,7 @@ beforeEach(() => {
   h.setStore({ id: STORE })
   h.setConfig(fiscalConfig())
   h.storeResolver.mockReturnValue(STORE)
+  h.resolvePilot.mockResolvedValue({ ok: true, storeId: STORE })
   h.windowStatus.mockReturnValue({
     active: true,
     window: {
@@ -268,7 +276,7 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.consumeActivation).not.toHaveBeenCalled()
   })
 
-  it("exige loja explícita e somente loja-1", async () => {
+  it("exige loja explícita e somente a piloto RESOLVIDA", async () => {
     h.storeResolver.mockReturnValue(null)
     h.requireFiscalAdmin.mockResolvedValue({ ok: false, status: 400, error: "store" })
     expect((await POST(request(""))).status).toBe(400)
@@ -282,6 +290,29 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     })
     expect((await POST(request("?storeId=loja-2"))).status).toBe(400)
     expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["zero candidatas", { ok: false, code: "no_candidate" }],
+    ["múltiplas candidatas (decisão humana)", { ok: false, code: "ambiguous" }],
+    ["falha de leitura", { ok: false, code: "unavailable" }],
+  ])("resolução da piloto: %s bloqueia antes de Prisma/consumo/batch", async (_label, result) => {
+    h.resolvePilot.mockResolvedValue(result)
+    const response = await POST(request())
+    expect(response.status).toBe(409)
+    expect(await json(response)).toEqual({ ok: false, code: "pilot_store_unresolved" })
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.consumeActivation).not.toHaveBeenCalled()
+    expect(h.runBatch).not.toHaveBeenCalled()
+  })
+
+  it("request autenticada de outra loja que a piloto resolvida é recusada", async () => {
+    h.resolvePilot.mockResolvedValue({ ok: true, storeId: "loja-9" })
+    const response = await POST(request())
+    expect(response.status).toBe(400)
+    expect(await json(response)).toEqual({ ok: false, code: "request_not_allowed" })
+    expect(h.prismaEnsureConnected).not.toHaveBeenCalled()
+    expect(h.consumeActivation).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -351,7 +382,10 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
   it.each([
     ["ambiente", { ambiente: "PRODUCAO" }],
     ["modelo", { modeloFiscal: "NFE" }],
-    ["fiscal enabled", { fiscalEnabled: true }],
+    ["provider fora do par permitido", { provider: "GATEWAY_FOCUS" }],
+    ["provider ausente", { provider: null }],
+    ["fiscal HABILITADO (aquisição exige emissão DESLIGADA)", { fiscalEnabled: true }],
+    ["fiscalEnabled ausente", { fiscalEnabled: null }],
     ["certificado id", { certificadoAtivoId: null }],
     ["store divergente", { storeId: "loja-2" }],
   ])("preflight %s bloqueia antes de resolver/consumir/A1", async (_label, override) => {
@@ -362,6 +396,17 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.consumeActivation).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
   })
+
+  it.each(["STUB_HOMOLOGACAO", "SEFAZ_DIRETO"])(
+    "provider %s + fiscalEnabled=false atravessa o preflight até o batch (estado preparatório seguro)",
+    async (provider) => {
+      h.setConfig(fiscalConfig({ provider }))
+      const response = await POST(request())
+      expect(response.status).toBe(200)
+      expect(h.consumeActivation).toHaveBeenCalledOnce()
+      expect(h.runBatch).toHaveBeenCalledOnce()
+    },
+  )
 
   it.each(["not_started", "expired"])(
     "janela %s bloqueia antes de ACL, A1, ledger e batch",
@@ -426,6 +471,23 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.consumeActivation.mock.invocationCallOrder[0]).toBeLessThan(
       h.runBatch.mock.invocationCallOrder[0]!,
     )
+  })
+
+  it("superfície não tem caminho de emissão/numeração/NotaFiscal/Venda: só leituras + ledger técnico", async () => {
+    const response = await POST(request())
+
+    expect(response.status).toBe(200)
+    // Leituras read-only do preflight — as ÚNICAS interações diretas com o banco.
+    expect(h.prisma.store.findUnique).toHaveBeenCalledOnce()
+    expect(h.prisma.configuracaoFiscalLoja.findUnique).toHaveBeenCalledOnce()
+    // O ledger técnico one-shot (job CONSULTA + log) é a única escrita, e o batch não recebe
+    // nenhum cliente de banco: os inputs são exatamente activation, refs e SecureContext.
+    expect(h.consumeActivation).toHaveBeenCalledOnce()
+    expect(Object.keys(h.runBatch.mock.calls[0]![0] as object).sort()).toEqual([
+      "activation",
+      "certificate",
+      "preparedSecureContext",
+    ])
   })
 
   it("conflito persistente/cold start bloqueia antes do batch", async () => {
