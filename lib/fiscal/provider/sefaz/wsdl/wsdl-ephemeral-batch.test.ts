@@ -207,6 +207,9 @@ describe("batch efêmero fechado H-9/H-10", () => {
             mensagem: "sanitizada",
             classification: "UNKNOWN_UNCERTAIN",
             externalTransmissionAttempted: true,
+            transportPhase: "BEFORE_SECURE_CONNECT",
+            transportClass: "DNS",
+            transportCode: "ENOTFOUND",
           }
         }
         return successOutcome(target.servico)
@@ -222,7 +225,47 @@ describe("batch efêmero fechado H-9/H-10", () => {
       failureClass: "acquisition:wsdl_rede_incerta",
       h9: false,
       h10: false,
+      // Cada serviço carrega a SUA própria evidência sanitizada de transporte.
+      transportPhase: "BEFORE_SECURE_CONNECT",
+      transportClass: "DNS",
+      transportCode: "ENOTFOUND",
     })
+    // Os demais serviços não herdam telemetria alheia.
+    for (const service of result.services.filter((item) => item.service !== "NFeStatusServico4")) {
+      expect(service.transportPhase).toBeNull()
+      expect(service.transportClass).toBeNull()
+      expect(service.transportCode).toBeNull()
+    }
+  })
+
+  it("falha de aquisição sem telemetria serializa campos nulos — nunca ausentes/objeto cru", async () => {
+    const token = await activation()
+    const runner = createWsdlEphemeralBatchTestRunner({
+      createAuthority: createWsdlEphemeralExternalAuthority,
+      acquire: async () => ({
+        ok: false,
+        codigo: "wsdl_tentativa_nao_autorizada",
+        mensagem: "sanitizada",
+        classification: "BLOCKED_BEFORE_NETWORK",
+        externalTransmissionAttempted: false,
+        transportPhase: null,
+        transportClass: null,
+        transportCode: null,
+      }),
+      correlationId: () => "correlation-test",
+    })
+
+    const result = await runner({ activation: token, certificate, preparedSecureContext })
+    expect(result.ok).toBe(false)
+    for (const service of result.services) {
+      expect(service.failureClass).toBe("acquisition:wsdl_tentativa_nao_autorizada")
+      expect(service.transportPhase).toBeNull()
+      expect(service.transportClass).toBeNull()
+      expect(service.transportCode).toBeNull()
+    }
+    const serialized = JSON.stringify(result)
+    expect(serialized).toContain('"transportClass":null')
+    expect(serialized).not.toContain("mensagem")
   })
 
   it("revalida expiresAt antes de cada authority e não inicia novos GETs após expirar", async () => {

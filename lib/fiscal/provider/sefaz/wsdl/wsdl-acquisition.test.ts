@@ -17,11 +17,15 @@ import {
   WSDL_MAX_CONNECTION_TIMEOUT_MS,
   WSDL_MAX_RESPONSE_BYTES,
   WSDL_MAX_TOTAL_DEADLINE_MS,
+  WSDL_NODE_TRANSPORT_ERROR_CLASSES,
+  WSDL_TRANSPORT_UNKNOWN_CODE,
   SefazWsdlAcquisition,
   boundWsdlDeadlines,
+  classifyWsdlTransportError,
   contentTypeEvidencia,
   type SefazWsdlAcquisitionOutcome,
   type SefazWsdlAcquisitionRequest,
+  type SefazWsdlTransportClass,
 } from "./wsdl-acquisition"
 import {
   consumeWsdlExecutionAuthority,
@@ -112,12 +116,20 @@ type ServerObservacao = {
 async function startMtlsServer(
   handler: (response: ServerResponse, request: IncomingMessage) => void,
 ): Promise<{ port: number; hits: () => number; observado: ServerObservacao }> {
+  return startMtlsServerCert(pki.serverCertificatePem, pki.serverPrivateKeyPem, handler)
+}
+
+async function startMtlsServerCert(
+  certificatePem: string,
+  privateKeyPem: string,
+  handler: (response: ServerResponse, request: IncomingMessage) => void,
+): Promise<{ port: number; hits: () => number; observado: ServerObservacao }> {
   let hitCount = 0
   const observado: ServerObservacao = { metodos: [], urls: [], corpos: [] }
   const server = createHttpsServer(
     {
-      key: pki.serverPrivateKeyPem,
-      cert: pki.serverCertificatePem,
+      key: privateKeyPem,
+      cert: certificatePem,
       ca: pki.caCertificatePem,
       requestCert: true,
       rejectUnauthorized: true,
@@ -211,6 +223,10 @@ describe("SefazWsdlAcquisition · sem autoridade a capability é inerte", () => 
       ok: false,
       codigo: "wsdl_rede_incerta",
       externalTransmissionAttempted: false,
+      // Falha na criação da request: fase REQUEST_CREATE, sem classe inventada.
+      transportPhase: "REQUEST_CREATE",
+      transportClass: "UNKNOWN_NETWORK",
+      transportCode: WSDL_TRANSPORT_UNKNOWN_CODE,
     })
   })
 
@@ -468,6 +484,11 @@ describe("SefazWsdlAcquisition · desfechos de rede fail-closed", () => {
       ok: false,
       codigo: "wsdl_timeout_conexao",
       classification: "UNKNOWN_UNCERTAIN",
+      // Código existente PRESERVADO — timeout não colapsa em wsdl_rede_incerta.
+      transportClass: "TIMEOUT",
+      transportCode: WSDL_TRANSPORT_UNKNOWN_CODE,
+      // TCP conectou (servidor aceita e trava); a janela observada é o handshake TLS.
+      transportPhase: "SECURE_CONNECT",
     })
   })
 
@@ -484,6 +505,9 @@ describe("SefazWsdlAcquisition · desfechos de rede fail-closed", () => {
       ok: false,
       codigo: "wsdl_deadline_total",
       classification: "UNKNOWN_UNCERTAIN",
+      transportClass: "TIMEOUT",
+      transportCode: WSDL_TRANSPORT_UNKNOWN_CODE,
+      transportPhase: "RESPONSE_STREAM",
     })
   })
 
@@ -599,5 +623,260 @@ describe("catálogo de aquisição × superfície SOAP", () => {
       expect(lookup.ok).toBe(true)
     }
     expect(SEFAZ_WSDL_ACQUISITION_TARGETS).toHaveLength(6)
+  })
+})
+
+describe("telemetria de transporte sanitizada (GOAL 020 · 138) · classificador puro", () => {
+  const CODIGOS_TLS_CERTIFICADO = new Set(
+    [...WSDL_NODE_TRANSPORT_ERROR_CLASSES]
+      .filter(([, classe]) => classe === "TLS_CERTIFICATE")
+      .map(([code]) => code),
+  )
+
+  function erroEnvenenado(code: string | undefined): Error {
+    const error = new Error(
+      `MSG_CRUA host=${HOST_HOMOLOGACAO} ip=10.250.1.1 caminho=C:\\Users\\rafae\\segredo ` +
+        "blobRef=BLOB_REF_NAO_VAZAR senha=SENHA_FAKE_NAO_VAZAR stack-cru",
+    )
+    error.stack = "STACK_CRUA_NAO_VAZAR\n    at fake"
+    Object.assign(error, {
+      cause: new Error("CAUSE_CRUO_NAO_VAZAR"),
+      address: "10.250.1.1",
+      hostname: HOST_HOMOLOGACAO,
+      syscall: "getaddrinfo",
+      port: 443,
+      cert: { subject: "SUBJECT_NAO_VAZAR", issuer: "ISSUER_NAO_VAZAR" },
+      fingerprint: "FP_NAO_VAZAR",
+      blobRef: "BLOB_REF_NAO_VAZAR",
+      senhaRef: "SENHA_REF_NAO_VAZAR",
+    })
+    if (code !== undefined) (error as { code?: string }).code = code
+    return error
+  }
+
+  it.each([
+    ["ENOTFOUND", "DNS"],
+    ["EAI_AGAIN", "DNS"],
+    ["ECONNREFUSED", "TCP_CONNECT"],
+    ["EHOSTUNREACH", "TCP_CONNECT"],
+    ["ENETUNREACH", "TCP_CONNECT"],
+    ["ECONNRESET", "CONNECTION_RESET"],
+    ["EPIPE", "CONNECTION_RESET"],
+    ["ETIMEDOUT", "TIMEOUT"],
+  ] as const)("código Node %s => classe %s", (code, classe) => {
+    expect(classifyWsdlTransportError(erroEnvenenado(code))).toEqual({ class: classe, code })
+  })
+
+  it.each([
+    "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "CERT_HAS_EXPIRED",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+  ])("erro TLS de cadeia/identidade %s => TLS_CERTIFICATE", (code) => {
+    expect(CODIGOS_TLS_CERTIFICADO.has(code)).toBe(true)
+    expect(classifyWsdlTransportError(erroEnvenenado(code)).class).toBe("TLS_CERTIFICATE")
+  })
+
+  it.each([
+    "EPROTO",
+    "ERR_TLS_HANDSHAKE_TIMEOUT",
+    "ERR_SSL_WRONG_VERSION_NUMBER",
+    "ERR_SSL_NO_PROTOCOLS",
+    "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE",
+    "ERR_SSL_SSLV3_ALERT_ILLEGAL_PARAMETER",
+  ])("erro TLS genérico %s => TLS_HANDSHAKE", (code) => {
+    expect(classifyWsdlTransportError(erroEnvenenado(code)).class).toBe("TLS_HANDSHAKE")
+  })
+
+  it("código desconhecido ou ausente => UNKNOWN_NETWORK + UNKNOWN", () => {
+    expect(classifyWsdlTransportError(erroEnvenenado("EFOOBarbaz"))).toEqual({
+      class: "UNKNOWN_NETWORK",
+      code: WSDL_TRANSPORT_UNKNOWN_CODE,
+    })
+    expect(classifyWsdlTransportError(erroEnvenenado(undefined))).toEqual({
+      class: "UNKNOWN_NETWORK",
+      code: WSDL_TRANSPORT_UNKNOWN_CODE,
+    })
+    expect(classifyWsdlTransportError("string crua")).toEqual({
+      class: "UNKNOWN_NETWORK",
+      code: WSDL_TRANSPORT_UNKNOWN_CODE,
+    })
+    expect(classifyWsdlTransportError(null)).toEqual({
+      class: "UNKNOWN_NETWORK",
+      code: WSDL_TRANSPORT_UNKNOWN_CODE,
+    })
+  })
+
+  it("a saída do classificador nunca carrega dado sensível do erro envenenado", () => {
+    for (const code of [...WSDL_NODE_TRANSPORT_ERROR_CLASSES.keys(), undefined, "EFOOBarbaz"]) {
+      const serializado = JSON.stringify(classifyWsdlTransportError(erroEnvenenado(code)))
+      expect(serializado).not.toContain("MSG_CRUA")
+      expect(serializado).not.toContain("STACK_CRUA")
+      expect(serializado).not.toContain("CAUSE_CRUO")
+      expect(serializado).not.toContain("NAO_VAZAR")
+      expect(serializado).not.toContain("10.250.1.1")
+      expect(serializado).not.toContain(HOST_HOMOLOGACAO)
+      expect(serializado).not.toContain("getaddrinfo")
+    }
+  })
+
+  it("a allow-list de códigos é fechada e só produz classes do enum", () => {
+    const CLASSES = new Set<SefazWsdlTransportClass>([
+      "DNS",
+      "TCP_CONNECT",
+      "TLS_CERTIFICATE",
+      "TLS_HANDSHAKE",
+      "CONNECTION_RESET",
+      "TIMEOUT",
+      "RESPONSE_STREAM",
+      "UNKNOWN_NETWORK",
+    ])
+    expect(WSDL_NODE_TRANSPORT_ERROR_CLASSES.size).toBeGreaterThan(0)
+    for (const [code, classe] of WSDL_NODE_TRANSPORT_ERROR_CLASSES) {
+      expect(code).toMatch(/^[A-Z][A-Z0-9_]*$/)
+      expect(CLASSES.has(classe)).toBe(true)
+    }
+  })
+})
+
+describe("telemetria de transporte sanitizada · integração (loopback, zero socket externo)", () => {
+  async function portaFechada(): Promise<number> {
+    const server = createTcpServer(() => undefined)
+    const port = await listen(server)
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    return port
+  }
+
+  async function startResetTcpServer(): Promise<number> {
+    // Aceita TCP e destrói o socket antes de qualquer byte TLS: reset de conexão real.
+    const server = createTcpServer((socket) => socket.destroy())
+    trackServer(server)
+    return listen(server)
+  }
+
+  async function startPlainTcpGarbageServer(): Promise<number> {
+    // Servidor TCP puro que responde bytes não-TLS: handshake TLS falha de verdade.
+    const server = createTcpServer((socket) => {
+      socket.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
+    })
+    trackServer(server)
+    return listen(server)
+  }
+
+  async function startPartialResponseServer(): Promise<number> {
+    const server = createHttpsServer(
+      {
+        key: pki.serverPrivateKeyPem,
+        cert: pki.serverCertificatePem,
+        ca: pki.caCertificatePem,
+        requestCert: true,
+        rejectUnauthorized: true,
+        minVersion: "TLSv1.2",
+      },
+      (_request, response) => {
+        response.writeHead(200, { "Content-Type": "text/xml" })
+        // Chunk grande força o flush dos headers + corpo antes do corte.
+        response.write("<wsdl:definitions>" + "a".repeat(128 * 1024), () => {
+          const timer = setTimeout(() => response.destroy(), 20)
+          response.once("close", () => clearTimeout(timer))
+        })
+      },
+    )
+    server.on("tlsClientError", () => undefined)
+    trackServer(server)
+    return listen(server)
+  }
+
+  it("ECONNREFUSED real (porta fechada) => TCP_CONNECT, fase antes do secureConnect", async () => {
+    const port = await portaFechada()
+    const outcome = await adquiridor(autoridade(port)).acquire(pedido())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "wsdl_rede_incerta",
+      classification: "UNKNOWN_UNCERTAIN",
+      externalTransmissionAttempted: true,
+      transportPhase: "BEFORE_SECURE_CONNECT",
+      transportClass: "TCP_CONNECT",
+      transportCode: "ECONNREFUSED",
+    })
+    // A mensagem crua do Node (contém IP:porta) jamais atravessa — só o código allowlisted.
+    const serializado = JSON.stringify(outcome)
+    expect(serializado).not.toContain("127.0.0.1")
+    expect(serializado).not.toContain("connect ECONNREFUSED")
+    expect(scanForSecrets(serializado, { extras: [String(port)] }).vazou).toBe(false)
+  })
+
+  it("reset real antes do TLS => CONNECTION_RESET com código allowlisted", async () => {
+    const port = await startResetTcpServer()
+    const outcome = await adquiridor(autoridade(port)).acquire(pedido())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "wsdl_rede_incerta",
+      externalTransmissionAttempted: true,
+      transportClass: "CONNECTION_RESET",
+      transportCode: "ECONNRESET",
+    })
+  })
+
+  it("cadeia TLS não confiável real (CA divergente) => TLS_CERTIFICATE, fase SECURE_CONNECT", async () => {
+    // Servidor apresenta certificado emitido por OUTRA CA; o cliente confia somente na CA boa:
+    // a verificação de cadeia falha de verdade (sem âncora local para o emissor).
+    const { port } = await startMtlsServerCert(
+      pki.wrongServerCertificatePem,
+      pki.wrongServerPrivateKeyPem,
+      (response) => response.end(WSDL_VALIDO),
+    )
+    const outcome = await adquiridor(autoridade(port)).acquire(pedido())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "wsdl_rede_incerta",
+      externalTransmissionAttempted: true,
+      transportPhase: "SECURE_CONNECT",
+      transportClass: "TLS_CERTIFICATE",
+    })
+    if (outcome.ok) throw new Error("cadeia divergente deveria falhar")
+    expect(outcome.transportPhase).toBe("SECURE_CONNECT")
+    expect(outcome.transportCode).not.toBe(WSDL_TRANSPORT_UNKNOWN_CODE)
+    expect(WSDL_NODE_TRANSPORT_ERROR_CLASSES.get(outcome.transportCode ?? "")).toBe(
+      "TLS_CERTIFICATE",
+    )
+  })
+
+  it("handshake contra bytes não-TLS reais => TLS_HANDSHAKE", async () => {
+    const port = await startPlainTcpGarbageServer()
+    const outcome = await adquiridor(autoridade(port)).acquire(pedido())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "wsdl_rede_incerta",
+      externalTransmissionAttempted: true,
+      transportClass: "TLS_HANDSHAKE",
+    })
+    if (outcome.ok) throw new Error("handshake contra bytes não-TLS deveria falhar")
+    expect(outcome.transportPhase).toBe("SECURE_CONNECT")
+    expect(outcome.transportCode).not.toBe(WSDL_TRANSPORT_UNKNOWN_CODE)
+    expect(WSDL_NODE_TRANSPORT_ERROR_CLASSES.get(outcome.transportCode ?? "")).toBe(
+      "TLS_HANDSHAKE",
+    )
+  })
+
+  it("erro após a resposta iniciar => RESPONSE_STREAM, nunca classe inferida do socket", async () => {
+    const port = await startPartialResponseServer()
+    const outcome = await adquiridor(autoridade(port)).acquire(pedido())
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      codigo: "wsdl_rede_incerta",
+      externalTransmissionAttempted: true,
+      transportPhase: "RESPONSE_STREAM",
+      transportClass: "RESPONSE_STREAM",
+      // O código Node real (reset durante o streaming) continua evidenciado em `transportCode`.
+      transportCode: "ECONNRESET",
+    })
   })
 })
