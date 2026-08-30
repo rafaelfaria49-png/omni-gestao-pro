@@ -49,9 +49,12 @@ vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window", () =
   configuredWsdlExecutionWindowStatus: h.windowStatus,
   consumeConfiguredWsdlExecutionActivation: h.consumeActivation,
 }))
-vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver", () => ({
-  resolveWsdlPilotStore: h.resolvePilot,
-}))
+vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver")
+  >()
+  return { ...actual, resolveWsdlPilotStore: h.resolvePilot }
+})
 vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-batch", () => ({
   runConfiguredWsdlEphemeralBatch: h.runBatch,
 }))
@@ -64,7 +67,7 @@ function fiscalConfig(overrides: Record<string, unknown> = {}) {
     ambiente: "HOMOLOGACAO",
     modeloFiscal: "NFCE",
     provider: "SEFAZ_DIRETO",
-    fiscalEnabled: true,
+    fiscalEnabled: false,
     certificadoAtivoId: CERT,
     ...overrides,
   }
@@ -379,8 +382,10 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
   it.each([
     ["ambiente", { ambiente: "PRODUCAO" }],
     ["modelo", { modeloFiscal: "NFE" }],
-    ["provider", { provider: "STUB_HOMOLOGACAO" }],
-    ["fiscal disabled (regra resultante: exige true)", { fiscalEnabled: false }],
+    ["provider fora do par permitido", { provider: "GATEWAY_FOCUS" }],
+    ["provider ausente", { provider: null }],
+    ["fiscal HABILITADO (aquisição exige emissão DESLIGADA)", { fiscalEnabled: true }],
+    ["fiscalEnabled ausente", { fiscalEnabled: null }],
     ["certificado id", { certificadoAtivoId: null }],
     ["store divergente", { storeId: "loja-2" }],
   ])("preflight %s bloqueia antes de resolver/consumir/A1", async (_label, override) => {
@@ -391,6 +396,17 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.consumeActivation).not.toHaveBeenCalled()
     expect(h.runBatch).not.toHaveBeenCalled()
   })
+
+  it.each(["STUB_HOMOLOGACAO", "SEFAZ_DIRETO"])(
+    "provider %s + fiscalEnabled=false atravessa o preflight até o batch (estado preparatório seguro)",
+    async (provider) => {
+      h.setConfig(fiscalConfig({ provider }))
+      const response = await POST(request())
+      expect(response.status).toBe(200)
+      expect(h.consumeActivation).toHaveBeenCalledOnce()
+      expect(h.runBatch).toHaveBeenCalledOnce()
+    },
+  )
 
   it.each(["not_started", "expired"])(
     "janela %s bloqueia antes de ACL, A1, ledger e batch",
@@ -455,6 +471,23 @@ describe("POST /api/fiscal/wsdl/ephemeral-execution", () => {
     expect(h.consumeActivation.mock.invocationCallOrder[0]).toBeLessThan(
       h.runBatch.mock.invocationCallOrder[0]!,
     )
+  })
+
+  it("superfície não tem caminho de emissão/numeração/NotaFiscal/Venda: só leituras + ledger técnico", async () => {
+    const response = await POST(request())
+
+    expect(response.status).toBe(200)
+    // Leituras read-only do preflight — as ÚNICAS interações diretas com o banco.
+    expect(h.prisma.store.findUnique).toHaveBeenCalledOnce()
+    expect(h.prisma.configuracaoFiscalLoja.findUnique).toHaveBeenCalledOnce()
+    // O ledger técnico one-shot (job CONSULTA + log) é a única escrita, e o batch não recebe
+    // nenhum cliente de banco: os inputs são exatamente activation, refs e SecureContext.
+    expect(h.consumeActivation).toHaveBeenCalledOnce()
+    expect(Object.keys(h.runBatch.mock.calls[0]![0] as object).sort()).toEqual([
+      "activation",
+      "certificate",
+      "preparedSecureContext",
+    ])
   })
 
   it("conflito persistente/cold start bloqueia antes do batch", async () => {
