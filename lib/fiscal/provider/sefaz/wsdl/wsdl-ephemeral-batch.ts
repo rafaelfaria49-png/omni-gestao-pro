@@ -10,6 +10,8 @@ import type { SefazServico } from "../sefaz-endpoint-catalog"
 import {
   SefazWsdlAcquisition,
   type SefazWsdlAcquisitionOutcome,
+  type SefazWsdlTransportClass,
+  type SefazWsdlTransportPhase,
 } from "./wsdl-acquisition"
 import {
   SEFAZ_WSDL_ACQUISITION_TARGETS,
@@ -48,6 +50,10 @@ export type WsdlEphemeralServiceEvidence = {
   readonly outputWrapper: string | null
   readonly outputNamespace: string | null
   readonly failureClass: string | null
+  /** Telemetria sanitizada de transporte deste serviço (GOAL 020 · 138); null quando não há. */
+  readonly transportPhase: SefazWsdlTransportPhase | null
+  readonly transportClass: SefazWsdlTransportClass | null
+  readonly transportCode: string | null
 }
 
 export type WsdlEphemeralBatchResult = {
@@ -86,7 +92,15 @@ const DEFAULT_DEPENDENCIES: BatchDependencies = {
   correlationId: randomUUID,
 }
 
-function failureEvidence(service: SefazServico, failureClass: string): WsdlEphemeralServiceEvidence {
+function failureEvidence(
+  service: SefazServico,
+  failureClass: string,
+  transport: {
+    readonly transportPhase: SefazWsdlTransportPhase | null
+    readonly transportClass: SefazWsdlTransportClass | null
+    readonly transportCode: string | null
+  } | null = null,
+): WsdlEphemeralServiceEvidence {
   return {
     service,
     httpStatus: null,
@@ -103,6 +117,9 @@ function failureEvidence(service: SefazServico, failureClass: string): WsdlEphem
     outputWrapper: null,
     outputNamespace: null,
     failureClass,
+    transportPhase: transport?.transportPhase ?? null,
+    transportClass: transport?.transportClass ?? null,
+    transportCode: transport?.transportCode ?? null,
   }
 }
 
@@ -152,7 +169,13 @@ async function executeBatch(
       continue
     }
     if (!outcome.ok) {
-      services.push(failureEvidence(target.servico, `acquisition:${outcome.codigo}`))
+      services.push(
+        failureEvidence(target.servico, `acquisition:${outcome.codigo}`, {
+          transportPhase: outcome.transportPhase,
+          transportClass: outcome.transportClass,
+          transportCode: outcome.transportCode,
+        }),
+      )
       continue
     }
 
@@ -189,6 +212,9 @@ async function executeBatch(
       outputWrapper: contract.outputWrapperLocalName,
       outputNamespace: contract.outputWrapperNamespace,
       failureClass: null,
+      transportPhase: null,
+      transportClass: null,
+      transportCode: null,
     })
   }
 
