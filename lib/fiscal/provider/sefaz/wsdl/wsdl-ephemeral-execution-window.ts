@@ -127,6 +127,29 @@ type WsdlActivationTransaction = {
   lockActivationScope: (dedupeKey: string) => Promise<void>
 }
 
+/** Runner tipado mínimo do `$queryRaw` de um cliente/transação Prisma. */
+export type WsdlActivationQueryRawRunner = (
+  query: TemplateStringsArray,
+  ...values: unknown[]
+) => Promise<unknown>
+
+/**
+ * Advisory lock TRANSACIONAL do consumo one-shot (primitive PostgreSQL, sem schema).
+ *
+ * GOAL 135: `pg_advisory_xact_lock()` retorna `void` e o `$queryRaw` do Prisma não desserializa
+ * colunas void (P2010 — primeira invocação real falhou na execução 134 de 30/08, rollback sem
+ * write). O cast `::text AS lock` devolve a MESMA lock function, no MESMO escopo de transação,
+ * mudando apenas o tipo da coluna devolvida — semântica de exclusão, ordem da transação e
+ * escopo da chave permanecem idênticos. Deve continuar sendo a PRIMEIRA instrução da
+ * transação de consumo.
+ */
+export async function wsdlActivationAdvisoryLock(
+  runQuery: WsdlActivationQueryRawRunner,
+  dedupeKey: string,
+): Promise<void> {
+  await runQuery`SELECT pg_advisory_xact_lock(hashtext(${dedupeKey}))::text AS lock`
+}
+
 export type WsdlActivationLedgerClient = {
   $transaction: <T>(operation: (tx: WsdlActivationTransaction) => Promise<T>) => Promise<T>
 }
@@ -144,7 +167,7 @@ function productiveActivationLedgerClient(): WsdlActivationLedgerClient {
           fiscalEmissaoJob: scoped.fiscalEmissaoJob,
           fiscalLog: scoped.fiscalLog,
           lockActivationScope: async (dedupeKey) => {
-            await scoped.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${dedupeKey}))`
+            await wsdlActivationAdvisoryLock(scoped.$queryRaw.bind(scoped), dedupeKey)
           },
         })
       }),
