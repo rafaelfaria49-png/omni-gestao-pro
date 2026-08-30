@@ -142,35 +142,59 @@ describe("janela efêmera WSDL versionada", () => {
     })
   })
 
-  it("constante versionada está e permanece DORMENTE (null/null/null) após o containment OFF de 30/08", () => {
+  it("constante versionada materializa a NOVA janela H-9/H-10 sem reutilizar activation histórica", () => {
     expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: null,
-      notBeforeUtc: null,
-      expiresAtUtc: null,
+      activationId: "wsdl-h9h10-20260830-2005z-513540884b814ac1",
+      notBeforeUtc: "2026-08-30T20:05:00.000Z",
+      expiresAtUtc: "2026-08-30T20:15:00.000Z",
     })
-    expect(evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())).toEqual({
-      active: false,
-      reason: "disabled",
-    })
+    for (const deadId of HISTORICAL_ACTIVATION_IDS) {
+      expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
+    }
+    // A activation de 30/08 14:40z é histórica/proibida e distinta da nova.
+    expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(
+      "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d",
+    )
   })
 
-  it("nenhuma activation — inclusive a janela consumida/falha de 30/08 — é configurável", () => {
-    for (const deadId of [...HISTORICAL_ACTIVATION_IDS, "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d"]) {
+  it("nenhuma activation — históricas e a de 30/08 14:40z — é configurável", () => {
+    for (const deadId of [
+      ...HISTORICAL_ACTIVATION_IDS,
+      "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d",
+    ]) {
       expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
     }
   })
 
   it("derivação de dedupeKey permanece estável (v1 + SHA-256 da activation)", () => {
+    const newHash = sha256Utf8("wsdl-h9h10-20260830-2005z-513540884b814ac1")
     const fixture = "FISCAL-017-GATE-019-TEST"
-    for (const deadId of HISTORICAL_ACTIVATION_IDS) {
-      expect(`fiscal:wsdl:h9-h10:v1:${sha256Utf8(fixture)}`).not.toBe(
-        `fiscal:wsdl:h9-h10:v1:${sha256Utf8(deadId)}`,
-      )
-    }
-    // A activation de 30/08 também é distinta de qualquer fixture.
-    expect(sha256Utf8("wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d")).not.toBe(
-      sha256Utf8(fixture),
+    expect(`fiscal:wsdl:h9-h10:v1:${newHash}`).not.toBe(
+      `fiscal:wsdl:h9-h10:v1:${sha256Utf8(fixture)}`,
     )
+    expect(newHash).not.toBe(sha256Utf8("wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d"))
+    for (const deadId of HISTORICAL_ACTIVATION_IDS) {
+      expect(newHash).not.toBe(sha256Utf8(deadId))
+    }
+  })
+
+  it("avalia a janela materializada: not_started, active, expired em expiresAt e após", () => {
+    const config = WSDL_EPHEMERAL_EXECUTION_WINDOW
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-30T20:04:59Z"))).toEqual({
+      active: false,
+      reason: "not_started",
+    })
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-30T20:05:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-30T20:10:00Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-30T20:14:59Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-30T20:15:00Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-08-30T20:15:01Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
   })
 
   it("avalia janela fixture: not_started, active, expired em expiresAt e após", () => {
