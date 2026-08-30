@@ -8,12 +8,13 @@
  * `ConfiguracaoFiscalLoja` (ADR-0016, fail-closed) — nunca de um literal — e a request
  * autenticada deve pertencer exatamente à candidata resolvida.
  *
- * `fiscalEnabled`: o gate legado exigia `false` (era um proxy de "esta loja não emite") de uma
- * fase em que não existia pipeline fiscal. Com o GOAL 020 o pipeline de homologação NFC-e é
- * operacional e a piloto resolvida é justamente a loja que o opera — o preflight exige
- * `fiscalEnabled = true`. Isto NÃO habilita emissão nem transmissão: esta superfície é GET de
- * metadados (sem corpo, sem SOAP, alvos fechados do catálogo); emissão continua retida pelos
- * guards próprios do pipeline.
+ * `fiscalEnabled`: a aquisição H-9/H-10 é metadado read-only (GET sem corpo, sem SOAP, alvos
+ * fechados do catálogo) e NÃO é emissão — por isso o preflight exige `fiscalEnabled = false`
+ * (GOAL 020 · 132, invertendo a decisão do refresh 129): emissão permanece globalmente
+ * desligada durante a aquisição, e a habilitação (`SEFAZ_DIRETO` + `fiscalEnabled=true`)
+ * pertence ao gate posterior do live drill de contingência. Providers elegíveis: somente
+ * `STUB_HOMOLOGACAO` ou `SEFAZ_DIRETO` (sempre com emissão off). A semântica global de
+ * `fiscalEnabled` (snapshot/emissão) NÃO é alterada — a regra vale para este contrato.
  */
 import { NextResponse } from "next/server"
 import { prisma, prismaEnsureConnected } from "@/lib/prisma"
@@ -25,7 +26,10 @@ import {
   configuredWsdlExecutionWindowStatus,
   consumeConfiguredWsdlExecutionActivation,
 } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window"
-import { resolveWsdlPilotStore } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver"
+import {
+  candidataAquisicaoWsdl,
+  resolveWsdlPilotStore,
+} from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-pilot-store-resolver"
 import { runConfiguredWsdlEphemeralBatch } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-batch"
 import { isWsdlCanonicalProductionSurface } from "@/lib/fiscal/provider/sefaz/wsdl/wsdl-canonical-production-surface"
 
@@ -169,13 +173,10 @@ export async function POST(request: Request) {
     if (!store || !config || config.storeId !== store.id) {
       return response(409, { ok: false, code: "preflight_blocked" })
     }
-    if (
-      config.ambiente !== "HOMOLOGACAO" ||
-      config.modeloFiscal !== "NFCE" ||
-      config.provider !== "SEFAZ_DIRETO" ||
-      config.fiscalEnabled !== true ||
-      !String(config.certificadoAtivoId ?? "").trim()
-    ) {
+    // Revalidação da própria leitura com o MESMO predicado canônico do resolver — as duas
+    // superfícies nunca divergem: HOMOLOGACAO, NFCE, provider em {STUB_HOMOLOGACAO,
+    // SEFAZ_DIRETO}, fiscalEnabled=false (emissão desligada) e certificadoAtivoId presente.
+    if (!candidataAquisicaoWsdl(config)) {
       return response(409, { ok: false, code: "preflight_blocked" })
     }
 

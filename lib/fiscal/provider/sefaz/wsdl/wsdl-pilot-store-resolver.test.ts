@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import {
+  candidataAquisicaoWsdl,
   resolveWsdlPilotStoreFrom,
   type WsdlPilotStoreClient,
 } from "./wsdl-pilot-store-resolver"
@@ -10,6 +11,7 @@ function candidata(storeId: string, overrides: Record<string, unknown> = {}) {
     ambiente: "HOMOLOGACAO",
     modeloFiscal: "NFCE",
     provider: "SEFAZ_DIRETO",
+    fiscalEnabled: false,
     certificadoAtivoId: `cert-${storeId}`,
     ...overrides,
   }
@@ -34,22 +36,28 @@ describe("resolução dinâmica da loja-piloto WSDL (fail-closed)", () => {
     })
   })
 
-  it("exatamente UMA candidata resolve", async () => {
-    const resolved = await resolveWsdlPilotStoreFrom(
-      client([candidata("loja-real-7"), candidata("loja-comum", { provider: "STUB_HOMOLOGACAO" })]),
-    )
-    expect(resolved).toEqual({ ok: true, storeId: "loja-real-7" })
-  })
+  it.each(["STUB_HOMOLOGACAO", "SEFAZ_DIRETO"])(
+    "provider %s + fiscalEnabled=false + A1 referenciado é candidata válida",
+    async (provider) => {
+      const resolved = await resolveWsdlPilotStoreFrom(
+        client([candidata("loja-real-7", { provider })]),
+      )
+      expect(resolved).toEqual({ ok: true, storeId: "loja-real-7" })
+    },
+  )
 
   it("duas candidatas bloqueiam e exigem decisão humana — nunca 'a primeira'", async () => {
     const resolved = await resolveWsdlPilotStoreFrom(
-      client([candidata("loja-a"), candidata("loja-b")]),
+      client([candidata("loja-a"), candidata("loja-b", { provider: "STUB_HOMOLOGACAO" })]),
     )
     expect(resolved).toEqual({ ok: false, code: "ambiguous" })
   })
 
   it.each([
-    ["provider divergente", candidata("loja-a", { provider: "GATEWAY_FOCUS" })],
+    ["provider fora do par permitido", candidata("loja-a", { provider: "GATEWAY_FOCUS" })],
+    ["provider ausente", candidata("loja-a", { provider: null })],
+    ["fiscalEnabled=true (emissão ligada não é aquisição)", candidata("loja-a", { fiscalEnabled: true })],
+    ["fiscalEnabled ausente", candidata("loja-a", { fiscalEnabled: null })],
     ["ambiente divergente", candidata("loja-a", { ambiente: "PRODUCAO" })],
     ["modelo divergente", candidata("loja-a", { modeloFiscal: "NFE" })],
     ["certificado ausente", candidata("loja-a", { certificadoAtivoId: null })],
@@ -78,5 +86,9 @@ describe("resolução dinâmica da loja-piloto WSDL (fail-closed)", () => {
     await resolveWsdlPilotStoreFrom(client([candidata("loja-a")]))
     expect(fetchSpy).not.toHaveBeenCalled()
     fetchSpy.mockRestore()
+  })
+
+  it("candidata fiscalmente HABILITADA (SEFAZ_DIRETO + fiscalEnabled=true) é recusada mesmo com A1 válido", () => {
+    expect(candidataAquisicaoWsdl(candidata("loja-a", { fiscalEnabled: true }))).toBe(false)
   })
 })
