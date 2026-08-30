@@ -1,13 +1,13 @@
 /**
  * Janela efêmera versionada para a futura coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 131 ATIVAÇÃO ON, autorizada textualmente pelo humano):
- * **ATIVA** — `wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d`, janela única de 10 minutos
- * (14:40:00Z → 14:50:00Z). Uma única execução administrativa, no máximo 6 GETs WSDL oficiais
- * SEFAZ-SP/HOMOLOGACAO. Containment OFF imediatamente após a execução restaurará
- * `{null, null, null}`. As janelas de 24/08 e anteriores expiraram sem consumo e permanecem
- * APENAS como evidência histórica; jamais devem ser re-materializadas. Gate 2 permanece
- * humano e separado.
+ * Estado atual (GOAL 020 · 131 FASE 6 · CONTAINMENT OFF): **DORMENTE** — `activationId`,
+ * `notBeforeUtc` e `expiresAtUtc` restaurados a `null`. A janela
+ * `wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d` (30/08 14:40→14:50Z) recebeu sua ÚNICA chamada
+ * administrativa às 14:40:13Z; a resposta foi 409 `activation_unavailable` (falha de consumo do
+ * one-shot ANTES de qualquer rede — nenhum GET externo ocorreu). É evidência histórica; não é
+ * configuração executável e jamais deve ser re-materializada sem novo gate humano. Gate 2
+ * permanece humano e separado.
  *
  * A loja-piloto NÃO é literal (`WSDL_EXECUTION_PILOT_STORE_ID = "loja-1"` foi removido).
  * Ela é resolvida dinamicamente por `resolveWsdlPilotStore` (ADR-0016 · regra do 132:
@@ -34,9 +34,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d",
-  notBeforeUtc: "2026-08-30T14:40:00.000Z",
-  expiresAtUtc: "2026-08-30T14:50:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
