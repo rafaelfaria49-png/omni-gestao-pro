@@ -39,7 +39,7 @@ export const WSDL_PILOT_STORE_CRITERIA = Object.freeze({
   /** Aquisição de WSDL exige emissão DESLIGADA; habilitação pertence ao gate do live drill. */
   fiscalEnabled: false,
   /** Únicos providers elegíveis: preparatório de homologação ou direto (ainda com emissão off). */
-  providersPermitidos: ["STUB_HOMOLOGACAO", "SEFAZ_DIRETO"],
+  providersPermitidos: Object.freeze(["STUB_HOMOLOGACAO", "SEFAZ_DIRETO"]),
 } as const)
 
 export type WsdlPilotStoreClient = {

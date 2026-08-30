@@ -176,9 +176,6 @@ export async function POST(request: Request) {
     // Revalidação da própria leitura com o MESMO predicado canônico do resolver — as duas
     // superfícies nunca divergem: HOMOLOGACAO, NFCE, provider em {STUB_HOMOLOGACAO,
     // SEFAZ_DIRETO}, fiscalEnabled=false (emissão desligada) e certificadoAtivoId presente.
-    if (!store || !config || config.storeId !== store.id) {
-      return response(409, { ok: false, code: "preflight_blocked" })
-    }
     if (!candidataAquisicaoWsdl(config)) {
       return response(409, { ok: false, code: "preflight_blocked" })
     }

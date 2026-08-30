@@ -76,13 +76,26 @@ e não deve ter durante a aquisição.
 - `git diff --check`: OK
 - WSDL_EXTERNAL_GET_COUNT=0 · SEFAZ_REQUEST_COUNT=0 · DATABASE_WRITE_COUNT=0
 
-## Revisão independente (read-only, outra família)
+## Revisão independente (read-only, outra família — sobre `origin/main..HEAD`)
 
-Status: PENDENTE no momento do commit — será executada sobre `origin/main..HEAD` antes do
-push/PR e este registro será preenchido com o veredito real. Focos obrigatórios: aceitar
-`STUB_HOMOLOGACAO` não cria caminho de emissão; predicado único resolver×rota; preservação de
-one-shot/superfície/GET-only/6 alvos/janela nula; diff restrito; zero escrita de banco; zero
-segredo no diff.
+Veredito: **APROVADO** · **P0=0 · P1=0** · P2=3 (informativos, 2 aplicados neste commit).
+
+Focos 1-9 todos CONFIRMADOS pelo revisor: (1) STUB_HOMOLOGACAO não cria caminho de emissão —
+nenhum import de provider-factory/emissão/numeração, únicas escritas são job técnico
+CONSULTA/CONCLUIDO + FiscalLog, rede é GET fixo com authority que recusa qualquer divergência
+antes do socket; (2) `fiscalEnabled=true`/null/ausente recusados por igualdade estrita; (3)
+predicado fail-closed em campos estranhos; (4) resolver e rota compartilham o mesmo predicado
+(mock da rota preserva a implementação real); (5) one-shot global, superfície canônica,
+ADMIN, 6 alvos, GET-only, janela nula preservados — e o consumo da activation também passa pelo
+mesmo resolver; (6) prova REAL do A1 (`resolveActiveCertificate` + conferência do
+`certificadoAtivoId`) antes do consumo e do batch, com falha de PFX sem queimar o one-shot;
+(7) diff restrito e sem segredo (única ocorrência é o NOME de env na evidência 131); (8)
+matriz de testes completa; (9) semântica global de `fiscalEnabled` intacta (queue-producer
+423 `loja_fiscal_desabilitada`, contingência offline e snapshot seguem recusando).
+
+P2 registrados: (1) guard duplicado na rota — **corrigido** (removido); (2) `providersPermitidos`
+sem freeze de runtime — **corrigido** (`Object.freeze`); (3) predicado não null-safe para a
+linha inteira — sem caminho real (contrato de tipo + call sites garantem row não-nula), sem ação.
 
 ## Classificação
 
