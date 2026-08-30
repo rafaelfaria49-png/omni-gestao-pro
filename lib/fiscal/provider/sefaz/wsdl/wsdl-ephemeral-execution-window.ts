@@ -1,14 +1,14 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 131 · 2ª ATIVAÇÃO ON, autorizada textualmente pelo humano):
- * **ATIVA** — `wsdl-h9h10-20260830-2005z-513540884b814ac1`, janela única de 10 minutos
- * (20:05:00Z → 20:15:00Z). Uma única execução administrativa, no máximo 6 GETs WSDL oficiais
- * SEFAZ-SP/HOMOLOGACAO. O primitive do advisory lock está CORRIGIDO (P2010/void resolvido no
- * GOAL 135, provado contra PostgreSQL real). Containment OFF imediatamente após a execução
- * restaurará `{null, null, null}`. A activation de 30/08 14:40z (fed207ff) e todas as
- * anteriores são históricas/proibidas e jamais devem ser re-materializadas. Gate 2 permanece
- * humano e separado.
+ * Estado atual (GOAL 020 · 131 · 2ª execução · CONTAINMENT OFF): **DORMENTE** — `activationId`,
+ * `notBeforeUtc` e `expiresAtUtc` restaurados a `null`. A janela
+ * `wsdl-h9h10-20260830-2005z-513540884b814ac1` (30/08 20:05→20:15Z) recebeu sua ÚNICA chamada
+ * administrativa às 20:05:17Z; o consumo one-shot FUNCIONOU (fix P2010/135 validado em
+ * produção) e o batch de 6 alvos executou, com TODOS os serviços retornando
+ * `acquisition:wsdl_rede_incerta` (falha de rede/TLS pré-resposta; ver evidência 137). É
+ * evidência histórica; não é configuração executável e jamais deve ser re-materializada sem
+ * novo gate humano. Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -34,9 +34,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260830-2005z-513540884b814ac1",
-  notBeforeUtc: "2026-08-30T20:05:00.000Z",
-  expiresAtUtc: "2026-08-30T20:15:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
