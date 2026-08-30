@@ -1,17 +1,19 @@
 /**
  * Janela efêmera versionada para a futura coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · refresh do gate): **DORMENTE** — `activationId`, `notBeforeUtc` e
- * `expiresAtUtc` são `null`. A janela de 24/08 (`wsdl-h9h10-20260824-1800z-*`) expirou sem
- * consumo e permanece APENAS como evidência histórica; não é configuração executável e jamais
- * deve ser re-materializada. Ativar exige alterar as três constantes em commit revisado;
- * deployments antigos tornam-se inertes quando `expiresAtUtc` passa. Nenhuma execução é
- * autorizada por este módulo; Gate 2 permanece humano e separado.
+ * Estado atual (GOAL 020 · 131 ATIVAÇÃO ON, autorizada textualmente pelo humano):
+ * **ATIVA** — `wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d`, janela única de 10 minutos
+ * (14:40:00Z → 14:50:00Z). Uma única execução administrativa, no máximo 6 GETs WSDL oficiais
+ * SEFAZ-SP/HOMOLOGACAO. Containment OFF imediatamente após a execução restaurará
+ * `{null, null, null}`. As janelas de 24/08 e anteriores expiraram sem consumo e permanecem
+ * APENAS como evidência histórica; jamais devem ser re-materializadas. Gate 2 permanece
+ * humano e separado.
  *
- * A loja-piloto NÃO é mais literal (`WSDL_EXECUTION_PILOT_STORE_ID = "loja-1"` foi removido).
- * Ela é resolvida dinamicamente por `resolveWsdlPilotStore` (ADR-0016) e o consumo exige que a
- * request autenticada pertença EXATAMENTE à candidata resolvida; zero ou múltiplas candidatas
- * bloqueiam (fail-closed).
+ * A loja-piloto NÃO é literal (`WSDL_EXECUTION_PILOT_STORE_ID = "loja-1"` foi removido).
+ * Ela é resolvida dinamicamente por `resolveWsdlPilotStore` (ADR-0016 · regra do 132:
+ * `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`, `SEFAZ_DIRETO`}) e o consumo exige
+ * que a request autenticada pertença EXATAMENTE à candidata resolvida; zero ou múltiplas
+ * candidatas bloqueiam (fail-closed).
  *
  * One-shot GLOBAL preservado sem schema novo sobre o primitive existente
  * `FiscalEmissaoJob.@@unique([storeId, dedupeKey])` (que é por-loja): a transação de consumo
@@ -32,9 +34,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d",
+  notBeforeUtc: "2026-08-30T14:40:00.000Z",
+  expiresAtUtc: "2026-08-30T14:50:00.000Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
