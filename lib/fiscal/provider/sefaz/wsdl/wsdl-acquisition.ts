@@ -30,6 +30,18 @@
  * O material A1 é resolvido pelas referências opacas existentes (`loadA1MtlsMaterial`) e
  * descartado assim que o contexto TLS é construído. Nenhuma mensagem, código ou campo de saída
  * deriva de PFX, senha, PEM ou chave privada. Este módulo não escreve em disco, banco ou log.
+ *
+ * ## Telemetria de transporte (GOAL 020 · 138)
+ *
+ * Falhas de rede/TLS que antes viravam apenas `wsdl_rede_incerta` passam a carregar telemetria
+ * sanitizada e tipada (`transportPhase`/`transportClass`/`transportCode`) para que uma execução
+ * autorizada distinga a CLASSE técnica da falha sem expor dado sensível. A classe vem EXCLUSIVA-
+ * MENTE de um código Node em allow-list fechada; onde não há código reconhecido, `transportCode`
+ * é `UNKNOWN` e a classe é `UNKNOWN_NETWORK`. `transportPhase` registra onde a falha ocorreu,
+ * sem inferir além da evidência: ausência de `secureConnect` NÃO vira "TLS" — DNS/TCP continuam
+ * distinguíveis pelo código. `error.message`, `error.stack`, `error.cause`, `syscall`,
+ * `address`, `hostname`, certificado peer, fingerprint, subject/issuer, PFX, senha, blobRef,
+ * senhaRef, cookie e token nunca são lidos nem derivados.
  */
 import "server-only"
 
@@ -128,6 +140,101 @@ export type SefazWsdlAcquisitionClassification =
   | "UNKNOWN_UNCERTAIN"
   | "RESPONSE_RECEIVED"
 
+/**
+ * Onde a falha de transporte ocorreu, observado diretamente pelo ciclo de vida da request.
+ * Nunca inferido: `SECURE_CONNECT` só é atribuído quando o TCP conectou e o `secureConnect`
+ * ainda não disparou.
+ */
+export type SefazWsdlTransportPhase =
+  /** Exceção síncrona na criação da request; nenhum socket foi criado. */
+  | "REQUEST_CREATE"
+  /** Socket atribuído, TCP ainda não estabelecido (janela de DNS/TCP). */
+  | "BEFORE_SECURE_CONNECT"
+  /** TCP estabelecido, handshake TLS em curso. */
+  | "SECURE_CONNECT"
+  /** Conexão concluída; falha durante resposta (headers ou streaming). */
+  | "RESPONSE_STREAM"
+  /** Ciclo `end()`/lifecycle sem socket observável. */
+  | "REQUEST_LIFECYCLE"
+
+/**
+ * Classe técnica da falha, enum FECHADO. Deriva somente de código Node em allow-list —
+ * nunca de mensagem, fase ou inferência.
+ */
+export type SefazWsdlTransportClass =
+  | "DNS"
+  | "TCP_CONNECT"
+  | "TLS_CERTIFICATE"
+  | "TLS_HANDSHAKE"
+  | "CONNECTION_RESET"
+  | "TIMEOUT"
+  | "RESPONSE_STREAM"
+  | "UNKNOWN_NETWORK"
+
+/** Telemetria sanitizada: somente valores de enums fechados ou código em allow-list. */
+export type SefazWsdlTransportTelemetry = {
+  readonly phase: SefazWsdlTransportPhase
+  readonly class: SefazWsdlTransportClass
+  /** Código Node em allow-list, ou a constante `UNKNOWN` quando ausente/não reconhecido. */
+  readonly code: string
+}
+
+/** Constante para código Node ausente ou fora da allow-list — nunca o código bruto. */
+export const WSDL_TRANSPORT_UNKNOWN_CODE = "UNKNOWN"
+
+/**
+ * Allow-list FECHADA de códigos Node que o caminho `GET ?wsdl` pode realmente produzir,
+ * mapeada para a classe técnica. Qualquer código fora dela vira `UNKNOWN`/`UNKNOWN_NETWORK`.
+ */
+export const WSDL_NODE_TRANSPORT_ERROR_CLASSES: ReadonlyMap<string, SefazWsdlTransportClass> =
+  new Map([
+    // Resolução de nomes (dns.lookup).
+    ["ENOTFOUND", "DNS"],
+    ["EAI_AGAIN", "DNS"],
+    // Estabelecimento TCP.
+    ["ECONNREFUSED", "TCP_CONNECT"],
+    ["EHOSTUNREACH", "TCP_CONNECT"],
+    ["ENETUNREACH", "TCP_CONNECT"],
+    // Conexão interrompida.
+    ["ECONNRESET", "CONNECTION_RESET"],
+    ["EPIPE", "CONNECTION_RESET"],
+    // Timeout produzido pelo runtime (SO_KEEPALIVE/connect).
+    ["ETIMEDOUT", "TIMEOUT"],
+    // Verificação de cadeia/identidade do certificado do servidor.
+    ["UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "TLS_CERTIFICATE"],
+    ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "TLS_CERTIFICATE"],
+    ["SELF_SIGNED_CERT_IN_CHAIN", "TLS_CERTIFICATE"],
+    ["DEPTH_ZERO_SELF_SIGNED_CERT", "TLS_CERTIFICATE"],
+    ["CERT_HAS_EXPIRED", "TLS_CERTIFICATE"],
+    ["ERR_TLS_CERT_ALTNAME_INVALID", "TLS_CERTIFICATE"],
+    // Handshake TLS sem falha de cadeia (protocolo/alerta/tempo de handshake).
+    ["EPROTO", "TLS_HANDSHAKE"],
+    ["ERR_TLS_HANDSHAKE_TIMEOUT", "TLS_HANDSHAKE"],
+    ["ERR_SSL_WRONG_VERSION_NUMBER", "TLS_HANDSHAKE"],
+    ["ERR_SSL_NO_PROTOCOLS", "TLS_HANDSHAKE"],
+    ["ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE", "TLS_HANDSHAKE"],
+    ["ERR_SSL_SSLV3_ALERT_ILLEGAL_PARAMETER", "TLS_HANDSHAKE"],
+  ])
+
+/**
+ * Função PURA de classificação: lê exclusivamente a propriedade `code` do erro e a consulta
+ * na allow-list. Nunca toca em `message`, `stack`, `cause`, `syscall`, `address`, `hostname`
+ * ou qualquer outra propriedade — envenenar essas propriedades não contamina a saída.
+ */
+export function classifyWsdlTransportError(
+  error: unknown,
+): { readonly class: SefazWsdlTransportClass; readonly code: string } {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined
+  if (typeof code === "string") {
+    const mapped = WSDL_NODE_TRANSPORT_ERROR_CLASSES.get(code)
+    if (mapped) return { class: mapped, code }
+  }
+  return { class: "UNKNOWN_NETWORK", code: WSDL_TRANSPORT_UNKNOWN_CODE }
+}
+
 export type SefazWsdlAcquisitionFailure = {
   readonly ok: false
   readonly codigo: SefazWsdlAcquisitionErrorCode
@@ -136,6 +243,10 @@ export type SefazWsdlAcquisitionFailure = {
   readonly classification: Exclude<SefazWsdlAcquisitionClassification, "RESPONSE_RECEIVED">
   /** Proveniência honesta: `true` somente se um socket externo foi de fato iniciado. */
   readonly externalTransmissionAttempted: boolean
+  /** Telemetria sanitizada de transporte; `null` onde não há falha de rede a diagnosticar. */
+  readonly transportPhase: SefazWsdlTransportPhase | null
+  readonly transportClass: SefazWsdlTransportClass | null
+  readonly transportCode: string | null
 }
 
 export type SefazWsdlAcquisitionSuccess = {
@@ -166,8 +277,18 @@ function failure(
   mensagem: string,
   classification: SefazWsdlAcquisitionFailure["classification"],
   externalTransmissionAttempted: boolean,
+  transport: SefazWsdlTransportTelemetry | null = null,
 ): SefazWsdlAcquisitionFailure {
-  return { ok: false, codigo, mensagem, classification, externalTransmissionAttempted }
+  return {
+    ok: false,
+    codigo,
+    mensagem,
+    classification,
+    externalTransmissionAttempted,
+    transportPhase: transport?.phase ?? null,
+    transportClass: transport?.class ?? null,
+    transportCode: transport?.code ?? null,
+  }
 }
 
 function boundedTimeout(value: number | undefined, maximum: number): number {
@@ -353,6 +474,40 @@ export class SefazWsdlAcquisition {
       let connectionTimer: ReturnType<typeof setTimeout> | null = null
       let totalTimer: ReturnType<typeof setTimeout> | null = null
 
+      // Estado observado do ciclo de vida — base da `phase` da telemetria. Nunca inferido além
+      // do que os eventos de fato dispararam.
+      let socketSeen = false
+      let tcpConnected = false
+      let secureConnected = false
+      let responseStarted = false
+
+      const faseAtual = (): SefazWsdlTransportPhase => {
+        if (responseStarted || secureConnected) return "RESPONSE_STREAM"
+        if (tcpConnected) return "SECURE_CONNECT"
+        if (socketSeen) return "BEFORE_SECURE_CONNECT"
+        return "REQUEST_LIFECYCLE"
+      }
+
+      /** Telemetria a partir de um erro Node: classe/código só da allow-list; fase observada. */
+      const telemetria = (
+        error: unknown,
+        fase: SefazWsdlTransportPhase = faseAtual(),
+      ): SefazWsdlTransportTelemetry => {
+        const classificacao = classifyWsdlTransportError(error)
+        // Durante o streaming da resposta, a classe honesta é o segmento que falhou; o código
+        // Node reconhecido (ex.: ECONNRESET) continua indo em `code`.
+        const classe: SefazWsdlTransportClass =
+          fase === "RESPONSE_STREAM" ? "RESPONSE_STREAM" : classificacao.class
+        return { phase: fase, class: classe, code: classificacao.code }
+      }
+
+      /** Timeout interno (sem objeto de erro Node): classe TIMEOUT com a fase observada. */
+      const telemetriaTimeout = (): SefazWsdlTransportTelemetry => ({
+        phase: faseAtual(),
+        class: "TIMEOUT",
+        code: WSDL_TRANSPORT_UNKNOWN_CODE,
+      })
+
       const finish = (outcome: SefazWsdlAcquisitionOutcome): void => {
         if (settled) return
         settled = true
@@ -382,6 +537,7 @@ export class SefazWsdlAcquisition {
             secureContext: input.preparedSecureContext,
           },
           (response) => {
+            responseStarted = true
             const status = response.statusCode ?? 0
             if (REDIRECT_STATUS.has(status)) {
               response.resume()
@@ -464,25 +620,27 @@ export class SefazWsdlAcquisition {
                 externalTransmissionAttempted: true,
               })
             })
-            response.once("error", () => {
+            response.once("error", (error: unknown) => {
               finish(
                 failure(
                   "wsdl_rede_incerta",
                   "Falha de rede durante a leitura do documento.",
                   "UNKNOWN_UNCERTAIN",
                   true,
+                  telemetria(error),
                 ),
               )
             })
           },
         )
-      } catch {
+      } catch (error) {
         finish(
           failure(
             "wsdl_rede_incerta",
             "Falha de rede ao iniciar a tentativa HTTPS.",
             "UNKNOWN_UNCERTAIN",
             false,
+            telemetria(error, "REQUEST_CREATE"),
           ),
         )
         return
@@ -495,12 +653,17 @@ export class SefazWsdlAcquisition {
             "Deadline total da aquisição excedido.",
             "UNKNOWN_UNCERTAIN",
             true,
+            telemetriaTimeout(),
           ),
         )
         httpRequest.destroy()
       }, input.totalDeadlineMs)
 
       httpRequest.once("socket", (socket) => {
+        socketSeen = true
+        socket.once("connect", () => {
+          tcpConnected = true
+        })
         connectionTimer = setTimeout(() => {
           finish(
             failure(
@@ -508,23 +671,26 @@ export class SefazWsdlAcquisition {
               "Timeout de conexão/TLS excedido.",
               "UNKNOWN_UNCERTAIN",
               true,
+              telemetriaTimeout(),
             ),
           )
           httpRequest.destroy()
         }, input.connectionTimeoutMs)
         socket.once("secureConnect", () => {
+          secureConnected = true
           if (connectionTimer) clearTimeout(connectionTimer)
           connectionTimer = null
         })
       })
 
-      httpRequest.once("error", () => {
+      httpRequest.once("error", (error: unknown) => {
         finish(
           failure(
             "wsdl_rede_incerta",
             "Falha de rede ou TLS durante a aquisição.",
             "UNKNOWN_UNCERTAIN",
             true,
+            telemetria(error),
           ),
         )
       })
@@ -532,13 +698,14 @@ export class SefazWsdlAcquisition {
       try {
         // `GET` sem corpo: não existe parâmetro de payload nesta ferramenta.
         httpRequest.end()
-      } catch {
+      } catch (error) {
         finish(
           failure(
             "wsdl_rede_incerta",
             "Falha após criação da tentativa HTTPS.",
             "UNKNOWN_UNCERTAIN",
             true,
+            telemetria(error, "REQUEST_LIFECYCLE"),
           ),
         )
         httpRequest.destroy()
