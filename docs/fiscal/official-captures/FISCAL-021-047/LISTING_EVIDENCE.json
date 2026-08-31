@@ -1,0 +1,87 @@
+{
+  "capturedAtUtc": "2026-08-17T03:05:00Z",
+  "purpose": "Independently reviewable excerpt of Portal Nacional listing pages (titles+hrefs only). Full HTML not stored.",
+  "pages": {
+    "manuais": {
+      "url": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl+iEFdE=",
+      "sha256_full_html": "18f7853eb6f233cdc3c40836e4feddd43c7134977a8bb9e162e3703d260eb402",
+      "bytes_full_html": 35767,
+      "relevantLinks": [
+        {
+          "title": "Manual de Orientação ao Contribuinte - MOC - versão 7.0 - NF-e e NFC-e",
+          "href": "exibirArquivo.aspx?conteudo=LrBx7WT9PuA="
+        },
+        {
+          "title": "------> Anexo IV - Manual de Contingência - NFC-e",
+          "href": "exibirArquivo.aspx?conteudo=fMhAfsQfE M="
+        },
+        {
+          "title": "Manual de especificações técnicas do DANFE_NFC-e e Qr_Code Versão 6.0",
+          "href": "exibirArquivo.aspx?conteudo=k/IuuaW4YiY="
+        },
+        {
+          "title": "Manual de Especificações da Contingência Offline para NFC-e - versão 2.0",
+          "href": "exibirArquivo.aspx?conteudo=tG8 fKpcfbM="
+        }
+      ]
+    },
+    "notasTecnicas": {
+      "url": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY=",
+      "sha256_full_html": "d3201f58f8d02f0420aba461b0c1a6b562d61f5ac84135927f01906d6604afa4",
+      "bytes_full_html": 114679,
+      "relevantLinks": [
+        {
+          "title": "Nota Técnica 2025.001. v.1.03 - Corrigido - Publicada em 29/09/2025",
+          "href": "exibirArquivo.aspx?conteudo=NvuzQGYd6E8="
+        },
+        {
+          "title": "Nota Técnica Conjunta 2025.001 - Publicada em 08/05/2025",
+          "href": "exibirArquivo.aspx?conteudo=5ZkvIZt10mQ="
+        },
+        {
+          "title": "Nota Técnica 2025.001 v.1.02 - Publicada em 02/09/2025",
+          "href": "exibirArquivo.aspx?conteudo=3NLMgy80wTE="
+        },
+        {
+          "title": "Nota Técnica 2025.001 v.1.01 - Publicada em 26/06/2025",
+          "href": "exibirArquivo.aspx?conteudo=uE fQh6OuYw="
+        },
+        {
+          "title": "Nota Técnica 2025.001 v.1.00 - Publicada em 25/03/2025",
+          "href": "exibirArquivo.aspx?conteudo=trSXReoZPuY="
+        }
+      ]
+    },
+    "esquemasXml": {
+      "url": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w=",
+      "sha256_full_html": "a99a244e9b27754ce1d55303a56d856e1bf12f6a476df10fe0d7b19f2894da9e",
+      "bytes_full_html": 59023,
+      "relevantLinks": [
+        {
+          "title": "Schemas XML NF-e -010e_v.1.02 - NT 2025.002 v.1.40 , NT 2026.002 v.1.0 e NT 2026.003 v.1.0 - (Publicado em 10/07/2026)",
+          "href": "exibirArquivo.aspx?conteudo=akib2DRpJN4="
+        },
+        {
+          "title": "Esquema XML NF-e/NFC-e - Pacote de Liberação nº 010b (Novo leiaute da NF-e, NT 2025.002 v.1.30, NT 2024.003 e NT 2025.001) (ZIP). Publicado em 07/10/2025",
+          "href": "exibirArquivo.aspx?conteudo=zaSePUxCMcs="
+        },
+        {
+          "title": "Esquema XML NF-e/NFC-e - Pacote de Liberação nº 010b (Novo leiaute da NF-e, NT 2025.002 v.1.20, NT 2024.003 e NT 2025.001) (ZIP). Publicado em 20/08/2025",
+          "href": "exibirArquivo.aspx?conteudo=lM8atKSxb90="
+        },
+        {
+          "title": "Esquema XML NF-e/NFC-e - Pacote de Liberação nº 010b (Novo leiaute da NF-e, NT 2025.002 v.1.20, NT 2024.003 e NT 2025.001) (ZIP). Publicado em 30/07/2025",
+          "href": "exibirArquivo.aspx?conteudo=r TFT/MIJ0E="
+        },
+        {
+          "title": "Esquema XML NF-e/NFC-e - Pacote de Liberação nº 010b (Novo leiaute da NF-e, NT 2025.002 v.1.10, NT 2024.003 e NT 2025.001) (ZIP). Publicado em 09/06/2025",
+          "href": "exibirArquivo.aspx?conteudo=T97MsW48FOM="
+        },
+        {
+          "title": "Esquema XML NF-e/NFC-e - Pacote de Liberação nº 9q (Novo leiaute da NF-e, NT 2025.001 v.1.00) (ZIP). Publicado em 19/05/2025",
+          "href": "exibirArquivo.aspx?conteudo=0qRvxtvKcj4="
+        }
+      ]
+    }
+  }
+}

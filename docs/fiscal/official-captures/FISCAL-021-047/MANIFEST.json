@@ -1,0 +1,110 @@
+{
+  "goal": "FISCAL-021-DANFCE-QR-OFFLINE-REGULATORY-AUDIT-047",
+  "capturedAtUtc": "2026-08-17T03:05:00Z",
+  "authority": "Portal Nacional da NF-e",
+  "listingPages": {
+    "manuais": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl+iEFdE=",
+    "notasTecnicas": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY=",
+    "esquemasXml": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w="
+  },
+  "network": {
+    "sefazWebServices": 0,
+    "soap": 0,
+    "mtls": 0,
+    "a1": 0,
+    "allowedHosts": [
+      "www.nfe.fazenda.gov.br",
+      "portal.fazenda.sp.gov.br"
+    ]
+  },
+  "files": [
+    {
+      "path": "Manual_Padroes_DANFE_NFCe_QRCode_v6.0_202503.pdf",
+      "title": "Manual de especificações técnicas do DANFE NFC-e e QR Code — Versão 6.0",
+      "role": "canonical-manual",
+      "published": "2025-03",
+      "pages": 40,
+      "bytes": 1887904,
+      "sha256": "bf906cc212f1edd19b1df7d1cdf4fbf5e73c3fec77567b6e69fa74453c95db5e",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=k/IuuaW4YiY=",
+      "pdfTitle": "Manual de Especificações Técnicas do DANFE NFC-e",
+      "pdfCreationDate": "D:20250326105511-03'00'"
+    },
+    {
+      "path": "NT_2025.001_v1.03_202509.pdf",
+      "title": "Nota Técnica 2025.001 v.1.03 — QR-Code NFC-e versão 3",
+      "role": "canonical-nt-qr-v3",
+      "published": "2025-09-29",
+      "pages": 15,
+      "bytes": 1028544,
+      "sha256": "333b69f71debe5040585b677b574bb13b39362aa7934b904edc59cdf83cded02",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=NvuzQGYd6E8=",
+      "pdfTitle": "Microsoft Word - NT2025.001_v1.03 - NFCe_qrCode_v3",
+      "pdfCreationDate": "D:20250930100334-03'00'"
+    },
+    {
+      "path": "MOC_7.00_Anexo_IV_Contingencia_NFCe_202011.pdf",
+      "title": "MOC 7.00 Anexo IV — Padrões Técnicos de Contingência Off-line NFC-e",
+      "role": "canonical-anexo-iv",
+      "published": "2020-11",
+      "pages": 12,
+      "bytes": 811631,
+      "sha256": "0b5ae1e88ae60b57d4f1d752316289ff55f7e10c7e1d405905325e9de2666b0e",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=fMhAfsQfE%20M=",
+      "pdfTitle": "Nota Fiscal do Consumidor Eletrônica",
+      "pdfCreationDate": "D:20201104165101-03'00'"
+    }
+  ],
+  "hashedNotStored": [
+    {
+      "title": "NT 2025.001 v.1.00 (histórica)",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=trSXReoZPuY=",
+      "bytes": 577941,
+      "pages": 14,
+      "sha256": "19a36e270756d613c573c6e0ae94782935b7ca7eead48d64cef87737374d29ea",
+      "reason": "substituída por v1.03; hash de proveniência apenas"
+    },
+    {
+      "title": "NT 2025.001 v.1.01 (histórica)",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=uE%20fQh6OuYw=",
+      "bytes": 666827,
+      "pages": 14,
+      "sha256": "99b94e03007cef880a99b3bd36e27abf2b54181e91b3f1d2dd2faf2bfc469e9e",
+      "reason": "substituída por v1.03; hash de proveniência apenas"
+    },
+    {
+      "title": "NT 2025.001 v.1.02 (histórica)",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=3NLMgy80wTE=",
+      "bytes": 1027385,
+      "pages": 15,
+      "sha256": "44b71f16bf1196f35efe0f8645d7992305b37506ffd2e44fe7fb3350616a930d",
+      "reason": "substituída por v1.03; hash de proveniência apenas"
+    },
+    {
+      "title": "Manual de Especificações da Contingência Offline para NFC-e v2.0 (2016)",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=tG8%20fKpcfbM=",
+      "bytes": 574805,
+      "pages": 10,
+      "sha256": "5ff5c8fdc8a55ae91f2f6e7c29566a45ca7e3867c7b76877deb48911071cf06c",
+      "reason": "predecessor convertido no Anexo IV MOC 7.00; hash de proveniência apenas"
+    },
+    {
+      "title": "MOC 7.0 — Visão Geral (PDF completo)",
+      "officialUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=LrBx7WT9PuA=",
+      "bytes": 4304647,
+      "pages": 150,
+      "sha256": "f664dcf94b77cabb32311620d85a7eb02cdf86adb2d4632ce178af2572dd2ad1",
+      "reason": "Anexo IV já capturado; PDF completo não versionado neste GOAL"
+    }
+  ],
+  "listingEvidence": {
+    "path": "LISTING_EVIDENCE.json",
+    "purpose": "Títulos+hrefs do índice Portal Nacional em 2026-08-17 e SHA-256 do HTML completo, sem armazenar o HTML bruto"
+  },
+  "repoXsdAlreadyPresent": {
+    "package": "PL_010e_v1.02",
+    "file": "lib/fiscal/xsd/schemas/PL_010e_v1.02/NFe/leiauteNFe_v4.00.xsd",
+    "sha256": "598c71780cbc6b54f170464bd6d5538c2d01a99d987a1666b662d4e166b84bf7",
+    "source": "docs/fiscal/FISCAL_XSD_MANIFEST_001.md"
+  }
+}
