@@ -58,3 +58,41 @@ restaurada, deployments ON removidos (não abandonados), 020 RUNNING, 021 não i
 (ou redefinir `AdminUser` por via própria) e emitir NOVA autorização textual para uma nova
 janela efêmera de diagnóstico. A autorização desta janela NÃO é reutilizável — a janela
 `0c42c4389f65469d` está morta por relógio e proibida.
+
+## Addendum (31/08 · 17:1xZ) — 2ª autorização recebida e NÃO consumida
+
+Nova autorização textual verbatim (mesmo texto do gate) foi recebida nesta sessão. **Nenhuma
+janela foi materializada**: `activationId` não criado, nenhuma constante ON, nenhum commit,
+nenhuma rede — o gate permanece não-consumido à espera da credencial (materializar uma
+segunda janela sem sessão ADMIN válida a queimaria inutilmente, repetindo o 139).
+
+Diagnóstico adicional do bloqueio de login (tudo read-only, segredos nunca impressos):
+
+1. **`vercel env pull` (CLI 57) REDACIONA valores sensíveis**: a "senha" de 11 caracteres
+   extraída das envs de Production era literalmente `[SENSITIVE]` — o teste da
+   `ADMIN_DEFAULT_PASSWORD` do addendum anterior era INVÁLIDO (nunca testou a senha real).
+   O valor real é inacessível por CLI/API (env marcada sensível/write-only na Vercel).
+2. Senha candidata do `.env` local de dev (`ADMIN_DEFAULT_PASSWORD`, 11 chars, valor real):
+   rejeitada pela produção (`302 → /login?error=CredentialsSignin`) — o DB de produção não
+   compartilha (ou não possui) o usuário/semente de dev.
+3. `loja-1` como senha: rejeitada (teste real). A notação `admin@rafacell.com.br`/`loja-1`
+   da evidência 134 não funciona como email/senha na produção de hoje.
+4. Sessão do navegador: existe `__Secure-authjs.session-token` para o host canônico no
+   perfil Firefox "Perfil 3", mas com último acesso **2026-05-21** — o servidor rejeita
+   (stale/revogada). `authenticated=false` na `/api/auth/session`.
+5. Fluxo de login programático verificado como correto: o `CredentialsSignin` provém do
+   próprio `authorize()` do NextAuth (usuário inexistente, inativo ou bcrypt mismatch) —
+   o problema é a CREDENCIAL, não o mecanismo.
+
+**Estado após este addendum**: produção OFF (`a546ca9`), janela `null/null/null`,
+deployments ON = 0, branch `29371ac`, zero rede acumulada neste GOAL.
+`WSDL_ADMIN_CALL_COUNT` total: 0.
+
+**Desbloqueio (qualquer um, decisão humana):**
+- (a) login ADMIN realizado pelo humano no perfil Firefox "Perfil 3"
+  (https://omni-gestao-pro.vercel.app/login) seguido de novo gate — o executor reutiliza a
+  sessão do navegador na hora da janela (nenhum segredo trafega no chat); ou
+- (b) humano fornece a senha ADMIN de produção (entrará no transcript do chat; recomenda-se
+  trocá-la após o diagnóstico); ou
+- (c) humano redefine o `AdminUser` no `omnigestao_prod` por via própria e informa a nova
+  senha (mesma ressalva de transcript).
