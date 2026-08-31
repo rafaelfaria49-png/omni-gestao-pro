@@ -1,7 +1,12 @@
 # FISCAL-NFCE-CONTINGENCY-020 — Diagnóstico browser-assisted: janela expirou SEM CONSUMO (140)
 
 Trilha `fiscal` · GOAL 020 (continuação) · execução do gate textual (não-consumido em 139).
-Data: 2026-08-31 · **ZERO rede em todo o GOAL acumulado** · Janela `null/null/null` restaurada.
+Data: 2026-08-31 · Zero rede NESTA janela (140): `WSDL_ADMIN_CALL_COUNT=0` ·
+`WSDL_EXTERNAL_GET_COUNT=0` · Janela `null/null/null` restaurada.
+*(Correção documental: a frase original "ZERO rede em todo o GOAL acumulado" era um ERRO —
+o GOAL 020 acumulado NÃO tem zero rede; a execução 137 (30/08, 20:05:17Z) registrou 1
+chamada administrativa HTTP 200 com `WSDL_EXTERNAL_GET_COUNT ≤ 6`. Ver §Histórico acumulado
+abaixo e a evidência canônica 137.)*
 
 ## Linha do tempo (UTC)
 
@@ -20,10 +25,12 @@ Data: 2026-08-31 · **ZERO rede em todo o GOAL acumulado** · Janela `null/null/
 | 19:56 | Deploy Production OFF `dpl_HqPwz84yDaNULU49ZcEoq7HXLnNX` (`bgr2hhoqm`) READY; alias canônico confirmado nele |
 | 19:57 | Remoção dos deployments ON: produção `ripbdw99x` + preview `738goze7r` — **`ACTIVE_ON_DEPLOYMENTS_REMAINING = 0`** |
 
-## Resultado
+## Resultado (desta janela 140)
 
 - **WSDL_ADMIN_CALL_COUNT = 0** · **WSDL_EXTERNAL_GET_COUNT = 0** ·
-  **SEFAZ_SOAP_POST_COUNT = 0** · **SEFAZ_PRODUCTION_REQUEST_COUNT = 0**
+  **SEFAZ_SOAP_POST_COUNT = 0** · **SEFAZ_PRODUCTION_REQUEST_COUNT = 0** — contadores
+  locais desta janela 140 (o histórico acumulado do GOAL 020 inclui a execução 137; ver
+  seção abaixo).
 - A activation `99c21bca85a94cef` **NÃO foi consumida**: nenhuma chamada HTTP administrativa
   ocorreu (nem tentativa) — o one-shot global segue íntegro e a janela morreu por relógio
   (`expired` → 404 permanente antes de ACL/Prisma/A1/socket).
@@ -31,6 +38,19 @@ Data: 2026-08-31 · **ZERO rede em todo o GOAL acumulado** · Janela `null/null/
 - A telemetria sanitizada do GOAL 138 permanece integrada e em produção, pronta para a
   próxima janela autorizada: `transportPhase`/`transportClass`/`transportCode` por serviço,
   além dos campos sanitizados existentes (httpStatus/byteLength/sha256/contentTypeEvidence).
+
+## Histórico acumulado do GOAL 020 (honesto)
+
+- **Execução 137 (30/08, 20:05:17Z) — evidência canônica de rede deste GOAL**: 1 chamada
+  administrativa, **HTTP 200**; o batch executou os seis alvos canônicos; a evidência
+  disponível registra `WSDL_EXTERNAL_GET_COUNT ≤ 6` (nenhuma contagem mais precisa é
+  suportada); os seis resultados foram `acquisition:wsdl_rede_incerta`; **nenhuma resposta
+  WSDL válida foi materializada** naquela execução (`RAW_WSDL_PERSISTED=false`).
+- **Janela 139 (`0c42c4389f65469d`, 31/08 03:00→03:10Z)** — expirou sem consumo: login ADMIN
+  falhou (`CredentialsSignin`), nenhuma chamada (0/0).
+- **Janela 140 (`99c21bca85a94cef`, 31/08 19:00→19:10Z)** — expirou sem consumo: invocation
+  browser-assisted não executada a tempo pelo humano (relógio 19:34:18Z), nenhuma chamada (0/0).
+- Em nenhuma janela do GOAL 020 uma resposta WSDL válida foi materializada até hoje.
 
 ## Classificação (GOAL 138, janela 2 de diagnóstico)
 
