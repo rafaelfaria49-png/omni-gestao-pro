@@ -85,8 +85,11 @@ Diagnóstico adicional do bloqueio de login (tudo read-only, segredos nunca impr
    o problema é a CREDENCIAL, não o mecanismo.
 
 **Estado após este addendum**: produção OFF (`a546ca9`), janela `null/null/null`,
-deployments ON = 0, branch `29371ac`, zero rede acumulada neste GOAL.
-`WSDL_ADMIN_CALL_COUNT` total: 0.
+deployments ON = 0, branch `29371ac`, zero rede NESTA janela (139). *(Correção documental
+registrada na evidência 140: o GOAL 020 acumulado NÃO tem zero rede — a execução 137
+(30/08, 20:05:17Z) teve `WSDL_ADMIN_CALL_COUNT=1` e `WSDL_EXTERNAL_GET_COUNT ≤ 6`; a
+afirmação "zero rede acumulada neste GOAL" e "`WSDL_ADMIN_CALL_COUNT` total: 0" desta linha
+era erro factual e está corrigida aqui.)*
 
 **Desbloqueio (qualquer um, decisão humana):**
 - (a) login ADMIN realizado pelo humano no perfil Firefox "Perfil 3"
