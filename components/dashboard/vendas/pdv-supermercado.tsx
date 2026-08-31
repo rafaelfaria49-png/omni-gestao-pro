@@ -12,6 +12,7 @@ import {
   QrCode,
   Search,
   ShoppingCart,
+  PauseCircle,
   Trash2,
   X,
   Zap,
@@ -96,7 +97,7 @@ import { buildPagamentosResumo, type PdvReceiptInput } from "@/lib/escpos"
 import { PdvPostSaleDialog } from "./pdv-post-sale-dialog"
 import { PdvAutoPrintFeedback } from "./pdv-auto-print-feedback"
 import {
-  getHeldSales,
+  useHeldSales,
   saveHeldSale,
   removeHeldSale,
   newHoldId,
@@ -862,7 +863,7 @@ export function PdvSupermercado({
   }, [isPaymentModalOpen, attrDialogOpen, weightDialogOpen, accessoryProduct, showItemAvulsoModal, vendaEsperaOpen, recebimentoOpen, trocasOpen, cashierId, openPaymentModal, openMultipayModal, formasSupermercado])
 
   const terminalIdForHold = readSelectedTerminal(lojaKey)?.id ?? "default"
-  const heldSales = getHeldSales(lojaKey, terminalIdForHold)
+  const heldSales = useHeldSales(lojaKey, terminalIdForHold, "supermercado")
 
   function handleHoldSale() {
     const held: HeldSale = {
@@ -881,7 +882,9 @@ export function PdvSupermercado({
         accessorySelection: i.accessorySelection,
         cartLineKey: i.cartLineKey,
       })),
-      customer: null,
+      customer: selectedCustomer
+        ? { id: selectedCustomer.id, name: selectedCustomer.name, cpf: selectedCustomer.cpf, phone: selectedCustomer.phone }
+        : null,
       discountReais,
       discountPercent,
       pdvType: "supermercado",
@@ -910,7 +913,13 @@ export function PdvSupermercado({
     )
     setDiscountReais(sale.discountReais ?? 0)
     setDiscountPercent(sale.discountPercent ?? 0)
+    setSelectedCustomer(
+      sale.customer
+        ? { id: sale.customer.id, name: sale.customer.name, cpf: sale.customer.cpf ?? "", phone: sale.customer.phone ?? "" }
+        : null,
+    )
     removeHeldSale(lojaKey, terminalIdForHold, sale.id)
+    return true
   }
 
   function handleDiscardHeldSale(id: string) {
@@ -957,6 +966,19 @@ export function PdvSupermercado({
                   </div>
                 )}
                 <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 shrink-0 rounded-xl border-primary/30 bg-primary/10 px-2.5 text-xs font-bold text-primary transition-all hover:bg-primary/20"
+                    onClick={() => setVendaEsperaOpen(true)}
+                    aria-label={`Abrir vendas em espera${heldSales.length > 0 ? ` (${heldSales.length})` : ""}`}
+                    title="Vendas em espera (F7)"
+                  >
+                    <PauseCircle className="mr-1.5 h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Em espera</span>
+                    {heldSales.length > 0 ? <span className="ml-1 tabular-nums">({heldSales.length})</span> : null}
+                    <span className="ml-1 text-[9px] font-normal opacity-50">[F7]</span>
+                  </Button>
                   {!isModoRapido ? (
                     <Button
                       type="button"
