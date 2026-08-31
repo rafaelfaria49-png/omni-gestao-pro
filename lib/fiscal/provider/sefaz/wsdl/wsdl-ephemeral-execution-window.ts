@@ -1,15 +1,19 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 138 · CONTAINMENT OFF do DIAGNÓSTICO): **DORMENTE** — `activationId`,
- * `notBeforeUtc` e `expiresAtUtc` restaurados a `null`. A janela
- * `wsdl-h9h10-20260831-0300z-0c42c4389f65469d` (31/08 03:00→03:10Z) EXPIROU SEM CONSUMO: o
- * login ADMIN pré-janela falhou com `CredentialsSignin` (a senha de produção acessível ao
- * executor não autentica), e a chamada NÃO foi feita — fail-closed. `WSDL_ADMIN_CALL_COUNT=0`,
- * nenhum GET externo, a activation NÃO foi consumida (one-shot intacto no ledger). É evidência
- * histórica; não é configuração executável e jamais deve ser re-materializada sem novo gate
- * humano. As activations de 30/08 (14:40z `fed207ff` e 20:05z `51354088`) seguem
- * históricas/proibidas. Gate 2 permanece humano e separado.
+ * Estado atual (GOAL 020 · 138 · DIAGNÓSTICO H-9/H-10 por invocation browser-assisted,
+ * autorização textual humana verbatim vigente e NÃO consumida): **ATIVA** —
+ * `wsdl-h9h10-20260831-1900z-99c21bca85a94cef`, janela única de 10 minutos
+ * (19:00:00Z → 19:10:00Z de 31/08). Uma única execução administrativa, no máximo 6 GETs WSDL
+ * oficiais SEFAZ-SP/HOMOLOGACAO com o A1 já custodiado. A chamada é SAME-ORIGIN executada
+ * manualmente pelo humano autenticado no Console do Chrome no host canônico — nenhum cookie,
+ * token ou sessão é extraído, copiado ou manipulado pelo agente. Coleta SOMENTE de telemetria
+ * sanitizada de transporte (`transportPhase`/`transportClass`/`transportCode` do GOAL 138) —
+ * sem emissão NFC-e, sem SEFAZ PRODUÇÃO, sem retry. O primitive do advisory lock segue
+ * corrigido (135). Containment OFF imediatamente após a execução restaurará
+ * `{null, null, null}`. As activations de 30/08 (14:40z `fed207ff`, 20:05z `51354088`) e a de
+ * 31/08 03:00z (`0c42c4389f65469d`, expirou sem consumo) são históricas/proibidas e jamais
+ * devem ser re-materializadas. Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -35,9 +39,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260831-1900z-99c21bca85a94cef",
+  notBeforeUtc: "2026-08-31T19:00:00.000Z",
+  expiresAtUtc: "2026-08-31T19:10:00.000Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
