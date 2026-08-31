@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect, useState } from "react"
+
 /**
  * Venda em espera — persistência local por loja + terminal.
  * Não toca em estoque, financeiro nem caixa.
@@ -8,6 +10,7 @@
 import type { AccessorySelectionV1 } from "@/lib/acessorios/types"
 
 const HOLDS_KEY_PREFIX = "@omnigestao:pdv-holds:"
+const HOLDS_CHANGED_EVENT = "omnigestao:pdv-holds-changed"
 
 export type HeldCartItem = {
   lineId: string
@@ -21,6 +24,9 @@ export type HeldCartItem = {
   serviceCategory?: string
   warrantyDays?: number
   serviceTerms?: string
+  /** Complementos e resumo operacional de linhas legadas do PDV Clássico. */
+  complementos?: string[]
+  lineDetail?: string
   atributosLabel?: string
   vendaPorPeso?: boolean
   custoUnitario?: number | null
@@ -63,16 +69,63 @@ function holdsKey(storeId: string, terminalId: string): string {
   return `${HOLDS_KEY_PREFIX}${storeId}:${terminalId}`
 }
 
-export function getHeldSales(storeId: string, terminalId: string): HeldSale[] {
+function dispatchHoldsChanged(storeId: string, terminalId: string): void {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return
+  window.dispatchEvent(new CustomEvent(HOLDS_CHANGED_EVENT, {
+    detail: { storeId, terminalId },
+  }))
+}
+
+export function getHeldSales(
+  storeId: string,
+  terminalId: string,
+  pdvType?: HeldSale["pdvType"],
+): HeldSale[] {
   if (typeof window === "undefined") return []
   try {
     const raw = localStorage.getItem(holdsKey(storeId, terminalId))
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? (parsed as HeldSale[]) : []
+    if (!Array.isArray(parsed)) return []
+    const sales = parsed as HeldSale[]
+    return pdvType ? sales.filter((sale) => sale.pdvType === pdvType) : sales
   } catch {
     return []
   }
+}
+
+/**
+ * Lê o mesmo contrato local usado pelos três PDVs e re-renderiza após alterações
+ * na aba atual ou em outra aba. O filtro por tipo impede reconstrução incompatível.
+ */
+export function useHeldSales(
+  storeId: string,
+  terminalId: string,
+  pdvType?: HeldSale["pdvType"],
+): HeldSale[] {
+  const [revision, setRevision] = useState(0)
+
+  useEffect(() => {
+    const onChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ storeId?: string; terminalId?: string }>).detail
+      if (detail?.storeId === storeId && detail?.terminalId === terminalId) {
+        setRevision((value) => value + 1)
+      }
+    }
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === holdsKey(storeId, terminalId)) setRevision((value) => value + 1)
+    }
+    window.addEventListener(HOLDS_CHANGED_EVENT, onChanged)
+    window.addEventListener("storage", onStorage)
+    return () => {
+      window.removeEventListener(HOLDS_CHANGED_EVENT, onChanged)
+      window.removeEventListener("storage", onStorage)
+    }
+  }, [storeId, terminalId])
+
+  // `revision` é lida para que a atualização local/distribuída provoque novo render.
+  void revision
+  return getHeldSales(storeId, terminalId, pdvType)
 }
 
 export function saveHeldSale(storeId: string, terminalId: string, sale: HeldSale): void {
@@ -80,6 +133,7 @@ export function saveHeldSale(storeId: string, terminalId: string, sale: HeldSale
   try {
     const existing = getHeldSales(storeId, terminalId).filter((s) => s.id !== sale.id)
     localStorage.setItem(holdsKey(storeId, terminalId), JSON.stringify([...existing, sale]))
+    dispatchHoldsChanged(storeId, terminalId)
   } catch {
     /* ignore quota errors */
   }
@@ -90,6 +144,7 @@ export function removeHeldSale(storeId: string, terminalId: string, id: string):
   try {
     const updated = getHeldSales(storeId, terminalId).filter((s) => s.id !== id)
     localStorage.setItem(holdsKey(storeId, terminalId), JSON.stringify(updated))
+    dispatchHoldsChanged(storeId, terminalId)
   } catch {
     /* ignore */
   }
@@ -107,6 +162,8 @@ export function newHoldId(): string {
 }
 
 export function nextHoldLabel(existing: HeldSale[]): string {
-  const n = existing.length + 1
+  const labels = new Set(existing.map((sale) => sale.label))
+  let n = existing.length + 1
+  while (labels.has(`Venda ${n}`)) n += 1
   return `Venda ${n}`
 }

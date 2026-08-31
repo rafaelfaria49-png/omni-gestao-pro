@@ -26,6 +26,7 @@ import {
   Loader2,
   Zap,
   ShoppingCart,
+  PauseCircle,
   PackageSearch,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -118,7 +119,7 @@ import { PdvPostSaleDialog } from "./pdv-post-sale-dialog"
 import { PdvAutoPrintFeedback } from "./pdv-auto-print-feedback"
 import { VendaEsperaModal } from "./venda-espera-modal"
 import {
-  getHeldSales,
+  useHeldSales,
   saveHeldSale,
   removeHeldSale,
   newHoldId,
@@ -1978,7 +1979,7 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
   // ─── Venda em espera ────────────────────────────────────────────────────────
 
   const terminalIdForHold = readSelectedTerminal(storeIdKey)?.id ?? "default"
-  const heldSales = getHeldSales(storeIdKey, terminalIdForHold)
+  const heldSales = useHeldSales(storeIdKey, terminalIdForHold, "assistencia")
 
   function handleHoldSale() {
     const held: HeldSale = {
@@ -2045,10 +2046,15 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
       setCustomerName(sale.customer.name)
       setSelectedClienteId(sale.customer.id)
       setSelectedClienteDoc(sale.customer.cpf ?? null)
+    } else {
+      setCustomerName("")
+      setSelectedClienteId(null)
+      setSelectedClienteDoc(null)
     }
     setDiscountReais(sale.discountReais ?? 0)
     setDiscountPercent(sale.discountPercent ?? 0)
     removeHeldSale(storeIdKey, terminalIdForHold, sale.id)
+    return true
   }
 
   function handleDiscardHeldSale(id: string) {
@@ -2090,6 +2096,18 @@ export function PdvAssistenciaEnterprise({ isModoRapido = false }: { isModoRapid
 
         {/* Center: control buttons */}
         <div className="flex flex-1 items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => setVendaEsperaOpen(true)}
+            aria-label={`Abrir vendas em espera${heldSales.length > 0 ? ` (${heldSales.length})` : ""}`}
+            title="Vendas em espera (F7)"
+            className="flex min-w-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary transition-all hover:bg-primary/20"
+          >
+            <PauseCircle className="h-3.5 w-3.5 shrink-0" />
+            <span className="hidden sm:inline">Em espera</span>
+            {heldSales.length > 0 ? <span className="tabular-nums">({heldSales.length})</span> : null}
+            <kbd className="hidden rounded border border-primary/30 bg-primary/10 px-1 py-px text-[9px] font-bold sm:inline">F7</kbd>
+          </button>
           {!modoRapido ? (
             <button
               type="button"

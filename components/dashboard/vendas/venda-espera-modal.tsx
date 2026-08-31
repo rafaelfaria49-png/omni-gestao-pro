@@ -1,10 +1,21 @@
 "use client"
 
+import { useState } from "react"
 import { Clock, RotateCcw, Trash2, PauseCircle } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import type { HeldSale } from "@/lib/pdv-hold"
 
 function formatTime(isoStr: string): string {
@@ -29,7 +40,7 @@ interface VendaEsperaModalProps {
   heldSales: HeldSale[]
   cartEmpty: boolean
   onHold: () => void
-  onResume: (sale: HeldSale) => void
+  onResume: (sale: HeldSale) => boolean | void
   onDiscard: (id: string) => void
 }
 
@@ -42,6 +53,27 @@ export function VendaEsperaModal({
   onResume,
   onDiscard,
 }: VendaEsperaModalProps) {
+  const [pendingResume, setPendingResume] = useState<HeldSale | null>(null)
+  const [pendingDiscardId, setPendingDiscardId] = useState<string | null>(null)
+
+  const resume = (sale: HeldSale) => {
+    if (!cartEmpty) {
+      setPendingResume(sale)
+      return
+    }
+    if (onResume(sale) !== false) onOpenChange(false)
+  }
+
+  const confirmResumeWithCurrentHold = () => {
+    if (!pendingResume) return
+    onHold()
+    const resumed = onResume(pendingResume)
+    if (resumed !== false) {
+      setPendingResume(null)
+      onOpenChange(false)
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -80,10 +112,12 @@ export function VendaEsperaModal({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="font-medium text-sm">{sale.label}</span>
-                        {sale.customer?.name && (
+                        {sale.customer?.name ? (
                           <Badge variant="outline" className="text-xs">
                             {sale.customer.name}
                           </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Consumidor</span>
                         )}
                       </div>
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -94,22 +128,24 @@ export function VendaEsperaModal({
 
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>
-                        {sale.items.length} {sale.items.length === 1 ? "item" : "itens"}
+                        {sale.items.reduce((total, item) => total + item.quantity, 0)} {sale.items.reduce((total, item) => total + item.quantity, 0) === 1 ? "item" : "itens"}
                       </span>
                       <span className="font-semibold text-foreground">
                         {saleTotal(sale).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}
                       </span>
                     </div>
 
+                    <p className="truncate text-xs text-muted-foreground" title={sale.items[0]?.name ?? "Venda sem itens"}>
+                      {sale.items[0]?.name ?? "Venda sem itens"}
+                      {sale.items.length > 1 ? ` + ${sale.items.length - 1} ${sale.items.length === 2 ? "item" : "itens"}` : ""}
+                    </p>
+
                     <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="default"
                         className="flex-1"
-                        onClick={() => {
-                          onResume(sale)
-                          onOpenChange(false)
-                        }}
+                        onClick={() => resume(sale)}
                       >
                         <RotateCcw className="mr-1 h-3 w-3" />
                         Retomar
@@ -118,7 +154,8 @@ export function VendaEsperaModal({
                         size="sm"
                         variant="ghost"
                         className="text-destructive hover:text-destructive"
-                        onClick={() => onDiscard(sale.id)}
+                        aria-label={`Descartar ${sale.label}`}
+                        onClick={() => setPendingDiscardId(sale.id)}
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>
@@ -130,6 +167,46 @@ export function VendaEsperaModal({
           )}
         </div>
       </DialogContent>
+
+      <AlertDialog open={pendingResume !== null} onOpenChange={(value) => !value && setPendingResume(null)}>
+        <AlertDialogContent className="max-w-sm border-border bg-card">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Carrinho atual não está vazio</AlertDialogTitle>
+            <AlertDialogDescription>
+              Para retomar {pendingResume?.label ?? "esta venda"}, o carrinho atual precisa ser preservado.
+              Coloque-o em espera e abra a venda selecionada?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmResumeWithCurrentHold}>
+              Colocar atual em espera
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={pendingDiscardId !== null} onOpenChange={(value) => !value && setPendingDiscardId(null)}>
+        <AlertDialogContent className="max-w-sm border-border bg-card">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Descartar venda em espera?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta ação remove apenas o hold local. Nenhuma venda real, estoque, Financeiro ou Caixa será alterado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDiscardId) onDiscard(pendingDiscardId)
+                setPendingDiscardId(null)
+              }}
+            >
+              Descartar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   )
 }

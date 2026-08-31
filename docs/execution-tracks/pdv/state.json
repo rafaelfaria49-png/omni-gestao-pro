@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "pdv",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "ALTO",
-  "current_goal": "PDV-VENDA-EM-ESPERA-RESTORE-001",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": "2b223705a3a2d6982a50b2fbb1d025cedc8541d5",
   "counters": {
-    "goals_done": 2,
+    "goals_done": 3,
     "goals_blocked": 0,
     "goals_imported": 1,
-    "ledger_lines": 2
+    "ledger_lines": 3
   },
-  "last_goal": "PDV-TROCAS-VALE-HARDENING-PRE-PUBLISH-002",
+  "last_goal": "PDV-VENDA-EM-ESPERA-RESTORE-001",
   "last_result": "DONE",
-  "last_ratified_at": "2026-08-28T01:27:00.901Z"
+  "last_ratified_at": "2026-08-29T21:00:50.288Z"
 }
