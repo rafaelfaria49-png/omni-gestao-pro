@@ -1,0 +1,523 @@
+{
+  "goal": "FISCAL-018-CANCELAMENTO-REGULATORY-PACKAGE-039",
+  "authority": "Portal Nacional da NF-e",
+  "capturedAtUtc": "2026-08-16T14:36:09Z",
+  "runtimeNetwork": "forbidden",
+  "schemaFilesMutable": false,
+  "doesNotReplace": "PL_010e_v1.02",
+  "classification": "B",
+  "classificationReason": "TProt/nProt inconsistente entre Evento_Canc_PL_v1.01 ([0-9]{15}) e envelope genérico PL_Evento NT 2026.004 / PL_010e ([0-9]{15}|[0-9]{17}). Não arbitrar.",
+  "packages": {
+    "Evento_Canc_PL_v1.01": {
+      "role": "leiaute específico do evento 110111 (cancelamento clássico)",
+      "officialTitle": "Esquemas XML NF-e / NFC-e - Evento Cancelamento (Atualizado em 21/12/2018) (ZIP)",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=0Yynu2Ck%20bM=",
+      "originalFilename": "Evento_Canc_PL_v1.01_NT_2018_004.zip",
+      "publishedAtDisplayed": "21/12/2018",
+      "directory": "lib/fiscal/xsd/schemas/Evento_Canc_PL_v1.01",
+      "entrypoint": "e110111_v1.00.xsd",
+      "files": [
+        {
+          "name": "e110111_v1.00.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/e110111_v1.00.xsd",
+          "bytes": 1770,
+          "sha256": "56fcdad336b281a9de5e7aae27850bc2c5bd7714e267c891e1b4d0dc227c65da"
+        },
+        {
+          "name": "envEventoCancNFe_v1.00.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/envEventoCancNFe_v1.00.xsd",
+          "bytes": 595,
+          "sha256": "d3f1550b1c3fa6974690cc27e5b74a55fbec3dd11ecdd2992fbcd248b015d534"
+        },
+        {
+          "name": "eventoCancNFe_v1.00.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/eventoCancNFe_v1.00.xsd",
+          "bytes": 572,
+          "sha256": "3e5a2840a42f1f66bbbcb21066dcde6aa90407c1ef05456ad9ac38456d96982d"
+        },
+        {
+          "name": "leiauteEventoCancNFe_v1.00.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/leiauteEventoCancNFe_v1.00.xsd",
+          "bytes": 13952,
+          "sha256": "9426ec0d8e3ce441c78d61cf2bd8b6910b7b1cc377a0b337a5a1a9dbe438a66f"
+        },
+        {
+          "name": "procEventoCancNFe_v1.00.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/procEventoCancNFe_v1.00.xsd",
+          "bytes": 581,
+          "sha256": "7e85da1583df86aee753400286d4aad48160846090cd6ecd2c1400fed4afaa69"
+        },
+        {
+          "name": "retEnvEventoCancNFe_v1.00.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/retEnvEventoCancNFe_v1.00.xsd",
+          "bytes": 589,
+          "sha256": "a0a81bf59c9c166f4061f52f8d74cd7aa21bdc1bd8c9b0e0b8bc44d0df34e665"
+        },
+        {
+          "name": "tiposBasico_v1.03.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/tiposBasico_v1.03.xsd",
+          "bytes": 32400,
+          "sha256": "486f7b7e2ac053eddf87661858fbeb171f8dce2e805d501d388665269c95dbf3"
+        },
+        {
+          "name": "xmldsig-core-schema_v1.01.xsd",
+          "zipPath": "Evento_Canc_PL_v1.01/xmldsig-core-schema_v1.01.xsd",
+          "bytes": 3749,
+          "sha256": "8ce2a385b593c85acf09cb03521f9e730dad2b2e6a5d02cc6f5b688ca94ce230"
+        }
+      ],
+      "dependencyGraph": {
+        "e110111_v1.00.xsd": [
+          "tiposBasico_v1.03.xsd"
+        ],
+        "envEventoCancNFe_v1.00.xsd": [
+          "leiauteEventoCancNFe_v1.00.xsd"
+        ],
+        "eventoCancNFe_v1.00.xsd": [
+          "leiauteEventoCancNFe_v1.00.xsd"
+        ],
+        "leiauteEventoCancNFe_v1.00.xsd": [
+          "xmldsig-core-schema_v1.01.xsd",
+          "tiposBasico_v1.03.xsd"
+        ],
+        "procEventoCancNFe_v1.00.xsd": [
+          "leiauteEventoCancNFe_v1.00.xsd"
+        ],
+        "retEnvEventoCancNFe_v1.00.xsd": [
+          "leiauteEventoCancNFe_v1.00.xsd"
+        ],
+        "tiposBasico_v1.03.xsd": [],
+        "xmldsig-core-schema_v1.01.xsd": []
+      }
+    },
+    "PL_Evento_NT2026.004_v1.01": {
+      "role": "envelope genérico NFeRecepcaoEvento (parte geral). Não contém e110111.",
+      "officialTitle": "Schemas XML NF-e 010d_v1.01 - CNPJ Alfanumérico - NT 2026.004.v.1.01, Eventos e ws de Consulta CCC. (Publicado em 08/06/2026)",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=FOEnx2KAsCk=",
+      "originalFilename": "CNPJ Alfanumérico - NT2026.004.v.1.01 PL Eventos e Cad Consulta Cadastro CCC.zip",
+      "nestedZip": "PL_Evento.zip",
+      "publishedAtDisplayed": "08/06/2026",
+      "directory": "lib/fiscal/xsd/schemas/PL_Evento_NT2026.004_v1.01",
+      "entrypoint": "envEvento_v1.00.xsd",
+      "files": [
+        {
+          "name": "envEvento_v1.00.xsd",
+          "zipPath": "PL_Evento/envEvento_v1.00.xsd",
+          "bytes": 575,
+          "sha256": "e4d61ba81582b5f1f9a2a4b135d33f4c1ec1c8f9138a2343a9abfffa02bb2777"
+        },
+        {
+          "name": "leiauteEvento_v1.00.xsd",
+          "zipPath": "PL_Evento/leiauteEvento_v1.00.xsd",
+          "bytes": 14594,
+          "sha256": "9a48df8603f685653dfde27dbda72e0f47b5d3c13be0090952f1e82f8d2bc476"
+        },
+        {
+          "name": "procEventoNFe_v1.00.xsd",
+          "zipPath": "PL_Evento/procEventoNFe_v1.00.xsd",
+          "bytes": 572,
+          "sha256": "4263ee5d12e7a731efab126310aba4edb25612e5986a1c5dde0c87e6c6173798"
+        },
+        {
+          "name": "retEnvEvento_v1.00.xsd",
+          "zipPath": "PL_Evento/retEnvEvento_v1.00.xsd",
+          "bytes": 569,
+          "sha256": "5eb93a244c5b26c983c08f725f8eafaa1923664a992181b9d78f60cc8523fa72"
+        },
+        {
+          "name": "tiposBasico_v1.03.xsd",
+          "zipPath": "PL_Evento/tiposBasico_v1.03.xsd",
+          "bytes": 34589,
+          "sha256": "eccea0733717db3108c79f8efc7cc7ffeeba8b6c46a5948410ff012c1636b0ba"
+        },
+        {
+          "name": "tiposBasico_v4.00.xsd",
+          "zipPath": "PL_Evento/tiposBasico_v4.00.xsd",
+          "bytes": 22556,
+          "sha256": "e73476a037832fa1b8aea8323de5385d8a6ac4e73f98ac5d0805735a77ec36c2"
+        },
+        {
+          "name": "xmldsig-core-schema_v1.01.xsd",
+          "zipPath": "PL_Evento/xmldsig-core-schema_v1.01.xsd",
+          "bytes": 3747,
+          "sha256": "f56744a5f51c03f027de13f39f869307091781a9ef1d91b1ebe14719ce28e1ac"
+        }
+      ],
+      "dependencyGraph": {
+        "envEvento_v1.00.xsd": [
+          "leiauteEvento_v1.00.xsd"
+        ],
+        "leiauteEvento_v1.00.xsd": [
+          "xmldsig-core-schema_v1.01.xsd",
+          "tiposBasico_v1.03.xsd"
+        ],
+        "procEventoNFe_v1.00.xsd": [
+          "leiauteEvento_v1.00.xsd"
+        ],
+        "retEnvEvento_v1.00.xsd": [
+          "leiauteEvento_v1.00.xsd"
+        ],
+        "tiposBasico_v1.03.xsd": [],
+        "tiposBasico_v4.00.xsd": [],
+        "xmldsig-core-schema_v1.01.xsd": []
+      }
+    }
+  },
+  "negativeProof": {
+    "Eventos_RTC": {
+      "officialTitle": "Esquema XML NF-e/NFC-e - Schema dos eventos da NT 2025.002 v.1.40 - RTC (ZIP). Publicado em 27/07/2026",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=kp0SXLu%20ZdI=",
+      "originalFilename": "Eventos_RTC.zip",
+      "contains110111": false,
+      "note": "Não substitui o schema de cancelamento clássico. Não incorporado ao grafo 110111."
+    }
+  },
+  "archives": [
+    {
+      "name": "Evento_Canc_PL_v1.01_NT_2018_004.zip",
+      "bytes": 10695,
+      "sha256": "71ccd5fcc48f9604a2a8965146df45e3b73e96e87942ab3391be0d55cc0df718",
+      "entries": [
+        {
+          "name": "Evento_Canc_PL_v1.01/",
+          "bytes": 0,
+          "dir": true
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/e110111_v1.00.xsd",
+          "bytes": 1770,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/envEventoCancNFe_v1.00.xsd",
+          "bytes": 595,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/eventoCancNFe_v1.00.xsd",
+          "bytes": 572,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/leiauteEventoCancNFe_v1.00.xsd",
+          "bytes": 13952,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/procEventoCancNFe_v1.00.xsd",
+          "bytes": 581,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/retEnvEventoCancNFe_v1.00.xsd",
+          "bytes": 589,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/tiposBasico_v1.03.xsd",
+          "bytes": 32400,
+          "dir": false
+        },
+        {
+          "name": "Evento_Canc_PL_v1.01/xmldsig-core-schema_v1.01.xsd",
+          "bytes": 3749,
+          "dir": false
+        }
+      ],
+      "officialTitle": "Esquemas XML NF-e / NFC-e - Evento Cancelamento (Atualizado em 21/12/2018) (ZIP)",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=0Yynu2Ck%20bM=",
+      "originalFilename": "Evento_Canc_PL_v1.01_NT_2018_004.zip",
+      "publishedAtDisplayed": "21/12/2018",
+      "capturedAtUtc": "2026-08-16T14:36:09Z",
+      "mimeType": "application/zip"
+    },
+    {
+      "name": "Eventos_RTC.zip",
+      "bytes": 24056,
+      "sha256": "a4c57ce95b225cd8852f90bd6c39ca28ae551636ff3f67eb2602b9fa847129b2",
+      "entries": [
+        {
+          "name": "Eventos_RTC/",
+          "bytes": 0,
+          "dir": true
+        },
+        {
+          "name": "Eventos_RTC/e110001_v1.00.xsd",
+          "bytes": 3062,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e112110_v1.00.xsd",
+          "bytes": 2949,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e112120_v1.00 .xsd",
+          "bytes": 4516,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e112130_v1.00.xsd",
+          "bytes": 5366,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e112140_v1.00.xsd",
+          "bytes": 4534,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e112150_v1.00.xsd",
+          "bytes": 2626,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e211110_v1.00.xsd",
+          "bytes": 5056,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e211124_v1.00.xsd",
+          "bytes": 4602,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e211128_v1.00.xsd",
+          "bytes": 2944,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e211130_v1.00.xsd",
+          "bytes": 4286,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e211140_v1.00.xsd",
+          "bytes": 4429,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e211150_v1.00.xsd",
+          "bytes": 3709,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e212110_v1.00.xsd",
+          "bytes": 3038,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e212120_v1.00.xsd",
+          "bytes": 2901,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e412120_v1.00.xsd",
+          "bytes": 3542,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/e412130_v1.00.xsd",
+          "bytes": 3541,
+          "dir": false
+        },
+        {
+          "name": "Eventos_RTC/tiposBasico_v1.03.xsd",
+          "bytes": 31233,
+          "dir": false
+        }
+      ],
+      "officialTitle": "Esquema XML NF-e/NFC-e - Schema dos eventos da NT 2025.002 v.1.40 - RTC (ZIP). Publicado em 27/07/2026",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=kp0SXLu%20ZdI=",
+      "originalFilename": "Eventos_RTC.zip",
+      "publishedAtDisplayed": "27/07/2026",
+      "capturedAtUtc": "2026-08-16T14:36:10Z",
+      "mimeType": "application/zip",
+      "role": "prova negativa — não contém e110111; não incorporado ao grafo 110111"
+    },
+    {
+      "name": "CNPJ_Alfanumerico_NT2026.004.v1.01_PL_Eventos_e_Cad_Consulta_CCC.zip",
+      "bytes": 65203,
+      "sha256": "cc50170b276c23bdab88650e1c68a46fdc707c8e810664452bba974cf744e7db",
+      "entries": [
+        {
+          "name": "CadConsultaCadastro_NT2026.004.zip",
+          "bytes": 8077,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento.zip",
+          "bytes": 12482,
+          "dir": false
+        },
+        {
+          "name": "PL_010d_NT2026.004.zip",
+          "bytes": 47638,
+          "dir": false
+        }
+      ],
+      "officialTitle": "Schemas XML NF-e 010d_v1.01 - CNPJ Alfanumérico - NT 2026.004.v.1.01, Eventos e ws de Consulta CCC. (Publicado em 08/06/2026)",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=FOEnx2KAsCk=",
+      "originalFilename": "CNPJ Alfanumérico - NT2026.004.v.1.01 PL Eventos e Cad Consulta Cadastro CCC.zip",
+      "publishedAtDisplayed": "08/06/2026",
+      "capturedAtUtc": "2026-08-16T14:41:07Z",
+      "mimeType": "application/zip"
+    },
+    {
+      "name": "PL_Evento.zip",
+      "bytes": 12482,
+      "sha256": "7995ad7865cf3710655ee5e3162ff10bd9725358e3f67523256667e9cca6cb1a",
+      "note": "ZIP aninhado extraído de CNPJ_Alfanumerico_NT2026.004.v1.01_PL_Eventos_e_Cad_Consulta_CCC.zip",
+      "officialTitle": "PL_Evento.zip (ZIP aninhado no pacote NT 2026.004 v.1.01 Eventos e Cad Consulta CCC)",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=FOEnx2KAsCk=",
+      "originalFilename": "PL_Evento.zip",
+      "publishedAtDisplayed": "08/06/2026",
+      "capturedAtUtc": "2026-08-16T14:41:07Z",
+      "mimeType": "application/zip",
+      "entries": [
+        {
+          "name": "PL_Evento/",
+          "bytes": 0,
+          "dir": true
+        },
+        {
+          "name": "PL_Evento/envEvento_v1.00.xsd",
+          "bytes": 575,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento/leiauteEvento_v1.00.xsd",
+          "bytes": 14594,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento/procEventoNFe_v1.00.xsd",
+          "bytes": 572,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento/retEnvEvento_v1.00.xsd",
+          "bytes": 569,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento/tiposBasico_v1.03.xsd",
+          "bytes": 34589,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento/tiposBasico_v4.00.xsd",
+          "bytes": 22556,
+          "dir": false
+        },
+        {
+          "name": "PL_Evento/xmldsig-core-schema_v1.01.xsd",
+          "bytes": 3747,
+          "dir": false
+        }
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "name": "Manual de Orientacao ao Contribuinte - MOC - versao 7.0 - NF-e e NFC-e.pdf",
+      "bytes": 4304647,
+      "sha256": "f664dcf94b77cabb32311620d85a7eb02cdf86adb2d4632ce178af2572dd2ad1",
+      "officialTitle": "Manual de Orientação ao Contribuinte - MOC - versão 7.0 - NF-e e NFC-e",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl%2BiEFdE%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=LrBx7WT9PuA=",
+      "originalFilename": "Manual de Orientação ao Contribuinte - MOC - versão 7.0 - NF-e e NFC-e.pdf",
+      "publishedAtDisplayed": "não exibida na listagem (título sem data de atualização)",
+      "capturedAtUtc": "2026-08-16T14:38:40Z",
+      "mimeType": "application/pdf"
+    },
+    {
+      "name": "ANEXO I - Leiaute e Regra de Validacao - NF-e e NFC-e.pdf",
+      "bytes": 4106196,
+      "sha256": "5eb4cf2010b10b0b62f78197c4eb64025f24535d4c6e61158bc7806dd008f55d",
+      "officialTitle": "-------> Anexo I - Leiaute e Regra de Validação - NF-e e NFC-e",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl%2BiEFdE%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=J%20I%20v4eN00E=",
+      "originalFilename": "ANEXO I - Leiaute e Regra de Validação - NF-e e NFC-e.pdf",
+      "publishedAtDisplayed": "não exibida na listagem (anexo do MOC 7.0)",
+      "capturedAtUtc": "2026-08-16T14:38:44Z",
+      "mimeType": "application/pdf"
+    },
+    {
+      "name": "NT_2018_004 - Cancelamento por Substituicao da NFC-e.pdf",
+      "bytes": 709017,
+      "sha256": "793c8130e74192e5874970533c05d6c9c66626e0d24826d3a6494e1bddc9eb75",
+      "officialTitle": "Nota Técnica 2018.004 - v.1.00 - Publicada em 21/12/2018",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=DEisbx2XCIs=",
+      "originalFilename": "NT_2018_004 - Cancelamento por Substituição da NFC-e.pdf",
+      "publishedAtDisplayed": "21/12/2018",
+      "capturedAtUtc": "2026-08-16T14:38:48Z",
+      "mimeType": "application/pdf"
+    },
+    {
+      "name": "NT_2026.004_v1.01_AlteraSchemaNFCeNFeCNPJAlfa.pdf",
+      "bytes": 516956,
+      "sha256": "5f24a25351e790692754b07bbefac42ac67e70167a62a7806395d880f56675be",
+      "officialTitle": "Nota Técnica 2026.004 v.1.01 - Publicada em 08/06/2026",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=BTZQzgsO9Ws=",
+      "originalFilename": "NT_2026.004_v1.01_AlteraSchemaNFCeNFeCNPJAlfa.pdf",
+      "publishedAtDisplayed": "08/06/2026",
+      "capturedAtUtc": "2026-08-16T14:38:50Z",
+      "mimeType": "application/pdf"
+    }
+  ],
+  "pl010eSnapshot": {
+    "directory": "lib/fiscal/xsd/schemas/PL_010e_v1.02/NFe",
+    "files": [
+      {
+        "name": "DFeTiposBasicos_v1.00.xsd",
+        "bytes": 61958,
+        "sha256": "7fe1dbd89a1dd80826c5134c2406b7eb5df4fa7a9177c5aa6e72319caba7c6d2"
+      },
+      {
+        "name": "leiauteNFe_v4.00.xsd",
+        "bytes": 352527,
+        "sha256": "598c71780cbc6b54f170464bd6d5538c2d01a99d987a1666b662d4e166b84bf7"
+      },
+      {
+        "name": "nfe_v4.00.xsd",
+        "bytes": 716,
+        "sha256": "adce3646c13ceb54922ec3142fc1dc45bd4fb839ac35ad583e86c733c07d27df"
+      },
+      {
+        "name": "tiposBasico_v4.00.xsd",
+        "bytes": 22532,
+        "sha256": "772619c85723e598840667ca66e7298a250442df47eeb94b397d2a333ce62047"
+      },
+      {
+        "name": "xmldsig-core-schema_v1.01.xsd",
+        "bytes": 3747,
+        "sha256": "f56744a5f51c03f027de13f39f869307091781a9ef1d91b1ebe14719ce28e1ac"
+      }
+    ],
+    "note": "Snapshot de integridade. Este GOAL não altera estes arquivos."
+  },
+  "indexes": {
+    "esquemasXml": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+    "manuaisMoc": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=ndIjl%2BiEFdE%3D",
+    "notasTecnicas": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY%3D"
+  },
+  "notIncorporatedIndexEntries": [
+    {
+      "officialTitle": "Schemas XML NF-e - 010d_v.1.03 CNPJ Alfanumérico- NT 2026.004.v.1.01- (Publicado em 10/07/2026)",
+      "note": "Título não cita Evento Cancelamento / 110111. Não incorporado. Envelope de eventos capturado é o ZIP de 08/06/2026 (Eventos e Cad Consulta CCC)."
+    },
+    {
+      "officialTitle": "Esquemas XML NFC-e - Evento Cancelamento por Substituição (Atualizado em 21/12/2018) (ZIP)",
+      "note": "Pacote 110112. Isolado do grafo 110111. Não incorporado."
+    }
+  ]
+}

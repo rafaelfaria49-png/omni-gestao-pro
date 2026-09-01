@@ -22,6 +22,8 @@
     "test:fiscal-c14n:external": "node scripts/fiscal/run-c14n-external-proof.mjs",
     "fiscal:c14n:proof": "npm run test:fiscal-c14n:external",
     "fiscal:xsd:verify-hashes": "node scripts/fiscal/verify-xsd-artifacts.mjs",
+    "fiscal:xsd:verify-evento-cancelamento": "node scripts/fiscal/verify-evento-cancelamento-xsd.mjs",
+    "fiscal:xsd:verify-nprot-identifiers-040": "node scripts/fiscal/verify-nprot-identifiers-040.mjs",
     "test:e2e": "node scripts/run-playwright-e2e.mjs test",
     "test:e2e:ui": "node scripts/run-playwright-e2e.mjs test --ui",
     "test:e2e:headed": "node scripts/run-playwright-e2e.mjs test --headed",

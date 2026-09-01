@@ -1,0 +1,220 @@
+{
+  "goal": "FISCAL-018-CANCELAMENTO-NPROT-IDENTIFIERS-ADJUDICATION-040",
+  "continuesGoal": "FISCAL-018-CANCELAMENTO-REGULATORY-PACKAGE-039",
+  "pr": 62,
+  "expectedParentCommit": "5307c4d73a7749660c926169a878a2b6b6f6db20",
+  "authority": "Portal Nacional da NF-e + documentação pública estática SEFAZ-SP",
+  "capturedAtUtc": "2026-08-16T15:40:00Z",
+  "runtimeNetwork": "forbidden",
+  "doesNotReplace": [
+    "PL_010e_v1.02",
+    "Evento_Canc_PL_v1.01",
+    "PL_Evento_NT2026.004_v1.01",
+    "evento-cancelamento/manifest.json"
+  ],
+  "classification": "B",
+  "classificationReason": "Contratos de identificador (nProt 15|17, chNFe/CNPJ alfanuméricos) estão publicados em NT + XSD 010d_v1.03, mas não existe ZIP oficial que republica e110111 com esses tipos. Validação XSD unificada do evento 110111 permanece não implementável sem composição de pacotes. Produção SP com protocolo 17: não comprovada.",
+  "h9h10": "untouched",
+  "cStatPreserved": {
+    "lote": "128",
+    "evento": "135",
+    "documentoConsulta": "101"
+  },
+  "package010d_v1_03": {
+    "role": "Pacote 010d atualmente listado como em uso (CNPJ alfanumérico / NT 2026.004 v1.01)",
+    "officialTitle": "Schemas XML NF-e - 010d_v.1.03 CNPJ Alfanumérico- NT 2026.004.v.1.01- (Publicado em 10/07/2026)",
+    "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=BMPFMBoln3w%3D",
+    "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=%20pBOYTXBtbk=",
+    "originalFilename": "PL_010d_v1.03.zip",
+    "publishedAtDisplayed": "10/07/2026",
+    "zipInternalDates": "2026-06-23 a 2026-07-08",
+    "directory": "lib/fiscal/xsd/schemas/PL_010d_v1.03",
+    "archive": "lib/fiscal/xsd/evento-cancelamento/archives/PL_010d_v1.03.zip",
+    "bytes": 67813,
+    "sha256": "45ceefe4dfbbfec93958283b650a2f1e1734784f4770d070b9907754de081d9b",
+    "mimeType": "application/zip",
+    "containsE110111": false,
+    "eventoFiles": [
+      {
+        "name": "envEvento_v1.00.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/envEvento_v1.00.xsd",
+        "bytes": 575,
+        "sha256": "e4d61ba81582b5f1f9a2a4b135d33f4c1ec1c8f9138a2343a9abfffa02bb2777"
+      },
+      {
+        "name": "leiauteEvento_v1.00.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/leiauteEvento_v1.00.xsd",
+        "bytes": 14594,
+        "sha256": "9a48df8603f685653dfde27dbda72e0f47b5d3c13be0090952f1e82f8d2bc476"
+      },
+      {
+        "name": "procEventoNFe_v1.00.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/procEventoNFe_v1.00.xsd",
+        "bytes": 572,
+        "sha256": "4263ee5d12e7a731efab126310aba4edb25612e5986a1c5dde0c87e6c6173798"
+      },
+      {
+        "name": "retEnvEvento_v1.00.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/retEnvEvento_v1.00.xsd",
+        "bytes": 569,
+        "sha256": "5eb93a244c5b26c983c08f725f8eafaa1923664a992181b9d78f60cc8523fa72"
+      },
+      {
+        "name": "tiposBasico_v1.03.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/tiposBasico_v1.03.xsd",
+        "bytes": 33686,
+        "sha256": "d89d4fe1136f89abc7878b440d91ac0e770fbc128dd35b483284c961d6c3fd5d"
+      },
+      {
+        "name": "tiposBasico_v4.00.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/tiposBasico_v4.00.xsd",
+        "bytes": 22556,
+        "sha256": "e73476a037832fa1b8aea8323de5385d8a6ac4e73f98ac5d0805735a77ec36c2"
+      },
+      {
+        "name": "xmldsig-core-schema_v1.01.xsd",
+        "zipPath": "PL_010d_v1.03/Evento/xmldsig-core-schema_v1.01.xsd",
+        "bytes": 3747,
+        "sha256": "f56744a5f51c03f027de13f39f869307091781a9ef1d91b1ebe14719ce28e1ac"
+      }
+    ],
+    "identifierPatterns": {
+      "Evento/tiposBasico_v1.03.xsd": {
+        "TProt": "[0-9]{15}|[0-9]{17}",
+        "TChNFe": "[0-9]{6}[0-9A-Z]{12}[0-9]{26}",
+        "TCnpj": "[0-9A-Z]{12}[0-9]{2}",
+        "TCnpjOpc": "[0-9]{0}|[0-9A-Z]{12}[0-9]{2}"
+      },
+      "Evento/leiauteEvento infEvento/@Id": [
+        "ID[0-9]{12}[0-9A-Z]{12}[0-9]{28}",
+        "ID[0-9]{15}"
+      ]
+    },
+    "nfeTiposBasico_v4_00": {
+      "bytes": 22532,
+      "sha256": "772619c85723e598840667ca66e7298a250442df47eeb94b397d2a333ce62047",
+      "identicalToPl010e": true
+    }
+  },
+  "comparison010d_v1_01": {
+    "note": "010d_v1.01 listado no Portal (Publicado em 08/06/2026) é byte-idêntico ao ZIP já versionado no GOAL 039.",
+    "officialTitle": "Schemas XML NF-e 010d_v1.01 - CNPJ Alfanumérico - NT 2026.004.v.1.01, Eventos e ws de Consulta CCC. (Publicado em 08/06/2026)",
+    "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=FOEnx2KAsCk=",
+    "bytes": 65203,
+    "sha256": "cc50170b276c23bdab88650e1c68a46fdc707c8e810664452bba974cf744e7db",
+    "identicalTo039Archive": "CNPJ_Alfanumerico_NT2026.004.v1.01_PL_Eventos_e_Cad_Consulta_CCC.zip",
+    "tProtTChNFeTCnpjVs010d_v1_03": "mesmos patterns; Evento/tiposBasico_v1.03.xsd difere só em comentários/documentação (TCnpjVar annotation)",
+    "notReplaced": true
+  },
+  "archivesAdded": [
+    {
+      "name": "PL_010d_v1.03.zip",
+      "bytes": 67813,
+      "sha256": "45ceefe4dfbbfec93958283b650a2f1e1734784f4770d070b9907754de081d9b",
+      "entries": [
+        "PL_010d_v1.03/",
+        "PL_010d_v1.03/CadConsultaCadastro/",
+        "PL_010d_v1.03/CadConsultaCadastro/consCad_v2.00.xsd",
+        "PL_010d_v1.03/CadConsultaCadastro/leiauteConsultaCadastro_v2.00.xsd",
+        "PL_010d_v1.03/CadConsultaCadastro/retConsCad_v2.00.xsd",
+        "PL_010d_v1.03/CadConsultaCadastro/tiposBasico_v1.03.xsd",
+        "PL_010d_v1.03/Evento/",
+        "PL_010d_v1.03/Evento/envEvento_v1.00.xsd",
+        "PL_010d_v1.03/Evento/leiauteEvento_v1.00.xsd",
+        "PL_010d_v1.03/Evento/procEventoNFe_v1.00.xsd",
+        "PL_010d_v1.03/Evento/retEnvEvento_v1.00.xsd",
+        "PL_010d_v1.03/Evento/tiposBasico_v1.03.xsd",
+        "PL_010d_v1.03/Evento/tiposBasico_v4.00.xsd",
+        "PL_010d_v1.03/Evento/xmldsig-core-schema_v1.01.xsd",
+        "PL_010d_v1.03/NFe/",
+        "PL_010d_v1.03/NFe/consSitNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/DFeTiposBasicos_v1.00.xsd",
+        "PL_010d_v1.03/NFe/leiauteConsSitNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/leiauteInutNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/leiauteNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/nfe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/procInutNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/retConsReciNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/retConsSitNFe_v4.00.xsd",
+        "PL_010d_v1.03/NFe/tiposBasico_v4.00.xsd",
+        "PL_010d_v1.03/NFe/xmldsig-core-schema_v1.01.xsd"
+      ]
+    }
+  ],
+  "documentsAdded": [
+    {
+      "name": "NT_2025.002_v1.51_RTC.pdf",
+      "bytes": 2182361,
+      "sha256": "a4aaaa181522b43cd90b502f8ccb9e4bdabea30fed838e2d0790be5ba77254a4",
+      "officialTitle": "Nota Técnica 2025.002 v.1.51 - Publicada em 04/08/2026",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=AKD/muSmiIY=",
+      "originalFilename": "NT_2025.002_v1.51_RTC.pdf",
+      "publishedAtDisplayed": "04/08/2026",
+      "role": "NT 2025.002 vigente — nProt Tam 15,17; nota SP NFC-e 17 posições; não republica e110111",
+      "mimeType": "application/pdf",
+        "capturedAtUtc": "2026-08-16T15:37:18Z"
+    },
+    {
+      "name": "NT_2025.002_v1.10_RTC_NF-e_IBS_CBS_IS.pdf",
+      "bytes": 1540779,
+      "sha256": "bdc8a10e5f0eb3f598b14dcc5bd8039cdb964aea69dfb56bfdabc25749faa255",
+      "officialTitle": "Nota Técnica 2025.002.v.1.10 - Publicada em 09/06/2025",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/listaConteudo.aspx?tipoConteudo=04BIflQt1aY%3D",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/exibirArquivo.aspx?conteudo=B7DBKw%20UPbs=",
+      "originalFilename": "NT_2025.002_v1.10_RTC_NF-e_IBS_CBS_IS.pdf",
+      "publishedAtDisplayed": "09/06/2025",
+      "role": "Prova cronológica: 15|17 e nota SP já existiam antes do aviso SVRS 04/07/2025",
+      "mimeType": "application/pdf",
+      "capturedAtUtc": "2026-08-16T15:29:05Z"
+    },
+    {
+      "name": "portal-nfe-informe-page3-2026-08-16.html",
+      "bytes": 38486,
+      "sha256": "8f649565be24cb67a2d55e69bcd8e07a0e08e7d941b2c171eb4481bd68475c74",
+      "officialTitle": "Urgente - Número de protocolo com 17 caracteres na SVRS (informe name=1372, 04/07/2025)",
+      "officialIndexUrl": "https://www.nfe.fazenda.gov.br/portal/informe.aspx?ehCTG=false&page=3&pagesize=20",
+      "officialArchiveUrl": "https://www.nfe.fazenda.gov.br/portal/informe.aspx?ehCTG=false&page=3&pagesize=20#1372",
+      "originalFilename": "informe.aspx page=3",
+      "publishedAtDisplayed": "04/07/2025",
+      "role": "Aviso operacional SVRS; não republica XSD 110111",
+      "mimeType": "text/html",
+      "capturedAtUtc": "2026-08-16T15:26:00Z"
+    },
+    {
+      "name": "portal-fazenda-sp-servicos-nfce-2026-08-16.html",
+      "bytes": 103890,
+      "sha256": "139863da43ca9435ca7156cc6f273c46f9019a513bf73beb6eb43f0a0a2003bf",
+      "officialTitle": "Portal SEFAZ-SP — Sobre a Nota Fiscal de Consumidor Eletrônica (NFC-e)",
+      "officialIndexUrl": "https://portal.fazenda.sp.gov.br/servicos/nfce",
+      "officialArchiveUrl": "https://portal.fazenda.sp.gov.br/servicos/nfce",
+      "originalFilename": "servicos/nfce",
+      "publishedAtDisplayed": "11/03/2026 (aviso de protocolo 17 no ambiente de testes)",
+      "role": "Única evidência SP pública estática localizada: testes 17 posições; produção sem data",
+      "mimeType": "text/html",
+      "capturedAtUtc": "2026-08-16T15:31:00Z"
+    }
+  ],
+  "classicVsCurrent": {
+    "TProt": {
+      "classic": "[0-9]{15}",
+      "classicSource": "Evento_Canc_PL_v1.01/tiposBasico_v1.03.xsd",
+      "current": "[0-9]{15}|[0-9]{17}",
+      "currentSource": "PL_010d_v1.03/Evento/tiposBasico_v1.03.xsd + NT 2025.002 v1.51 §5.1 / PR09 / R51"
+    },
+    "TChNFe": {
+      "classic": "numeric structured 44",
+      "current": "[0-9]{6}[0-9A-Z]{12}[0-9]{26}"
+    },
+    "TCnpj": {
+      "classic": "[0-9]{14}",
+      "current": "[0-9A-Z]{12}[0-9]{2}"
+    }
+  },
+  "sp": {
+    "production17": "nao_comprovado",
+    "test17Announced": "2026-03-11",
+    "source": "portal.fazenda.sp.gov.br/servicos/nfce"
+  },
+  "pl010eSnapshotSha256_tiposBasico": "772619c85723e598840667ca66e7298a250442df47eeb94b397d2a333ce62047"
+}

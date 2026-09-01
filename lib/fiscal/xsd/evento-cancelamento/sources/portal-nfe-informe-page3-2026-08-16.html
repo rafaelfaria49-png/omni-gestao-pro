@@ -1,0 +1,319 @@
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html lang="pt-br" xmlns="http://www.w3.org/1999/xhtml">
+<head><title>
+	Portal da Nota Fiscal Eletrônica
+</title>
+
+    <!-- CSS -->
+    <link href="css/geral.css" rel="stylesheet" type="text/css" /><link href="css/classes.css" rel="stylesheet" type="text/css" /><link href="css/paginasInternas.css" rel="stylesheet" type="text/css" /><link href="css/estilo_visualizacao.css" rel="stylesheet" type="text/css" />
+
+	
+    <!-- Javascript -->
+    <script src="scripts/jquery-3.2.1.min.js" type="text/javascript"></script>
+    <script src="scripts/menu.js" type="text/javascript"></script>
+    <script src="scripts/mascaras.js" type="text/javascript"></script>
+    <script src="//www.receita.fazenda.gov.br/estatistica/estatistica.js" type="text/javascript"></script>
+    <script src="scripts/captcha-som.js" type="text/javascript"></script>
+
+    <meta http-equiv="cache-control" content="no-store, no-cache, must-revalidate, Post-Check=0, Pre-Check=0" /><meta http-equiv="pragma" content="no-cache" /><meta http-equiv="expires" content="0" />
+
+    <script type="text/javascript">
+        document.addEventListener('keydown', function (e) {
+            if (e.ctrlKey && e.shiftKey && e.code === 'KeyQ') {
+                var popup = document.getElementById('ctl00_PanelPopup');
+            popup.style.display = popup.style.display === 'none' ? 'block' : 'none';
+        }
+    });
+    </script>
+
+
+
+    
+    </head>
+<body onselectstart="return true;">
+    <div id="barra-brasil" style="background: #7F7F7F; height: 20px; padding: 0 0 0 10px; display: block;">
+        <ul id="menu-barra-temp" style="list-style: none;">
+            <li style="display: inline; float: left; padding-right: 10px; margin-right: 10px; border-right: 1px solid #EDEDED">
+                <a href="http://brasil.gov.br" style="font-family: sans,sans-serif; text-decoration: none; color: white;">Portal do Governo Brasileiro</a></li>
+            <li><a style="font-family: sans,sans-serif; text-decoration: none; color: white;" href="http://epwg.governoeletronico.gov.br/barra/atualize.html">Atualize sua Barra de Governo</a></li>
+        </ul>
+    </div>
+   
+    <script defer="defer" src="//barra.brasil.gov.br/barra.js" type="text/javascript"></script>
+ 
+
+
+    <div id="divCentral">
+        <form method="post" action="./informe.aspx?ehCTG=false&amp;page=3&amp;pagesize=20" id="aspnetForm">
+<div class="aspNetHidden">
+<input type="hidden" name="__EVENTTARGET" id="__EVENTTARGET" value="" />
+<input type="hidden" name="__EVENTARGUMENT" id="__EVENTARGUMENT" value="" />
+<input type="hidden" name="__VIEWSTATE" id="__VIEWSTATE" value="/wEPDwUJMzI3MTI0MDE1D2QWAmYPZBYCAgMPZBYOAgsPDxYCHgRUZXh0BQ82MCwzNTkgYmlsaMO1ZXNkZAIPDw8WAh8ABQ4yLDk5NSBtaWxow7Vlc2RkAhEPDxYCHgtOYXZpZ2F0ZVVybAUVaW5mb0VzdGF0aXN0aWNhcy5hc3B4ZGQCFQ8PFgIfAQVFaHR0cHM6Ly93d3cubmZlLmZhemVuZGEuZ292LmJyL2FyZWFyZXN0cml0YS9pbmljaWFsL2F1dGVudGljYWNhby5hc3B4ZGQCGQ8PFgIfAQUycGVyZ3VudGFzRnJlcXVlbnRlcy5hc3B4P3RpcG9Db250ZXVkbz0zT3cxbmZUQnpJbz1kZAIpDzwrABEDAA8WBB4LXyFEYXRhQm91bmRnHgtfIUl0ZW1Db3VudAIFZAEQFgAWABYADBQrAAAWAmYPZBYOZg8PFgIeB1Zpc2libGVoZGQCAQ9kFgJmD2QWAgIBDw8WBh4NQWx0ZXJuYXRlVGV4dAUmQ29uaGVjaW1lbnRvIGRlIFRyYW5zcG9ydGUgRWxldHLDtG5pY28eD0NvbW1hbmRBcmd1bWVudAUdaHR0cDovL3d3dy5jdGUuZmF6ZW5kYS5nb3YuYnIeCEltYWdlVXJsBSR+L2ltYWdlbnMvYmFubmVyc19WaXNpdGVfQ1RlX09mZi5wbmcWAh4FdGl0bGUFJkNvbmhlY2ltZW50byBkZSBUcmFuc3BvcnRlIEVsZXRyw7RuaWNvZAICD2QWAmYPZBYCAgEPDxYGHwUFKVNpc3RlbWEgUMO6YmxpY28gZGUgRXNjcml0dXJhw6fDo28gRmlzY2FsHwYFI2h0dHA6Ly93d3cxLnJlY2VpdGEuZmF6ZW5kYS5nb3YuYnIvHwcFJX4vaW1hZ2Vucy9iYW5uZXJzX1Zpc2l0ZV9TcGVkX09mZi5wbmcWAh8IBSlTaXN0ZW1hIFDDumJsaWNvIGRlIEVzY3JpdHVyYcOnw6NvIEZpc2NhbGQCAw9kFgJmD2QWAgIBDw8WBh8FBSpTdXBlcmludGVuZMOqbmNpYSBkYSBab25hIEZyYW5jYSBkZSBNYW5hdXMfBgUaaHR0cDovL3d3dy5zdWZyYW1hLmdvdi5ici8fBwUgfi9pbWFnZW5zL2Jhbm5lcnNfbWFuYXVzX09mZi5wbmcWAh8IBSpTdXBlcmludGVuZMOqbmNpYSBkYSBab25hIEZyYW5jYSBkZSBNYW5hdXNkAgQPZBYCZg9kFgICAQ8PFgYfBQUrTWFuaWZlc3RvIEVsZXRyw7RuaWNvIGRlIERvY3VtZW50b3MgRmlzY2Fpcx8GBSZodHRwczovL2RmZS1wb3J0YWwuc3Zycy5ycy5nb3YuYnIvTWRmZR8HBR1+L2ltYWdlbnMvYmFubmVyX21kZmVfT2ZmLnBuZxYCHwgFK01hbmlmZXN0byBFbGV0csO0bmljbyBkZSBEb2N1bWVudG9zIEZpc2NhaXNkAgUPZBYCZg9kFgICAQ8PFgYfBQUyUG9ydGFsIE5hY2lvbmFsIGRvIEJpbGhldGUgZGUgUGFzc2FnZW0gRWxldHLDtG5pY28fBgUlaHR0cHM6Ly9kZmUtcG9ydGFsLnN2cnMucnMuZ292LmJyL0JwZR8HBRx+L2ltYWdlbnMvYmFubmVyX2JwZV9PZmYucG5nFgIfCAUyUG9ydGFsIE5hY2lvbmFsIGRvIEJpbGhldGUgZGUgUGFzc2FnZW0gRWxldHLDtG5pY29kAgYPDxYCHwRoZGQCOQ8PFgIfAAU3UG9ydGFsIGRhIE5GLWUgMjAyNiAtIE5vdGEgRmlzY2FsIEVsZXRyw7RuaWNhICB2Mi45LjkuMGRkGAIFHl9fQ29udHJvbHNSZXF1aXJlUG9zdEJhY2tLZXlfXxYGBQ9jdGwwMCRpYnRCdXNjYXIFKWN0bDAwJGdkdkxpbmtzRGVzdGFxdWUkY3RsMDIkSW1hZ2VCdXR0b24xBSljdGwwMCRnZHZMaW5rc0Rlc3RhcXVlJGN0bDAzJEltYWdlQnV0dG9uMQUpY3RsMDAkZ2R2TGlua3NEZXN0YXF1ZSRjdGwwNCRJbWFnZUJ1dHRvbjEFKWN0bDAwJGdkdkxpbmtzRGVzdGFxdWUkY3RsMDUkSW1hZ2VCdXR0b24xBSljdGwwMCRnZHZMaW5rc0Rlc3RhcXVlJGN0bDA2JEltYWdlQnV0dG9uMQUWY3RsMDAkZ2R2TGlua3NEZXN0YXF1ZQ88KwAMAQgCAWTkX+sTNDpeEXNGCFmkK21DFaW6Dw==" />
+</div>
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['aspnetForm'];
+if (!theForm) {
+    theForm = document.aspnetForm;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+<script src="/portal/WebResource.axd?d=ZWO9axJrMUCOr1izP3UEZRCC9H9dses7etW7JecjiAOQDqMwdG-StzfDPAgcsQ8hxRkl-AMsAJBR-BfkCGB56pQ3gKo1&amp;t=638901428248157332" type="text/javascript"></script>
+
+
+<script src="/portal/ScriptResource.axd?d=lKER9OjLRXZj9hl3hYK1NeWbJzY0IIuG9PQaTzQ6Pm4nRciLTwk7o7LjvpMe9GVNg6X662VfwSehVb1otyCcpU2m44xxQkgLKAsDvmWO2Yna970r9nQMs9iM2wsfBKVn0e1N7A7CfQv2RmViMgcjNESKRE1Dcs2RNiSvVkuZ4dWJXKV60&amp;t=5c0e0825" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=Zi9TAHOLxEdccMKnNf4xNp8a5H_hC7ktwxXCMW839oIKC-KlhfxAOitBAXQG-SWySwraG75zIJTvwEANGe6get63WoT4ZdLXWAgk2Z-XBAfy6jgxiI7x9b-cNebF_Co_PAsvQ0fBly5YGzia9V_0av0M8lEOOZsSxMV4gVx6Zq9PLtC70&amp;t=5c0e0825" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=smDdZy0UdpA1U3PAJHasvdsXod9zn0f2STlJy-PJhGx8_vYP8dRjsZf1qYxwY3mS3cKF3WfB2R7Sg2WH_GXXIJKqKFePPEuDwdr0J1yTgWwyQFaZHnpfUQNuECmQ8Px3haXQojOb4ag1amzsVDiDq6qB-x01&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=kVR0IuuaOhFQpbjZA2sxxCaO48uBn_yQ4V1ccam0AMBnJU-vxMcVz4_hScZwm0hjt38WU8tS_S9S9e-wfV9LiOXTumlBPyt5u-wXxYke6l0NhR_Ob4oiPVTYswKhwFEsSqlZZo1rxk5seYGDbATTjkNDUzY1&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=pkcToEKdnWyj6BBLNVnJyu_Y3XuXBs98wZ9wyZ15w9FXEvOrMM_gT7X2PwqJnvsQwfFLRbyxKeWQ2-Se4Q_7IXxARPdPMFy6Wgv8gHuYX2tS02anFSYZQgATkiBq9L2Yo3nBUqnJHh5z5fmkcUkTqbk72f01&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=l84ZJb7av4nWEYmrUBlqz_xYDiy0on6DT4jtttxtkWr02MctCAoc2Wn1hZblUUTh-TGffEgIYUOPcfY6FTKpxumPBPqSE5DeU9Fe88UicGnOpX87B2r7zozypeAyqKLoVYXUNAX1vrLuRgjmBPBiJGaY0c2ZX4rNd72hCnu_9ISYB4lw0&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=iDbFzJSD2oML9r8HieMBM-M5gKhdLCr5IrMss1r17SsZ0JcaO8TSLbAGunGheaW3Fj0IjsrIGzPxUhMMhtkaM-AhC3KMBTGg9PenIXe-p2nmvF4WImocqKuito4crmkzUW3tjQSXa_Vrz-x-4r8IrVyS-Jloz7keeyTzQuO8126poHhe0&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=AiYOmmQWJYcb6cvJtIZ-9MKPdtkBa7UyWQPa9fehqyoGrsAdiYguZzbaZYfBK6IRoAwuGML54M6traEPFdZLa4H8KLLZLY3s8RhJWQWrRIKONPTO4QgzVn0-ZnBE_h16Nc6oo_qSbd5C77QEW-IevdOLAS5skB6YczbXT-cJBPKepBnt0&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<script src="/portal/ScriptResource.axd?d=re7kKGQqZxCO0AjgKkBJNbY_JwHnDfNmkK6-PdOBQcA-_lUmrvxrQm5kHHnzPxP9CMhmIbF8xgBPP2bg3tQI3aH6pnGFWuGn1wQ_6PbuTzniu6aYITmr5zjYR4AGaiIXWdxLh79qhN9GIa4oxYvya7XvOkcOfXsHte-TGaHlNkb7Nptc0&amp;t=ffffffff87636c38" type="text/javascript"></script>
+<div class="aspNetHidden">
+
+	<input type="hidden" name="__VIEWSTATEGENERATOR" id="__VIEWSTATEGENERATOR" value="5B334D86" />
+	<input type="hidden" name="__EVENTVALIDATION" id="__EVENTVALIDATION" value="/wEdAApYhpnJt58dGdRS6RHTpwrVZLQlHz+zjyg7L4aHZvZX1VRXlc/8UyQ3XSUj7QL9zmMEao+HCuWf709Mb5rjbkLgNCckUz+Zyz93RVMykxNgIZ447S1NfnWN7VA5SBuEBeJOjU6XyL6ErgbhWj6OwNA5jxoQlmOeg+bJl0yPRxMOmzTZNOtTvRyGaT6hhlTIEUNN11GISA+gOcqDGnwa1tFKBPXnDqe+I/UgGWCwYaoF1GBXmXg=" />
+</div>
+            <script type="text/javascript">
+//<![CDATA[
+Sys.WebForms.PageRequestManager._initialize('ctl00$ScriptManager', 'aspnetForm', ['tctl00$upnBuscar',''], [], [], 90, 'ctl00');
+//]]>
+</script>
+
+
+            <div id="ctl00_PanelPopup" style="display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 100; background-color: white; padding: 20px; border: 1px solid #ccc; box-shadow: 0px 0px 10px #ccc;">
+	
+                <span id="ctl00_LabelPopup">Deseja acessar a Área Restrita com autenticação via GovBR?</span>
+                <br />
+                <br />
+                <input type="submit" name="ctl00$ButtonAcessar" value="Acessar" onclick="window.location=&#39;https://hom.nfe.fazenda.gov.br/arearestrita/inicial/autenticacao.aspx&#39;; return false;" id="ctl00_ButtonAcessar" />
+                &nbsp;
+            <input type="submit" name="ctl00$ButtonSair" value="Sair" onclick="document.getElementById(&#39;&lt;%= PanelPopup.ClientID %>&#39;).style.display=&#39;none&#39;; return false;" id="ctl00_ButtonSair" />
+
+            
+</div>
+
+            <div id="tudoSemRodape" class="contemFloat">
+                <div id="cabecalho">
+                    <div id="menuAcessibilidade">
+                        <?xml version="1.0" encoding="utf-8"?><a href="listaSubMenu.aspx?Id=6H4uVlIEaKs=">Conheça a NF-e</a><a href="listaSubMenu.aspx?Id=esCrSQFUvGg=">Serviços</a><a href="listaSubMenu.aspx?Id=ndIjl+iEFdE=">Legislação</a><a href="listaSubMenu.aspx?Id=04BIflQt1aY=">Documentos</a><a href="listaSubMenu.aspx?Id=BMPFMBoln3w=">Downloads</a><a href="https://www.nfe.fazenda.gov.br/arearestrita/inicial/autenticacao.aspx">Área Restrita</a><a href="https://www1.sped.fazenda.gov.br/spednfeacesso/arnfe/inicial/listaSubMenu.aspx?Id=UORZ3ynALMA=">Documentos e outros</a><a href="listaSubMenu.aspx?Id=VOYEgBgD3iU=">Outros DF-e</a>
+                    </div>
+                    
+                    <div id="divTransparente" onclick="javascript:location.href = 'principal.aspx'">
+                    </div>
+                    <div id="imgHome">
+                        <a href="principal.aspx">
+                            <img id="ibtHome" src="imagens/home_icon_Off.png" onmouseover="javascript: trocarImagem(this)"
+                                onmouseout="javascript: trocarImagem(this)" alt="Link para a página inicial do Portal da NF-e" />
+                        </a>
+                    </div>
+                    <div id="menu">
+                        <?xml version="1.0" encoding="utf-8"?><ul class="abasMenu" xmlns:chave="http://exslt.org/chaveacesso"><li class="itemMenuPrincipal"><a href="listaSubMenu.aspx?Id=esCrSQFUvGg=">Serviços</a><ul class="dropdown"><li><a href="consultaRecaptcha.aspx?tipoConsulta=resumo&amp;tipoConteudo=7PhJ+gAVw2g=">Consultar NF-e</a></li><li><a href="consulta.aspx?tipoConsulta=inutilizacao&amp;tipoConteudo=nDmpH/MjKrg=">Consultar Inutilização</a></li><li><a href="solicitaCertificado.aspx?tipoConteudo=49BQNAeyGfk=">Consultar Duplicidade AN</a></li><li><a href="disponibilidade.aspx?versao=0.00&amp;tipoConteudo=P2c98tUpxrI=">Consultar Disponibilidade</a></li><li><a href="manifestacaoDestinatario.aspx?tipoConteudo=o9MkXc+hmKs=">Manifestação Destinatário</a></li><li><a href="webServices.aspx?tipoConteudo=OUC/YVNWZfo=">Relação de Serviços Web</a></li><li><a href="https://www.nfe.fazenda.gov.br/AgendamentoSVC/?tipoConteudo=dKnzIG+XQXM=">Agendamento SVC-AN</a></li><li><a href="consultaEPECConciliacao.aspx?tipoConteudo=uoOHfIFn8Nc=">Consulta/Liberação de EPEC pendente de conciliação</a></li></ul></li><li class="itemMenuPrincipal"><a href="listaSubMenu.aspx?Id=ndIjl+iEFdE=">Legislação</a><ul class="dropdown"><li><a href="listaConteudo.aspx?tipoConteudo=3GhDwJ/ZeSI=">Ajustes SINIEF</a></li><li><a href="listaConteudo.aspx?tipoConteudo=ECxaPvwFHQE=">Atos RFB/CGIBS</a></li><li><a href="listaConteudo.aspx?tipoConteudo=hXHrw4cadF8=">Atos Técnicos RFB/CGIBS</a></li><li><a href="listaConteudo.aspx?tipoConteudo=AX0vPC2u8xc=">Atos COTEPE</a></li><li><a href="listaConteudo.aspx?tipoConteudo=QIcipqxg0bU=">Convênios</a></li><li><a href="listaConteudo.aspx?tipoConteudo=gPWmdzYAb0Y=">Protocolos</a></li></ul></li><li class="itemMenuPrincipal"><a href="listaSubMenu.aspx?Id=04BIflQt1aY=">Documentos</a><ul class="dropdown"><li><a href="listaConteudo.aspx?tipoConteudo=ndIjl+iEFdE=">Manuais </a></li><li><a href="listaConteudo.aspx?tipoConteudo=BMPFMBoln3w=">Esquemas XML</a></li><li><a href="listaConteudo.aspx?tipoConteudo=04BIflQt1aY=">Notas Técnicas</a></li><li><a href="listaConteudo.aspx?tipoConteudo=hXzemuyNHW4=">Informes Técnicos</a></li><li><a href="listaConteudo.aspx?tipoConteudo=/NJarYc9nus=">Diversos</a></li></ul></li><li class="itemMenuPrincipal"><a href="listaSubMenu.aspx?Id=BMPFMBoln3w=">Downloads</a><ul class="dropdown"><li><a href="download.aspx?tipoConteudo=vBO/4eBj5F4=">Visualizador de DF-e</a></li><li><a href="download.aspx?tipoConteudo=OFrcUd5//Lg=">Assinador</a></li></ul></li><li class="itemMenuPrincipal"><a href="listaSubMenu.aspx?Id=VOYEgBgD3iU=">Outros DF-e</a><ul class="dropdown"><li><a href="?tipoConteudo=A/NFALwUh+4=">NF-e ABI</a><ul class="dropdown-submenu"><li><a href="listaConteudo.aspx?tipoConteudo=ABKmOKwKO7o=">Manuais</a></li><li><a href="listaConteudo.aspx?tipoConteudo=vZzcObX90uc=">Diversos</a></li></ul></li><li><a href="listaConteudo.aspx?tipoConteudo=pGfPgyEaNGg=">NFAg</a><ul class="dropdown-submenu"><li><a href="listaConteudo.aspx?tipoConteudo=hwtReelpAJI=">Manuais</a></li><li><a href="listaConteudo.aspx?tipoConteudo=2DuboicICSo=">Esquemas XML</a></li><li><a href="listaConteudo.aspx?tipoConteudo=SzaK/rPsPjc=">Diversos</a></li></ul></li><li><a href="listaConteudo.aspx?tipoConteudo=VjrjMInPXGA=">NFGas</a><ul class="dropdown-submenu"><li><a href="listaConteudo.aspx?tipoConteudo=eWTd1q6pRMM=">Manuais</a></li><li><a href="listaConteudo.aspx?tipoConteudo=rRDFjf1Ps7M=">Esquemas XML</a></li></ul></li></ul></li></ul>
+                    </div>
+                </div>
+                <div id="barraDireita">
+                    <div id="estatisticas">
+                        <h1>Estatísticas da NF-e</h1>
+                        <span id="ctl00_lblTituloNfeAut">NF-e Autorizadas</span>
+                        <br />
+                        <div class="valorEstatistica">
+                            <span id="ctl00_lblTotalNfeAut">60,359 bilhões</span>
+                        </div>
+                        <span id="ctl00_lblTituloEmissores">Número de Emissores</span>
+                        <br />
+                        <div class="valorEstatistica">
+                            <span id="ctl00_lblTotalEmissores">2,995 milhões</span>
+                        </div>
+                        <a id="ctl00_hlkInfoEstatisticas" href="infoEstatisticas.aspx">... saiba mais</a>
+                    </div>
+                    <div id="busca">
+                        <div id="ctl00_upnBuscar">
+	
+                                <input name="ctl00$txtPalavraChave" type="text" id="ctl00_txtPalavraChave" class="campoTextoBusca" />
+                                
+                                <input type="image" name="ctl00$ibtBuscar" id="ctl00_ibtBuscar" class="botaoBuscar" onmouseover="javascript: trocarImagem(this)" onmouseout="javascript: trocarImagem(this)" src="imagens/botao_buscar_Off_completo.png" />
+                                
+                            
+</div>
+                    </div>
+                    <div id="linkAreaRestrita">
+                        <p>
+                            <a id="ctl00_hlkAreaRestrita" href="https://www.nfe.fazenda.gov.br/arearestrita/inicial/autenticacao.aspx">Área Restrita do Fisco</a>
+                        </p>
+                    </div>
+                    <div id="linkCentralNFe">
+                        <p>
+                            <a id="ctl00_hlkCentralAtendimento" href="https://www.serpro.gov.br/menu/suporte/central-de-atendimento-serpro-nfe-cte">Central de Atendimento</a>
+                        </p>
+                    </div>
+                    <div id="linkFAQ">
+                        <p>
+                            <a id="ctl00_hlkFAQ" href="perguntasFrequentes.aspx?tipoConteudo=3Ow1nfTBzIo=">Perguntas Frequentes</a>
+                        </p>
+                    </div>
+                    <div id="linkSefaz">
+                        <p>
+                            <span id="ctl00_lblPortaisSefaz">Portais e Secretarias</span>
+                        </p>
+                    </div>
+                    <div id="linkBanners">
+                        <p>
+                            <span id="ctl00_lblPortaisEstaduais">Portais Estaduais da NF-e</span>
+                            <br />
+                            <?xml version="1.0" encoding="utf-8"?><select onchange="javascript: window.open(this.value)"><option value="">Selecione</option><option value="http://sefaznet.ac.gov.br/nfe/">Acre</option><option value="http://www.sefaz.al.gov.br/nfe/">Alagoas</option><option value="https://www.sefaz.ap.gov.br/index.php/nf-e">Amapá</option><option value="http://sistemas.sefaz.am.gov.br/nfeweb/portal/index.do">Amazonas</option><option value="http://www.sefaz.ba.gov.br/scripts/default/nfiscal.asp">Bahia</option><option value="http://nfe.sefaz.ce.gov.br/">Ceará</option><option value="http://dec.fazenda.df.gov.br/">Distrito Federal</option><option value="http://internet.sefaz.es.gov.br/informacoes/nfe/">Espirito Santo</option><option value="https://www.economia.go.gov.br/receita-estadual/documentos-fiscais/nfe.html">Goiás</option><option value="https://sistemas1.sefaz.ma.gov.br/portalsefaz/jsp/pagina/pagina.jsf?codigo=11">Maranhão</option><option value="http://www.sefaz.mt.gov.br/portal/nfe/">Mato Grosso</option><option value="https://www.sefaz.ms.gov.br/documentos-fiscais-eletronicos/nf-e/">Mato Grosso do Sul</option><option value="http://www.sped.fazenda.mg.gov.br/">Minas Gerais</option><option value="http://www.sefa.pa.gov.br/index.php/component/banners/click/7">Pará</option><option value="https://www.sefaz.pb.gov.br/servirtual/documentos-fiscais/nf-e/consulta-completa">Paraíba</option><option value="http://www.sped.fazenda.pr.gov.br/modules/conteudo/conteudo.php?conteudo=1">Paraná</option><option value="https://www.sefaz.pe.gov.br/Servicos/Nota-Fiscal-Eletronica/Paginas/Apresentacao.aspx">Pernambuco</option><option value="http://portal.sefaz.pi.gov.br/documentoseletronicos/portal/efd/index.php">Piauí</option><option value="http://www.fazenda.rj.gov.br/sefaz/faces/webcenter/faces/owResource.jspx?z=oracle.webcenter.doclib%21UCMServer%21UCMServer%2523dDocName%253A100998">Rio de Janeiro</option><option value="http://www.set.rn.gov.br/contentProducao/Aplicacao/SET_v2/nfe/gerados/inicio.asp">Rio Grande do Norte</option><option value="http://receita.fazenda.rs.gov.br/lista/2933/nf-e-(nota-fiscal-eletronica)">Rio Grande do Sul</option><option value="https://www.sefin.ro.gov.br/conteudo.jsp?idCategoria=524">Rondônia</option><option value="https://www.sefaz.rr.gov.br/empresa/consultar-internamento-nf">Roraima</option><option value="http://nfe.sef.sc.gov.br/">Santa Catarina</option><option value="http://www.fazenda.sp.gov.br/nfe/">São Paulo</option><option value="http://nfe.sefaz.se.gov.br/">Sergipe</option><option value="http://www.sefaz.to.gov.br/">Tocantins</option></select>
+                        </p>
+                        <p>
+                            <span id="ctl00_lblLinkSefaz">Secretarias de Fazenda</span>
+                            <br />
+                            <?xml version="1.0" encoding="utf-8"?><select onchange="javascript: window.open(this.value)"><option value="">Selecione</option><option value="http://www.sefaz.ac.gov.br">Acre</option><option value="http://www.sefaz.al.gov.br/">Alagoas</option><option value="http://www.sefaz.ap.gov.br/">Amapá</option><option value="http://www.sefaz.am.gov.br/">Amazonas</option><option value="http://www.sefaz.ba.gov.br/">Bahia</option><option value="http://www.sefaz.ce.gov.br/">Ceará</option><option value="http://www.fazenda.df.gov.br/">Distrito Federal</option><option value="http://www.sefaz.es.gov.br/">Espirito Santo</option><option value="http://www.sefaz.go.gov.br/">Goiás</option><option value="http://www.sefaz.ma.gov.br/">Maranhão</option><option value="http://www.sefaz.mt.gov.br/">Mato Grosso</option><option value="http://www.sefaz.ms.gov.br/">Mato Grosso do Sul</option><option value="http://www.fazenda.mg.gov.br/">Minas Gerais</option><option value="http://www.sefa.pa.gov.br/">Pará</option><option value="https://www.sefaz.pb.gov.br/">Paraíba</option><option value="http://www.sped.fazenda.pr.gov.br/">Paraná</option><option value="https://www.sefaz.pe.gov.br/SitePages/Home.aspx">Pernambuco</option><option value="http://www.sefaz.pi.gov.br/">Piauí</option><option value="https://www.google.com.br/url?sa=t&amp;rct=j&amp;q=&amp;esrc=s&amp;source=web&amp;cd=1&amp;cad=rja&amp;uact=8&amp;ved=0ahUKEwig-4mTh7rRAhUHjpAKHW_bCCYQFggcMAA&amp;url=http%3A%2F%2Fwww.fazenda.rj.gov.br%2F&amp;usg=AFQjCNEYn8VLkOFFH3QwfbCmOeh_LOGUEw">Rio de Janeiro</option><option value="http://www.set.rn.gov.br/">Rio Grande do Norte</option><option value="http://fazenda.rs.gov.br/inicial">Rio Grande do Sul</option><option value="https://www.sefin.ro.gov.br/">Rondônia</option><option value="http://www.sefaz.rr.gov.br/">Roraima</option><option value="http://www.sef.sc.gov.br/">Santa Catarina</option><option value="http://www.fazenda.sp.gov.br/">São Paulo</option><option value="http://www.sefaz.se.gov.br/">Sergipe</option><option value="http://www.sefaz.to.gov.br/">Tocantins</option></select>
+                        </p>
+                        
+                        
+                        <img id="linhaDivisoria" src="imagens/linha_divisoria.png" alt="Linha divisória" />
+                        <div>
+	<table cellspacing="0" rules="all" id="ctl00_gdvLinksDestaque" style="border-width:0px;border-collapse:collapse;">
+		<tr>
+			<td>
+                                        <input type="image" name="ctl00$gdvLinksDestaque$ctl02$ImageButton1" id="ctl00_gdvLinksDestaque_ctl02_ImageButton1" onmouseover="javascript: trocarImagem(this)" onmouseout="javascript: trocarImagem(this)" title="Conhecimento de Transporte Eletrônico" src="imagens/banners_Visite_CTe_Off.png" alt="Conhecimento de Transporte Eletrônico" onclick="aspnetForm.target =&#39;_blank&#39;;" />
+                                    </td>
+		</tr><tr>
+			<td>
+                                        <input type="image" name="ctl00$gdvLinksDestaque$ctl03$ImageButton1" id="ctl00_gdvLinksDestaque_ctl03_ImageButton1" onmouseover="javascript: trocarImagem(this)" onmouseout="javascript: trocarImagem(this)" title="Sistema Público de Escrituração Fiscal" src="imagens/banners_Visite_Sped_Off.png" alt="Sistema Público de Escrituração Fiscal" onclick="aspnetForm.target =&#39;_blank&#39;;" />
+                                    </td>
+		</tr><tr>
+			<td>
+                                        <input type="image" name="ctl00$gdvLinksDestaque$ctl04$ImageButton1" id="ctl00_gdvLinksDestaque_ctl04_ImageButton1" onmouseover="javascript: trocarImagem(this)" onmouseout="javascript: trocarImagem(this)" title="Superintendência da Zona Franca de Manaus" src="imagens/banners_manaus_Off.png" alt="Superintendência da Zona Franca de Manaus" onclick="aspnetForm.target =&#39;_blank&#39;;" />
+                                    </td>
+		</tr><tr>
+			<td>
+                                        <input type="image" name="ctl00$gdvLinksDestaque$ctl05$ImageButton1" id="ctl00_gdvLinksDestaque_ctl05_ImageButton1" onmouseover="javascript: trocarImagem(this)" onmouseout="javascript: trocarImagem(this)" title="Manifesto Eletrônico de Documentos Fiscais" src="imagens/banner_mdfe_Off.png" alt="Manifesto Eletrônico de Documentos Fiscais" onclick="aspnetForm.target =&#39;_blank&#39;;" />
+                                    </td>
+		</tr><tr>
+			<td>
+                                        <input type="image" name="ctl00$gdvLinksDestaque$ctl06$ImageButton1" id="ctl00_gdvLinksDestaque_ctl06_ImageButton1" onmouseover="javascript: trocarImagem(this)" onmouseout="javascript: trocarImagem(this)" title="Portal Nacional do Bilhete de Passagem Eletrônico" src="imagens/banner_bpe_Off.png" alt="Portal Nacional do Bilhete de Passagem Eletrônico" onclick="aspnetForm.target =&#39;_blank&#39;;" />
+                                    </td>
+		</tr>
+	</table>
+</div>
+                        
+                    </div>
+                </div>
+                <div id="conteudo">
+                    <div id="localizacao">
+                        <div id="voceEstaAqui">
+                            Você está aqui:
+                        </div>
+                        <div id="caminho">
+                            <a id="ctl00_hlkPaginaPrincipao" href="principal.aspx">Página Principal</a>
+                            
+                            
+                            
+                        </div>
+                    </div>
+                    <div id="zoomAcessibilidade">
+                        <img src="imagens/acessibilidade_reduzir_Off.png" id="imgZoomMenos" onmouseover="javascript: trocarImagem(this)"
+                            onmouseout="javascript: trocarImagem(this)" alt="Link que permite reduzir o tamanho da fonte" />
+                        <img src="imagens/acessibilidade_ampliar_Off.png" id="imgZoomMais" onmouseover="javascript: trocarImagem(this)"
+                            onmouseout="javascript: trocarImagem(this)" alt="Link que permite aumentar o tamanho da fonte" />
+                    </div>
+                    <div id="conteudoDinamico">
+                        
+    <?xml version="1.0" encoding="utf-8"?><div class="divTituloPrincipal" xmlns:dt="http://exslt.org/dates-and-times"><label class="tituloPrincipal">
+        Avisos
+      </label></div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1392"></a><p>03/10/2025 -
+              Publicada versão 1.07 de Nota Técnica 2024.003</p>A Nota Técnica&nbsp;2024.003&nbsp;v.1.07 tem por objetivo detalhar as especificações necessárias para inserção, na NF-e, dos dados relativos ao trânsito de produtos animais vivos, vegetais e florestais.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1391"></a><p>03/10/2025 -
+              Publicado Informe Técnico 2025.002 v.1.20 e tabelas cClassTrib e cCredPres</p>Foi publicado o Informe Técnico&nbsp;2025.002&nbsp;v.1.20 que informa tabelas de classificação tributária e crédito presumido e atualização das referidas tabelas.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1390"></a><p>03/10/2025 -
+              Publicada a Nota Técnica 2025.002.v.1.30</p>Publicada a NT 2025.002.v.1.30 de adequação dos leiautes da NF-e e da NFC-e à Reforma Tributária de Consumo - RTC.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1389"></a><p>01/10/2025 -
+              Substituído arquivo da v.1.03 da Nota Técnica 2025.001</p>Foi substituído o arquivo da NT 2025.001.v.1.03 em função de: 1)&nbsp; uma correção na RV YA03-10. A observação foi tachada de amarelo. 2) Duas correções no tópico &quot;Histórico de Alterações/Cronograma&quot;. A&nbsp;parte referente ao item 1.02 foi tachada&nbsp;de amarelo e foi corrigido no item 1.03 o termo de &quot;16a-30&quot; para &quot;E16a-30&quot;.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1388"></a><p>29/09/2025 -
+              Publicado Informe Técnico 2024.002 v.1.10</p>Foi publicada a v.1.10 do Informe Técnico 2024.002 que divulga tabela de meios de pagamento.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1387"></a><p>29/09/2025 -
+              Publicada v.1.03 da Nota Técnica 2025.001</p>Foi publicada a v.1.03 da Nota Técnica 2025.001 que altera regras de validação.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1386"></a><p>29/09/2025 -
+              Publicadas novas versões de Documentações referentes à Tributação Monofásica de Combustíveis</p>Publicadas a versão 1.06 do Informe Técnico 2023.003 e nova versão da Nova Tabela referentes à Tributação Monofásica de Combustíveis.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1381"></a><p>16/09/2025 -
+              Publicado Manual de Orientação do Contribuinte da NFAg</p>Foi publicado v.1.00 do Manual de Orientação do Contribuinte da NFAg e respectivo esquema para Reforma Tributária do Consumo - RTC.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1380"></a><p>02/09/2025 -
+              Publicada a Nota Técnica 2025.001.v.1.02</p>Publicada a NT 2025.001.v.1.02, que traz algumas mudanças de Regras de Validação, conforme descrição constante no Item 02, em relação a: <br />
+<ul>
+<li>Leiaute QR-Code versão 3; </li>
+<li>NFC-e para Produtor Rural &#8211; Pessoa Física; </li>
+<li>Resposta Síncrona para Lote com 1 (uma) NF-e; </li>
+<li>Controle do Atraso na Data de Emissão da NF-e; </li>
+<li>Controle do Tipo da IE do Destinatário (campo indIEDest); </li>
+<li>Dados de Cobrança: Novas Regras de Validação.</li></ul><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1379"></a><p>20/08/2025 -
+              Publicado schema v.1.21 referente à Reforma Tributária de Consumo - RTC</p>Publicado schema v.1.21 do Pacote de Liberação 010b de adequação dos leiautes da NF-e e da NFC-e à Reforma Tributária de Consumo -&nbsp;RTC.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1378"></a><p>18/08/2025 -
+              Publicado schema dos eventos da Nota Técnica 2025.002.v.1.20</p>Publicado schema dos eventos da NT&nbsp;2025.002.v.1.20 referentes à Reforma Tributária de Consumo -&nbsp;RTC.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1377"></a><p>18/08/2025 -
+              Publicada a Nota Técnica 2019.001 v.1.70</p>Publicada a NT 2019.001 v.1.70 que cria a atualiza regras de validação da NF-e/NFC-e<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1376"></a><p>01/08/2025 -
+              Exclusão do link de download do aplicativo manifestador do destinatário mantido pela SEFAZ SP</p>&nbsp;Conforme Informe publicado no dia 23/04/2025, a SEFAZ SP descontinuou o&nbsp;aplicativo de manifestação do destinatário a partir de 01/08/25. Assim, o link foi excluído do menu &quot;Downloads&quot;.<br /><br />Assinado por: Secretaria Especial da Receita Federal do Brasil</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1375"></a><p>31/07/2025 -
+              Publicado Informe Técnico 2024.001 v.2.20 que divulga atualização na tabela de NCM a partir de 01/10/2025.</p>Foi publicado&nbsp;Informe Técnico&nbsp;2024.001 v.2.20 que divulga atualização na tabela de&nbsp;NCM&nbsp;a partir de 01/10/2025<br /><br />Assinado por: Secretaria Especial da Receita Federal do Brasil</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1374"></a><p>30/07/2025 -
+              Publicada a Nota Técnica 2025.002.v.1.20</p>Publicada a NT&nbsp;2025.002.v.1.20 de adequação dos leiautes da NF-e e da NFC-e à Reforma Tributária de Consumo -&nbsp;RTC.<br /><br />Assinado por: Secretaria Especial da Receita Federal do Brasil</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1373"></a><p>10/07/2025 -
+              Publicada versão 1.52 de Nota Técnica 2018.005</p>A Nota Técnica&nbsp;2018.003&nbsp;v.1.52 tem por objetivo alterar as datas de implantação da regra de validação ZD07-10 para o Estado do Paraná.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1372"></a><p>04/07/2025 -
+              Urgente - Número de protocolo com 17 caracteres na SVRS</p>O retorno de 17 caracteres para o número de protocolo será adotado pela SEFAZ-SP, futuramente (ainda sem previsão), devido ao alto volume de emissão de NFC-e por ano, conforme previsto na Nota Técnica 2025.002 (NT da Reforma Tributária).<br />
+<br />
+   Equivocadamente, esse retorno entrou em produção para a Sefaz Virtual do Rio Grande do Sul (SVRS) hoje (04/07/2025, entre 13h39 e 14h45), afetando a informação da autorização de uso para parte dos sistemas ERP.<br />
+<br />
+  A SVRS já fez a correção no WebService de &quot;Consulta Situação&quot; para retornar o número do protocolo com 15 caracteres.<br />
+ Assim, a solução para as NF-e emitidas no horário supracitado é realizar novamente a consulta dos números de protocolo, retornando com o número de 15 caracteres.<br />
+<br />
+   Sobre o evento de cancelamento, nas próximas horas, será liberada a versão aceitando o pedido de cancelamento com o número do protocolo contendo 15 ou 17 caracteres, considerando que muitas empresas internalizaram o protocolo com 17 caracteres. <br />
+<br />
+  Contamos com a compreensão de todos.<br /><br />Assinado por: Secretaria da Fazenda do Rio Grande do Sul</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1371"></a><p>04/07/2025 -
+              Publicada tabela de crédito presumido do IBS/CBS</p>Foi publicada tabela de crédito presumido do IBS/CBS.<br /><br />Assinado por: Secretaria Especial da Receita Federal do Brasil</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1370"></a><p>27/06/2025 -
+              Publicada versão 1.06 de Nota Técnica 2024.003</p>A Nota Técnica 2024.003 v.1.06 tem por objetivo detalhar as especificações necessárias para inserção, na NF-e, dos dados relativos ao trânsito de produtos animais vivos, vegetais e florestais.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div class="divInforme" xmlns:dt="http://exslt.org/dates-and-times"><a name="1369"></a><p>26/06/2025 -
+              Publicada versão 1.01 da Nota Técnica 2025.001</p>Foi publicada a versão 1.01 da Nota Técnica 2025.001 que divulga simplificação operacional.<br /><br />Assinado por: Coordenação Técnica do ENCAT</div><div id="paginacao" xmlns:dt="http://exslt.org/dates-and-times">
+           
+          <a href="https://www.nfe.fazenda.gov.br/portal/informe.aspx?ehCTG=false&amp;page=2&amp;pagesize=20">
+            &lt;&lt;Anterior
+          </a>
+         <b class="blacktext">4 de 17</b> 
+      
+           
+          <a href="https://www.nfe.fazenda.gov.br/portal/informe.aspx?ehCTG=false&amp;page=4&amp;pagesize=20">
+            Próxima&gt;&gt;
+          </a></div>
+
+                    </div>
+                </div>
+            </div>
+            <div id="rodape">
+                <div id="sombraRodape">
+                </div>
+                <div id="conteudoRodape">
+                    <div id="menuRodape">
+                        <?xml version="1.0" encoding="utf-8"?><a href="listaSubMenu.aspx?Id=6H4uVlIEaKs=">Conheça a NF-e</a><a href="listaSubMenu.aspx?Id=esCrSQFUvGg=">Serviços</a><a href="listaSubMenu.aspx?Id=ndIjl+iEFdE=">Legislação</a><a href="listaSubMenu.aspx?Id=04BIflQt1aY=">Documentos</a><a href="listaSubMenu.aspx?Id=BMPFMBoln3w=">Downloads</a><a href="https://www.nfe.fazenda.gov.br/arearestrita/inicial/autenticacao.aspx">Área Restrita</a><a href="https://www1.sped.fazenda.gov.br/spednfeacesso/arnfe/inicial/listaSubMenu.aspx?Id=UORZ3ynALMA=">Documentos e outros</a><a href="listaSubMenu.aspx?Id=VOYEgBgD3iU=">Outros DF-e</a>
+                        <span id="ctl00_lblPortalRodape" class="labelPortalRodape">Portal da NF-e 2026 - Nota Fiscal Eletrônica  v2.9.9.0</span>
+                    </div>
+                    <div id="marcaReceita">
+                        <a href="//www.receita.fazenda.gov.br" target="_blank" class="imgReceita">
+                            <!--img src="imagens/marca_Receita.png" class="imgReceita" alt="Link para o sítio da Receita Federal"/-->
+                            Receita Federal </a>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tipoAmbiente">
+                <span id="ctl00_lblAmbiente"></span>
+            </div>
+
+        
+
+<script type="text/javascript">
+//<![CDATA[
+Sys.Application.add_init(function() {
+    $create(AjaxControlToolkit.AutoCompleteBehavior, {"completionListCssClass":"popupBusca","delimiterCharacters":"(),.! ","id":"ctl00_aceAutoCompletarBusca","minimumPrefixLength":1,"serviceMethod":"ListarAutocompletarCampoPesquisar","servicePath":"AutoCompletarBusca.asmx"}, null, null, $get("ctl00_txtPalavraChave"));
+});
+//]]>
+</script>
+</form>
+    </div>
+</body>
+
+</html>
