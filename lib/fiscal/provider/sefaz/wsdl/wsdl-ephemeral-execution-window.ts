@@ -1,18 +1,22 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 142 · CONTAINMENT OFF da janela de diagnóstico browser-assisted):
- * **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a `null`. A janela
- * `wsdl-h9h10-20260831-2230z-891f55e242004bd2` (31/08 22:30→22:40Z) **EXPIROU SEM CONSUMO**: a
- * invocation administrativa NÃO foi realizada e nenhum fetch manual foi disparado. Contadores
- * LOCAIS desta janela: `WSDL_ADMIN_CALL_COUNT=0`, `WSDL_EXTERNAL_GET_COUNT=0` (o histórico
- * acumulado do GOAL 020 NÃO é zero — a execução 137 registrou 1 chamada administrativa HTTP 200
- * e batch dos 6 alvos). A activation NÃO foi consumida (one-shot íntegro, morta por relógio). É
- * evidência histórica; não é configuração executável e jamais deve ser re-materializada sem
- * NOVA autorização humana (a autorização desta janela NÃO é reutilizável). As activations de
- * 30/08 (14:40z `fed207ff`, 20:05z `51354088`) e as demais de 31/08 (`0c42c4389f65469d` 03:00z,
- * `99c21bca85a94cef` 19:00z, ambas expiradas sem consumo) seguem históricas/proibidas. Gate 2
- * permanece humano e separado.
+ * Estado atual (GOAL 020 · 143 · DIAGNÓSTICO H-9/H-10 browser-assisted sincronizado,
+ * autorização textual humana verbatim vigente e NÃO consumida): **ATIVA** —
+ * `wsdl-h9h10-20260902-0430z-772103b09d9477ca`, janela única de 10 minutos
+ * (04:30:00Z → 04:40:00Z de 02/09, folga operacional para checks/merge/deploy ON READY
+ * antes de `notBeforeUtc`). Uma única execução administrativa: invocation SAME-ORIGIN
+ * manual do humano autenticado no Console do Chrome no host canônico (fetch POST sem body,
+ * sem retry, sem segunda invocation), com no máximo 6 GETs WSDL oficiais SEFAZ-SP/HOMOLOGACAO
+ * com o A1 já custodiado. Coleta SOMENTE da telemetria sanitizada de transporte
+ * (`transportPhase`/`transportClass`/`transportCode` do GOAL 138) — sem emissão NFC-e, sem
+ * SEFAZ PRODUÇÃO, sem relaxamento de TLS, sem mudança de destino. O primitive do advisory
+ * lock segue corrigido (135). Containment OFF imediatamente após qualquer resultado
+ * restaurará `{null, null, null}`. As activations de 30/08 (14:40z `fed207ff`, 20:05z
+ * `51354088`) e as de 31/08 (`0c42c4389f65469d` 03:00z, `99c21bca85a94cef` 19:00z,
+ * `891f55e242004bd2` 22:30z, todas expiradas sem consumo nesta fase) são
+ * históricas/proibidas e jamais devem ser re-materializadas. Gate 2 permanece humano e
+ * separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -38,9 +42,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260902-0430z-772103b09d9477ca",
+  notBeforeUtc: "2026-09-02T04:30:00.000Z",
+  expiresAtUtc: "2026-09-02T04:40:00.000Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
