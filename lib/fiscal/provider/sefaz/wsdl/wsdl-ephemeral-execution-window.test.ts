@@ -5,9 +5,13 @@ import {
   WSDL_EPHEMERAL_EXECUTION_WINDOW,
   WSDL_EXECUTION_EXPECTED_TARGETS,
   WSDL_EXECUTION_MAX_WINDOW_MS,
+  WSDL_EXECUTION_MIN_LEASE_MS,
+  WSDL_EXECUTION_NETWORK_LEASE_MS,
   consumeWsdlTargetExecutionPermit,
   createWsdlExecutionGateTestHarness,
   evaluateWsdlExecutionWindow,
+  resolveWsdlExecutionNetworkLease,
+  wsdlExecutionActivationStillActive,
   type WsdlActivationLedgerClient,
   type WsdlExecutionWindowConfig,
 } from "./wsdl-ephemeral-execution-window"
@@ -37,6 +41,12 @@ const ACTIVE_CONFIG: WsdlExecutionWindowConfig = Object.freeze({
   activationId: "FISCAL-017-GATE-019-TEST",
   notBeforeUtc: "2026-08-13T12:00:00Z",
   expiresAtUtc: "2026-08-13T12:10:00Z",
+})
+
+const ARMING_CONFIG: WsdlExecutionWindowConfig = Object.freeze({
+  activationId: "FISCAL-020-GATE-152-TEST",
+  notBeforeUtc: "2026-09-02T12:00:00.000Z",
+  expiresAtUtc: "2026-09-02T12:45:00.000Z",
 })
 
 function versionedConfigHasAllowedStructure(config: WsdlExecutionWindowConfig): boolean {
@@ -233,7 +243,7 @@ describe("janela efêmera WSDL versionada", () => {
     expect(versionedConfigHasAllowedStructure({ ...ACTIVE_CONFIG, activationId: null })).toBe(false)
   })
 
-  it("recusa configuração parcial, id inválido, UTC não estrito e janela acima de 15 min", () => {
+  it("recusa configuração parcial, id inválido, UTC não estrito e janela acima do teto de arming", () => {
     const now = new Date("2026-08-13T12:05:00Z")
     expect(evaluateWsdlExecutionWindow({ ...ACTIVE_CONFIG, expiresAtUtc: null }, now)).toEqual({
       active: false,
@@ -248,7 +258,7 @@ describe("janela efêmera WSDL versionada", () => {
     ).toEqual({ active: false, reason: "invalid" })
     expect(
       evaluateWsdlExecutionWindow(
-        { ...ACTIVE_CONFIG, expiresAtUtc: "2026-08-13T12:16:00Z" },
+        { ...ACTIVE_CONFIG, expiresAtUtc: "2026-08-13T12:46:00Z" },
         now,
       ),
     ).toEqual({ active: false, reason: "invalid" })
@@ -431,5 +441,202 @@ describe("ledger persistente global one-shot", () => {
     expect(
       consumeWsdlTargetExecutionPermit(second.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[0]!),
     ).toBe(false)
+  })
+})
+
+describe("GOAL 152 — janela externa de arming vs lease interna de rede", () => {
+  it("1. estado null/null/null continua disabled", () => {
+    expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
+      activationId: null,
+      notBeforeUtc: null,
+      expiresAtUtc: null,
+    })
+    expect(evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())).toEqual({
+      active: false,
+      reason: "disabled",
+    })
+  })
+
+  it("2. janela externa antes de notBefore bloqueia", () => {
+    expect(evaluateWsdlExecutionWindow(ARMING_CONFIG, new Date("2026-09-02T11:59:59.000Z"))).toEqual({
+      active: false,
+      reason: "not_started",
+    })
+  })
+
+  it("3. janela externa depois de expiresAt bloqueia", () => {
+    expect(evaluateWsdlExecutionWindow(ARMING_CONFIG, new Date("2026-09-02T12:45:00.000Z"))).toEqual({
+      active: false,
+      reason: "expired",
+    })
+  })
+
+  it("4. janela externa maior que o teto de arming é inválida; exatamente o teto é válida", () => {
+    expect(WSDL_EXECUTION_MAX_WINDOW_MS).toBe(45 * 60 * 1_000)
+    expect(evaluateWsdlExecutionWindow(ARMING_CONFIG, new Date("2026-09-02T12:20:00.000Z")).active).toBe(
+      true,
+    )
+    expect(
+      evaluateWsdlExecutionWindow(
+        { ...ARMING_CONFIG, expiresAtUtc: "2026-09-02T12:45:00.001Z" },
+        new Date("2026-09-02T12:20:00.000Z"),
+      ),
+    ).toEqual({ active: false, reason: "invalid" })
+  })
+
+  it("5-7. consumo cria lease <=10 min a partir do consumedAt e nunca ultrapassa expiresAt", () => {
+    expect(WSDL_EXECUTION_NETWORK_LEASE_MS).toBe(10 * 60 * 1_000)
+    const consumedAt = new Date("2026-09-02T12:22:00.000Z")
+    const expiresAt = new Date("2026-09-02T12:45:00.000Z")
+    const full = resolveWsdlExecutionNetworkLease({ consumedAt, expiresAt })
+    expect(full).toEqual({
+      ok: true,
+      leaseExpiresAt: new Date("2026-09-02T12:32:00.000Z"),
+      leaseMs: WSDL_EXECUTION_NETWORK_LEASE_MS,
+    })
+
+    const capped = resolveWsdlExecutionNetworkLease({
+      consumedAt: new Date("2026-09-02T12:40:00.000Z"),
+      expiresAt,
+    })
+    expect(capped).toEqual({
+      ok: true,
+      leaseExpiresAt: expiresAt,
+      leaseMs: 5 * 60 * 1_000,
+    })
+    if (capped.ok) {
+      expect(capped.leaseMs).toBeLessThanOrEqual(WSDL_EXECUTION_NETWORK_LEASE_MS)
+      expect(capped.leaseExpiresAt.getTime()).toBeLessThanOrEqual(expiresAt.getTime())
+    }
+  })
+
+  it("8-9. permit funciona durante a lease e falha depois da lease", async () => {
+    const shared = sharedLedger()
+    let now = new Date("2026-09-02T12:22:00.000Z")
+    const consumed = await gate(shared, { config: ARMING_CONFIG, clock: () => now }).consume({
+      storeId: "loja-1",
+      operatorId: "admin",
+    })
+    if (!consumed.ok) throw new Error("fixture deveria consumir")
+    expect(shared.jobs[0]?.payload).toMatchObject({
+      consumedAt: "2026-09-02T12:22:00.000Z",
+      leaseExpiresAt: "2026-09-02T12:32:00.000Z",
+      networkLeaseMs: WSDL_EXECUTION_NETWORK_LEASE_MS,
+    })
+
+    now = new Date("2026-09-02T12:31:59.000Z")
+    expect(wsdlExecutionActivationStillActive(consumed.activation)).toBe(true)
+    expect(
+      consumeWsdlTargetExecutionPermit(consumed.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[0]!),
+    ).toBe(true)
+
+    now = new Date("2026-09-02T12:32:00.000Z")
+    expect(wsdlExecutionActivationStillActive(consumed.activation)).toBe(false)
+    expect(
+      consumeWsdlTargetExecutionPermit(consumed.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[1]!),
+    ).toBe(false)
+  })
+
+  it("10. segundo consumo da mesma activation falha", async () => {
+    const shared = sharedLedger()
+    const clock = () => new Date("2026-09-02T12:22:00.000Z")
+    expect((await gate(shared, { config: ARMING_CONFIG, clock }).consume({ storeId: "loja-1", operatorId: "a" })).ok).toBe(
+      true,
+    )
+    expect(await gate(shared, { config: ARMING_CONFIG, clock }).consume({ storeId: "loja-1", operatorId: "b" })).toEqual({
+      ok: false,
+      code: "already_consumed_or_persistence_unavailable",
+    })
+    expect(shared.jobs).toHaveLength(1)
+  })
+
+  it("11-12. segundo uso do mesmo alvo falha e seis alvos continuam o teto", async () => {
+    const shared = sharedLedger()
+    const consumed = await gate(shared, {
+      config: ARMING_CONFIG,
+      clock: () => new Date("2026-09-02T12:22:00.000Z"),
+    }).consume({ storeId: "loja-1", operatorId: "admin" })
+    if (!consumed.ok) throw new Error("fixture deveria consumir")
+    expect(SEFAZ_WSDL_ACQUISITION_TARGETS).toHaveLength(6)
+    expect(WSDL_EXECUTION_EXPECTED_TARGETS).toBe(6)
+    for (const target of SEFAZ_WSDL_ACQUISITION_TARGETS) {
+      expect(consumeWsdlTargetExecutionPermit(consumed.activation, target)).toBe(true)
+      expect(consumeWsdlTargetExecutionPermit(consumed.activation, target)).toBe(false)
+    }
+  })
+
+  it("13-14. nenhum caminho adiciona retry e nenhum teste usa socket externo", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    const shared = sharedLedger()
+    const consumed = await gate(shared, {
+      config: ARMING_CONFIG,
+      clock: () => new Date("2026-09-02T12:22:00.000Z"),
+    }).consume({ storeId: "loja-1", operatorId: "admin" })
+    if (!consumed.ok) throw new Error("fixture deveria consumir")
+    consumeWsdlTargetExecutionPermit(consumed.activation, SEFAZ_WSDL_ACQUISITION_TARGETS[0]!)
+    wsdlExecutionActivationStillActive(consumed.activation)
+    resolveWsdlExecutionNetworkLease({
+      consumedAt: new Date("2026-09-02T12:22:00.000Z"),
+      expiresAt: new Date("2026-09-02T12:45:00.000Z"),
+    })
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
+    expect(shared.jobs[0]).toMatchObject({
+      tentativas: 1,
+      maxTentativas: 1,
+      proximaTentativaEm: null,
+    })
+  })
+
+  it("latência de deploy consome a janela externa e a invocation ainda recebe lease curta completa", async () => {
+    const shared = sharedLedger()
+    let now = new Date("2026-09-02T12:22:00.000Z")
+    const consumed = await gate(shared, { config: ARMING_CONFIG, clock: () => now }).consume({
+      storeId: "loja-1",
+      operatorId: "admin",
+    })
+    if (!consumed.ok) throw new Error("invocation tardia deveria ainda consumir")
+    expect(shared.jobs[0]?.payload).toMatchObject({
+      consumedAt: "2026-09-02T12:22:00.000Z",
+      leaseExpiresAt: "2026-09-02T12:32:00.000Z",
+    })
+    now = new Date("2026-09-02T12:22:00.000Z")
+    expect(wsdlExecutionActivationStillActive(consumed.activation)).toBe(true)
+    now = new Date("2026-09-02T12:31:59.999Z")
+    expect(wsdlExecutionActivationStillActive(consumed.activation)).toBe(true)
+    now = new Date("2026-09-02T12:32:00.000Z")
+    expect(wsdlExecutionActivationStillActive(consumed.activation)).toBe(false)
+  })
+
+  it("sem tempo mínimo seguro para iniciar a lease, falha antes de persistir e sem rede", async () => {
+    expect(WSDL_EXECUTION_MIN_LEASE_MS).toBe(2 * 60 * 1_000)
+    const tooLate = resolveWsdlExecutionNetworkLease({
+      consumedAt: new Date("2026-09-02T12:44:00.000Z"),
+      expiresAt: new Date("2026-09-02T12:45:00.000Z"),
+    })
+    expect(tooLate).toEqual({ ok: false, reason: "too_short" })
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    const shared = sharedLedger()
+    expect(
+      await gate(shared, {
+        config: ARMING_CONFIG,
+        clock: () => new Date("2026-09-02T12:44:00.000Z"),
+      }).consume({ storeId: "loja-1", operatorId: "admin" }),
+    ).toEqual({ ok: false, code: "window_unavailable" })
+    expect(shared.jobs).toHaveLength(0)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    fetchSpy.mockRestore()
+  })
+
+  it("lease começa no consumedAt, não no notBefore/deploy", () => {
+    const notBefore = new Date("2026-09-02T12:00:00.000Z")
+    const consumedAt = new Date("2026-09-02T12:22:00.000Z")
+    const expiresAt = new Date("2026-09-02T12:45:00.000Z")
+    const lease = resolveWsdlExecutionNetworkLease({ consumedAt, expiresAt })
+    expect(lease.ok).toBe(true)
+    if (!lease.ok) return
+    expect(lease.leaseExpiresAt.getTime()).toBe(consumedAt.getTime() + WSDL_EXECUTION_NETWORK_LEASE_MS)
+    expect(lease.leaseExpiresAt.getTime()).not.toBe(notBefore.getTime() + WSDL_EXECUTION_NETWORK_LEASE_MS)
   })
 })

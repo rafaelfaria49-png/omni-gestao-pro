@@ -217,8 +217,8 @@ export function createWsdlEphemeralExternalAuthority(options: {
         minVersion: "TLSv1.2",
       }),
     request: (requestOptions, onResponse) => {
-      // A1/vault/SecureContext podem consumir o restante da janela. Revalidar aqui, na última
-      // instrução anterior a `node:https.request`, impede socket iniciado após `expiresAt`.
+      // A1/vault/SecureContext podem consumir o restante da lease interna. Revalidar aqui, na
+      // última instrução anterior a `node:https.request`, impede socket iniciado após a lease.
       if (!wsdlExecutionActivationStillActive(options.activation)) {
         throw new Error("Janela efêmera WSDL expirada antes da tentativa de rede.")
       }
