@@ -1,20 +1,19 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 149 · DIAGNÓSTICO H-9/H-10 browser-assisted sincronizado,
- * autorização textual humana verbatim vigente e NÃO consumida): **ATIVA** —
- * `wsdl-h9h10-20260902-2127z-bfefedc2de8f65f9`, janela única de 10 minutos
- * (21:27:00Z → 21:37:00Z de 02/09, ~15 min de folga a partir da autorização; invocation só
- * se restarem ≥ 8 min até `expiresAtUtc`). Uma única execução administrativa: invocation
- * SAME-ORIGIN manual do humano autenticado no Console do Chrome no host canônico (fetch POST
- * sem body, sem retry, sem segunda invocation), com no máximo 6 GETs WSDL oficiais
- * SEFAZ-SP/HOMOLOGACAO com o A1 já custodiado. Coleta SOMENTE da telemetria sanitizada de
- * transporte (`transportPhase`/`transportClass`/`transportCode` do GOAL 138) — sem emissão
- * NFC-e, sem SEFAZ PRODUÇÃO, sem relaxamento de TLS, sem mudança de destino. O primitive do
- * advisory lock segue corrigido (135). Containment OFF imediatamente após qualquer resultado
- * restaurará `{null, null, null}`. As activations de 30/08, 31/08 e as de 02/09 (`772103b09d9477ca`
- * 04:30z, `4b5f2504640de6e4` 14:00z) são históricas/proibidas e jamais devem ser
- * re-materializadas. Gate 2 permanece humano e separado.
+ * Estado atual (GOAL 020 · 150 · CONTAINMENT OFF da janela de diagnóstico browser-assisted
+ * sincronizado): **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a
+ * `null`. A janela `wsdl-h9h10-20260902-2127z-bfefedc2de8f65f9` (02/09 21:27→21:37Z / 18:27→18:37
+ * BRT) **NÃO FOI UTILIZADA**: Production ON (`r7vu7jg1b` / `dpl_CGPPBZNG`) ainda estava Building
+ * em 21:29:06Z com 7,9 min restantes até `expiresAtUtc` (gate ≥ 8 min falhou). Fetch NÃO foi
+ * entregue; invocation administrativa NÃO foi realizada; nenhum GET WSDL foi disparado.
+ * Contadores LOCAIS desta janela: `WSDL_ADMIN_CALL_COUNT=0`, `WSDL_EXTERNAL_GET_COUNT=0` (o
+ * histórico acumulado do GOAL 020 NÃO é zero — a execução 137 registrou 1 chamada administrativa
+ * HTTP 200 e batch dos 6 alvos). A activation NÃO foi consumida (one-shot íntegro, morta por
+ * relógio/gate de timing). É evidência histórica; não é configuração executável e jamais deve
+ * ser re-materializada sem NOVA autorização humana. As activations de 30/08, 31/08 e as de 02/09
+ * (`772103b09d9477ca` 04:30z, `4b5f2504640de6e4` 14:00z) seguem históricas/proibidas. Gate 2
+ * permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -40,9 +39,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260902-2127z-bfefedc2de8f65f9",
-  notBeforeUtc: "2026-09-02T21:27:00.000Z",
-  expiresAtUtc: "2026-09-02T21:37:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
