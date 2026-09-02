@@ -1,19 +1,15 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 150 · CONTAINMENT OFF da janela de diagnóstico browser-assisted
- * sincronizado): **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a
- * `null`. A janela `wsdl-h9h10-20260902-2127z-bfefedc2de8f65f9` (02/09 21:27→21:37Z / 18:27→18:37
- * BRT) **NÃO FOI UTILIZADA**: Production ON (`r7vu7jg1b` / `dpl_CGPPBZNG`) ainda estava Building
- * em 21:29:06Z com 7,9 min restantes até `expiresAtUtc` (gate ≥ 8 min falhou). Fetch NÃO foi
- * entregue; invocation administrativa NÃO foi realizada; nenhum GET WSDL foi disparado.
- * Contadores LOCAIS desta janela: `WSDL_ADMIN_CALL_COUNT=0`, `WSDL_EXTERNAL_GET_COUNT=0` (o
- * histórico acumulado do GOAL 020 NÃO é zero — a execução 137 registrou 1 chamada administrativa
- * HTTP 200 e batch dos 6 alvos). A activation NÃO foi consumida (one-shot íntegro, morta por
- * relógio/gate de timing). É evidência histórica; não é configuração executável e jamais deve
- * ser re-materializada sem NOVA autorização humana. As activations de 30/08, 31/08 e as de 02/09
- * (`772103b09d9477ca` 04:30z, `4b5f2504640de6e4` 14:00z) seguem históricas/proibidas. Gate 2
- * permanece humano e separado.
+ * Estado atual (GOAL 020 · 152 · gate resiliente à latência de deploy): **DORMENTE** —
+ * `activationId`, `notBeforeUtc` e `expiresAtUtc` permanecem `null`. Nenhuma activation real
+ * está materializada. A janela versionada é somente a elegibilidade EXTERNA da única
+ * invocation (arming). A rede NÃO herda essa duração: após `consumeConfiguredWsdlExecutionActivation`
+ * persistir o one-shot, nasce uma lease interna `min(consumedAt + 10min, expiresAtUtc)`. Permits
+ * e `wsdlExecutionActivationStillActive` revalidam essa lease — nunca a janela externa longa.
+ * Sem tempo mínimo seguro para iniciar a lease, o consumo falha antes de qualquer socket.
+ * A janela 21:27z (`bfefedc2de8f65f9`) e as anteriores de 02/09, 31/08 e 30/08 são históricas
+ * e jamais devem ser re-materializadas. Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -45,7 +41,15 @@ export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
-export const WSDL_EXECUTION_MAX_WINDOW_MS = 15 * 60 * 1_000
+/** Teto da janela EXTERNA de elegibilidade (arming): checks + build + presença humana. */
+export const WSDL_EXECUTION_MAX_WINDOW_MS = 45 * 60 * 1_000
+/** Teto absoluto da lease de rede, contado a partir do consumedAt persistido. */
+export const WSDL_EXECUTION_NETWORK_LEASE_MS = 10 * 60 * 1_000
+/**
+ * Tempo mínimo restante até `expiresAtUtc` para iniciar a lease. Abaixo disso o consumo
+ * falha fechado antes de qualquer socket (6 GET × 20s de deadline total).
+ */
+export const WSDL_EXECUTION_MIN_LEASE_MS = 2 * 60 * 1_000
 
 export type WsdlExecutionWindowConfig = {
   readonly activationId: string | null
@@ -115,6 +119,40 @@ export function evaluateWsdlExecutionWindow(
 
 export function configuredWsdlExecutionWindowStatus(): WsdlExecutionWindowStatus {
   return evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())
+}
+
+export type WsdlExecutionNetworkLease =
+  | {
+      readonly ok: true
+      readonly leaseExpiresAt: Date
+      readonly leaseMs: number
+    }
+  | { readonly ok: false; readonly reason: "invalid" | "too_short" }
+
+/**
+ * Lease efetiva de rede: `min(consumedAt + 10min, expiresAtUtc)`. Nunca ultrapassa o
+ * deadline externo nem o teto de 10 minutos. Recusa se a fatia restante for menor que
+ * `WSDL_EXECUTION_MIN_LEASE_MS`.
+ */
+export function resolveWsdlExecutionNetworkLease(input: {
+  readonly consumedAt: Date
+  readonly expiresAt: Date
+}): WsdlExecutionNetworkLease {
+  const consumedAtMs = input.consumedAt.getTime()
+  const expiresAtMs = input.expiresAt.getTime()
+  if (Number.isNaN(consumedAtMs) || Number.isNaN(expiresAtMs) || consumedAtMs >= expiresAtMs) {
+    return { ok: false, reason: "invalid" }
+  }
+  const uncappedEndMs = consumedAtMs + WSDL_EXECUTION_NETWORK_LEASE_MS
+  const leaseExpiresAtMs = Math.min(uncappedEndMs, expiresAtMs)
+  const leaseMs = leaseExpiresAtMs - consumedAtMs
+  if (leaseMs > WSDL_EXECUTION_NETWORK_LEASE_MS) return { ok: false, reason: "invalid" }
+  if (leaseMs < WSDL_EXECUTION_MIN_LEASE_MS) return { ok: false, reason: "too_short" }
+  return {
+    ok: true,
+    leaseExpiresAt: new Date(leaseExpiresAtMs),
+    leaseMs,
+  }
 }
 
 type WsdlActivationTransaction = {
@@ -188,8 +226,8 @@ export type WsdlExecutionActivation = {
 type ActivationBinding = {
   readonly storeId: string
   readonly activationHash: string
-  readonly notBeforeMs: number
-  readonly expiresAtMs: number
+  readonly consumedAtMs: number
+  readonly leaseExpiresAtMs: number
   readonly clock: () => Date
   readonly availableTargets: Set<string>
 }
@@ -249,6 +287,11 @@ async function consumeActivation(
   const hash = activationHash(status.window.activationId)
   const dedupeKey = `fiscal:wsdl:h9-h10:v1:${hash}`
   const now = clock()
+  const lease = resolveWsdlExecutionNetworkLease({
+    consumedAt: now,
+    expiresAt: status.window.expiresAt,
+  })
+  if (!lease.ok) return { ok: false, code: "window_unavailable" }
   try {
     await client.$transaction(async (tx) => {
       // Serializa consumidores de QUALQUER loja para a mesma activation antes de checar.
@@ -280,6 +323,8 @@ async function consumeActivation(
             activationHash: hash,
             targetCount: WSDL_EXECUTION_EXPECTED_TARGETS,
             consumedAt: now.toISOString(),
+            leaseExpiresAt: lease.leaseExpiresAt.toISOString(),
+            networkLeaseMs: WSDL_EXECUTION_NETWORK_LEASE_MS,
             transmission: { method: "GET", environment: "HOMOLOGACAO" },
           },
           ultimoErro: null,
@@ -304,6 +349,7 @@ async function consumeActivation(
             targetCount: WSDL_EXECUTION_EXPECTED_TARGETS,
             notBeforeUtc: status.window.notBefore.toISOString(),
             expiresAtUtc: status.window.expiresAt.toISOString(),
+            leaseExpiresAtUtc: lease.leaseExpiresAt.toISOString(),
           },
           operador: input.operatorId,
         },
@@ -315,8 +361,12 @@ async function consumeActivation(
     return { ok: false, code: "already_consumed_or_persistence_unavailable" }
   }
 
-  // A transação pode terminar no limite da janela. Persistimos o consumo, mas não emitimos rede.
-  const afterCommit = evaluateWsdlExecutionWindow(config, clock())
+  // A transação pode terminar no limite da lease. Persistimos o consumo, mas não emitimos rede.
+  const afterCommitNow = clock()
+  if (afterCommitNow.getTime() >= lease.leaseExpiresAt.getTime()) {
+    return { ok: false, code: "window_unavailable" }
+  }
+  const afterCommit = evaluateWsdlExecutionWindow(config, afterCommitNow)
   if (!afterCommit.active || afterCommit.window.activationId !== status.window.activationId) {
     return { ok: false, code: "window_unavailable" }
   }
@@ -327,8 +377,8 @@ async function consumeActivation(
   activationBindings.set(activation, {
     storeId: input.storeId,
     activationHash: hash,
-    notBeforeMs: afterCommit.window.notBefore.getTime(),
-    expiresAtMs: afterCommit.window.expiresAt.getTime(),
+    consumedAtMs: now.getTime(),
+    leaseExpiresAtMs: lease.leaseExpiresAt.getTime(),
     clock,
     availableTargets,
   })
@@ -351,9 +401,15 @@ export async function consumeConfiguredWsdlExecutionActivation(input: {
   )
 }
 
+function networkLeaseStillOpen(binding: ActivationBinding): boolean {
+  const now = binding.clock().getTime()
+  return now >= binding.consumedAtMs && now < binding.leaseExpiresAtMs
+}
+
 /**
- * Consome a permissão de UM alvo. O prazo é revalidado aqui, imediatamente antes da emissão da
- * authority real. O relógio e os alvos vêm do binding privado, nunca do request.
+ * Consome a permissão de UM alvo. O prazo da LEASE INTERNA é revalidado aqui, imediatamente
+ * antes da emissão da authority real. O relógio e os alvos vêm do binding privado, nunca do
+ * request nem da janela externa de arming.
  */
 export function consumeWsdlTargetExecutionPermit(
   activation: WsdlExecutionActivation,
@@ -362,21 +418,19 @@ export function consumeWsdlTargetExecutionPermit(
   const binding = activationBindings.get(activation)
   const canonical = canonicalSefazWsdlTarget(candidate)
   if (!binding || !canonical) return false
-  const now = binding.clock().getTime()
-  if (now < binding.notBeforeMs || now >= binding.expiresAtMs) return false
+  if (!networkLeaseStillOpen(binding)) return false
   const key = targetKey(canonical)
   if (!binding.availableTargets.delete(key)) return false
   return true
 }
 
-/** Revalidação final usada pelo runtime imediatamente antes de criar o request Node. */
+/** Revalidação final da lease interna, imediatamente antes de criar o request Node. */
 export function wsdlExecutionActivationStillActive(
   activation: WsdlExecutionActivation,
 ): boolean {
   const binding = activationBindings.get(activation)
   if (!binding) return false
-  const now = binding.clock().getTime()
-  return now >= binding.notBeforeMs && now < binding.expiresAtMs
+  return networkLeaseStillOpen(binding)
 }
 
 /** Seam somente de teste: mesma transação/ledger, com config, relógio e piloto controlados. */

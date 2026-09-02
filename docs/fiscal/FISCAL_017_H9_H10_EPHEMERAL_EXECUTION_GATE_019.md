@@ -57,9 +57,12 @@ A habilitação não usa Environment Variable. A janela é esta configuração v
 ```
 
 Ativar futuramente exige commit revisado que preencha os três valores. A validação exige UTC
-estrito, `notBefore < expiresAt` e duração máxima de 15 minutos. Antes de `notBefore`, a partir de
-`expiresAt`, com configuração parcial/inválida ou com os três valores `null`, o endpoint responde
-como indisponível antes de ACL, Prisma, cofre, A1, SecureContext ou socket. O request não fornece
+estrito e `notBefore < expiresAt`. GOAL 020 · 152 separa duas durações: a janela EXTERNA de
+elegibilidade (arming) tem teto `WSDL_EXECUTION_MAX_WINDOW_MS` (45 min); a rede usa uma lease
+interna `min(consumedAt + 10 min, expiresAtUtc)` revalidada em cada permit. O teto histórico de
+15 min deixou de ser o limite de rede. Antes de `notBefore`, a partir de `expiresAt`, com
+configuração parcial/inválida ou com os três valores `null`, o endpoint responde como
+indisponível antes de ACL, Prisma, cofre, A1, SecureContext ou socket. O request não fornece
 relógio.
 
 ## 2. Consumo global one-shot persistente
