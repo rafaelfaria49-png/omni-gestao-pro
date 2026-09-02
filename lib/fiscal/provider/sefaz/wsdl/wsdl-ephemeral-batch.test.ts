@@ -130,7 +130,7 @@ describe("batch efêmero fechado H-9/H-10", () => {
   })
 
   it("se o relógio expira durante o carregamento A1, o runtime bloqueia antes de node:https", async () => {
-    let now = new Date("2026-08-13T12:09:59Z")
+    let now = new Date("2026-08-13T12:08:00Z")
     const token = await activation({ clock: () => now })
     const target = SEFAZ_WSDL_ACQUISITION_TARGETS[0]!
     const authority = createWsdlEphemeralExternalAuthority({ activation: token, target })
