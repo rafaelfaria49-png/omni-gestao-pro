@@ -1,15 +1,14 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 152 · gate resiliente à latência de deploy): **DORMENTE** —
- * `activationId`, `notBeforeUtc` e `expiresAtUtc` permanecem `null`. Nenhuma activation real
- * está materializada. A janela versionada é somente a elegibilidade EXTERNA da única
- * invocation (arming). A rede NÃO herda essa duração: após `consumeConfiguredWsdlExecutionActivation`
- * persistir o one-shot, nasce uma lease interna `min(consumedAt + 10min, expiresAtUtc)`. Permits
- * e `wsdlExecutionActivationStillActive` revalidam essa lease — nunca a janela externa longa.
- * Sem tempo mínimo seguro para iniciar a lease, o consumo falha antes de qualquer socket.
- * A janela 21:27z (`bfefedc2de8f65f9`) e as anteriores de 02/09, 31/08 e 30/08 são históricas
- * e jamais devem ser re-materializadas. Gate 2 permanece humano e separado.
+ * Estado atual (GOAL 020 · 153 · DIAGNÓSTICO H-9/H-10 com gate resiliente à latência):
+ * **ARMING EXTERNO ATIVO** — `wsdl-h9h10-20260903-0037z-b3913bea58774deb`,
+ * 00:37:00Z → 01:22:00Z (45 min). Esta janela NÃO é autoridade de rede longa.
+ * Rede só após consumo one-shot persistido, lease `min(consumedAt + 10min, expiresAtUtc)`.
+ * Invocation: exatamente UMA, same-origin, ADMIN, browser-assisted, sem body, sem retry.
+ * Fetch só se restarem ≥ 12 min de arming após Production ON READY + alias.
+ * As activations de 30/08, 31/08 e 02/09 (incl. `bfefedc2de8f65f9`) são históricas/proibidas.
+ * Gate 2 permanece humano e separado. Containment OFF restaura `{null,null,null}`.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -35,9 +34,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260903-0037z-b3913bea58774deb",
+  notBeforeUtc: "2026-09-03T00:37:00.000Z",
+  expiresAtUtc: "2026-09-03T01:22:00.000Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
