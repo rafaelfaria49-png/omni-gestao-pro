@@ -81,6 +81,9 @@ const nextConfig = {
   outputFileTracingIncludes: {
     "/api/catalogo/aparelhos/search": ["./docs/catalogo/seeds/*.csv"],
     "/api/catalogo/peliculas/search": ["./docs/catalogo/seeds/*.csv"],
+    "/api/fiscal/**": ["./lib/fiscal/provider/sefaz/trust/icp-brasil-v10.pem"],
+    "/api/internal/fiscal/**": ["./lib/fiscal/provider/sefaz/trust/icp-brasil-v10.pem"],
+    "/api/vendas/**": ["./lib/fiscal/provider/sefaz/trust/icp-brasil-v10.pem"],
   },
   typescript: {
     ignoreBuildErrors: true,

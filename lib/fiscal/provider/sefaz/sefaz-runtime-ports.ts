@@ -12,6 +12,7 @@ import {
   type SecureContext,
   type SecureContextOptions,
 } from "node:tls"
+import { getSefazCompositeRootCAs } from "./trust/icp-brasil-v10"
 
 export type SefazHttpsRequestPort = (
   options: SefazHttpsRequestOptions,
@@ -177,5 +178,9 @@ export function consumeOfflineLoopbackTestAuthority(
 
 export const nodeSefazHttpsRuntimePorts: SefazHttpsRuntimePorts = Object.freeze({
   request: (options, onResponse) => nodeHttpsRequest(options, onResponse),
-  createSecureContext: (options) => nodeCreateSecureContext(options),
+  createSecureContext: (options) =>
+    nodeCreateSecureContext({
+      ...options,
+      ca: getSefazCompositeRootCAs(),
+    }),
 })
