@@ -133,6 +133,37 @@ TLS · mudança de hostname/IP.
 - **Total de chamadas administrativas do GOAL 020: 3** (134, 137, 154) — sendo 2 com batch
   dos 6 alvos e 1 barrada no guard. **Total de WSDL válidas obtidas: 0.**
 
+## Publicação do containment (154)
+
+| Instante (UTC) | Evento |
+|---|---|
+| 02:0xZ | Commits OFF locais `bc66b6b` (janela → `{null,null,null}` + evidência) e `894bb48` (CURRENT_STATUS: retirada da afirmação stale "ZERO activation real · ZERO Production ON") |
+| 02:1xZ | **PR #154** aberta (`goal/fiscal-020-contingency-offline-nfce` → `main`) |
+| 02:2xZ | Revisão independente (contexto frio, sem acesso ao raciocínio do executor): **REJECT · P0=0 · P1=2 · P2=4** |
+| 02:3xZ | Correção `3bc0fef`: P1-1 (acumulado subcontado — a execução **134** também fez 1 chamada admin, HTTP 409, 0 alvos ⇒ total **3**, não 2) e P1-2 (CURRENT_STATUS afirmava publicação inexistente). P2-1 corrigido junto ("mesma cadeia" era inferência). Zero mudança de código. |
+| 02:3xZ | Re-revisão do `3bc0fef`: **APPROVE · P0=0 · P1=0 · P2=3** — seções do diagnóstico verificadas idênticas por hash; arquivos de código byte-idênticos a `894bb48` |
+| — | Checks **6/6 verdes**: ubuntu-24.04 2m12s · windows-2022 2m45s · container/offline/supply-chain 6m17s · 3× Vercel |
+| **02:37:20Z** | **PR #154 mergeada** (merge commit) — **`main = 2e28093c35c0849f445181badabf70f684760635`** |
+| 02:37:22Z | Deploy Production OFF `dpl_BBhVQcV4d1WkUKoGEjeTZXZFEorp` (`4vqryvrvh`) criado |
+| **02:42:20Z** | Production OFF **READY** |
+| — | Alias canônico confirmado no OFF — `vercel inspect https://omni-gestao-pro.vercel.app` → `4vqryvrvh`, e prova independente por `GET /api/version` → `buildId=2e28093c35c0` (o build ON seria `b09449f2e9fb`). Promoção automática; `vercel alias set` **não** foi necessário. |
+| — | Deployments ON removidos: Production `r0dj2h12b` (`dpl_AoHpnZjHfzx4qADtp8JjwbV37SbE`, commit `b09449f`) e Preview `9skp20s0f` (`dpl_3tkVA4Y77PEYzwtEpkKAVwdrzXQz`, commit `2c78d1f`) |
+| — | **`ACTIVE_ON_DEPLOYMENTS_REMAINING = 0`** no projeto canônico — `vercel ls omni-gestao-pro --meta githubCommitSha=<ON>` devolve *No deployments found* para os dois SHAs ON. Alias reconferido após as remoções: segue em `2e28093c35c0`. |
+
+### Nota de escopo do contador (honesta)
+
+O projeto **irmão `omni-gestao`** (mesmo repositório, projeto Vercel distinto) manteve dois
+deployments construídos do código ON: Production `69wxao08g` (`b09449f`) e Preview
+`qn6jfl1of` (`2c78d1f`). Eles **não** foram removidos e **não** contam para
+`ACTIVE_ON_DEPLOYMENTS_REMAINING`, porque não são superfície ON: `isWsdlCanonicalProductionSurface`
+exige **duas** provas independentes e ambas falham lá —
+`REQUEST_HOST_NOT_CANONICAL` (o host jamais é `omni-gestao-pro.vercel.app`) e
+`RUNTIME_PROJECT_NOT_CANONICAL` (`isCanonicalVercelProject` compara exatamente contra um único
+`VERCEL_PROJECT_ID`; "projeto legado e qualquer terceiro projeto devolvem `false`"). Somam-se
+às duas travas da própria activation (one-shot GASTO no ledger + relógio vencido às 01:22Z).
+Registrado aqui porque as containments anteriores (137/139/140/142/144/147/150) também
+escoparam o contador ao projeto canônico sem dizê-lo — a decisão fica explícita a partir daqui.
+
 ## Classificação
 
 **C-EXTERNAL-TLS-CHAIN**. O bloqueio deixou de ser incerto e passou a ser **identificado por
