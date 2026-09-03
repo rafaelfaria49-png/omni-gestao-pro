@@ -152,15 +152,48 @@ describe("janela efêmera WSDL versionada", () => {
     })
   })
 
-  it("constante versionada está e permanece DORMENTE (null/null/null) após o containment OFF da janela 21:27z de 02/09", () => {
+  it("constante versionada materializa arming H-9/H-10 0037z sem reutilizar activation histórica", () => {
     expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: null,
-      notBeforeUtc: null,
-      expiresAtUtc: null,
+      activationId: "wsdl-h9h10-20260903-0037z-b3913bea58774deb",
+      notBeforeUtc: "2026-09-03T00:37:00.000Z",
+      expiresAtUtc: "2026-09-03T01:22:00.000Z",
     })
-    expect(evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())).toEqual({
+    const durationMs =
+      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.expiresAtUtc!).getTime() -
+      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.notBeforeUtc!).getTime()
+    expect(durationMs).toBe(WSDL_EXECUTION_MAX_WINDOW_MS)
+    expect(durationMs).toBeLessThanOrEqual(WSDL_EXECUTION_MAX_WINDOW_MS)
+    for (const deadId of [
+      ...HISTORICAL_ACTIVATION_IDS,
+      "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d",
+      "wsdl-h9h10-20260830-2005z-513540884b814ac1",
+      "wsdl-h9h10-20260831-0300z-0c42c4389f65469d",
+      "wsdl-h9h10-20260831-1900z-99c21bca85a94cef",
+      "wsdl-h9h10-20260831-2230z-891f55e242004bd2",
+      "wsdl-h9h10-20260902-0430z-772103b09d9477ca",
+      "wsdl-h9h10-20260902-1400z-4b5f2504640de6e4",
+      "wsdl-h9h10-20260902-2127z-bfefedc2de8f65f9",
+    ]) {
+      expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
+    }
+    expect(
+      evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-03T00:59:00.000Z"))
+        .active,
+    ).toBe(true)
+  })
+
+  it("avalia a janela de arming materializada: not_started, active, expired em expiresAt", () => {
+    const config = WSDL_EPHEMERAL_EXECUTION_WINDOW
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-09-03T00:36:59.000Z"))).toEqual({
       active: false,
-      reason: "disabled",
+      reason: "not_started",
+    })
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-09-03T00:37:00.000Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-09-03T01:00:00.000Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-09-03T01:21:59.000Z")).active).toBe(true)
+    expect(evaluateWsdlExecutionWindow(config, new Date("2026-09-03T01:22:00.000Z"))).toEqual({
+      active: false,
+      reason: "expired",
     })
   })
 
@@ -445,13 +478,8 @@ describe("ledger persistente global one-shot", () => {
 })
 
 describe("GOAL 152 — janela externa de arming vs lease interna de rede", () => {
-  it("1. estado null/null/null continua disabled", () => {
-    expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: null,
-      notBeforeUtc: null,
-      expiresAtUtc: null,
-    })
-    expect(evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())).toEqual({
+  it("1. configuração explícita null/null/null continua disabled (independente da constante versionada)", () => {
+    expect(evaluateWsdlExecutionWindow(DISABLED_CONFIG, new Date("2026-09-03T00:59:00.000Z"))).toEqual({
       active: false,
       reason: "disabled",
     })
