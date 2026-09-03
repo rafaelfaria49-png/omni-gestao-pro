@@ -70,8 +70,10 @@ da lista foi tocado.
 3. A falha é **pré-HTTP** e **anterior ao handshake concluído**: nenhum alvo devolveu status,
    corpo ou bytes. `HTTP_RESPONSE_FROM_WSDL_TARGETS_REACHED = false`,
    `RAW_WSDL_RECEIVED = false`.
-4. **Uniformidade absoluta** nos 6 alvos (mesmo host, mesma cadeia) — o modo de falha é
-   sistêmico do caminho TLS, não específico de um serviço.
+4. **Uniformidade absoluta** nos 6 alvos (mesmo host `homologacao.nfce.fazenda.sp.gov.br`)
+   — o modo de falha é sistêmico do caminho TLS, não específico de um serviço. *(A cadeia
+   apresentada NÃO foi observada: nenhum certificado foi capturado. Dizer "mesma cadeia"
+   seria inferência.)*
 
 ## O que a evidência NÃO decide (deliberadamente)
 
@@ -119,13 +121,17 @@ TLS · mudança de hostname/IP.
 
 ## Histórico acumulado do GOAL 020 (honesto)
 
-- **Execução 137** (30/08): 1 chamada administrativa HTTP 200; 6 alvos; `wsdl_rede_incerta`
-  **sem** telemetria de transporte; nenhuma WSDL válida.
+- **Execução 134** (30/08, 14:40:13Z): 1 chamada administrativa → **HTTP 409**
+  `activation_unavailable` no último guard (consumo do one-shot). `WSDL_EXTERNAL_GET_COUNT=0`
+  — nenhum alvo foi tocado. Ver [evidência 134](./FISCAL-NFCE-CONTINGENCY-020-H9H10-EXECUTION-409-134.md).
+- **Execução 137** (30/08, 20:05:17Z): 1 chamada administrativa HTTP 200; 6 alvos;
+  `wsdl_rede_incerta` **sem** telemetria de transporte; nenhuma WSDL válida.
 - **Execução 154** (03/09, esta): 1 chamada administrativa HTTP 200; 6 alvos; mesma falha,
   agora **classificada** como `TLS_CERTIFICATE / UNABLE_TO_GET_ISSUER_CERT_LOCALLY` em
   `SECURE_CONNECT`; nenhuma WSDL válida.
 - Janelas 139, 140, 142, 144, 147 e 150: expiraram ou não foram utilizadas (0/0 cada).
-- **Total de chamadas administrativas do GOAL 020: 2. Total de WSDL válidas obtidas: 0.**
+- **Total de chamadas administrativas do GOAL 020: 3** (134, 137, 154) — sendo 2 com batch
+  dos 6 alvos e 1 barrada no guard. **Total de WSDL válidas obtidas: 0.**
 
 ## Classificação
 
