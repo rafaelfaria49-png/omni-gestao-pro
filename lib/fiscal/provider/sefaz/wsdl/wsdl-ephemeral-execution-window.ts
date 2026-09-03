@@ -1,14 +1,25 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 153 · DIAGNÓSTICO H-9/H-10 com gate resiliente à latência):
- * **ARMING EXTERNO ATIVO** — `wsdl-h9h10-20260903-0037z-b3913bea58774deb`,
- * 00:37:00Z → 01:22:00Z (45 min). Esta janela NÃO é autoridade de rede longa.
- * Rede só após consumo one-shot persistido, lease `min(consumedAt + 10min, expiresAtUtc)`.
- * Invocation: exatamente UMA, same-origin, ADMIN, browser-assisted, sem body, sem retry.
- * Fetch só se restarem ≥ 12 min de arming após Production ON READY + alias.
- * As activations de 30/08, 31/08 e 02/09 (incl. `bfefedc2de8f65f9`) são históricas/proibidas.
- * Gate 2 permanece humano e separado. Containment OFF restaura `{null,null,null}`.
+ * Estado atual (GOAL 020 · 154 · CONTAINMENT OFF pós-diagnóstico H-9/H-10): **DORMENTE** —
+ * `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a `null`.
+ *
+ * A activation `wsdl-h9h10-20260903-0037z-b3913bea58774deb` (arming externo 03/09
+ * 00:37:00Z → 01:22:00Z) foi **CONSUMIDA**: exatamente UMA invocation administrativa
+ * same-origin, browser-assisted, ADMIN/Production — `WSDL_ADMIN_CALL_COUNT=1`, HTTP 200,
+ * `code="completed"`, `ok=false`, batch dos 6 alvos canônicos. Nenhum byte de WSDL foi
+ * recebido: os 6 alvos falharam ANTES de qualquer resposta HTTP, todos em
+ * `transportPhase=SECURE_CONNECT` · `transportClass=TLS_CERTIFICATE` ·
+ * `transportCode=UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (`failureClass=acquisition:wsdl_rede_incerta`,
+ * `httpStatus=null`, `byteLength=null`, `sha256=null`, `h9=false`, `h10=false`).
+ * H-9 e H-10 permanecem **ABERTOS**. A distinção entre cadeia incompleta apresentada pela
+ * SEFAZ e trust store Node/Vercel insuficiente NÃO está decidida e pertence ao próximo GOAL.
+ *
+ * O one-shot global está GASTO para esta activation: ela é evidência histórica, não é
+ * configuração executável e jamais deve ser re-materializada. Evidência sanitizada dos seis
+ * serviços em `docs/ai-execution/_evidence/FISCAL-NFCE-CONTINGENCY-020-H9H10-TLS-DIAGNOSTIC-CONTAINMENT-154.md`.
+ * As activations de 30/08, 31/08 e 02/09 (incl. `bfefedc2de8f65f9`) seguem históricas/proibidas.
+ * Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -34,9 +45,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260903-0037z-b3913bea58774deb",
-  notBeforeUtc: "2026-09-03T00:37:00.000Z",
-  expiresAtUtc: "2026-09-03T01:22:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
