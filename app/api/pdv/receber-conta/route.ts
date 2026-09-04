@@ -3,6 +3,14 @@
  *
  * Recebimento de título no PDV (F5): baixa financeira + movimentação + vínculo à sessão de caixa.
  * Reusa services existentes — sem alteração de schema.
+ *
+ * Invariantes (GOAL PDV-RECEBIMENTO-CANONICALIDADE-HARDENING-002):
+ *  - ATÔMICO: título + histórico + `MovimentacaoFinanceira` + `CaixaOperacao` numa única
+ *    `$transaction`. Se a movimentação ou o caixa falham, a baixa NÃO persiste.
+ *  - IDEMPOTENTE: `payload.localId` determinístico (sem `Date.now()`), verificado DENTRO
+ *    da transação — retry não cria uma segunda entrada de caixa.
+ *  - Título já quitado nunca vira entrada de caixa: o service devolve `ja_pago` e a rota
+ *    não grava nada. O valor lançado é SEMPRE o saldo em aberto real, nunca o valor bruto.
  */
 import { NextResponse } from "next/server"
 import { z } from "zod"
@@ -21,19 +29,27 @@ import {
 import { createMovimentacaoEntradaFromReceber } from "@/lib/financeiro/services/movimentacoes-service"
 import { verificarPeriodoFechado } from "@/lib/financeiro/services/fechamento-service"
 import { logAuditoriaFinanceira, extractAuditoriaActor } from "@/lib/financeiro/services/auditoria-actor"
+import { PAY_EPS } from "@/lib/financeiro/contracts/valores"
 import type { Prisma } from "@/generated/prisma"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 export const revalidate = 0
 
-async function resolveCarteiraIdFromPayload(payload: unknown, storeId: string): Promise<string | null> {
+/** Transação curta: pooler pgBouncer em modo transação com `connection_limit=1`. */
+const TX_OPTS = { maxWait: 5_000, timeout: 15_000 } as const
+
+async function resolveCarteiraIdFromPayload(
+  payload: unknown,
+  storeId: string,
+  db: Prisma.TransactionClient,
+): Promise<string | null> {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null
   const raw = (payload as Record<string, unknown>).carteiraId
   if (typeof raw !== "string") return null
   const id = raw.trim()
   if (!id) return null
-  const c = await prisma.carteiraFinanceira.findFirst({
+  const c = await db.carteiraFinanceira.findFirst({
     where: { id, storeId, ativo: true },
     select: { id: true },
   })
@@ -49,7 +65,36 @@ const bodySchema = z.object({
   formaPagamento: z.string().max(120).optional(),
   observacao: z.string().max(2000).optional(),
   sessaoId: z.string().min(1).max(120),
+  /**
+   * Identidade da OPERAÇÃO (não do título). O cliente reusa a mesma chave ao repetir uma
+   * tentativa que pode ter commitado — o servidor devolve o mesmo resultado sem regravar.
+   */
+  idempotencyKey: z.string().min(1).max(160).optional(),
 })
+
+/**
+ * `payload.localId` da `CaixaOperacao`. Mesmo formato do helper compartilhado
+ * `lib/caixa/recebimento-cr-caixa.ts` (`<prefixo>:<storeId>:<chave>`), escopado por loja.
+ *
+ * Sem chave explícita, cai numa identidade derivada da operação — determinística, nunca
+ * `Date.now()`. Isso cobre o retry idêntico de `parcial` (mesmo valor ⇒ mesma chave ⇒
+ * replay). Para `liquidar`, o valor derivado muda depois da 1ª baixa (o saldo virou 0), de
+ * modo que o retry não casa a chave e é barrado um passo adiante, pelo `ja_pago` do
+ * service: nada é duplicado, mas a resposta é erro em vez de replay. Chamadores que
+ * queiram replay gracioso devem enviar `idempotencyKey` — o modal do PDV envia.
+ */
+function buildRecebimentoLocalId(params: {
+  storeId: string
+  sessaoId: string
+  tituloId: string
+  op: "liquidar" | "parcial"
+  valor: number
+  idempotencyKey?: string
+}): string {
+  const chave =
+    params.idempotencyKey?.trim() || `${params.tituloId}:${params.op}:${params.valor.toFixed(2)}`
+  return `pdv-rc:${params.storeId}:${params.sessaoId}:${chave}`
+}
 
 function pickTituloRef(input: { tituloId?: string | number; localKey?: string }): { id?: string; localKey?: string } {
   const idRaw = input.tituloId != null ? String(input.tituloId).trim() : ""
@@ -126,98 +171,138 @@ export async function POST(request: Request) {
       )
     }
 
-    let res: Awaited<ReturnType<typeof liquidarContaReceber>>
-    let valorMov = 0
-    let parcial = false
+    const parcial = parsed.data.op === "parcial"
 
-    if (parsed.data.op === "liquidar") {
-      // Saldo REAL em aberto (valor − pagamentos já registrados no histórico) ANTES de quitar.
-      // `res.data.valor` é o valor BRUTO da coluna e não diminui em baixas parciais via backend —
-      // usá-lo lançaria mais que o devido no caixa/movimentação em títulos já parcialmente pagos.
+    // Título + histórico + movimentação + operação de caixa numa ÚNICA unidade
+    // transacional. Qualquer falha aqui desfaz a baixa — nada de título quitado sem
+    // lançamento financeiro correspondente.
+    const outcome = await prisma.$transaction(async (tx) => {
       const atual = ref.id
-        ? await getContaReceberById(storeId, ref.id)
-        : await getContaReceberByLocalKey(storeId, ref.localKey!)
-      const abertoAntes = atual ? buildContaReceberAuditTrail([atual])[0]?.saldoAberto ?? 0 : 0
+        ? await getContaReceberById(storeId, ref.id, tx)
+        : await getContaReceberByLocalKey(storeId, ref.localKey!, tx)
+      if (!atual) return { kind: "erro" as const, code: "not_found", status: 404 }
 
-      res = await liquidarContaReceber({
+      // Saldo REAL em aberto (valor − pagamentos já registrados no histórico) ANTES de
+      // quitar. A coluna `valor` é o valor BRUTO e não diminui em baixas parciais —
+      // usá-la lançaria mais que o devido no caixa de um título parcialmente pago.
+      const abertoAntes = buildContaReceberAuditTrail([atual])[0]?.saldoAberto ?? 0
+      const valorMov = parcial ? parsed.data.valor! : abertoAntes
+
+      const localId = buildRecebimentoLocalId({
         storeId,
-        id: ref.id,
-        localKey: ref.localKey,
-        observacao,
-        userLabel,
+        sessaoId: sessao.id,
+        tituloId: atual.id,
+        op: parsed.data.op,
+        valor: valorMov,
+        idempotencyKey: parsed.data.idempotencyKey,
       })
+
+      // Idempotência: a mesma operação repetida não gera uma segunda entrada no caixa.
+      // Checada ANTES de qualquer escrita — inclusive antes de reaplicar o pagamento.
+      const jaRegistrada = await tx.caixaOperacao.findFirst({
+        where: { storeId, tipo: "recebimento_cr", payload: { path: ["localId"], equals: localId } },
+        select: { id: true, valor: true },
+      })
+      if (jaRegistrada) {
+        return { kind: "replay" as const, titulo: atual, valorMov: jaRegistrada.valor }
+      }
+
+      // O service é a autoridade sobre a recusa (`ja_pago` / `nada_em_aberto` /
+      // `titulo_encerrado`) e não escreve nada quando recusa.
+      const res = parcial
+        ? await registrarPagamentoParcial({
+            storeId,
+            id: ref.id,
+            localKey: ref.localKey,
+            valorPago: parsed.data.valor!,
+            observacao,
+            userLabel,
+            db: tx,
+          })
+        : await liquidarContaReceber({
+            storeId,
+            id: ref.id,
+            localKey: ref.localKey,
+            observacao,
+            userLabel,
+            db: tx,
+          })
       if (!res.ok) {
         const status = res.reason === "not_found" ? 404 : 422
-        return NextResponse.json({ ok: false, error: res.reason, code: res.reason }, { status })
+        return { kind: "erro" as const, code: res.reason, status }
       }
-      valorMov = abertoAntes > 0 ? abertoAntes : res.data.valor
-      parcial = false
-    } else {
-      res = await registrarPagamentoParcial({
-        storeId,
-        id: ref.id,
-        localKey: ref.localKey,
-        valorPago: parsed.data.valor!,
-        observacao,
-        userLabel,
+      // Invariante: o service só aceita quando há saldo acima do epsilon — logo `valorMov`
+      // aqui é sempre > 0. Nunca cair no valor bruto da coluna como fallback.
+      if (!(valorMov > PAY_EPS)) throw new Error("valor_recebimento_invalido")
+
+      const carteiraId = await resolveCarteiraIdFromPayload(res.data.payload, storeId, tx)
+      const mov = await createMovimentacaoEntradaFromReceber(
+        { id: res.data.id, storeId: res.data.storeId, descricao: res.data.descricao, cliente: res.data.cliente },
+        valorMov,
+        { parcial, carteiraId, db: tx },
+      )
+      // Escrita financeira NÃO é best-effort: sem movimentação, a baixa não vale.
+      if (!mov.ok) throw new Error(`movimentacao_financeira_falhou:${mov.reason}`)
+
+      await tx.caixaOperacao.create({
+        data: {
+          sessaoId: sessao.id,
+          storeId,
+          tipo: "recebimento_cr",
+          valor: valorMov,
+          motivo: `Recebimento CR — ${res.data.cliente || res.data.descricao} (${forma})`,
+          operador: userLabel,
+          payload: {
+            localId,
+            tituloId: res.data.id,
+            localKey: res.data.localKey,
+            formaPagamento: forma,
+            op: parsed.data.op,
+          } as Prisma.InputJsonValue,
+        },
       })
-      if (!res.ok) {
-        const status = res.reason === "not_found" ? 404 : 422
-        return NextResponse.json({ ok: false, error: res.reason, code: res.reason }, { status })
-      }
-      valorMov = parsed.data.valor!
-      parcial = true
+
+      return { kind: "ok" as const, titulo: res.data, valorMov }
+    }, TX_OPTS)
+
+    if (outcome.kind === "erro") {
+      return NextResponse.json(
+        { ok: false, error: outcome.code, code: outcome.code },
+        { status: outcome.status },
+      )
     }
 
-    const carteiraId = await resolveCarteiraIdFromPayload(res.data.payload, storeId)
-    await createMovimentacaoEntradaFromReceber(
-      { id: res.data.id, storeId: res.data.storeId, descricao: res.data.descricao, cliente: res.data.cliente },
-      valorMov,
-      { parcial, carteiraId },
-    ).catch((e) => console.error("[pdv/receber-conta mov]", e))
+    const titulo = outcome.titulo
+    const valorMov = outcome.valorMov
+    const replay = outcome.kind === "replay"
 
-    const localId = `pdv-rc:${sessao.id}:${res.data.id}:${parsed.data.op}:${Date.now()}`
-    await prisma.caixaOperacao.create({
-      data: {
-        sessaoId: sessao.id,
+    if (!replay) {
+      void logAuditoriaFinanceira({
         storeId,
-        tipo: "recebimento_cr",
-        valor: valorMov,
-        motivo: `Recebimento CR — ${res.data.cliente || res.data.descricao} (${forma})`,
-        operador: userLabel,
-        payload: {
-          localId,
-          tituloId: res.data.id,
-          localKey: res.data.localKey,
-          formaPagamento: forma,
-          op: parsed.data.op,
-        } as Prisma.InputJsonValue,
-      },
-    })
+        entidade: "receber",
+        entidadeId: titulo.id,
+        acao: "liquidar",
+        actor,
+        depois: { localKey: titulo.localKey, valor: valorMov, formaPagamento: forma, sessaoId: sessao.id, parcial },
+      })
+    }
 
-    void logAuditoriaFinanceira({
-      storeId,
-      entidade: "receber",
-      entidadeId: res.data.id,
-      acao: "liquidar",
-      actor,
-      depois: { localKey: res.data.localKey, valor: valorMov, formaPagamento: forma, sessaoId: sessao.id, parcial },
-    })
-
-    const audit = buildContaReceberAuditTrail([res.data])[0] ?? null
+    const audit = buildContaReceberAuditTrail([titulo])[0] ?? null
 
     return NextResponse.json({
       ok: true,
       op: parsed.data.op,
       valorRecebido: valorMov,
+      /** true = operação já registrada antes (retry); nada foi gravado de novo. */
+      jaRegistrado: replay,
       titulo: {
-        id: res.data.id,
-        localKey: res.data.localKey,
-        status: res.data.status,
-        valor: res.data.valor,
-        vencimento: res.data.vencimento,
-        cliente: res.data.cliente,
-        descricao: res.data.descricao,
+        id: titulo.id,
+        localKey: titulo.localKey,
+        status: titulo.status,
+        valor: titulo.valor,
+        vencimento: titulo.vencimento,
+        cliente: titulo.cliente,
+        descricao: titulo.descricao,
       },
       audit,
     })

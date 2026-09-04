@@ -71,7 +71,10 @@ export async function POST(request: Request) {
   })
 
   if (!res.ok) {
-    return NextResponse.json({ ok: false, error: res.reason }, { status: 404 })
+    // `ja_pago` / `nada_em_aberto` / `titulo_encerrado` não são "não encontrado": o título
+    // existe e a operação é que não se aplica. Mesmo mapeamento da rota do PDV.
+    const status = res.reason === "not_found" ? 404 : 422
+    return NextResponse.json({ ok: false, error: res.reason, code: res.reason }, { status })
   }
 
   try {

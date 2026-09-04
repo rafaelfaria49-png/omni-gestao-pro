@@ -3,9 +3,41 @@ import type { Prisma } from "@/generated/prisma"
 import type { ContaReceberTitulo } from "@/generated/prisma"
 import { mergeFinanceiroPayload, appendFinanceiroHistorico } from "@/lib/financeiro/contracts/payload"
 import { RECEBER_STATUS, normalizeReceberStatus, type ReceberStatusCanon } from "@/lib/financeiro/contracts/status"
-import { safeMoney, isOverdueDateString } from "@/lib/financeiro/contracts/valores"
+import { safeMoney, isOverdueDateString, PAY_EPS } from "@/lib/financeiro/contracts/valores"
 
-const PAY_EPS = 0.009
+/**
+ * Cliente Prisma aceito pelos services de Contas a Receber: o singleton global OU um
+ * `Prisma.TransactionClient` recebido de `$transaction`. Permite que a baixa (título +
+ * histórico + movimentação + caixa) participe de UMA unidade transacional.
+ * Mesmo padrão já usado em `lib/estoque/deposito-core.ts`.
+ */
+export type ContaReceberDbClient = Prisma.TransactionClient
+
+/** Sem `db`, usa o singleton global — chamadores existentes não mudam. */
+function dbOf(db?: ContaReceberDbClient): ContaReceberDbClient {
+  return db ?? prisma
+}
+
+/**
+ * Chaves do `payload` cuja autoridade é do SERVIDOR (livro-razão financeiro).
+ *
+ * `replacePayload: true` existe para os caminhos legados que sempre reenviam o snapshot
+ * INTEIRO do localStorage/import/sync. Esse snapshot pode substituir campos de
+ * apresentação, mas nunca apagar o que o servidor gravou: `historico` é a única fonte de
+ * `saldoAberto`, e apagá-lo ressuscita dívida já recebida.
+ *
+ * Exceção deliberada: se o próprio chamador envia a chave no `payloadPatch`, ele é a
+ * autoridade sobre ela (ex.: importador que reconstrói o histórico a cada re-importação) —
+ * **exceto** quando o servidor já gravou lançamentos naquele título (ver
+ * `temLedgerDoServidor`).
+ */
+export const CONTA_RECEBER_SERVER_OWNED_PAYLOAD_KEYS = [
+  "historico",
+  "canceladoEm",
+  "motivoCancelamento",
+  "estornoTituloEm",
+  "motivoEstorno",
+] as const
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v)
@@ -38,6 +70,25 @@ export function sumPagamentosFromHistoricoPayload(payload: unknown): number {
   return safeMoney(s)
 }
 
+/**
+ * O servidor já gravou algum lançamento no ledger deste título?
+ *
+ * `appendFinanceiroHistorico` é o ÚNICO caminho pelo qual o servidor apenda ao
+ * `historico`, e ele sempre carimba `at`. Os importadores montam entradas próprias com
+ * `data`/`importadoEm` e nunca `at`. Logo, a presença de `at` identifica com segurança um
+ * lançamento nascido aqui dentro (PDV, Financeiro, OS) — inclusive nos títulos que já
+ * existem em produção, que não têm marcador de origem explícito.
+ *
+ * A partir do primeiro lançamento do servidor, o ledger daquele título passa a ser dele:
+ * re-importar a planilha de origem (que não conhece o pagamento feito no PDV) não pode
+ * mais reescrever o histórico nem ressuscitar a dívida.
+ */
+function temLedgerDoServidor(payload: unknown): boolean {
+  const h = asPayloadRecord(payload).historico
+  if (!Array.isArray(h)) return false
+  return h.some((e) => isRecord(e) && typeof e.at === "string" && e.at.length > 0)
+}
+
 export type ContaReceberServiceResult<T> = { ok: true; data: T } | { ok: false; reason: string }
 
 export type UpsertContaReceberInput = {
@@ -53,6 +104,7 @@ export type UpsertContaReceberInput = {
   historicoEntrada?: Record<string, unknown>
   /** Quando true, substitui o `payload` em vez de fazer merge profundo. Útil para caminhos legados (PDV/import). */
   replacePayload?: boolean
+  db?: ContaReceberDbClient
 }
 
 export type ContaReceberSummary = {
@@ -73,34 +125,73 @@ export async function listContasReceberByStore(storeId: string): Promise<ContaRe
   })
 }
 
-export async function getContaReceberById(storeId: string, id: string): Promise<ContaReceberTitulo | null> {
+export async function getContaReceberById(
+  storeId: string,
+  id: string,
+  db?: ContaReceberDbClient,
+): Promise<ContaReceberTitulo | null> {
   const sid = safeStr(storeId).trim()
   const tid = safeStr(id).trim()
   if (!sid || !tid) return null
-  return prisma.contaReceberTitulo.findFirst({
+  return dbOf(db).contaReceberTitulo.findFirst({
     where: { id: tid, storeId: sid },
   })
 }
 
-export async function getContaReceberByLocalKey(storeId: string, localKey: string): Promise<ContaReceberTitulo | null> {
+export async function getContaReceberByLocalKey(
+  storeId: string,
+  localKey: string,
+  db?: ContaReceberDbClient,
+): Promise<ContaReceberTitulo | null> {
   const sid = safeStr(storeId).trim()
   const lk = safeStr(localKey).trim()
   if (!sid || !lk) return null
-  return prisma.contaReceberTitulo.findUnique({
+  return dbOf(db).contaReceberTitulo.findUnique({
     where: { storeId_localKey: { storeId: sid, localKey: lk } },
   })
 }
 
 async function findTitulo(
   storeId: string,
-  opts: { id?: string; localKey?: string },
+  opts: { id?: string; localKey?: string; db?: ContaReceberDbClient },
 ): Promise<ContaReceberTitulo | null> {
   if (opts.id) {
-    const t = await getContaReceberById(storeId, opts.id)
+    const t = await getContaReceberById(storeId, opts.id, opts.db)
     if (t) return t
   }
-  if (opts.localKey) return await getContaReceberByLocalKey(storeId, opts.localKey)
+  if (opts.localKey) return await getContaReceberByLocalKey(storeId, opts.localKey, opts.db)
   return null
+}
+
+/**
+ * Status canônico quando um snapshot legado reescreve o título (`replacePayload`) sem
+ * trazer o próprio livro-razão.
+ *
+ * 1. Estado terminal do servidor (pago/cancelado/estornado) não é reaberto por um
+ *    snapshot antigo — título quitado nunca volta a ser dívida em aberto.
+ * 2. O status nunca contradiz o `historico` preservado: com pagamentos gravados,
+ *    "pendente" é uma mentira — deriva-se parcial/pago.
+ *
+ * A guarda é unidirecional: ela impede REABRIR dívida, não impede encerrá-la. Um chamador
+ * que peça `cancelado`/`estornado` continua sendo atendido, mesmo com ledger no título.
+ */
+function canonicalSnapshotStatus(params: {
+  existente: string
+  payload: Record<string, unknown>
+  valor: number
+  pedido: ReceberStatusCanon
+}): ReceberStatusCanon {
+  const atual = normalizeReceberStatus(params.existente)
+  if (atual === RECEBER_STATUS.PAGO || atual === RECEBER_STATUS.CANCELADO || atual === RECEBER_STATUS.ESTORNADO) {
+    return atual
+  }
+  if (params.pedido === RECEBER_STATUS.CANCELADO || params.pedido === RECEBER_STATUS.ESTORNADO) {
+    return params.pedido
+  }
+  const pago = sumPagamentosFromHistoricoPayload(params.payload)
+  if (params.valor > PAY_EPS && pago + PAY_EPS >= params.valor) return RECEBER_STATUS.PAGO
+  if (pago > PAY_EPS) return RECEBER_STATUS.PARCIAL
+  return params.pedido
 }
 
 /**
@@ -113,15 +204,30 @@ export async function upsertContaReceber(input: UpsertContaReceberInput): Promis
     throw new Error("contas-receber-service: storeId e localKey são obrigatórios")
   }
 
-  const existing = await prisma.contaReceberTitulo.findUnique({
+  const client = dbOf(input.db)
+  const existing = await client.contaReceberTitulo.findUnique({
     where: { storeId_localKey: { storeId, localKey } },
   })
 
   let nextPayload: Record<string, unknown>
   const basePayload = existing?.payload as Record<string, unknown> | undefined
+  // O chamador só é autoridade sobre o livro-razão se (a) enviar `historico` e (b) o
+  // servidor ainda não tiver gravado lançamento nenhum nesse título. Re-importação de
+  // planilha continua reescrevendo o histórico que ela mesma criou — mas nunca apaga um
+  // pagamento nascido no PDV/Financeiro.
+  const ledgerDoChamador =
+    !!(input.replacePayload && isRecord(input.payloadPatch) && "historico" in input.payloadPatch) &&
+    !temLedgerDoServidor(basePayload)
   if (input.replacePayload && isRecord(input.payloadPatch)) {
     // Compatibilidade com APIs legadas que sempre enviam snapshot completo.
     nextPayload = { ...input.payloadPatch }
+    // Canonicalidade: o snapshot do cliente não apaga o que o servidor gravou.
+    for (const k of CONTA_RECEBER_SERVER_OWNED_PAYLOAD_KEYS) {
+      const cedeAoChamador = k === "historico" ? ledgerDoChamador : k in input.payloadPatch
+      if (cedeAoChamador) continue
+      const prev = basePayload?.[k]
+      if (prev !== undefined) nextPayload[k] = prev
+    }
   } else {
     nextPayload = mergeFinanceiroPayload(basePayload, input.payloadPatch)
   }
@@ -136,7 +242,11 @@ export async function upsertContaReceber(input: UpsertContaReceberInput): Promis
   const vencimento = input.vencimento !== undefined ? safeStr(input.vencimento) : (existing?.vencimento ?? "")
 
   const stIn = input.status ?? existing?.status ?? RECEBER_STATUS.PENDENTE
-  const statusCanon = normalizeReceberStatus(stIn) ?? RECEBER_STATUS.PENDENTE
+  const statusPedido = normalizeReceberStatus(stIn) ?? RECEBER_STATUS.PENDENTE
+  const statusCanon =
+    input.replacePayload && existing && !ledgerDoChamador
+      ? canonicalSnapshotStatus({ existente: existing.status, payload: nextPayload, valor, pedido: statusPedido })
+      : statusPedido
 
   const data = {
     descricao,
@@ -147,7 +257,7 @@ export async function upsertContaReceber(input: UpsertContaReceberInput): Promis
     payload: nextPayload as unknown as Prisma.InputJsonValue,
   }
 
-  return prisma.contaReceberTitulo.upsert({
+  return client.contaReceberTitulo.upsert({
     where: { storeId_localKey: { storeId, localKey } },
     create: {
       storeId,
@@ -210,13 +320,19 @@ export async function liquidarContaReceber(params: {
   observacao?: string
   formaPagamento?: string
   userLabel?: string
+  db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
-  const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey })
+  const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
   if (!row) return { ok: false, reason: "not_found" }
 
   const cur = normalizeReceberStatus(row.status)
   if (cur === RECEBER_STATUS.CANCELADO || cur === RECEBER_STATUS.ESTORNADO) return { ok: false, reason: "titulo_encerrado" }
-  if (cur === RECEBER_STATUS.PAGO) return { ok: true, data: row }
+  // Título já quitado NÃO é sucesso: devolver `ok:true` fazia o chamador lançar uma nova
+  // entrada de caixa sobre uma dívida inexistente. Reusa o código `ja_pago` que
+  // `registrarPagamentoParcial` (aqui) e `registrarPagamentoParcialContaPagar` já emitem
+  // para a mesma condição. (`liquidarContaPagar` ainda devolve sucesso silencioso nesse
+  // caso — mesmo defeito, do outro lado; fora do escopo deste GOAL.)
+  if (cur === RECEBER_STATUS.PAGO) return { ok: false, reason: "ja_pago" }
 
   const aberto = saldoAberto(row)
   if (aberto <= PAY_EPS) return { ok: false, reason: "nada_em_aberto" }
@@ -230,7 +346,7 @@ export async function liquidarContaReceber(params: {
     userLabel: safeStr(params.userLabel) || undefined,
   })
 
-  const updated = await prisma.contaReceberTitulo.update({
+  const updated = await dbOf(params.db).contaReceberTitulo.update({
     where: { id: row.id },
     data: {
       status: RECEBER_STATUS.PAGO,
@@ -248,8 +364,9 @@ export async function registrarPagamentoParcial(params: {
   observacao?: string
   formaPagamento?: string
   userLabel?: string
+  db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
-  const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey })
+  const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
   if (!row) return { ok: false, reason: "not_found" }
 
   const cur = normalizeReceberStatus(row.status)
@@ -277,7 +394,7 @@ export async function registrarPagamentoParcial(params: {
   if (pago + PAY_EPS >= total) nextStatus = RECEBER_STATUS.PAGO
   else if (pago > PAY_EPS) nextStatus = RECEBER_STATUS.PARCIAL
 
-  const updated = await prisma.contaReceberTitulo.update({
+  const updated = await dbOf(params.db).contaReceberTitulo.update({
     where: { id: row.id },
     data: {
       status: nextStatus,

@@ -4,6 +4,14 @@
 
 const MONEY_SCALE = 100
 
+/**
+ * Tolerância de arredondamento de centavos. Saldo `<= PAY_EPS` é considerado ZERO —
+ * título quitado, nada em aberto. Fonte única do epsilon na trilha de Contas a Receber:
+ * service, API e UI comparam com este mesmo valor (cópias divergentes já produziram
+ * "PENDENTE com R$ 0" na tela). `contas-pagar-service` ainda mantém a própria cópia.
+ */
+export const PAY_EPS = 0.009
+
 export function safeMoney(n: unknown): number {
   if (typeof n !== "number" || !Number.isFinite(n)) return 0
   return Math.round(n * MONEY_SCALE) / MONEY_SCALE
