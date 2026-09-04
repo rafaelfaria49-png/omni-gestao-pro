@@ -255,6 +255,22 @@ export async function createMovimentacaoEntradaFromReceber(
     carteiraId?: string | null
     /** Quando informado, o lançamento participa da transação do chamador. */
     db?: MovimentacoesDbClient
+    /**
+     * O CHAMADOR é dono da idempotência — pula as duas checagens daqui.
+     *
+     * Existe para o recebimento em LOTE (G2), cuja identidade é o advisory lock
+     * transacional + o `localId` da `CaixaOperacao`. A heurística de soma abaixo
+     * ("já gravei ≥ este valor ⇒ é retry") supõe um pagamento por vez e, num lote,
+     * suprimiria uma segunda parcial legítima de mesmo valor — dinheiro recebido que
+     * sumiria do financeiro. Sem o flag, nada muda para os chamadores existentes.
+     */
+    idempotenciaDoChamador?: boolean
+    /**
+     * Não recalcula o saldo da carteira agora — o chamador recalcula uma vez por
+     * carteira ao fim do lote. Evita N varreduras completas das movimentações dentro de
+     * uma transação que precisa ser curta (pgBouncer, `connection_limit=1`).
+     */
+    adiarRecalculoCarteira?: boolean
   } = {},
 ): Promise<MovimentacaoResult> {
   const storeId = assertStoreId(titulo.storeId)
@@ -268,20 +284,23 @@ export async function createMovimentacaoEntradaFromReceber(
 
   // Para liquidação total: idempotência estrita (skipa se já existe)
   // Para parcial: permite múltiplos APENAS se valor diferente já gravado (melhor esforço)
-  if (!opts.parcial) {
-    if (await existeMovimentacao(storeId, referenciaId, "entrada", origem, opts.db)) {
-      return { ok: true, action: "skipped_idempotent" }
-    }
-  } else {
-    // Para parcial: verifica se o total já gravado para esta referência ≥ valor recebido agora
-    const agg = await client.movimentacaoFinanceira.aggregate({
-      where: { storeId, referenciaId, tipo: "entrada", origem: { startsWith: "receber" } },
-      _sum: { valor: true },
-    })
-    const totalGravado = safeMoney(agg._sum.valor ?? 0)
-    // Se total gravado já é >= o novo valor, provavelmente retry; pula
-    if (totalGravado >= valorMoney) {
-      return { ok: true, action: "skipped_idempotent" }
+  // Com `idempotenciaDoChamador`, nenhuma das duas roda — a identidade é do chamador.
+  if (!opts.idempotenciaDoChamador) {
+    if (!opts.parcial) {
+      if (await existeMovimentacao(storeId, referenciaId, "entrada", origem, opts.db)) {
+        return { ok: true, action: "skipped_idempotent" }
+      }
+    } else {
+      // Para parcial: verifica se o total já gravado para esta referência ≥ valor recebido agora
+      const agg = await client.movimentacaoFinanceira.aggregate({
+        where: { storeId, referenciaId, tipo: "entrada", origem: { startsWith: "receber" } },
+        _sum: { valor: true },
+      })
+      const totalGravado = safeMoney(agg._sum.valor ?? 0)
+      // Se total gravado já é >= o novo valor, provavelmente retry; pula
+      if (totalGravado >= valorMoney) {
+        return { ok: true, action: "skipped_idempotent" }
+      }
     }
   }
 
@@ -289,7 +308,7 @@ export async function createMovimentacaoEntradaFromReceber(
   const movimentacao = await client.movimentacaoFinanceira.create({
     data: { storeId, tipo: "entrada", valor: valorMoney, descricao, origem, referenciaId, carteiraId },
   })
-  if (carteiraId) {
+  if (carteiraId && !opts.adiarRecalculoCarteira) {
     // Dentro de `$transaction`, o recálculo usa o MESMO cliente: enxerga o lançamento
     // ainda não commitado e o saldo da carteira volta atrás junto no rollback. Nesse modo
     // a falha PROPAGA — engoli-la deixaria a transação abortada sem ninguém saber.

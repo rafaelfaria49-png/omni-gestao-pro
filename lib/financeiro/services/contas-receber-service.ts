@@ -320,6 +320,8 @@ export async function liquidarContaReceber(params: {
   observacao?: string
   formaPagamento?: string
   userLabel?: string
+  /** Identidade da operação em LOTE (G2), carimbada no histórico para rastreabilidade. */
+  loteId?: string
   db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
   const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
@@ -344,6 +346,7 @@ export async function liquidarContaReceber(params: {
     observacao: safeStr(params.observacao) || undefined,
     formaPagamento: safeStr(params.formaPagamento).trim() || undefined,
     userLabel: safeStr(params.userLabel) || undefined,
+    loteId: safeStr(params.loteId).trim() || undefined,
   })
 
   const updated = await dbOf(params.db).contaReceberTitulo.update({
@@ -364,6 +367,8 @@ export async function registrarPagamentoParcial(params: {
   observacao?: string
   formaPagamento?: string
   userLabel?: string
+  /** Identidade da operação em LOTE (G2), carimbada no histórico para rastreabilidade. */
+  loteId?: string
   db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
   const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
@@ -387,6 +392,7 @@ export async function registrarPagamentoParcial(params: {
     observacao: safeStr(params.observacao) || undefined,
     formaPagamento: safeStr(params.formaPagamento).trim() || undefined,
     userLabel: safeStr(params.userLabel) || undefined,
+    loteId: safeStr(params.loteId).trim() || undefined,
   })
 
   const pago = sumPagamentosFromHistoricoPayload(merged)
