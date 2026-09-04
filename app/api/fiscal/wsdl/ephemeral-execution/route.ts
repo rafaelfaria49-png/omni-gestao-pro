@@ -21,7 +21,7 @@ import { prisma, prismaEnsureConnected } from "@/lib/prisma"
 import { storeIdFromAssistecRequestForWrite } from "@/lib/store-id-from-request"
 import { requireFiscalAdmin } from "@/lib/fiscal/guard-fiscal-admin"
 import { resolveActiveCertificate } from "@/lib/fiscal/certificate/resolve-active-certificate"
-import { loadA1MtlsSecureContext } from "@/lib/fiscal/certificate/a1-mtls-material"
+import { loadA1SefazMtlsSecureContext } from "@/lib/fiscal/certificate/a1-mtls-material"
 import {
   configuredWsdlExecutionWindowStatus,
   consumeConfiguredWsdlExecutionActivation,
@@ -187,7 +187,7 @@ export async function POST(request: Request) {
 
     // Abre e valida PFX/senha em memória antes de tocar no ledger one-shot. Falha local deixa a
     // activation disponível; o material bruto é descartado dentro da primitiva.
-    const preparedSecureContext = await loadA1MtlsSecureContext({
+    const preparedSecureContext = await loadA1SefazMtlsSecureContext({
       storeId: active.storeId,
       blobRef: active.blobRef,
       senhaRef: active.senhaRef,

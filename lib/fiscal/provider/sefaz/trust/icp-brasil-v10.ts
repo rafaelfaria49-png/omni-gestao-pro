@@ -13,7 +13,11 @@
 import { createHash, X509Certificate } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import tls from "node:tls"
+import tls, {
+  createSecureContext as nodeCreateSecureContext,
+  type SecureContext,
+  type SecureContextOptions,
+} from "node:tls"
 
 export const ICP_BRASIL_V10_CANONICAL_DER_SHA256 =
   "6E:0B:FF:06:9A:26:99:4C:15:DE:2C:48:88:CC:54:AF:84:88:2E:54:95:B7:FB:F6:6B:E9:CC:FF:EC:74:89:F6"
@@ -186,4 +190,25 @@ export function getSefazCompositeRootCAs(): string[] {
   if (cachedCompositeCAs) return [...cachedCompositeCAs]
   cachedCompositeCAs = buildSefazCompositeCAs()
   return [...cachedCompositeCAs]
+}
+
+/**
+ * Factory canonica para SecureContext SEFAZ.
+ * Unica autoridade de composicao da trust SEFAZ.
+ *
+ * Garante mecanicamente que TODO SecureContext produtivo SEFAZ receba:
+ * - tls.rootCertificates padrao do Node.js
+ * - Trust anchor oficial da ICP-Brasil v10
+ * - minVersion padrao TLSv1.2 (ou o minVersion especificado nas opcoes)
+ * - Credenciais mTLS A1 (pfx, passphrase) preservadas
+ * - Sem alterar trust global do processo (zero NODE_EXTRA_CA_CERTS)
+ */
+export function createSefazSecureContext(
+  options: SecureContextOptions = {},
+): SecureContext {
+  return nodeCreateSecureContext({
+    ...options,
+    minVersion: options.minVersion ?? "TLSv1.2",
+    ca: getSefazCompositeRootCAs(),
+  })
 }

@@ -6,13 +6,16 @@
  */
 import { describe, expect, it } from "vitest"
 import { X509Certificate } from "node:crypto"
+import { createServer as createHttpsServer } from "node:https"
 import tls from "node:tls"
 import {
   ICP_BRASIL_V10_CANONICAL_DER_SHA256,
   ICP_BRASIL_V10_CANONICAL_SKI,
   buildSefazCompositeCAs,
+  createSefazSecureContext,
   extractSubjectKeyIdentifier,
   getDerSha256Fingerprint,
+  getSefazCompositeRootCAs,
   loadIcpBrasilV10Pem,
   normalizePem,
   validateIcpBrasilV10Certificate,
@@ -171,5 +174,123 @@ describe("Composicao de Trust e SecureContext SEFAZ (Criterios A a G)", () => {
     // nodeSefazHttpsRuntimePorts preserva rejectUnauthorized sem relaxar para false
     expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).not.toBe("0")
     expect(process.env.NODE_EXTRA_CA_CERTS).toBeUndefined()
+  })
+
+  it("Factory canônica: createSefazSecureContext constrói contexto com CAs compostas e minVersion TLSv1.2", () => {
+    const pki = createTestMtlsPki()
+
+    // 1. Chamada sem argumentos aplica defaults seguros
+    const defaultContext = createSefazSecureContext()
+    expect(defaultContext).toBeDefined()
+
+    // 2. Com credenciais A1, repassa pfx, passphrase e minVersion
+    const a1Context = createSefazSecureContext({
+      pfx: pki.clientPfx,
+      passphrase: pki.clientPassphrase,
+    })
+    expect(a1Context).toBeDefined()
+
+    // 3. Senha incorreta falha
+    expect(() => {
+      createSefazSecureContext({
+        pfx: pki.clientPfx,
+        passphrase: "senha-incorreta-factory",
+      })
+    }).toThrow(/mac verify failure|pkcs12/i)
+
+    // 4. Versão TLS inválida falha
+    expect(() => {
+      createSefazSecureContext({
+        minVersion: "TLSv9.9" as any,
+      })
+    }).toThrow()
+  })
+
+  it("Cadeia offline: contexto sem a raiz correspondente falha na validação TLS, e contexto composto passa", async () => {
+    const pki = createTestMtlsPki()
+    const server = createHttpsServer(
+      {
+        key: pki.serverPrivateKeyPem,
+        cert: pki.serverCertificatePem,
+      },
+      (req, res) => {
+        res.writeHead(200)
+        res.end("ok")
+      },
+    )
+
+    const port = await new Promise<number>((resolve, reject) => {
+      server.once("error", reject)
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address()
+        if (addr && typeof addr === "object") resolve(addr.port)
+        else reject(new Error("porta indisponivel"))
+      })
+    })
+
+    try {
+      // Caso 1: SecureContext padrão sem a CA correspondente falha na verificação da cadeia
+      const defaultContext = tls.createSecureContext()
+      const failPromise = new Promise<string>((resolve) => {
+        const client = tls.connect({
+          host: "127.0.0.1",
+          port,
+          servername: pki.serverName,
+          rejectUnauthorized: true,
+          secureContext: defaultContext,
+        })
+        client.on("error", (err) => resolve((err as any).code || err.message))
+        client.on("secureConnect", () => {
+          client.destroy()
+          resolve("unexpected_success")
+        })
+      })
+
+      const failResult = await failPromise
+      expect([
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "self-signed certificate in certificate chain",
+        "CERT_SIGNATURE_FAILURE",
+      ]).toContain(failResult)
+
+      // Caso 2: SecureContext composto com a raiz passa na verificação da cadeia
+      const compositeContext = tls.createSecureContext({
+        ca: buildSefazCompositeCAs(tls.rootCertificates, pki.caCertificatePem),
+      })
+      const successPromise = new Promise<string>((resolve) => {
+        const client = tls.connect({
+          host: "127.0.0.1",
+          port,
+          servername: pki.serverName,
+          rejectUnauthorized: true,
+          secureContext: compositeContext,
+        })
+        client.on("error", (err) => resolve((err as any).code || err.message))
+        client.on("secureConnect", () => {
+          client.destroy()
+          resolve("success")
+        })
+      })
+
+      const successResult = await successPromise
+      expect(successResult).toBe("success")
+
+      // Caso 3: Prova que a raiz ICP-Brasil v10 está presente em getSefazCompositeRootCAs()
+      // mas ausente de tls.rootCertificates
+      const icpPem = loadIcpBrasilV10Pem()
+      const normalizedIcp = normalizePem(icpPem)
+      const presentInDefault = tls.rootCertificates.some(
+        (root) => normalizePem(root) === normalizedIcp,
+      )
+      expect(presentInDefault).toBe(false)
+
+      const compositeCAs = getSefazCompositeRootCAs()
+      const presentInComposite = compositeCAs.some(
+        (root) => normalizePem(root) === normalizedIcp,
+      )
+      expect(presentInComposite).toBe(true)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
   })
 })

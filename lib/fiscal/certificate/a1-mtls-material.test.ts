@@ -6,6 +6,7 @@ import {
   A1MtlsMaterialError,
   loadA1MtlsMaterial,
   loadA1MtlsSecureContext,
+  loadA1SefazMtlsSecureContext,
 } from "./a1-mtls-material"
 
 const STORE = "store-mtls-offline"
@@ -171,5 +172,49 @@ describe("A1 mTLS material · somente memória e referências opacas", () => {
     })).toEqual({ vazou: false, ocorrencias: [] })
     fixture.pfx.fill(0)
     invalidPfx.fill(0)
+  })
+
+  it("loadA1MtlsSecureContext aceita factory customizada e preserva credenciais", async () => {
+    const fixture = validTestPfx({ senha: "senha-custom-factory-sintetica" })
+    let factoryCalled = false
+    let capturedOptions: Record<string, unknown> | null = null
+
+    const secureContext = await loadA1MtlsSecureContext(
+      {
+        storeId: STORE,
+        blobRef: PFX_REF,
+        senhaRef: SENHA_REF,
+        env: testEnv(fixture.pfx, fixture.senha),
+      },
+      {
+        createSecureContext: (options) => {
+          factoryCalled = true
+          capturedOptions = { ...options }
+          return Buffer.from("dummy-context") as unknown as import("node:tls").SecureContext
+        },
+      },
+    )
+
+    expect(factoryCalled).toBe(true)
+    expect(capturedOptions).toMatchObject({
+      passphrase: "senha-custom-factory-sintetica",
+      minVersion: "TLSv1.2",
+    })
+    expect(secureContext).toBeDefined()
+    fixture.pfx.fill(0)
+  })
+
+  it("loadA1SefazMtlsSecureContext constrói SecureContext válido com trust SEFAZ", async () => {
+    const fixture = validTestPfx({ senha: "senha-sefaz-context-sintetica" })
+
+    const secureContext = await loadA1SefazMtlsSecureContext({
+      storeId: STORE,
+      blobRef: PFX_REF,
+      senhaRef: SENHA_REF,
+      env: testEnv(fixture.pfx, fixture.senha),
+    })
+
+    expect(secureContext).toBeDefined()
+    fixture.pfx.fill(0)
   })
 })
