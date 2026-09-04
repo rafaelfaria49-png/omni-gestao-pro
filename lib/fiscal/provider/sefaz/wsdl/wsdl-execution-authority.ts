@@ -32,7 +32,11 @@
  */
 import { request as nodeHttpsRequest } from "node:https"
 import { createSecureContext as nodeCreateSecureContext } from "node:tls"
-import type { SefazHttpsRequestOptions, SefazHttpsRuntimePorts } from "../sefaz-runtime-ports"
+import {
+  createSefazSecureContext,
+  type SefazHttpsRequestOptions,
+  type SefazHttpsRuntimePorts,
+} from "../sefaz-runtime-ports"
 import {
   SEFAZ_WSDL_METHOD,
   SEFAZ_WSDL_QUERY,
@@ -211,10 +215,11 @@ export function createWsdlEphemeralExternalAuthority(options: {
   const expectedPath = `${target.path}?${SEFAZ_WSDL_QUERY}`
   const runtime: SefazHttpsRuntimePorts = {
     createSecureContext: (tlsOptions) =>
-      nodeCreateSecureContext({
+      createSefazSecureContext({
+        ...tlsOptions,
         pfx: tlsOptions.pfx,
         passphrase: tlsOptions.passphrase,
-        minVersion: "TLSv1.2",
+        minVersion: tlsOptions.minVersion ?? "TLSv1.2",
       }),
     request: (requestOptions, onResponse) => {
       // A1/vault/SecureContext podem consumir o restante da lease interna. Revalidar aqui, na

@@ -9,7 +9,12 @@
  */
 import "server-only"
 
-import { createSecureContext, type SecureContext } from "node:tls"
+import {
+  createSecureContext,
+  type SecureContext,
+  type SecureContextOptions,
+} from "node:tls"
+import { createSefazSecureContext } from "@/lib/fiscal/provider/sefaz/trust/icp-brasil-v10"
 import type { EnvLike } from "@/lib/fiscal/vault/env-vault"
 import { resolveFiscalSecretProvider } from "@/lib/fiscal/vault/provider-resolver"
 import { zeroBuffer } from "@/lib/fiscal/vault/pkcs12-loader"
@@ -141,6 +146,10 @@ export async function loadA1MtlsMaterial(
   }
 }
 
+export type LoadA1MtlsSecureContextOptions = {
+  readonly createSecureContext?: (options: SecureContextOptions) => SecureContext
+}
+
 /**
  * Resolve e valida o A1 em memória antes de qualquer capability de rede. O PFX e a senha são
  * descartados assim que o `SecureContext` TLS 1.2+ é construído; somente o contexto opaco segue
@@ -148,12 +157,14 @@ export async function loadA1MtlsMaterial(
  */
 export async function loadA1MtlsSecureContext(
   params: LoadA1MtlsMaterialParams,
+  options?: LoadA1MtlsSecureContextOptions,
 ): Promise<SecureContext> {
   const material = await loadA1MtlsMaterial(params)
+  const factory = options?.createSecureContext ?? createSecureContext
   try {
     let secureContext: SecureContext | null = null
     material.withTlsOptions(({ pfx, passphrase }) => {
-      secureContext = createSecureContext({ pfx, passphrase, minVersion: "TLSv1.2" })
+      secureContext = factory({ pfx, passphrase, minVersion: "TLSv1.2" })
     })
     if (!secureContext) {
       throw new A1MtlsMaterialError(
@@ -171,4 +182,17 @@ export async function loadA1MtlsSecureContext(
   } finally {
     material.dispose()
   }
+}
+
+/**
+ * Especialização canônica para o transporte SEFAZ:
+ * Constrói o SecureContext mTLS A1 aplicando a trust composta SEFAZ
+ * (tls.rootCertificates + ICP-Brasil v10) através da factory canônica `createSefazSecureContext`.
+ */
+export async function loadA1SefazMtlsSecureContext(
+  params: LoadA1MtlsMaterialParams,
+): Promise<SecureContext> {
+  return loadA1MtlsSecureContext(params, {
+    createSecureContext: createSefazSecureContext,
+  })
 }

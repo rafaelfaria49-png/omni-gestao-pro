@@ -44,6 +44,7 @@ vi.mock("@/lib/fiscal/certificate/resolve-active-certificate", () => ({
 }))
 vi.mock("@/lib/fiscal/certificate/a1-mtls-material", () => ({
   loadA1MtlsSecureContext: h.loadSecureContext,
+  loadA1SefazMtlsSecureContext: h.loadSecureContext,
 }))
 vi.mock("@/lib/fiscal/provider/sefaz/wsdl/wsdl-ephemeral-execution-window", () => ({
   configuredWsdlExecutionWindowStatus: h.windowStatus,
