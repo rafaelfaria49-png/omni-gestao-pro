@@ -1,24 +1,19 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 154 · CONTAINMENT OFF pós-diagnóstico H-9/H-10): **DORMENTE** —
- * `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a `null`.
+ * Estado atual (GOAL 020 · 163 · CONTAINMENT OFF pós-janela de arming 19:55z expirada
+ * sem consumo): **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a
+ * `null`.
  *
- * A activation `wsdl-h9h10-20260903-0037z-b3913bea58774deb` (arming externo 03/09
- * 00:37:00Z → 01:22:00Z) foi **CONSUMIDA**: exatamente UMA invocation administrativa
- * same-origin, browser-assisted, ADMIN/Production — `WSDL_ADMIN_CALL_COUNT=1`, HTTP 200,
- * `code="completed"`, `ok=false`, batch dos 6 alvos canônicos. Nenhum byte de WSDL foi
- * recebido: os 6 alvos falharam ANTES de qualquer resposta HTTP, todos em
- * `transportPhase=SECURE_CONNECT` · `transportClass=TLS_CERTIFICATE` ·
- * `transportCode=UNABLE_TO_GET_ISSUER_CERT_LOCALLY` (`failureClass=acquisition:wsdl_rede_incerta`,
- * `httpStatus=null`, `byteLength=null`, `sha256=null`, `h9=false`, `h10=false`).
- * H-9 e H-10 permanecem **ABERTOS**. A distinção entre cadeia incompleta apresentada pela
- * SEFAZ e trust store Node/Vercel insuficiente NÃO está decidida e pertence ao próximo GOAL.
+ * A activation `wsdl-h9h10-20260904-1955z-d2c844a079986c9e` (arming externo 04/09
+ * 19:55:00Z → 20:40:00Z, PR #159) **EXPIROU SEM CONSUMO**: nenhuma chamada administrativa
+ * foi autorizada/realizada dentro do prazo (`WSDL_ADMIN_CALL_COUNT_FOR_ACTIVATION=0`,
+ * `WSDL_EXTERNAL_GET_COUNT_FOR_ACTIVATION=0`, `SEFAZ_SOAP_POST_COUNT=0`,
+ * `SEFAZ_PRODUCTION_REQUEST_COUNT=0`). One-shot permaneceu íntegro (não gasto).
+ * É evidência histórica; não é configuração executável e jamais deve ser re-materializada.
  *
- * O one-shot global está GASTO para esta activation: ela é evidência histórica, não é
- * configuração executável e jamais deve ser re-materializada. Evidência sanitizada dos seis
- * serviços em `docs/ai-execution/_evidence/FISCAL-NFCE-CONTINGENCY-020-H9H10-TLS-DIAGNOSTIC-CONTAINMENT-154.md`.
- * As activations de 30/08, 31/08 e 02/09 (incl. `bfefedc2de8f65f9`) seguem históricas/proibidas.
+ * H-9 e H-10 permanecem **ABERTOS**. A trust anchor ICP-Brasil v10 permanece implantada e
+ * intacta. As activations de 30/08, 31/08, 02/09 e 03/09 (`b3913bea58774deb`) seguem históricas/proibidas.
  * Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
@@ -45,9 +40,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260904-1955z-d2c844a079986c9e",
-  notBeforeUtc: "2026-09-04T19:55:00.000Z",
-  expiresAtUtc: "2026-09-04T20:40:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
