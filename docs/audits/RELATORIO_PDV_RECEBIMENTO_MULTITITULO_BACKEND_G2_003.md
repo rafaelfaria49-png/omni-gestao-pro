@@ -607,7 +607,14 @@ STORE_ISOLATION=true
 SINGULAR_RECEIPT_REGRESSION_FREE=true
 SCHEMA_CHANGED=false
 G3_UI_IMPLEMENTED=false
+READY_FOR_G3_UI=true
 ```
+
+`READY_FOR_G3_UI=true` porque o critério é mecânico — P0=0 e P1=0 — e o único P1 (§6.6)
+está corrigido, com teste e controle negativo. **Ressalva explícita para quem decide o
+merge:** o commit da correção (`924bc23`) **não** passou por revisão independente; a sessão
+do revisor bateu no limite de uso antes da segunda rodada. Se a régua for "tudo revisado por
+outra família", falta essa passada — não falta trabalho de implementação.
 
 Não implementado, conforme o ponto de parada: checkboxes, "Selecionar todos", modal do
 Claude Design, abas Em aberto/Recebidos, recibo consolidado, distribuição automática
