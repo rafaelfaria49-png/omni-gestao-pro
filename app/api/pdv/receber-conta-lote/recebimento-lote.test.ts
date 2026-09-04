@@ -39,8 +39,15 @@ const h = vi.hoisted(() => {
   let ordem: string[] = []
 
   /** Falhas injetadas. 0 = desligado; N = falha na N-ésima chamada. */
-  const falhas = { tituloUpdate: 0, mov: 0, caixa: false, pagarNaLeitura: 0 }
+  const falhas = { tituloUpdate: 0, mov: 0, caixa: false, pagarNaLeitura: 0, tocarAposLeitura: 0 }
   const contadores = { tituloUpdate: 0, mov: 0, tituloRead: 0 }
+
+  /**
+   * Relógio monotônico do `updatedAt`. `new Date()` repetiria o mesmo milissegundo em
+   * escritas seguidas e o token de concorrência otimista pareceria funcionar sem funcionar.
+   */
+  let relogio = Date.parse("2026-09-04T12:00:00.000Z")
+  const tick = () => new Date(++relogio)
 
   /** Fila por chave: emula `pg_advisory_xact_lock` (transacional, exclusivo). */
   const filas = new Map<string, Promise<void>>()
@@ -77,8 +84,17 @@ const h = vi.hoisted(() => {
     for (const k of ["descricao", "cliente", "valor", "vencimento", "status", "payload"]) {
       if (data[k] !== undefined) row[k] = data[k]
     }
-    row.updatedAt = new Date()
+    row.updatedAt = tick()
     return row
+  }
+
+  /**
+   * Leituras devolvem CÓPIA, como um banco de verdade. Devolver a referência viva faria o
+   * `updatedAt` que o service capturou mudar junto com a linha — e o teste de concorrência
+   * nunca conseguiria simular "outra transação tocou a linha depois da minha leitura".
+   */
+  function snapshot<T extends Row | null | undefined>(row: T): T {
+    return (row ? { ...row } : row) as T
   }
 
   type Ctx = {
@@ -115,10 +131,15 @@ const h = vi.hoisted(() => {
         throw new Error(`query raw não suportada no harness: ${sql}`)
       },
       contaReceberTitulo: {
-        findUnique: async ({ where }: { where: { storeId_localKey: { storeId: string; localKey: string } } }) => {
+        findUnique: async ({
+          where,
+        }: {
+          where: { id?: string; storeId_localKey?: { storeId: string; localKey: string } }
+        }) => {
           guard()
-          const { storeId, localKey } = where.storeId_localKey
-          return db.titulos.find((r) => r.storeId === storeId && r.localKey === localKey) ?? null
+          if (where.id) return snapshot(db.titulos.find((r) => r.id === where.id) ?? null)
+          const { storeId, localKey } = where.storeId_localKey!
+          return snapshot(db.titulos.find((r) => r.storeId === storeId && r.localKey === localKey) ?? null)
         },
         findFirst: async ({ where }: { where: Record<string, unknown> }) => {
           guard()
@@ -129,18 +150,26 @@ const h = vi.hoisted(() => {
           if (row && falhas.pagarNaLeitura > 0 && contadores.tituloRead === falhas.pagarNaLeitura) {
             row.status = "pago"
           }
-          return row
+          const lido = snapshot(row)
+          // Outra transação toca a linha DEPOIS desta leitura: o token `updatedAt` que o
+          // service acabou de capturar fica velho e a escrita dele tem de casar 0 linhas.
+          if (row && falhas.tocarAposLeitura > 0 && contadores.tituloRead === falhas.tocarAposLeitura) {
+            row.updatedAt = tick()
+          }
+          return lido
         },
         findMany: async ({ where }: { where?: Record<string, unknown> }) => {
           guard()
           const lk = where?.localKey as { in?: string[] } | string | undefined
           const alvos = lk && typeof lk === "object" && Array.isArray(lk.in) ? new Set(lk.in) : null
-          return db.titulos.filter((r) => {
-            if (where?.storeId && r.storeId !== where.storeId) return false
-            if (alvos && !alvos.has(String(r.localKey))) return false
-            if (typeof lk === "string" && r.localKey !== lk) return false
-            return true
-          })
+          return db.titulos
+            .filter((r) => {
+              if (where?.storeId && r.storeId !== where.storeId) return false
+              if (alvos && !alvos.has(String(r.localKey))) return false
+              if (typeof lk === "string" && r.localKey !== lk) return false
+              return true
+            })
+            .map(snapshot)
         },
         upsert: async ({
           where,
@@ -166,7 +195,7 @@ const h = vi.hoisted(() => {
             status: create.status ?? "pendente",
             payload: create.payload ?? {},
             createdAt: new Date(),
-            updatedAt: new Date(),
+            updatedAt: tick(),
           }
           db.titulos.push(row)
           return row
@@ -181,6 +210,29 @@ const h = vi.hoisted(() => {
           if (!row) throw new Error("Record to update not found.")
           ordem.push(`titulo_update:${String(row.localKey)}`)
           return applyScalars(row, data)
+        },
+        /**
+         * Token de concorrência otimista: o `where` traz `updatedAt` da leitura. Se outra
+         * escrita tocou a linha nesse meio-tempo, o `count` volta 0 — como no Postgres.
+         */
+        updateMany: async ({ where, data }: { where: { id?: string; updatedAt?: unknown }; data: Row }) => {
+          guard()
+          contadores.tituloUpdate += 1
+          if (falhas.tituloUpdate > 0 && contadores.tituloUpdate === falhas.tituloUpdate) {
+            throw new Error(`falha injetada: título #${falhas.tituloUpdate}`)
+          }
+          const row = db.titulos.find((r) => r.id === where.id)
+          if (!row) return { count: 0 }
+          if (where.updatedAt !== undefined) {
+            const atual = row.updatedAt as Date | undefined
+            const token = where.updatedAt as Date
+            if (!atual || !(token instanceof Date) || atual.getTime() !== token.getTime()) {
+              return { count: 0 }
+            }
+          }
+          ordem.push(`titulo_update:${String(row.localKey)}`)
+          applyScalars(row, data)
+          return { count: 1 }
         },
       },
       movimentacaoFinanceira: {
@@ -343,6 +395,10 @@ const h = vi.hoisted(() => {
     pagarNaLeituraDoTitulo: (n: number) => {
       falhas.pagarNaLeitura = n
     },
+    /** Outra transação grava no título logo depois da N-ésima leitura do service. */
+    tocarTituloAposLeitura: (n: number) => {
+      falhas.tocarAposLeitura = n
+    },
     seedSessao: (id: string, storeId: string, status = "ABERTA") => db.sessoes.push({ id, storeId, status }),
     fecharSessao: (id: string) => {
       const s = db.sessoes.find((x) => x.id === id)
@@ -358,6 +414,7 @@ const h = vi.hoisted(() => {
       falhas.mov = 0
       falhas.caixa = false
       falhas.pagarNaLeitura = 0
+      falhas.tocarAposLeitura = 0
       contadores.tituloUpdate = 0
       contadores.mov = 0
       contadores.tituloRead = 0
@@ -756,6 +813,26 @@ describe("G2 — atomicidade sob falha injetada", () => {
       expect(await saldoDe(k)).toBe(100)
       expect(await statusDe(k)).toBe("pendente")
     }
+    expect(h.db.movs).toHaveLength(0)
+    expect(h.db.caixaOps).toHaveLength(0)
+  })
+
+  it("[T5c] escrita CONCORRENTE no mesmo título (outro lote / rota singular) derruba o lote inteiro", async () => {
+    // O advisory lock só serializa lotes de MESMA identidade. Dois lotes com chaves
+    // diferentes, ou um lote e a rota singular, chegam juntos ao mesmo título — e a
+    // revalidação sozinha não impede o segundo de sobrescrever a baixa do primeiro
+    // (lost update sob READ COMMITTED). O token `updatedAt` fecha essa janela.
+    const keys = await seedTitulos(4)
+    h.tocarTituloAposLeitura(2) // outra transação grava no 2º título depois da leitura
+
+    const res = await POST(post({ itens: itensDe(keys) }))
+    const body = await json(res)
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("titulo_alterado")
+    expect((body.detalhes as Row[])[0]).toMatchObject({ localKey: keys[1], motivo: "titulo_alterado" })
+    // O 1º título já tinha sido gravado quando o conflito apareceu — e voltou atrás.
+    for (const k of keys) expect(await saldoDe(k)).toBe(100)
     expect(h.db.movs).toHaveLength(0)
     expect(h.db.caixaOps).toHaveLength(0)
   })

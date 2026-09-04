@@ -305,6 +305,57 @@ export async function cancelContaReceber(params: {
   return { ok: true, data: updated }
 }
 
+/**
+ * Grava a baixa no título.
+ *
+ * Com `exigirTokenDeConcorrencia`, a escrita carrega um **token otimista** (`updatedAt`
+ * lido junto com a linha). Sem ele, é o `UPDATE ... WHERE id` de sempre.
+ *
+ * Por que o token existe: `status` e `payload` são calculados em JS a partir da leitura de
+ * `row`, então um update cego sobrescreve **em silêncio** o que outra transação tenha
+ * gravado no intervalo. Nem o Postgres nem o Prisma barram isso — sob READ COMMITTED o
+ * segundo `UPDATE` apenas espera o commit do primeiro e então grava valores derivados de
+ * um estado que já não existe (*lost update* clássico). Dois recebimentos simultâneos do
+ * MESMO título deixariam duas entradas de caixa e um `historico` com um pagamento só.
+ * `updatedAt` já existe no schema e é o token indicado pelo design do multitítulo
+ * (`AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md` §6).
+ *
+ * Por que é OPT-IN e não o padrão: ligá-lo para todo mundo mudaria o comportamento
+ * observável de rotas de produção fora do escopo do GOAL do lote (PDV singular, Financeiro,
+ * `pdv-servico-actions`), que passariam a **recusar** onde hoje sobrescrevem. A lacuna
+ * dessas rotas é **pré-existente** e está registrada como pendência para um GOAL próprio —
+ * a correção é a mesma linha, mas a decisão de mudar produção não é deste GOAL.
+ *
+ * `updateMany` de propósito: devolve contagem em vez de lançar, e não deixa a transação do
+ * chamador em estado abortado.
+ */
+async function gravarBaixaNoTitulo(
+  db: ContaReceberDbClient,
+  row: ContaReceberTitulo,
+  next: { status: ReceberStatusCanon; payload: Record<string, unknown> },
+  exigirTokenDeConcorrencia?: boolean,
+): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
+  const data = {
+    status: next.status,
+    payload: next.payload as unknown as Prisma.InputJsonValue,
+  }
+
+  if (!exigirTokenDeConcorrencia) {
+    const updated = await db.contaReceberTitulo.update({ where: { id: row.id }, data })
+    return { ok: true, data: updated }
+  }
+
+  const res = await db.contaReceberTitulo.updateMany({
+    where: { id: row.id, updatedAt: row.updatedAt },
+    data,
+  })
+  if (res.count !== 1) return { ok: false, reason: "titulo_alterado" }
+
+  const updated = await db.contaReceberTitulo.findUnique({ where: { id: row.id } })
+  if (!updated) return { ok: false, reason: "titulo_alterado" }
+  return { ok: true, data: updated }
+}
+
 function saldoAberto(row: ContaReceberTitulo): number {
   const v = safeMoney(row.valor)
   const st = normalizeReceberStatus(row.status)
@@ -322,6 +373,8 @@ export async function liquidarContaReceber(params: {
   userLabel?: string
   /** Identidade da operação em LOTE (G2), carimbada no histórico para rastreabilidade. */
   loteId?: string
+  /** Ver {@link gravarBaixaNoTitulo}. Ligado pelo lote (G2); default preserva o comportamento atual. */
+  exigirTokenDeConcorrencia?: boolean
   db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
   const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
@@ -349,14 +402,12 @@ export async function liquidarContaReceber(params: {
     loteId: safeStr(params.loteId).trim() || undefined,
   })
 
-  const updated = await dbOf(params.db).contaReceberTitulo.update({
-    where: { id: row.id },
-    data: {
-      status: RECEBER_STATUS.PAGO,
-      payload: merged as unknown as Prisma.InputJsonValue,
-    },
-  })
-  return { ok: true, data: updated }
+  return gravarBaixaNoTitulo(
+    dbOf(params.db),
+    row,
+    { status: RECEBER_STATUS.PAGO, payload: merged },
+    params.exigirTokenDeConcorrencia,
+  )
 }
 
 export async function registrarPagamentoParcial(params: {
@@ -369,6 +420,8 @@ export async function registrarPagamentoParcial(params: {
   userLabel?: string
   /** Identidade da operação em LOTE (G2), carimbada no histórico para rastreabilidade. */
   loteId?: string
+  /** Ver {@link gravarBaixaNoTitulo}. Ligado pelo lote (G2); default preserva o comportamento atual. */
+  exigirTokenDeConcorrencia?: boolean
   db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
   const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
@@ -400,14 +453,12 @@ export async function registrarPagamentoParcial(params: {
   if (pago + PAY_EPS >= total) nextStatus = RECEBER_STATUS.PAGO
   else if (pago > PAY_EPS) nextStatus = RECEBER_STATUS.PARCIAL
 
-  const updated = await dbOf(params.db).contaReceberTitulo.update({
-    where: { id: row.id },
-    data: {
-      status: nextStatus,
-      payload: merged as unknown as Prisma.InputJsonValue,
-    },
-  })
-  return { ok: true, data: updated }
+  return gravarBaixaNoTitulo(
+    dbOf(params.db),
+    row,
+    { status: nextStatus, payload: merged },
+    params.exigirTokenDeConcorrencia,
+  )
 }
 
 export type EstornoContaReceberModo = "titulo_completo" | "ultimo_pagamento"

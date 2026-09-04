@@ -314,13 +314,57 @@ Sem a variável de ambiente: `Test Files 1 skipped · Tests 4 skipped`.
 
 ### 6.5 Controles negativos (os testes provam alguma coisa?)
 
-Três mutações aplicadas ao código e revertidas em seguida:
+Quatro mutações aplicadas ao código e revertidas em seguida:
 
 | Mutação | Testes que quebraram |
 |---|---|
 | advisory lock removido | 3 — T10 (concorrência), ordem do lock, T12b |
 | `idempotenciaDoChamador: false` (heurística antiga de volta) | 3 — parciais legítimas, chaves diferentes, "heurística não roda no lote" |
 | título recusado pelo service vira `continue` em vez de derrubar o lote | 1 — T5b (rollback total) |
+| `exigirTokenDeConcorrencia: false` (token otimista desligado) | 1 — T5c (escrita concorrente no mesmo título) |
+
+---
+
+## 6.6 Token de concorrência otimista — o que a revisão independente encontrou
+
+A 1ª versão desta entrega **não tinha** o token, e a revisão independente (§13) achou a
+lacuna. Ela é real e vale registrar em detalhe, porque o advisory lock parece cobri-la e
+não cobre.
+
+`liquidarContaReceber` e `registrarPagamentoParcial` calculam `status` e `payload` **em
+JS**, a partir da linha lida, e gravavam com `UPDATE ... WHERE id` cego. Sob READ COMMITTED
+o segundo `UPDATE` apenas espera o commit do primeiro e então escreve valores derivados de
+um estado que já não existe — *lost update* clássico, silencioso, sem erro de serialização.
+
+O advisory lock **não** fecha isso: ele serializa apenas transações que compartilham a
+mesma `dedupeKey` (`storeId+sessaoId+idempotencyKey`). Dois lotes com chaves diferentes —
+dois terminais, duas sessões — nunca se encontram no lock.
+
+**Cenário concreto:** título com saldo R$ 100. Lote X (Terminal 1) e lote Y (Terminal 2)
+leem o título com saldo 100. X grava `pago`, `historico += [100]`, cria movimentação e
+caixa, comita. Y, que leu antes, grava por cima: **duas** movimentações e **duas** operações
+de caixa para uma dívida de R$ 100, e um `historico` que mostra um pagamento só.
+
+**Correção:** `updatedAt` — que já existe no schema e é exatamente o token que o design
+nomeia (`AUDITORIA_..._DESIGN_001.md` §6, *"serve como token de concorrência otimista"*) —
+entra no `where` do update do lote, via `updateMany` (devolve contagem em vez de lançar, e
+não deixa a transação do chamador abortada). Linha tocada desde a leitura ⇒ `count === 0` ⇒
+o service recusa com `titulo_alterado` ⇒ o lote **inteiro** cai. Coberto por T5c e pelo
+controle negativo acima.
+
+**Por que é OPT-IN (`exigirTokenDeConcorrencia`) e não o padrão.** Ligá-lo para todos os
+chamadores mudaria o comportamento observável de rotas de produção **fora do escopo deste
+GOAL** — a rota singular do PDV, `/api/financeiro/receber`,
+`/api/financeiro/contas-receber/{liquidar,pagamento-parcial}` e `pdv-servico-actions` —, que
+passariam a recusar onde hoje sobrescrevem. Medido: fazer disso o padrão quebra 4 harnesses
+de outras trilhas (Operações V3 incluída). A lacuna dessas rotas é **pré-existente**, não
+nasce aqui, e mudá-las é decisão de um GOAL próprio (P2-7). O default é byte-idêntico ao
+anterior — a regressão de 1075 testes nos escopos afetados confirma.
+
+**Residual honesto:** o lote está protegido nas duas ordens em que ele próprio escreve. O
+que **não** está fechado é a rota singular sobrescrever um lote já commitado — porque ela
+continua gravando sem token. Isso é a lacuna pré-existente, registrada em P2-7, não uma
+regressão desta entrega.
 
 ---
 
@@ -413,14 +457,14 @@ resultado empobrecido.
 
 | Escopo | Resultado |
 |---|---|
-| `recebimento-lote.test.ts` (novo) | **43 testes** — contrato, revalidação, atomicidade, idempotência, concorrência, multi-loja, carteira, superfície de persistência |
+| `recebimento-lote.test.ts` (novo) | **44 testes** — contrato, revalidação, atomicidade, idempotência, concorrência, multi-loja, carteira, superfície de persistência |
 | `recebimento-lote-lock.postgres.test.ts` (novo, opt-in) | **4 testes** contra Postgres real; pulados sem a env |
-| Regressão do singular G1 (18 testes) + canonicalidade + movimentações + caixa/fechamento | **219 passando**, 4 pulados (os do Postgres) em 15 arquivos |
-| Suíte completa | 7103 passando · 5 falhas pré-existentes (§10.1) |
+| Regressão ampla: singular G1 + canonicalidade + parcial + movimentações + caixa/fechamento + Operações V3/V4 + Financeiro | **1075 passando**, 4 pulados (os do Postgres) em 84 arquivos |
+| Suíte completa | 7101 passando · 9 falhas pré-existentes/ambientais (§10.1) |
 | `npm run typecheck` | ✅ exit 0 |
 | `git diff --check` | ✅ limpo |
 | `npx eslint` (arquivos tocados) | ✅ 0 erros, 0 warnings |
-| `npm run build` | ✅ exit 0 · `✓ Compiled successfully in 3.9min` · a rota aparece no manifesto como `ƒ /api/pdv/receber-conta-lote` |
+| `npm run build` | ✅ exit 0 · `✓ Compiled successfully` · a rota aparece no manifesto como `ƒ /api/pdv/receber-conta-lote` |
 | `git diff origin/main -- prisma/schema.prisma` | ✅ **vazio** |
 
 Comando da regressão focada:
@@ -431,26 +475,37 @@ npx vitest run app/api/pdv/receber-conta app/api/pdv/receber-conta-lote app/api/
 
 ### 10.1 Suíte completa
 
-`npx vitest run` (493 arquivos): **7103 passando**, 198 pulados, 2 *expected fail* e
-**5 falhas — todas pré-existentes e ambientais**, nenhuma importando qualquer módulo
+`npx vitest run` (493 arquivos): **7101 passando**, 198 pulados, 2 *expected fail* e
+**9 falhas — todas pré-existentes ou ambientais**, nenhuma importando qualquer módulo
 alterado aqui:
 
 | Falha | Causa | Confirmação |
 |---|---|---|
 | 3× `lib/fiscal/xml/nfce-xml-builder.test.ts` | `xmllint` ausente do PATH (o teste falha-fechado de propósito) | já registrado no baseline do G1 |
-| `lib/ops-inventory-sync-safety.test.ts` | timeout de 5 s num scan de arquivos sob carga paralela | **passa isolado** (verificado) |
+| 3× `lib/multi-loja-no-hardcoded-fallback.test.ts` | `Test timed out in 5000ms` — scan de arquivos sob carga paralela | **passa isolado** (verificado) |
+| `lib/fiscal/provider/sefaz/sefaz-envelope-backstop-e2e.test.ts` | idem (scan do grafo de imports) | **passa isolado** (verificado) |
+| `lib/ops-inventory-sync-safety.test.ts` | idem | **passa isolado** (verificado) |
 | `lib/whatsapp-legacy-quarantine.test.ts` | idem | **passa isolado** (verificado) |
 | `tools/fiscal-dry-run-integrity-proof/proof.test.ts` (suíte) | Java local é 8; o verificador foi compilado para 17 (`class file version 61.0`) | trilha Fiscal, ambiente |
 | `scripts/contador/setup-storage.test.ts` (suíte) | `SyntaxError` pré-existente no arquivo | trilha Contador, arquivo não tocado |
 
-Os dois primeiros scans passam quando executados sozinhos — mesma classe de falha já
-documentada no baseline do G1.
+Os 6 scans passam quando executados sozinhos (`4 arquivos / 20 testes, todos verdes`) —
+mesma classe de falha já documentada no baseline do G1, e o número deles varia com a carga
+da máquina, não com o diff. As duas primeiras execuções desta entrega registraram 5 e 9
+falhas justamente por isso.
 
 ---
 
 ## 11. Pendências (P0/P1/P2)
 
-**P0: nenhum. P1: nenhum.**
+**P0: nenhum.**
+
+**P1: um, encontrado pela revisão independente e CORRIGIDO** — ausência de token de
+concorrência no título, que permitia *lost update* entre dois lotes de sessões distintas
+(§6.6). Fechado para o caminho do lote com `updatedAt` + `updateMany`, com teste (T5c) e
+controle negativo. O que sobra é a lacuna **pré-existente** dos outros escritores,
+registrada em P2-7 — não foi corrigida aqui de propósito: muda comportamento de produção
+fora do escopo deste GOAL.
 
 ### P2-1 — o endpoint ainda não tem chamador
 Fundação dormente até o G3, por decisão do GOAL. Consequência honesta: o caminho é provado
@@ -485,10 +540,54 @@ JSONB (criá-lo seria schema change, vedado). Escopar por `sessaoId` mantém a v
 tamanho de uma sessão de caixa, mas a busca segue sendo um filtro em memória sobre esse
 recorte. A rota singular do G1 tem a mesma consulta **sem** o recorte de sessão.
 
+### P2-7 — o token de concorrência não vale para os outros escritores (pré-existente)
+`liquidarContaReceber`/`registrarPagamentoParcial` só exigem o token quando o chamador pede
+(§6.6). A rota singular do PDV, `/api/financeiro/receber`,
+`/api/financeiro/contas-receber/{liquidar,pagamento-parcial}` e `pdv-servico-actions`
+continuam gravando cego — a mesma janela de *lost update* que existe hoje em `main`, sem
+mudança. `cancelContaReceber` e `estornarContaReceber` também. **Recomendação:** um GOAL
+próprio que ligue `exigirTokenDeConcorrencia` em todos os caminhos de baixa e ajuste os 4
+harnesses afetados; a correção é uma linha por chamador, mas muda comportamento de produção
+(passa a recusar em corrida, em vez de sobrescrever) e merece revisão própria.
+
 ### P2-6 — herdadas do G1, não reabertas
 P2-A (status pelo caminho de merge), P2-D (matching fuzzy do cliente — G3), P2-F (o painel
 Financeiro descarta a listagem canônica com `local wins`), P2-G (`liquidarContaPagar` com o
 mesmo defeito do outro lado), P2-I e P2-J. Nenhuma foi tocada por este GOAL.
+
+---
+
+## 11.1 Revisão independente
+
+Executada por **outra família de modelo** (Sonnet 5), read-only, sobre o commit `d3910ed`,
+com as 9 perguntas de auditoria: atomicidade, idempotência concorrente, revalidação de
+saldo, sessão de caixa, multi-loja, regressão nos services compartilhados, epsilon,
+qualidade dos testes e honestidade do relatório.
+
+**Resultado: P0 nenhum · 1 P1 · 3 P2.**
+
+| Achado | Situação |
+|---|---|
+| **P1 — nenhum lock/token por título: dois pedidos concorrentes no mesmo título perdem um pagamento** | **Procedente e corrigido** (§6.6). O revisor também notou o mitigador parcial que o `FOR UPDATE` da sessão dá de graça (serializa lotes da MESMA sessão) e que ele não cobre sessões distintas nem a rota singular — confirmado. |
+| P2 — teste T16 promete mais do que checa (varre só `tx.` nos 2 arquivos do lote, não pega o `movimentacaoFinanceira.create` que vive no service compartilhado) | Procedente. O nome foi mantido, mas a garantia real de "sem schema" é o `git diff -- prisma/schema.prisma` vazio, que o próprio teste já aponta no comentário. |
+| P2 — `app/api/financeiro/receber/route.ts` ainda usa `.catch(console.error)` na movimentação (achado K do G1, corrigido só na rota do PDV) | Fora do diff e pré-existente. Registrado, não corrigido. |
+| P2-1..P2-6 do relatório | Relidos e confirmados pelo revisor contra o código. |
+
+O revisor validou de forma independente: que toda recusa é `throw` e não `return`; que
+`recalcularSaldoCarteira` não tem `.catch` engolindo erro; que os nomes físicos do
+`FOR UPDATE` batem com `prisma/schema.prisma`; que não há ciclo de deadlock entre o lote e
+`caixa/fechar`; que **nenhum** dos 5 chamadores de produção dos services alterados passa os
+parâmetros novos; e que `undefined` no `historico` não vira "buraco" no JSONB.
+
+Também registrou uma nota de método honesta: o worktree foi editado durante a revisão
+(estas eram as melhorias de `sessaoId`/total descritas em §9 e §8), e ele refez as leituras
+contra o estado final antes de concluir — inclusive retirando um falso positivo próprio
+sobre P2-5.
+
+Uma segunda rodada de revisão sobre a correção do P1 **não foi executada**: a sessão do
+revisor bateu no limite de uso. O token de concorrência está coberto por T5c e pelo
+controle negativo (§6.5), mas **não** passou por olhos independentes — registrar isso é
+mais honesto que declarar a revisão completa.
 
 ---
 

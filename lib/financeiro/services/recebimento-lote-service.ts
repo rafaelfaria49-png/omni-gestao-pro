@@ -531,6 +531,11 @@ export async function executarRecebimentoLote(
           formaPagamento: forma,
           userLabel: input.userLabel,
           loteId: input.idempotencyKey,
+          // O advisory lock só serializa lotes de MESMA identidade. Dois lotes com chaves
+          // diferentes (sessões/terminais distintos) chegam juntos ao mesmo título, e a
+          // revalidação sozinha não impede o segundo de sobrescrever a baixa do primeiro.
+          // O token `updatedAt` fecha essa janela: linha tocada desde a leitura ⇒ recusa.
+          exigirTokenDeConcorrencia: true,
           db: tx,
         })
       : await registrarPagamentoParcial({
@@ -541,6 +546,11 @@ export async function executarRecebimentoLote(
           formaPagamento: forma,
           userLabel: input.userLabel,
           loteId: input.idempotencyKey,
+          // O advisory lock só serializa lotes de MESMA identidade. Dois lotes com chaves
+          // diferentes (sessões/terminais distintos) chegam juntos ao mesmo título, e a
+          // revalidação sozinha não impede o segundo de sobrescrever a baixa do primeiro.
+          // O token `updatedAt` fecha essa janela: linha tocada desde a leitura ⇒ recusa.
+          exigirTokenDeConcorrencia: true,
           db: tx,
         })
     if (!res.ok) {
