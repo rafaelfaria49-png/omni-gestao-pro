@@ -11,6 +11,13 @@ export type ContaReceberRow = {
   vencimento: string
   status: string
   tipo: string
+  /**
+   * Saldo em aberto CANÔNICO (`valor − ledger efetivo`), calculado pelo servidor.
+   * Presente nas linhas vindas de `/api/ops/contas-receber-list`; ausente em linhas que
+   * nunca passaram pelo servidor (localStorage puro). Nunca derive saldo de `valor` — a
+   * coluna é o valor BRUTO e não diminui em baixas parciais.
+   */
+  saldoAberto?: number
   movimentoBaixaId?: string
   /** Linhas de recebimento (local); status PENDENTE após estorno. */
   historicoPagamentos?: PagamentoLinha[]

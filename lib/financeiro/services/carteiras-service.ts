@@ -25,6 +25,9 @@ export const TIPOS_CARTEIRA = [
 
 export type TipoCarteira = (typeof TIPOS_CARTEIRA)[number]
 
+/** Cliente Prisma aceito: o singleton global OU um `Prisma.TransactionClient`. */
+export type CarteirasDbClient = Prisma.TransactionClient
+
 export type CarteiraPublica = {
   id: string
   storeId: string
@@ -170,29 +173,30 @@ export async function atualizarCarteira(
  */
 export async function recalcularSaldoCarteira(
   id: string,
-  storeId: string
+  storeId: string,
+  db?: CarteirasDbClient
 ): Promise<CarteiraPublica> {
-  const carteira = await prisma.carteiraFinanceira.findFirst({
+  const client = db ?? prisma
+  const carteira = await client.carteiraFinanceira.findFirst({
     where: { id, storeId },
   })
   if (!carteira) throw new Error(`Carteira não encontrada: ${id}`)
 
-  const [entradas, saidas] = await Promise.all([
-    prisma.movimentacaoFinanceira.aggregate({
-      where: { carteiraId: id, storeId, tipo: "entrada" },
-      _sum: { valor: true },
-    }),
-    prisma.movimentacaoFinanceira.aggregate({
-      where: { carteiraId: id, storeId, tipo: "saida" },
-      _sum: { valor: true },
-    }),
-  ])
+  // Sequencial (não `Promise.all`): um `TransactionClient` serializa numa única conexão.
+  const entradas = await client.movimentacaoFinanceira.aggregate({
+    where: { carteiraId: id, storeId, tipo: "entrada" },
+    _sum: { valor: true },
+  })
+  const saidas = await client.movimentacaoFinanceira.aggregate({
+    where: { carteiraId: id, storeId, tipo: "saida" },
+    _sum: { valor: true },
+  })
 
   const totalEntradas = safeMoney(entradas._sum.valor ?? 0)
   const totalSaidas = safeMoney(saidas._sum.valor ?? 0)
   const saldoAtual = safeMoney(carteira.saldoInicial + totalEntradas - totalSaidas)
 
-  const updated = await prisma.carteiraFinanceira.update({
+  const updated = await client.carteiraFinanceira.update({
     where: { id },
     data: { saldoAtual },
   })

@@ -42,6 +42,7 @@ import {
   imprimirReciboPagamento,
   RECIBO_LOJA_NOME_PADRAO,
 } from "@/lib/contas-receber-recibo"
+import { isTituloEmAberto, saldoAbertoDaRow, somaSaldoEmAberto, PAY_EPS } from "@/lib/contas-receber-aberto"
 import { crediarioPrintAllowed } from "@/lib/pdv-print-runtime"
 import type { PdvImpressaoConfig } from "@/lib/pdv-impressao-config"
 import { cn } from "@/lib/utils"
@@ -79,6 +80,11 @@ function normClienteKey(s: string): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+}
+
+/** Chave local que identifica a tentativa em curso (título × operação × valor). */
+function opKey(row: ContaReceberRow, op: "liquidar" | "parcial", valor?: number): string {
+  return `${String(row.id)}:${op}:${op === "parcial" ? (valor ?? 0).toFixed(2) : "total"}`
 }
 
 function clienteMatchesTitulo(cliente: PdvClienteResult, tituloCliente: string): boolean {
@@ -131,6 +137,14 @@ export function PdvRecebimentoModal({
   const [formaPagto, setFormaPagto] = useState<string>("dinheiro")
   /** Saldo REALMENTE em aberto por título (id/localKey → saldoAberto), vindo do audit do servidor. */
   const [saldoAbertoMap, setSaldoAbertoMap] = useState<Record<string, number>>({})
+  /**
+   * Identidade da OPERAÇÃO de recebimento (não do título), enviada ao servidor.
+   * Criada na 1ª tentativa e reusada enquanto ela não confirma: se a chamada commitou e a
+   * resposta se perdeu, o retry é reconhecido como repetição em vez de virar uma segunda
+   * entrada no caixa. Descartada no sucesso — dois pagamentos legítimos de mesmo valor
+   * recebem chaves distintas.
+   */
+  const idempotencyKeysRef = useRef<Map<string, string>>(new Map())
 
   const formasAtivas = useMemo(
     () =>
@@ -182,6 +196,8 @@ export function PdvRecebimentoModal({
     setParcialValue({})
     setError(null)
     setSelectedCliente(null)
+    // Nova sessão do modal: chaves pendentes de tentativas anteriores não valem mais.
+    idempotencyKeysRef.current.clear()
     clearClienteSearch()
     const pre = preselectedCustomerName?.trim()
     if (pre) setQuery(pre)
@@ -210,24 +226,26 @@ export function PdvRecebimentoModal({
     }
   }, [formasAtivas, formaPagto])
 
-  const filtered = useMemo(() => {
-    if (!selectedCliente) return []
-    return rows.filter((r) => clienteMatchesTitulo(selectedCliente, r.cliente || ""))
-  }, [rows, selectedCliente])
-
   /**
-   * Saldo realmente em aberto do título. Prioriza o `saldoAberto` do audit do servidor
-   * (valor − pagamentos já registrados); cai para `row.valor` apenas se ausente.
-   * Evita a divergência em que a coluna `valor` (bruta) não diminui após baixa parcial.
+   * Saldo realmente em aberto do título. Fonte canônica: `row.saldoAberto` do servidor
+   * (valor − ledger efetivo); o mapa do `audit` da mesma resposta é o fallback.
+   * A coluna `valor` (bruta) não diminui após baixa parcial e nunca serve como saldo.
    */
   const saldoAbertoDe = useCallback(
-    (row: ContaReceberRow): number => {
-      const sa = saldoAbertoMap[String(row.id)]
-      if (typeof sa === "number" && Number.isFinite(sa)) return Math.max(0, Math.round(sa * 100) / 100)
-      return Math.max(0, Math.round((Number(row.valor) || 0) * 100) / 100)
-    },
+    (row: ContaReceberRow): number => saldoAbertoDaRow(row, saldoAbertoMap),
     [saldoAbertoMap],
   )
+
+  /**
+   * Lista operacional de cobrança: cliente casado E saldo canônico acima do epsilon.
+   * Título zerado sai daqui — "PENDENTE com R$ 0" não é dívida em aberto.
+   */
+  const filtered = useMemo(() => {
+    if (!selectedCliente) return []
+    return rows.filter(
+      (r) => clienteMatchesTitulo(selectedCliente, r.cliente || "") && isTituloEmAberto(r, saldoAbertoMap),
+    )
+  }, [rows, selectedCliente, saldoAbertoMap])
 
   /**
    * Saldo devedor do cliente após este recebimento, para o rodapé do recibo.
@@ -277,9 +295,24 @@ export function PdvRecebimentoModal({
     [impressaoConfig, lojaNome, formaLabel, selectedCliente?.name, toast, saldoDevedorClienteApos],
   )
 
+  const idempotencyKeyFor = useCallback((row: ContaReceberRow, op: "liquidar" | "parcial", valor?: number) => {
+    const k = opKey(row, op, valor)
+    const cached = idempotencyKeysRef.current.get(k)
+    if (cached) return cached
+    const fresh =
+      globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    idempotencyKeysRef.current.set(k, fresh)
+    return fresh
+  }, [])
+
+  const dropIdempotencyKey = useCallback((row: ContaReceberRow, op: "liquidar" | "parcial", valor?: number) => {
+    idempotencyKeysRef.current.delete(opKey(row, op, valor))
+  }, [])
+
   const postRecebimento = useCallback(
     async (row: ContaReceberRow, op: "liquidar" | "parcial", valor?: number) => {
       if (!storeId || !sessaoId) return { ok: false as const, error: "caixa_fechado" }
+      const idempotencyKey = idempotencyKeyFor(row, op, valor)
       const r = await fetch("/api/pdv/receber-conta", {
         method: "POST",
         headers: {
@@ -292,6 +325,7 @@ export function PdvRecebimentoModal({
           valor: op === "parcial" ? valor : undefined,
           formaPagamento: formaPagto,
           sessaoId,
+          idempotencyKey,
         }),
       })
       const j = (await r.json().catch(() => null)) as {
@@ -303,7 +337,7 @@ export function PdvRecebimentoModal({
       } | null
       if (!r.ok || !j?.ok) {
         const code = j?.code || j?.error
-        if (code === "ja_pago" || code === "nada_em_aberto") {
+        if (code === "ja_pago" || code === "nada_em_aberto" || code === "ja_quitado") {
           return { ok: false as const, error: "Este título já está quitado." }
         }
         if (code === "valor_maior_que_aberto") {
@@ -314,9 +348,10 @@ export function PdvRecebimentoModal({
         }
         return { ok: false as const, error: j?.error || `HTTP ${r.status}` }
       }
+      dropIdempotencyKey(row, op, valor)
       return { ok: true as const, valorRecebido: j.valorRecebido ?? valor ?? Number(row.valor) }
     },
-    [storeId, sessaoId, formaPagto],
+    [storeId, sessaoId, formaPagto, idempotencyKeyFor, dropIdempotencyKey],
   )
 
   const callLiquidar = useCallback(
@@ -368,7 +403,7 @@ export function PdvRecebimentoModal({
         return
       }
       const saldoAberto = saldoAbertoDe(row)
-      if (valor > saldoAberto + 0.009) {
+      if (valor > saldoAberto + PAY_EPS) {
         toast({
           variant: "destructive",
           title: "Valor excede o saldo",
@@ -416,8 +451,8 @@ export function PdvRecebimentoModal({
   )
 
   const totalRestante = useMemo(
-    () => filtered.reduce((s, r) => s + saldoAbertoDe(r), 0),
-    [filtered, saldoAbertoDe],
+    () => somaSaldoEmAberto(filtered, saldoAbertoMap),
+    [filtered, saldoAbertoMap],
   )
 
   const selectCliente = (c: PdvClienteResult) => {

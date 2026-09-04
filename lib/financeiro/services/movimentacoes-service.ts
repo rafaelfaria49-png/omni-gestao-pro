@@ -16,6 +16,16 @@ import { recalcularSaldoCarteira } from "@/lib/financeiro/services/carteiras-ser
 
 export type MovTipo = "entrada" | "saida"
 
+/**
+ * Cliente Prisma aceito: o singleton global OU um `Prisma.TransactionClient`. Sem `db`,
+ * o comportamento é o de sempre — chamadores existentes não mudam.
+ */
+export type MovimentacoesDbClient = Prisma.TransactionClient
+
+function dbOf(db?: MovimentacoesDbClient): MovimentacoesDbClient {
+  return db ?? prisma
+}
+
 export const MOV_ORIGENS = ["os", "venda", "manual", "pagar", "receber", "estorno_receber", "estorno_pagar"] as const
 export type MovOrigem = (typeof MOV_ORIGENS)[number] | string
 
@@ -98,8 +108,9 @@ async function existeMovimentacao(
   referenciaId: string,
   tipo: MovTipo,
   origem: string,
+  db?: MovimentacoesDbClient,
 ): Promise<boolean> {
-  const found = await prisma.movimentacaoFinanceira.findFirst({
+  const found = await dbOf(db).movimentacaoFinanceira.findFirst({
     where: { storeId, referenciaId, tipo, origem },
     select: { id: true },
   })
@@ -238,25 +249,32 @@ export async function getResumoMovimentacoes(
 export async function createMovimentacaoEntradaFromReceber(
   titulo: { id: string; storeId: string; descricao: string; cliente: string },
   valor: number,
-  opts: { parcial?: boolean; meta?: CreateFromTituloMeta; carteiraId?: string | null } = {},
+  opts: {
+    parcial?: boolean
+    meta?: CreateFromTituloMeta
+    carteiraId?: string | null
+    /** Quando informado, o lançamento participa da transação do chamador. */
+    db?: MovimentacoesDbClient
+  } = {},
 ): Promise<MovimentacaoResult> {
   const storeId = assertStoreId(titulo.storeId)
   const referenciaId = safeStr(opts.meta?.referenciaId) || titulo.id
   const valorMoney = safeMoney(valor)
   if (!(valorMoney > 0)) return { ok: false, reason: "valor_invalido" }
 
+  const client = dbOf(opts.db)
   const origem = opts.parcial ? "receber_parcial" : "receber"
   const carteiraId = safeStr(opts.carteiraId) || null
 
   // Para liquidação total: idempotência estrita (skipa se já existe)
   // Para parcial: permite múltiplos APENAS se valor diferente já gravado (melhor esforço)
   if (!opts.parcial) {
-    if (await existeMovimentacao(storeId, referenciaId, "entrada", origem)) {
+    if (await existeMovimentacao(storeId, referenciaId, "entrada", origem, opts.db)) {
       return { ok: true, action: "skipped_idempotent" }
     }
   } else {
     // Para parcial: verifica se o total já gravado para esta referência ≥ valor recebido agora
-    const agg = await prisma.movimentacaoFinanceira.aggregate({
+    const agg = await client.movimentacaoFinanceira.aggregate({
       where: { storeId, referenciaId, tipo: "entrada", origem: { startsWith: "receber" } },
       _sum: { valor: true },
     })
@@ -268,13 +286,20 @@ export async function createMovimentacaoEntradaFromReceber(
   }
 
   const descricao = `Recebimento — ${titulo.cliente || titulo.descricao}`
-  const movimentacao = await prisma.movimentacaoFinanceira.create({
+  const movimentacao = await client.movimentacaoFinanceira.create({
     data: { storeId, tipo: "entrada", valor: valorMoney, descricao, origem, referenciaId, carteiraId },
   })
   if (carteiraId) {
-    await recalcularSaldoCarteira(carteiraId, storeId).catch((e) =>
-      console.error("[movimentacoes-service] recalcularSaldoCarteira receber falhou:", e),
-    )
+    // Dentro de `$transaction`, o recálculo usa o MESMO cliente: enxerga o lançamento
+    // ainda não commitado e o saldo da carteira volta atrás junto no rollback. Nesse modo
+    // a falha PROPAGA — engoli-la deixaria a transação abortada sem ninguém saber.
+    if (opts.db) {
+      await recalcularSaldoCarteira(carteiraId, storeId, opts.db)
+    } else {
+      await recalcularSaldoCarteira(carteiraId, storeId).catch((e) =>
+        console.error("[movimentacoes-service] recalcularSaldoCarteira receber falhou:", e),
+      )
+    }
   }
   return { ok: true, action: "created", movimentacao }
 }

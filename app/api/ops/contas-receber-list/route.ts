@@ -19,6 +19,42 @@ function rowFromPayload(localKey: string, payload: unknown): ContaReceberRow | n
   return null
 }
 
+/**
+ * Canonicalidade da listagem (GOAL PDV-RECEBIMENTO-CANONICALIDADE-HARDENING-002 · §2).
+ *
+ * O `payload` acumula dois papéis: snapshot de apresentação do painel legado E livro-razão
+ * do servidor. Devolver o snapshot cru fazia a tela exibir "pendente / valor bruto" para
+ * títulos já quitados no servidor. Aqui a metadata visual do snapshot é preservada, mas os
+ * campos ESCALARES do registro server-side (que `upsertContaReceber` grava) sobrescrevem o
+ * snapshot, e o saldo em aberto canônico é exposto explicitamente em `saldoAberto`.
+ */
+function canonicalizeRow(
+  snapshot: ContaReceberRow | null,
+  titulo: { localKey: string | null; id: string; descricao: string; cliente: string; valor: number; vencimento: string; status: string },
+  saldoAberto: number,
+): ContaReceberRow {
+  const lk = titulo.localKey?.trim() || titulo.id
+  const base: ContaReceberRow = snapshot ?? {
+    id: lk,
+    descricao: titulo.descricao,
+    cliente: titulo.cliente,
+    valor: titulo.valor,
+    vencimento: titulo.vencimento,
+    status: titulo.status,
+    tipo: "Manual",
+  }
+  return {
+    ...base,
+    id: lk,
+    descricao: titulo.descricao,
+    cliente: titulo.cliente,
+    valor: titulo.valor,
+    vencimento: titulo.vencimento,
+    status: titulo.status,
+    saldoAberto,
+  }
+}
+
 export async function GET(req: Request) {
   const lojaId = opsLojaIdFromRequest(req)
   if (!lojaId) return NextResponse.json({ error: "storeId obrigatório" }, { status: 400 })
@@ -32,28 +68,17 @@ export async function GET(req: Request) {
       orderBy: { updatedAt: "desc" },
     })
 
+    const summary = buildContaReceberSummary(titulos)
+    const audit = buildContaReceberAuditTrail(titulos)
+    const saldoPorId = new Map(audit.map((a) => [a.id, a.saldoAberto]))
+
     const out: ContaReceberRow[] = []
     for (const r of titulos) {
       const lk = r.localKey?.trim() || r.id
       if (!lk) continue
-      const fromPayload = rowFromPayload(lk, r.payload)
-      if (fromPayload) {
-        out.push(fromPayload)
-        continue
-      }
-      out.push({
-        id: lk,
-        descricao: r.descricao,
-        cliente: r.cliente,
-        valor: r.valor,
-        vencimento: r.vencimento,
-        status: r.status,
-        tipo: "Manual",
-      })
+      out.push(canonicalizeRow(rowFromPayload(lk, r.payload), r, saldoPorId.get(r.id) ?? 0))
     }
 
-    const summary = buildContaReceberSummary(titulos)
-    const audit = buildContaReceberAuditTrail(titulos)
     const generatedAt = new Date().toISOString()
 
     return NextResponse.json({
