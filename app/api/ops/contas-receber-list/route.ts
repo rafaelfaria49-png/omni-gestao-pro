@@ -4,6 +4,7 @@ import { opsLojaIdFromRequest } from "@/lib/ops-api-gate"
 import { apiGuardFinanceiroViewOrOps } from "@/lib/auth/api-enterprise-guard"
 import type { ContaReceberRow } from "@/lib/contas-receber-types"
 import { buildContaReceberAuditTrail, buildContaReceberSummary } from "@/lib/financeiro/services"
+import { mapearNomesAmbiguos } from "@/lib/contas-receber-cliente-match"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -32,6 +33,7 @@ function canonicalizeRow(
   snapshot: ContaReceberRow | null,
   titulo: { localKey: string | null; id: string; descricao: string; cliente: string; valor: number; vencimento: string; status: string },
   saldoAberto: number,
+  clienteId?: string,
 ): ContaReceberRow {
   const lk = titulo.localKey?.trim() || titulo.id
   const base: ContaReceberRow = snapshot ?? {
@@ -52,7 +54,22 @@ function canonicalizeRow(
     vencimento: titulo.vencimento,
     status: titulo.status,
     saldoAberto,
+    ...(clienteId ? { clienteId } : {}),
   }
+}
+
+/**
+ * Identificador estável do cliente gravado pela origem do título (`payload.clienteId`
+ * aponta para `Cliente.id`, o mesmo id que `/api/clientes` devolve ao PDV).
+ *
+ * Exposto na linha porque é o único degrau REALMENTE seguro do casamento
+ * cliente × título no recebimento do PDV — sem ele, dois clientes homônimos veem a
+ * dívida um do outro. Campo aditivo: quem já consome a listagem ignora.
+ */
+function clienteIdFromPayload(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object") return undefined
+  const v = (payload as { clienteId?: unknown }).clienteId
+  return typeof v === "string" && v.trim() ? v.trim() : undefined
 }
 
 export async function GET(req: Request) {
@@ -76,7 +93,24 @@ export async function GET(req: Request) {
     for (const r of titulos) {
       const lk = r.localKey?.trim() || r.id
       if (!lk) continue
-      out.push(canonicalizeRow(rowFromPayload(lk, r.payload), r, saldoPorId.get(r.id) ?? 0))
+      out.push(
+        canonicalizeRow(
+          rowFromPayload(lk, r.payload),
+          r,
+          saldoPorId.get(r.id) ?? 0,
+          clienteIdFromPayload(r.payload),
+        ),
+      )
+    }
+
+    // Identifica nomes homônimos da loja para o gate de matching fail-closed
+    let nomesAmbiguos: string[] = []
+    if (prisma.cliente) {
+      const clientes = await prisma.cliente.findMany({
+        where: { storeId: lojaId },
+        select: { id: true, name: true },
+      })
+      nomesAmbiguos = Array.from(mapearNomesAmbiguos(clientes))
     }
 
     const generatedAt = new Date().toISOString()
@@ -86,6 +120,7 @@ export async function GET(req: Request) {
       rows: out,
       summary,
       audit,
+      nomesAmbiguos,
       metadata: {
         source: "server",
         storeId: lojaId,

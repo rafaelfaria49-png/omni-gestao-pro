@@ -84,12 +84,15 @@ describe("contrato com o modal do PDV (fonte)", () => {
     "utf8",
   )
 
-  it("a lista operacional filtra por saldo em aberto, não só por cliente/status", () => {
-    expect(modal).toContain("isTituloEmAberto")
+  it("a lista operacional separa aberto de recebido por SALDO, não por cliente/status", () => {
+    // O corte por saldo > ε mora em `partitionTitulos` desde o G3 (multitítulo);
+    // antes era `isTituloEmAberto` inline. A propriedade guardada é a mesma.
+    expect(modal).toContain("partitionTitulos")
   })
 
   it("o saldo total do cabeçalho usa o saldo canônico", () => {
-    expect(modal).toContain("somaSaldoEmAberto")
+    expect(modal).toContain("abertos.reduce((s, t) => s + t.saldoAberto, 0)")
+    expect(modal).not.toContain("s + t.valorBruto")
   })
 
   it("o saldo por título não deriva do valor bruto dentro do componente", () => {
@@ -97,9 +100,9 @@ describe("contrato com o modal do PDV (fonte)", () => {
     expect(modal).not.toContain("Math.round((Number(row.valor) || 0) * 100) / 100")
   })
 
-  it("a contagem de \"Títulos abertos\" vem da lista já filtrada por saldo", () => {
-    expect(modal).toContain("Títulos abertos")
-    expect(modal).toContain("{filtered.length}")
+  it("a contagem de títulos em aberto vem da lista derivada do saldo", () => {
+    expect(modal).toContain("{abertos.length}")
+    expect(modal).not.toContain("{doCliente.length}")
   })
 
   it("o epsilon é o do contrato financeiro, não um 0.009 solto", () => {

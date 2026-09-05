@@ -1,6 +1,30 @@
 /** Nome exibido no recibo térmico (80 mm). */
 export const RECIBO_LOJA_NOME_PADRAO = "Minha Loja"
 
+/**
+ * Último recurso do cabeçalho do cupom quando NENHUMA fonte real de identidade da
+ * unidade respondeu. Deliberadamente neutro: "Minha Loja" parecia nome comercial e
+ * saía impresso em caixa alta como se fosse a razão social do cliente (achado G da
+ * `AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md`).
+ */
+export const RECIBO_LOJA_NOME_FALLBACK = "Loja"
+
+/**
+ * Nome da loja para o cupom, na ordem de confiança das fontes que o PDV já tem
+ * (prop explícita do call site → cadastro da unidade ativa → …).
+ *
+ * Só descarta candidato vazio; **não inventa** nome fantasia nem razão social. Se
+ * nada real chegou, devolve o rótulo neutro — melhor um cupom sem marca do que um
+ * cupom com marca errada.
+ */
+export function resolveReciboLojaNome(...candidatos: Array<string | null | undefined>): string {
+  for (const c of candidatos) {
+    const t = String(c ?? "").trim()
+    if (t) return t
+  }
+  return RECIBO_LOJA_NOME_FALLBACK
+}
+
 export const FORMAS_PAGAMENTO_RECIBO = [
   "Dinheiro",
   "PIX",
@@ -228,6 +252,87 @@ export function buildReciboPagamentoInnerHtml(p: ReciboPagamentoPayload): string
   </div>`
 }
 
+// ─── recibo consolidado (lote multitítulo) ───────────────────────────────────
+
+export type ReciboLoteItem = {
+  descricao: string
+  valorRecebido: number
+  /** Saldo que ficou NESTE título depois da baixa (0 em quitação total). */
+  saldoRestante: number
+}
+
+export type ReciboLotePayload = {
+  lojaNome: string
+  cliente: string
+  dataPagamento: Date
+  formaPagamento: string
+  itens: ReciboLoteItem[]
+  /** Total confirmado pelo SERVIDOR (`totalRecebido` da resposta do lote). */
+  totalRecebido: number
+  /** O que o cliente ainda deve na unidade depois deste recebimento. */
+  saldoDevedorAtual: number
+}
+
+/** Estilos exclusivos do cupom consolidado — somados ao CSS térmico compartilhado. */
+const RECIBO_LOTE_CSS = `
+.recibo-thermal .itens { margin: 10px 0 2px; }
+.recibo-thermal .item { margin: 0 0 7px; }
+.recibo-thermal .item-d { font-size: 10px; font-weight: 700; }
+.recibo-thermal .item-l { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+.recibo-thermal .item-r { font-size: 9px; color: #333; }
+.recibo-thermal .tot { display: flex; justify-content: space-between; gap: 8px; font-weight: 800; font-size: 12px; margin-top: 8px; }
+`
+
+/**
+ * Cupom de UM recebimento que baixou VÁRIOS títulos. Um documento por operação — o
+ * cliente pagou uma vez, então assina uma vez. Imprimir N cupons individuais para um
+ * lote reintroduziria a leitura de "N pagamentos".
+ */
+export function buildReciboLoteInnerHtml(p: ReciboLotePayload): string {
+  const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })
+  const dataFmt = p.dataPagamento.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+  const loja = escapeHtml(p.lojaNome)
+  const cliente = escapeHtml(p.cliente || "—")
+  const forma = escapeHtml(p.formaPagamento || "—")
+  const qtd = p.itens.length
+
+  const itens = p.itens
+    .map((it) => {
+      const resta = Number.isFinite(it.saldoRestante) ? Math.max(0, it.saldoRestante) : 0
+      const situacao = resta > 0.009 ? `abatido — resta ${brl(resta)}` : "quitado"
+      return `
+      <div class="item">
+        <div class="item-d">${escapeHtml(it.descricao || "Título")}</div>
+        <div class="item-l"><span>${escapeHtml(situacao)}</span><span>${escapeHtml(brl(it.valorRecebido))}</span></div>
+      </div>`
+    })
+    .join("")
+
+  return `
+  <div class="recibo-thermal">
+    <h1>${loja}</h1>
+    <p class="sub">Recibo de recebimento</p>
+    <hr class="dash" />
+    <div class="row"><span class="label">Cliente</span>${cliente}</div>
+    <div class="forma"><span class="label">Forma de pagamento</span>${forma}</div>
+    <div class="row"><span class="label">Data do pagamento</span>${escapeHtml(dataFmt)}</div>
+    <hr class="dash" />
+    <div class="itens">
+      <span class="label">${qtd} ${qtd === 1 ? "título recebido" : "títulos recebidos"}</span>
+      ${itens}
+    </div>
+    <div class="tot"><span>Total recebido</span><span>${escapeHtml(brl(p.totalRecebido))}</span></div>
+    <div class="valor">${escapeHtml(brl(p.totalRecebido))}</div>
+    <hr class="dash" />
+    <div class="saldo">SALDO DEVEDOR ATUAL: ${escapeHtml(brl(p.saldoDevedorAtual))}</div>
+    <div class="sign-wrap">
+      <div class="sign-label">Assinatura do recebedor</div>
+      <div class="sign-space"></div>
+    </div>
+    <p class="muted">Documento gerado eletronicamente — ${loja}</p>
+  </div>`
+}
+
 function ensurePrintMount(): HTMLDivElement {
   let el = document.getElementById("recibo-print-mount") as HTMLDivElement | null
   if (!el) {
@@ -251,6 +356,19 @@ export function imprimirReciboPagamento(
   payload: ReciboPagamentoPayload,
   opts?: ImprimirReciboOpts,
 ): void {
+  printReciboInnerHtml(buildReciboPagamentoInnerHtml(payload), opts)
+}
+
+/**
+ * Imprime o recibo CONSOLIDADO do lote — um único cupom para os N títulos baixados
+ * na mesma operação. Compartilha a mesma montagem e o mesmo CSS do cupom singular.
+ */
+export function imprimirReciboLote(payload: ReciboLotePayload, opts?: ImprimirReciboOpts): void {
+  printReciboInnerHtml(buildReciboLoteInnerHtml(payload), opts, RECIBO_LOTE_CSS)
+}
+
+/** Montagem, `@page` e ciclo de impressão — compartilhados pelos dois cupons. */
+function printReciboInnerHtml(inner: string, opts?: ImprimirReciboOpts, extraCss = ""): void {
   if (typeof document === "undefined") return
   const pageSize = opts?.bobina === "58mm" ? "58mm" : "80mm"
   const pageCss = `
@@ -259,8 +377,7 @@ export function imprimirReciboPagamento(
   /** Montagem e `print()` fora do mesmo tick da baixa — evita travar a UI antes do loading sumir. */
   window.setTimeout(() => {
     const mount = ensurePrintMount()
-    const inner = buildReciboPagamentoInnerHtml(payload)
-    mount.innerHTML = `<div class="recibo-print-root"><style>${pageCss}${RECIBO_THERMAL_CSS}</style>${inner}</div>`
+    mount.innerHTML = `<div class="recibo-print-root"><style>${pageCss}${RECIBO_THERMAL_CSS}${extraCss}</style>${inner}</div>`
 
     document.documentElement.setAttribute("data-printing-recibo", "true")
 
