@@ -152,15 +152,43 @@ describe("janela efêmera WSDL versionada", () => {
     })
   })
 
-  it("constante versionada está DORMENTE após a janela 2325z expirada, sem reutilizar a activation", () => {
+  it("constante versionada arma uma terceira janela inédita de 45 minutos sem reutilizar activations mortas", () => {
     expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: null,
-      notBeforeUtc: null,
-      expiresAtUtc: null,
+      activationId: "wsdl-h9h10-20260905-1516z-025c3251e20744df",
+      notBeforeUtc: "2026-09-05T15:16:00.000Z",
+      expiresAtUtc: "2026-09-05T16:01:00.000Z",
     })
-    expect(evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date())).toEqual({
+    const durationMs =
+      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.expiresAtUtc!).getTime() -
+      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.notBeforeUtc!).getTime()
+    expect(durationMs).toBe(WSDL_EXECUTION_MAX_WINDOW_MS)
+    for (const deadId of [
+      "wsdl-h9h10-20260904-1955z-d2c844a079986c9e",
+      "wsdl-h9h10-20260904-2325z-fcad5be0637f918c",
+    ]) {
+      expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
+    }
+    expect(
+      evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-05T15:15:59.999Z")),
+    ).toEqual({
       active: false,
-      reason: "disabled",
+      reason: "not_started",
+    })
+    expect(
+      evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-05T15:16:00.000Z")),
+    ).toEqual({
+      active: true,
+      window: {
+        activationId: "wsdl-h9h10-20260905-1516z-025c3251e20744df",
+        notBefore: new Date("2026-09-05T15:16:00.000Z"),
+        expiresAt: new Date("2026-09-05T16:01:00.000Z"),
+      },
+    })
+    expect(
+      evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-05T16:01:00.000Z")),
+    ).toEqual({
+      active: false,
+      reason: "expired",
     })
   })
 
