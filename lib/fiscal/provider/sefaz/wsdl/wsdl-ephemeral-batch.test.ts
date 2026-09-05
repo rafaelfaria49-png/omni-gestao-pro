@@ -5,7 +5,7 @@ import { loadA1MtlsMaterial } from "@/lib/fiscal/certificate/a1-mtls-material"
 import { canonicalEnvRef } from "@/lib/fiscal/vault/fiscal-secret-vault"
 import { validTestPfx } from "@/lib/fiscal/vault/__fixtures__/make-test-pfx"
 import { scanForSecrets } from "@/lib/fiscal/vault/secret-scan"
-import { wsdlFixture } from "./__fixtures__/wsdl-fixtures"
+import { nfeAutorizacao4MultiOpFixture, wsdlFixture } from "./__fixtures__/wsdl-fixtures"
 import {
   SefazWsdlAcquisition,
   type SefazWsdlAcquisitionOutcome,
@@ -70,7 +70,10 @@ async function activation(options: {
 }
 
 function successOutcome(service: (typeof SEFAZ_WSDL_ACQUISITION_TARGETS)[number]["servico"]): SefazWsdlAcquisitionOutcome {
-  const documento = wsdlFixture({ servico: service })
+  const documento =
+    service === "NFeAutorizacao4"
+      ? nfeAutorizacao4MultiOpFixture()
+      : wsdlFixture({ servico: service })
   const bytes = Buffer.from(documento, "utf8")
   return {
     ok: true,
@@ -191,6 +194,15 @@ describe("batch efêmero fechado H-9/H-10", () => {
       expect(calls).toHaveLength(1)
       expect(calls[0]![0].preparedSecureContext).toBe(preparedSecureContext)
     }
+    const nfeAut = result.services.find((item) => item.service === "NFeAutorizacao4")
+    expect(nfeAut).toMatchObject({
+      service: "NFeAutorizacao4",
+      h9: true,
+      h10: true,
+      operation: "nfeAutorizacaoLote",
+      inputWrapper: "nfeDadosMsg",
+      outputWrapper: "nfeResultMsg",
+    })
   })
 
   it("uma falha é terminal para o serviço: não há retry e os demais continuam no máximo uma vez", async () => {

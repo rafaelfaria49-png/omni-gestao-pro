@@ -32,6 +32,19 @@ export const SEFAZ_WSDL_QUERY = "wsdl" as const
 /** Método da futura aquisição. Fixo: metadados são lidos, nunca transmitidos. */
 export const SEFAZ_WSDL_METHOD = "GET" as const
 
+/**
+ * Operação canônica esperada para serviços cujo WSDL publica múltiplas operações no mesmo binding SOAP 1.2.
+ *
+ * `NFeAutorizacao4` publica `nfeAutorizacaoLote` (leiaute padrão XML / enviNFe) e `nfeAutorizacaoLoteZip`
+ * (comprimido GZip em Base64). O piloto NFC-e transmite lote XML não-compactado via `nfeAutorizacaoLote`.
+ *
+ * Serviços sem entrada aqui não toleram ambiguidade: bindings com mais de uma operação falham fechados.
+ */
+export const SEFAZ_WSDL_EXPECTED_OPERATIONS: Readonly<Partial<Record<SefazServico, string>>> =
+  Object.freeze({
+    NFeAutorizacao4: "nfeAutorizacaoLote",
+  })
+
 export type SefazWsdlTarget = {
   readonly uf: SefazUf
   readonly ambiente: SefazAmbienteCatalogo
@@ -44,9 +57,15 @@ export type SefazWsdlTarget = {
   readonly host: string
   readonly path: string
   readonly namespace: string
+  /**
+   * Operação canônica esperada no binding SOAP 1.2 quando o serviço publica múltiplos métodos.
+   * Se ausente, o extrator recusa bindings com mais de uma wsdl:operation.
+   */
+  readonly expectedOperationName?: string
 }
 
 function alvo(endpoint: SefazEndpoint): SefazWsdlTarget {
+  const expectedOperationName = SEFAZ_WSDL_EXPECTED_OPERATIONS[endpoint.servico]
   return Object.freeze({
     uf: endpoint.uf,
     ambiente: endpoint.ambiente,
@@ -57,6 +76,7 @@ function alvo(endpoint: SefazEndpoint): SefazWsdlTarget {
     host: endpoint.host,
     path: `/ws/${endpoint.servico}.asmx`,
     namespace: endpoint.namespace,
+    ...(expectedOperationName ? { expectedOperationName } : {}),
   })
 }
 
@@ -93,6 +113,7 @@ export function sefazWsdlTargetIntegro(target: SefazWsdlTarget): boolean {
   if (!sefazEndpointIntegro(target.endpoint)) return false
   if (target.ambiente !== "HOMOLOGACAO" || target.uf !== "SP") return false
   if (target.host !== target.endpoint.host) return false
+  if (target.expectedOperationName !== SEFAZ_WSDL_EXPECTED_OPERATIONS[target.servico]) return false
 
   let parsed: URL
   try {
@@ -188,7 +209,8 @@ export function canonicalSefazWsdlTarget(candidato: SefazWsdlTarget): SefazWsdlT
     candidato.url !== canonico.url ||
     candidato.host !== canonico.host ||
     candidato.path !== canonico.path ||
-    candidato.namespace !== canonico.namespace
+    candidato.namespace !== canonico.namespace ||
+    candidato.expectedOperationName !== canonico.expectedOperationName
   ) {
     return null
   }

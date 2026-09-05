@@ -41,6 +41,11 @@ describe("allow-list de aquisição de WSDL · projeção do catálogo", () => {
       expect(alvo.url).toBe(`${alvo.endpoint.url}?${SEFAZ_WSDL_QUERY}`)
       expect(alvo.namespace).toBe(sefazServiceNamespace(alvo.servico))
       expect(sefazWsdlTargetIntegro(alvo)).toBe(true)
+      if (alvo.servico === "NFeAutorizacao4") {
+        expect(alvo.expectedOperationName).toBe("nfeAutorizacaoLote")
+      } else {
+        expect(alvo.expectedOperationName).toBeUndefined()
+      }
     }
   })
 
@@ -145,6 +150,28 @@ describe("canonicalSefazWsdlTarget · alvo forjado não atravessa", () => {
     const alvo = alvoValido()
     expect(canonicalSefazWsdlTarget({ ...alvo })).toBe(alvo)
   })
+
+  it("recusa alvo com expectedOperationName divergente", () => {
+    const lookupNFeAut = selectSefazWsdlTarget({
+      uf: "SP",
+      ambiente: "HOMOLOGACAO",
+      servico: "NFeAutorizacao4",
+    })
+    expect(lookupNFeAut.ok).toBe(true)
+    if (!lookupNFeAut.ok) return
+
+    const forjadoZip: SefazWsdlTarget = {
+      ...lookupNFeAut.alvo,
+      expectedOperationName: "nfeAutorizacaoLoteZip",
+    }
+    expect(canonicalSefazWsdlTarget(forjadoZip)).toBeNull()
+
+    const forjadoSemExpected: SefazWsdlTarget = {
+      ...lookupNFeAut.alvo,
+      expectedOperationName: undefined,
+    }
+    expect(canonicalSefazWsdlTarget(forjadoSemExpected)).toBeNull()
+  })
 })
 
 describe("sefazWsdlTargetIntegro · última barreira estrutural", () => {
@@ -159,7 +186,32 @@ describe("sefazWsdlTargetIntegro · última barreira estrutural", () => {
     ["sem query", { url: base.endpoint.url }],
     ["path divergente", { url: `https://${base.host}/outro?wsdl`, path: "/outro" }],
     ["ambiente de produção", { ambiente: "PRODUCAO" as const }],
+    ["expectedOperationName indevido em serviço sem multi-op", { expectedOperationName: "qualquerOp" }],
   ])("recusa %s", (_rotulo, patch) => {
     expect(sefazWsdlTargetIntegro({ ...base, ...patch } as SefazWsdlTarget)).toBe(false)
+  })
+
+  it("recusa NFeAutorizacao4 sem expectedOperationName ou com valor divergente", () => {
+    const lookupNFeAut = selectSefazWsdlTarget({
+      uf: "SP",
+      ambiente: "HOMOLOGACAO",
+      servico: "NFeAutorizacao4",
+    })
+    expect(lookupNFeAut.ok).toBe(true)
+    if (!lookupNFeAut.ok) return
+
+    expect(
+      sefazWsdlTargetIntegro({
+        ...lookupNFeAut.alvo,
+        expectedOperationName: undefined,
+      } as SefazWsdlTarget),
+    ).toBe(false)
+
+    expect(
+      sefazWsdlTargetIntegro({
+        ...lookupNFeAut.alvo,
+        expectedOperationName: "nfeAutorizacaoLoteZip",
+      } as SefazWsdlTarget),
+    ).toBe(false)
   })
 })
