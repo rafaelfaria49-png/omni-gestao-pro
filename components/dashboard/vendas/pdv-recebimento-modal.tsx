@@ -76,6 +76,7 @@ import {
   partitionTitulos,
   resolveIdempotencyKey,
   selecionaveis,
+  RECEBIMENTO_LOTE_UI_MAX_ITENS,
   valorReceberDoTitulo,
   novaTravaSubmissao,
   iniciarSubmissao,
@@ -346,7 +347,11 @@ export function PdvRecebimentoModal({
 
   const selecionadosSet = useMemo(() => new Set(selecionados), [selecionados])
 
-  const { itens: itensLote, total: totalSelecionado } = useMemo(
+  const {
+    itens: itensLote,
+    total: totalSelecionado,
+    excedeuTeto,
+  } = useMemo(
     () => buildItensLote(abertos, selecionados, parcialAtivo ? parcialValue : {}),
     [abertos, selecionados, parcialAtivo, parcialValue],
   )
@@ -374,16 +379,42 @@ export function PdvRecebimentoModal({
     })
   }, [abertos])
 
-  const toggleTitulo = useCallback((localKey: string) => {
-    setSelecionados((prev) =>
-      prev.includes(localKey) ? prev.filter((k) => k !== localKey) : [...prev, localKey],
-    )
-  }, [])
+  /**
+   * Marcar respeita o teto do lote. Sem isso, um cliente com 30 títulos montava uma
+   * CTA que o servidor recusaria inteira (`lote_excede_teto`) e o operador ficava com 30
+   * marcados, sem saber quantos tirar.
+   */
+  const toggleTitulo = useCallback(
+    (localKey: string) => {
+      setSelecionados((prev) => {
+        if (prev.includes(localKey)) return prev.filter((k) => k !== localKey)
+        if (prev.length >= RECEBIMENTO_LOTE_UI_MAX_ITENS) {
+          toast({
+            title: `Máximo de ${RECEBIMENTO_LOTE_UI_MAX_ITENS} títulos por recebimento`,
+            description: "Receba estes primeiro e depois marque os demais.",
+          })
+          return prev
+        }
+        return [...prev, localKey]
+      })
+    },
+    [toast],
+  )
 
   const toggleTodos = useCallback(() => {
     const alvo = selecionaveis(abertos)
-    setSelecionados((prev) => (prev.length >= alvo.length ? [] : alvo))
-  }, [abertos])
+    const cabe = alvo.slice(0, RECEBIMENTO_LOTE_UI_MAX_ITENS)
+    setSelecionados((prev) => {
+      if (prev.length >= cabe.length) return []
+      if (alvo.length > cabe.length) {
+        toast({
+          title: `Marquei os ${cabe.length} primeiros`,
+          description: `O lote aceita ${RECEBIMENTO_LOTE_UI_MAX_ITENS} títulos por vez; ficam ${alvo.length - cabe.length} para o próximo.`,
+        })
+      }
+      return cabe
+    })
+  }, [abertos, toast])
 
   /**
    * Saldo devedor do cliente para o rodapé do recibo SINGULAR.
@@ -559,6 +590,15 @@ export function PdvRecebimentoModal({
     ],
   )
 
+  /** Fechar é bloqueado enquanto o lote está no ar — a resposta ainda vai chegar. */
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next && travaRef.current.ativo) return
+      onOpenChange(next)
+    },
+    [onOpenChange],
+  )
+
   // ─── recebimento em lote (G3) ──────────────────────────────────────────────
 
   const gravarLote = useCallback(async () => {
@@ -578,6 +618,8 @@ export function PdvRecebimentoModal({
     /** Snapshot da tentativa: a resposta é lida contra o que foi ENVIADO. */
     const enviados: LoteItemPayload[] = itensLote
     const descricaoPorKey = new Map(abertos.map((t) => [t.localKey, t.descricao]))
+    /** Vira `true` assim que o servidor confirma — separa falha de gravação de falha de tela. */
+    let confirmado = false
 
     setGravando(true)
     setAviso(null)
@@ -613,7 +655,7 @@ export function PdvRecebimentoModal({
         setEtapa("lista")
         setAviso(conflito.mensagem)
         if (conflito.recarregar) await fetchTitulos()
-        if (conflito.caixaFechado) onOpenChange(false)
+        if (conflito.caixaFechado) handleOpenChange(false)
         toast({ variant: "destructive", title: "Recebimento não gravado", description: conflito.mensagem })
         return
       }
@@ -647,6 +689,9 @@ export function PdvRecebimentoModal({
         jaRegistrado: j.jaRegistrado === true,
       }
 
+      // Daqui para baixo o servidor JÁ gravou. Se algo na cauda (caixa local, recibo,
+      // recarga) estourar, o `catch` não pode dizer que o recebimento não aconteceu.
+      confirmado = true
       encerrarIdempotencyKey(loteKeysRef.current, fingerprint)
 
       // Reflexo LOCAL no CaixaProvider, exatamente uma vez por operação confirmada.
@@ -668,9 +713,20 @@ export function PdvRecebimentoModal({
       await fetchTitulos()
       onReceived?.()
     } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      if (confirmado) {
+        // O recebimento ESTÁ gravado; quem falhou foi a cauda local. Dizer o contrário
+        // levaria o operador a cobrar o cliente de novo.
+        setAviso("O recebimento foi gravado. A tela não conseguiu atualizar sozinha — recarregue a lista.")
+        toast({
+          variant: "destructive",
+          title: "Recebimento gravado, tela desatualizada",
+          description: msg,
+        })
+        return
+      }
       // Rede/timeout: NÃO é desfecho. A chave sobrevive para que o retry desta mesma
       // seleção seja reconhecido como replay em vez de virar um segundo recebimento.
-      const msg = e instanceof Error ? e.message : String(e)
       setEtapa("lista")
       setAviso("Não deu para confirmar o recebimento. Tente de novo — a operação não será duplicada.")
       toast({ variant: "destructive", title: "Falha ao receber", description: msg })
@@ -687,7 +743,7 @@ export function PdvRecebimentoModal({
     abertos,
     adicionarEntrada,
     fetchTitulos,
-    onOpenChange,
+    handleOpenChange,
     onReceived,
     toast,
     tryPrintReciboLote,
@@ -709,15 +765,6 @@ export function PdvRecebimentoModal({
     clearClienteSearch()
     queueMicrotask(() => searchInputRef.current?.focus())
   }
-
-  /** Fechar é bloqueado enquanto o lote está no ar — a resposta ainda vai chegar. */
-  const handleOpenChange = useCallback(
-    (next: boolean) => {
-      if (!next && travaRef.current.ativo) return
-      onOpenChange(next)
-    },
-    [onOpenChange],
-  )
 
   const bloqueado = gravando || formasAtivas.length === 0
   const ctaLabel =
@@ -812,7 +859,7 @@ export function PdvRecebimentoModal({
               setResultado(null)
               setEtapa("lista")
             }}
-            onFechar={() => onOpenChange(false)}
+            onFechar={() => handleOpenChange(false)}
             hotkeyLabel={hotkeyLabel}
           />
         ) : etapa === "confirmar" ? (
@@ -1052,7 +1099,7 @@ export function PdvRecebimentoModal({
                       type="button"
                       size="lg"
                       className="h-10 min-w-0 flex-1 px-3 font-bold whitespace-normal sm:flex-none sm:whitespace-nowrap"
-                      disabled={bloqueado || itensLote.length === 0}
+                      disabled={bloqueado || itensLote.length === 0 || excedeuTeto}
                       onClick={() => setEtapa("confirmar")}
                     >
                       {ctaLabel}
@@ -1133,7 +1180,12 @@ function LinhaAberta({
 }) {
   const parcial = parseValorBR(parcialValue)
   const excedeSaldo = parcial != null && parcial > linha.saldoAberto + PAY_EPS
-  const aplicado = valorReceberDoTitulo(linha, parcialAtivo ? parcialValue : undefined)
+  // `buildItensLote` já descarta valor ≤ 0 do payload; sem este espelho a linha ficava
+  // marcada mostrando um “fica devendo” MAIOR que o saldo e sumia do total em silêncio.
+  const valorInvalido = parcial != null && parcial <= PAY_EPS
+  const aplicado = valorInvalido
+    ? 0
+    : valorReceberDoTitulo(linha, parcialAtivo ? parcialValue : undefined)
   const restante = Math.max(0, Math.round((linha.saldoAberto - aplicado) * 100) / 100)
 
   return (
@@ -1219,16 +1271,23 @@ function LinhaAberta({
               value={parcialValue}
               onChange={(e) => onParcialChange(e.target.value)}
               disabled={disabled}
-              className={cn("h-9 bg-secondary border-border", excedeSaldo && "border-destructive")}
-              aria-describedby={excedeSaldo ? `parcial-hint-${linha.localKey}` : undefined}
+              className={cn(
+                "h-9 bg-secondary border-border",
+                (excedeSaldo || valorInvalido) && "border-destructive",
+              )}
+              aria-describedby={
+                excedeSaldo || valorInvalido ? `parcial-hint-${linha.localKey}` : undefined
+              }
             />
           </div>
           <p className="text-xs text-muted-foreground">
             Fica devendo <strong className="tabular-nums text-foreground">{brl(restante)}</strong>
           </p>
-          {excedeSaldo && (
+          {(excedeSaldo || valorInvalido) && (
             <p id={`parcial-hint-${linha.localKey}`} className="text-xs text-foreground">
-              Acima do saldo — será limitado a {brl(linha.saldoAberto)}.
+              {valorInvalido
+                ? "Informe um valor maior que zero — este título não entra no recebimento."
+                : `Acima do saldo — será limitado a ${brl(linha.saldoAberto)}.`}
             </p>
           )}
         </div>

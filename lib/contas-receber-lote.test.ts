@@ -113,6 +113,17 @@ describe("payload do endpoint G2", () => {
     expect(Object.keys(r.itens[0]!).sort()).toEqual(["localKey", "saldoEsperado", "tituloId", "valorReceber"])
   })
 
+  it("sinaliza quando a seleção passa do teto — o servidor recusaria o lote inteiro", () => {
+    const muitos = Array.from({ length: RECEBIMENTO_LOTE_UI_MAX_ITENS + 5 }, (_, i) => ({
+      localKey: `t-${i}`,
+      saldoAberto: 10,
+    }))
+    expect(buildItensLote(muitos, selecionaveis(muitos)).excedeuTeto).toBe(true)
+    expect(
+      buildItensLote(muitos, selecionaveis(muitos).slice(0, RECEBIMENTO_LOTE_UI_MAX_ITENS)).excedeuTeto,
+    ).toBe(false)
+  })
+
   it("o teto de itens da UI é o mesmo do service do lote", () => {
     const src = readFileSync(
       resolve(process.cwd(), "lib/financeiro/services/recebimento-lote-service.ts"),
@@ -294,5 +305,26 @@ describe("fiação do PdvRecebimentoModal", () => {
   it("o casamento por substring bidirecional do cliente foi removido", () => {
     expect(src).not.toMatch(/keyTitulo\.includes|includes\(keyTitulo\)/)
     expect(src).toContain("tituloPertenceAoCliente")
+  })
+})
+
+/**
+ * P1 da revisão independente: `excedeuTeto` era calculado e ignorado. Um cliente com 30
+ * títulos montava uma CTA que o servidor recusaria inteira, e o operador ficava com os 30
+ * marcados sem saber quantos tirar.
+ */
+describe("teto do lote na fiação do modal", () => {
+  const src = readFileSync(
+    resolve(process.cwd(), "components/dashboard/vendas/pdv-recebimento-modal.tsx"),
+    "utf8",
+  )
+
+  it("a CTA é bloqueada quando a seleção passa do teto", () => {
+    expect(src).toContain("|| excedeuTeto}")
+  })
+
+  it("marcar e Selecionar todos respeitam o teto", () => {
+    expect(src).toContain("prev.length >= RECEBIMENTO_LOTE_UI_MAX_ITENS")
+    expect(src).toContain("alvo.slice(0, RECEBIMENTO_LOTE_UI_MAX_ITENS)")
   })
 })

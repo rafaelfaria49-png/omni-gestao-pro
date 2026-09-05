@@ -9,7 +9,7 @@
 | **Branch** | `goal/pdv-recebimento-multititulo-ui-g3-005` |
 | **Design aprovado** | [`AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md`](./AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md) §3 · projeto Claude Design `433f40ee-849c-4f8f-a6e4-b45c68eab9aa` |
 | **Backend** | [`RELATORIO_PDV_RECEBIMENTO_MULTITITULO_BACKEND_G2_003.md`](./RELATORIO_PDV_RECEBIMENTO_MULTITITULO_BACKEND_G2_003.md) — `POST /api/pdv/receber-conta-lote`, consumido sem alteração |
-| **Estado** | PR aberta. **Não mergeada.** Revisão independente por outra família pendente. |
+| **Estado** | PR [#162](https://github.com/rafaelfaria49-png/omni-gestao-pro-pdv-claude/pull/162) aberta. **Não mergeada.** 1ª revisão independente feita (P0=0 · P1=1 · P2=6 → corrigidos); 2ª passada sobre os fixes pendente (§12). |
 
 ---
 
@@ -21,8 +21,14 @@ cliente, o operador vê **abas Em aberto / Recebidos**, marca N títulos por che
 etapa de confirmação e grava **tudo numa requisição** para o endpoint de lote do G2.
 
 O botão **"Quitar este título"** continua em cada linha, chamando a rota singular
-`/api/pdv/receber-conta` exatamente como antes — receber um título só nunca passou a
-exigir seleção múltipla.
+`/api/pdv/receber-conta` com o mesmo corpo e o mesmo ciclo de `idempotencyKey` de antes —
+receber um título só nunca passou a exigir seleção múltipla.
+
+> **O que saiu junto:** o botão irmão **"Baixa parcial"** por linha (que fazia
+> `op:"parcial"` na rota singular) não existe mais. Parcial agora é o modo
+> **"Valor parcial por título"** e vai pelo lote, inclusive quando é um título só. Isso é
+> o §3 do design aprovado ("recebimento parcial como modo separado, não input por card"),
+> não um efeito colateral — mas é uma ação de produção que mudou de rota, e fica dito.
 
 ---
 
@@ -34,7 +40,7 @@ exigir seleção múltipla.
 |---|---|
 | `lib/contas-receber-cliente-match.ts` | Escada determinística `clienteId → documento → telefone → nome exato` |
 | `lib/contas-receber-lote.ts` | Seleção, payload do lote, idempotência, trava de submissão, leitura de conflito, abas |
-| `lib/contas-receber-cliente-match.test.ts` · `lib/contas-receber-lote.test.ts` · `lib/contas-receber-recibo-lote.test.ts` | 45 testes focados do G3 |
+| `lib/contas-receber-cliente-match.test.ts` · `lib/contas-receber-lote.test.ts` · `lib/contas-receber-recibo-lote.test.ts` | 48 testes focados do G3 |
 
 **Alterados**
 
@@ -56,7 +62,7 @@ exigir seleção múltipla.
 O harness do Vitest roda em `environment: "node"` e o `include` é `**/*.test.ts` — **`.tsx`
 não é compilado**. Testar seleção, payload e conflito dentro do componente seria
 impossível. Toda a decisão financeira ficou em módulos puros (`contas-receber-lote.ts`,
-`contas-receber-cliente-match.ts`) e o `.tsx` é casca visual. Os 45 testes do G3 exercitam
+`contas-receber-cliente-match.ts`) e o `.tsx` é casca visual. Os 48 testes do G3 exercitam
 o mesmo código que a tela executa.
 
 ---
@@ -160,8 +166,10 @@ canônico, nunca por status ou valor bruto.
 `buildReciboLoteInnerHtml` / `imprimirReciboLote` produzem **um** cupom para os N títulos:
 nome real da loja, cliente, data/hora, forma, lista dos títulos com valor recebido e
 situação (quitado / abatido com o que resta), total recebido e saldo devedor restante. O
-cupom singular (`buildReciboPagamentoInnerHtml`) segue intacto e coberto pelos testes
-originais. Nunca se imprime N recibos individuais para um lote.
+cupom singular (`buildReciboPagamentoInnerHtml`) tem contrato de saída **byte a byte
+idêntico** e segue coberto pelos testes originais — o que mudou para ele é só o **valor**
+de `lojaNome` recebido, que agora passa por `resolveReciboLojaNome` em vez do antigo
+`lojaNome?.trim() || "Minha Loja"`. Mesma correção aprovada, aplicada aos dois cupons. Nunca se imprime N recibos individuais para um lote.
 
 **Nome da loja.** `resolveReciboLojaNome` escolhe a primeira fonte real: prop `lojaNome` do
 call site (o PDV Classic já passava) → `empresaDocumentos.nomeFantasia` → `razaoSocial`, do
@@ -207,12 +215,25 @@ O `DialogContent` do repositório traz `sm:max-w-lg`; um `max-w-*` sem variante 
 O modal precisou de `sm:max-w-5xl`. O modal antigo tinha `max-w-3xl` e estava, na prática,
 limitado a 512 px — a tabela densa não caberia. Nenhum outro modal foi tocado.
 
+### P2-6 — `"Minha Loja"` e a soma de homônimos continuam vivos no painel Financeiro
+`RECIBO_LOJA_NOME_PADRAO` e `calcSaldoDevedorClienteTodaLoja` /
+`calcSaldoDevedorOutrosPendentesMesmoCliente` seguem exportados e **chamados por
+`components/dashboard/financeiro/contas-receber.tsx`**, que este GOAL não toca. O §8 do
+design mandava removê-los; só o PDV parou de usá-los. O defeito de somar homônimos e o
+default "Minha Loja" continuam ativos naquela superfície.
+
+### P2-7 — saldo devedor do recibo mistura número fresco com número em cache
+`saldoDevedorAtual` soma os `saldoDepois` desta resposta (frescos, do servidor) com o
+`saldoAberto` dos demais títulos do cliente, que veio da última listagem. Se outra sessão
+mexer num título **diferente** do mesmo cliente entre a carga e o envio, o rodapé do cupom
+fica marginalmente defasado. É exibição — nenhum dinheiro se move sobre esse número.
+
 ---
 
 ## 10. Validação
 
 ```
-TESTES_FOCADOS_G3=45 passed (3 arquivos)
+TESTES_FOCADOS_G3=48 passed (3 arquivos)
 REGRESSAO=200 passed (12 arquivos: modal/aberto/recibo/lote/singular/canonicalidade/parcial/caixa/transversal)
 SUITE_COMPLETA=7194 passed · 3 arquivos falhando, todos PRÉ-EXISTENTES e de ambiente:
   lib/fiscal/xml/nfce-xml-builder.test.ts  → "xmllint ausente no PATH"
@@ -282,7 +303,50 @@ G2_BACKEND_REGRESSION=false
 
 ---
 
-## 12. Ponto de parada
+## 12. Revisão independente
+
+Executada por **outra família de modelo** (Sonnet; a primeira tentativa, em Fable, morreu
+por falta de crédito de uso — registrado por honestidade). Read-only, sobre o commit
+`adf0295`, com os oito focos pedidos pelo GOAL.
+
+Resultado da primeira rodada: **`P0=0 · P1=1 · P2=6 · VERDICT=REQUEST_CHANGES`**.
+
+**P1 (corrigido).** `buildItensLote` calculava `excedeuTeto` e a UI ignorava. Um cliente
+com 30 títulos abertos clicava "Selecionar todos", via `Receber 30 títulos — R$ X` e
+levava um `lote_excede_teto` (400) do servidor com os 30 ainda marcados e sem pista de
+quantos tirar. Agora marcar e "Selecionar todos" respeitam o teto (com aviso de quantos
+ficaram para o próximo recebimento) e a CTA é bloqueada por `excedeuTeto`. Dinheiro nunca
+esteve em risco — o servidor recusava o lote inteiro —, o defeito era de saída sem porta.
+
+**P2 acatados e corrigidos no código:**
+
+- ordem do desfecho: `encerrarIdempotencyKey` rodava antes da cauda (caixa local, recibo,
+  recarga). Se a cauda estourasse, o `catch` diria "não será duplicada" sobre um
+  recebimento **gravado**. Uma flag `confirmado` separa falha de gravação de falha de tela,
+  e a mensagem passou a ser "O recebimento foi gravado. A tela não conseguiu atualizar";
+- valor parcial `0` ou negativo: o item já era descartado do payload, mas a linha seguia
+  marcada exibindo um "fica devendo" MAIOR que o saldo e sumia do total em silêncio. Agora
+  é entrada inválida explícita, com borda e texto próprios;
+- `onOpenChange(false)` cru em dois pontos furava o guarda `handleOpenChange` ("não fecha
+  durante a gravação"). Inofensivo hoje — os dois só rodam depois do desfecho —, mas os
+  dois passaram pelo guarda. `handleOpenChange` subiu no arquivo para não ficar em TDZ na
+  lista de dependências de `gravarLote`.
+
+**P2 aceitos como residuais**, documentados em §9: P2-1 (homônimo exato sem `clienteId`),
+P2-2 (aba Recebidos sem data de recebimento), P2-6 (painel Financeiro) e P2-7 (saldo do
+recibo parcialmente em cache). Os dois pontos de transparência que a revisão pediu — a
+"Baixa parcial" singular retirada e o `lojaNome` do cupom singular — estão em §1 e §8.
+
+A revisão **não** encontrou P0: nenhum caminho em que `valor` bruto vire payload, em que
+título zerado seja cobrado, em que parcial ultrapasse o saldo, em que título de outro
+cliente entre na seleção ou no recibo, em que um código de erro do servidor fique sem
+tratamento, ou em que uma ação do operador vire dois POSTs.
+
+**Uma segunda passada de revisão sobre os fixes ainda não foi feita** — é o próximo gate.
+
+---
+
+## 13. Ponto de parada
 
 PR aberta e **não mergeada**, conforme o GOAL. O próximo gate é a **revisão independente por
 outra família de modelo**, com foco em seleção financeira, matching de cliente, payload G2,
