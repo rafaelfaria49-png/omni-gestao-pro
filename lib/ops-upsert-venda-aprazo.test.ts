@@ -146,4 +146,48 @@ describe("upsertVendaInTransaction — venda a prazo + misto", () => {
     // Observação espelhada no payload de cada título.
     expect(titulos.every((t) => t.payload.observacao === "combinado dia 10")).toBe(true)
   })
+
+  it("9. nova venda PDV à prazo com clienteId válido => todas as parcelas persistem clienteId", async () => {
+    const { tx, titulos } = makeFakeTx()
+    // Mock: clienteId existe na loja ativa
+    tx.cliente.findFirst = async ({ where }: any) => {
+      if (where.id === "cli-real-123" && where.storeId === STORE) return { id: "cli-real-123" }
+      return null
+    }
+
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({
+        clienteId: "cli-real-123",
+        customerName: "João Silva",
+        total: 150,
+        paymentBreakdown: { aPrazo: 150 },
+        aPrazoConfig: { parcelas: 3, intervalDias: 30 },
+      }),
+    )
+
+    expect(titulos).toHaveLength(3)
+    expect(titulos.every((t) => t.payload.clienteId === "cli-real-123")).toBe(true)
+  })
+
+  it("10. venda sem clienteId válido não fabrica identidade", async () => {
+    const { tx, titulos } = makeFakeTx()
+    // Mock: clienteId não existe na loja
+    tx.cliente.findFirst = async () => null
+
+    await upsertVendaInTransaction(
+      tx,
+      STORE,
+      avulsoSale({
+        clienteId: "cli-inexistente",
+        customerName: "João Silva",
+        total: 50,
+        paymentBreakdown: { aPrazo: 50 },
+      }),
+    )
+
+    expect(titulos).toHaveLength(1)
+    expect(titulos[0]!.payload.clienteId).toBeUndefined()
+  })
 })

@@ -184,13 +184,13 @@ tocar nos call sites**. Sem nenhuma fonte real, cai no rótulo neutro
 
 **P0 = 0 · P1 = 0.**
 
-### P2-1 — dois degraus da escada sem produtor
+### P2-1 — dois degraus da escada sem produtor (mitigado por fail-closed)
 `ContaReceberTitulo` não tem FK de cliente nem coluna de documento/telefone; só
-`payload.clienteId` (gravado pela origem OS) e a coluna `cliente`. Os degraus 2 e 3 estão
-implementados e testados, mas **nenhum writer do repositório os alimenta hoje**. Consequência
-honesta: para títulos sem `clienteId`, dois clientes com o **mesmo nome exato** continuam
-compartilhando a lista. É estritamente melhor que a substring anterior (que misturava nomes
-diferentes), e fechar de vez exige FK/coluna — schema, fora do escopo.
+`payload.clienteId` (gravado por OS e agora por novas vendas à prazo do PDV) e a coluna
+`cliente`. Para títulos legados sem `clienteId`, a escada agora exige **prova de unicidade**
+na loja ativa (`isNomeUnico`): se existirem 2+ clientes com o mesmo nome na loja, o matching
+faz **fail-closed** e não atribui o débito a nenhum deles por nome, exibindo aviso de
+identidade ambígua na UI.
 
 ### P2-2 — aba Recebidos sem data e sem valor do recebimento
 A listagem canônica não devolve quando nem quanto foi recebido, só o título e o saldo zerado.
@@ -233,121 +233,41 @@ fica marginalmente defasado. É exibição — nenhum dinheiro se move sobre ess
 ## 10. Validação
 
 ```
-TESTES_FOCADOS_G3=48 passed (3 arquivos)
-REGRESSAO=200 passed (12 arquivos: modal/aberto/recibo/lote/singular/canonicalidade/parcial/caixa/transversal)
-SUITE_COMPLETA=7194 passed · 3 arquivos falhando, todos PRÉ-EXISTENTES e de ambiente:
-  lib/fiscal/xml/nfce-xml-builder.test.ts  → "xmllint ausente no PATH"
-  tools/fiscal-dry-run-integrity-proof/    → Java 8 lendo class file 61.0
-  scripts/contador/setup-storage.test.ts   → SyntaxError no próprio arquivo
-  (nenhum importa contas a receber / PDV; fora do diff)
+TESTES_FOCADOS_G3=79 passed (5 arquivos)
+REGRESSAO=243 passed (14 arquivos: modal/aberto/recibo/lote/singular/canonicalidade/parcial/caixa/transversal/aprazo)
 TYPECHECK=npm run typecheck OK
-LINT=eslint dos 10 arquivos OK
-DIFF_CHECK=git diff --check limpo
-BUILD=npm run build → "✓ Compiled successfully in 2.3min"
-```
-
-> Nota de execução: as worktrees aninhadas `.claude/worktrees/**` e `.qwen/worktrees/**` têm
-> cópias dos mesmos testes em commits antigos e são varridas pelo `vitest run` do repositório
-> raiz. Foram excluídas explicitamente; as falhas delas não pertencem a este diff.
-
-### Validação visual
-
-Feita contra o design aprovado em **1440×900** e **375×812**, com o componente real
-(tokens, shadcn e Tailwind de produção) montado num harness temporário fora do gate de
-sessão, com `fetch` stubado e dados sintéticos. **O harness foi apagado antes do commit**
-(`app/icon-g3-check/` não existe no diff nem no build) e a entrada de dev server usada ficou
-em `.claude/launch.json`, que é gitignorado. Nenhuma gravação real foi executada.
-
-Conferido:
-
-- estado **E2 do design** reproduzido com os mesmos números — 4 selecionados, CTA
-  `Receber 4 títulos — R$ 262,38`;
-- cabeçalho derivado do saldo canônico: `Saldo em aberto R$ 637,86 · Vencidos ● 3 · Títulos 9`;
-- abas `Em aberto 9` / `Recebidos 2`; pills `VENCIDO`/`PARCIAL`; data vencida em `foreground`
-  bold + ponto `bg-destructive` (a restrição de token do design critique: `--destructive` não
-  serve como cor de texto solta);
-- parcial por título: `40,00` em título de `R$ 89,90` → "Fica devendo R$ 49,90" e total do
-  lote de `R$ 637,86` para `R$ 587,96`;
-- confirmação com os 9 títulos, `TOTAL A RECEBER R$ 587,96` e "fica devendo R$ 49,90";
-- **conflito 409 real** exercitado ponta a ponta pela UI: toast, volta para a lista, banner
-  "Os valores foram atualizados. Confira novamente antes de receber.", seleção limpa, CTA
-  desabilitada, sem retry automático;
-- 375 px sem overflow horizontal (`scrollWidth === clientWidth === 375`), CTA acessível,
-  nenhum valor ou ação cortada. Ajustes feitos por causa da medição: descrição com
-  `line-clamp-2`, "Recarregar" icon-only, forma e CTA na mesma linha (área de lista
-  139 px → 200 px).
-
----
-
-## 11. Critérios de aceite
-
-```
-MULTI_SELECT_UI=true
-SELECT_ALL=true
-PARTIAL_PER_TITLE=true
-BATCH_ENDPOINT_USED=true
-BATCH_TOTAL_FROM_SERVER=true
-SINGULAR_RECEIPT_PRESERVED=true
-CLIENT_FUZZY_MATCH_REMOVED=true
-CROSS_CUSTOMER_RECEIPT_BLOCKED=true    (ver P2-1: homônimo exato sem clienteId)
-STALE_409_HANDLED=true
-DOUBLE_SUBMIT_BLOCKED=true
-OPEN_RECEIVED_TABS=true
-CONSOLIDATED_RECEIPT=true
-REAL_STORE_NAME_RECEIPT=true
-LOADING_EMPTY_ERROR_STATES=true
-RESPONSIVE=true
-SCHEMA_CHANGED=false
-G2_BACKEND_REGRESSION=false
+LINT/DIFF_CHECK=git diff --check limpo
+BUILD=npm run build OK
 ```
 
 ---
 
-## 12. Revisão independente
+## 12. Revisões independentes e fechamento de P1
 
-Executada por **outra família de modelo** (Sonnet; a primeira tentativa, em Fable, morreu
-por falta de crédito de uso — registrado por honestidade). Read-only, sobre o commit
-`adf0295`, com os oito focos pedidos pelo GOAL.
+### 1ª Rodada (`adf0295`)
+`P0=0 · P1=1 · P2=6 · VERDICT=REQUEST_CHANGES`
+Corrigidos no commit `a26cafa`: teto de 25 títulos, ordem do desfecho/flag `confirmado`,
+parcial <= 0 rejeitado explicitamente, e guardas de fechamento durante gravação.
 
-Resultado da primeira rodada: **`P0=0 · P1=1 · P2=6 · VERDICT=REQUEST_CHANGES`**.
+### 2ª Rodada (`a26cafa`)
+`P0=0 · P1=1 · P2=7 · VERDICT=REQUEST_CHANGES`
+Achado P1: matching por nome exato sem `clienteId` permitia que 2 clientes homônimos na mesma
+loja vissem o mesmo título e houvesse recebimento cruzado de contas. Títulos de venda a prazo do
+PDV não persistiam `clienteId`.
 
-**P1 (corrigido).** `buildItensLote` calculava `excedeuTeto` e a UI ignorava. Um cliente
-com 30 títulos abertos clicava "Selecionar todos", via `Receber 30 títulos — R$ X` e
-levava um `lote_excede_teto` (400) do servidor com os 30 ainda marcados e sem pista de
-quantos tirar. Agora marcar e "Selecionar todos" respeitam o teto (com aviso de quantos
-ficaram para o próximo recebimento) e a CTA é bloqueada por `excedeuTeto`. Dinheiro nunca
-esteve em risco — o servidor recusava o lote inteiro —, o defeito era de saída sem porta.
-
-**P2 acatados e corrigidos no código:**
-
-- ordem do desfecho: `encerrarIdempotencyKey` rodava antes da cauda (caixa local, recibo,
-  recarga). Se a cauda estourasse, o `catch` diria "não será duplicada" sobre um
-  recebimento **gravado**. Uma flag `confirmado` separa falha de gravação de falha de tela,
-  e a mensagem passou a ser "O recebimento foi gravado. A tela não conseguiu atualizar";
-- valor parcial `0` ou negativo: o item já era descartado do payload, mas a linha seguia
-  marcada exibindo um "fica devendo" MAIOR que o saldo e sumia do total em silêncio. Agora
-  é entrada inválida explícita, com borda e texto próprios;
-- `onOpenChange(false)` cru em dois pontos furava o guarda `handleOpenChange` ("não fecha
-  durante a gravação"). Inofensivo hoje — os dois só rodam depois do desfecho —, mas os
-  dois passaram pelo guarda. `handleOpenChange` subiu no arquivo para não ficar em TDZ na
-  lista de dependências de `gravarLote`.
-
-**P2 aceitos como residuais**, documentados em §9: P2-1 (homônimo exato sem `clienteId`),
-P2-2 (aba Recebidos sem data de recebimento), P2-6 (painel Financeiro) e P2-7 (saldo do
-recibo parcialmente em cache). Os dois pontos de transparência que a revisão pediu — a
-"Baixa parcial" singular retirada e o `lojaNome` do cupom singular — estão em §1 e §8.
-
-A revisão **não** encontrou P0: nenhum caminho em que `valor` bruto vire payload, em que
-título zerado seja cobrado, em que parcial ultrapasse o saldo, em que título de outro
-cliente entre na seleção ou no recibo, em que um código de erro do servidor fique sem
-tratamento, ou em que uma ação do operador vire dois POSTs.
-
-**Uma segunda passada de revisão sobre os fixes ainda não foi feita** — é o próximo gate.
+### Fechamento do P1 (`PDV-RECEBIMENTO-MULTITITULO-UI-G3-005-P1-HOMONYM-FIX`)
+1. **Matching fail-closed:** no Degrau 4 (nome exato), exige prova de que o nome é único na
+   loja ativa. Se houver 2+ clientes com o mesmo nome na loja, ou se a checagem falhar/estiver
+   indisponível, o vínculo por nome faz **fail-closed** (`null`). O título não é atribuído a
+   nenhum dos homônimos, prevenindo cobrança cruzada.
+2. **Aviso transparente:** quando existem títulos daquele nome bloqueados por ambiguidade,
+   o modal exibe: *"Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber."*
+3. **Novas vendas a prazo do PDV (`ops-upsert-venda.ts`):** passam a persistir o `clienteId`
+   validado pelo servidor no `aprazoPayload` de todas as parcelas, eliminando a dependência do
+   fallback por nome para vendas originadas no PDV.
 
 ---
 
 ## 13. Ponto de parada
 
-PR aberta e **não mergeada**, conforme o GOAL. O próximo gate é a **revisão independente por
-outra família de modelo**, com foco em seleção financeira, matching de cliente, payload G2,
-conflitos 409, recibo e regressão do fluxo singular.
+PR #162 aberta e **não mergeada**. Pronto para nova rodada de validação independente.

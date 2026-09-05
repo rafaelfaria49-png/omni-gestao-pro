@@ -1155,6 +1155,7 @@ export async function upsertVendaInTransaction(
         total_value: aPrazoVal,
         numeroParcela: n,
         totalParcelas: parcelas,
+        ...(clienteId ? { clienteId } : {}),
         ...(aprazoObs ? { observacao: aprazoObs } : {}),
         vendas: [{ saleId: pedidoId, total: aPrazoVal }],
       } as unknown as Prisma.InputJsonValue

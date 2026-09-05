@@ -328,3 +328,41 @@ describe("teto do lote na fiação do modal", () => {
     expect(src).toContain("alvo.slice(0, RECEBIMENTO_LOTE_UI_MAX_ITENS)")
   })
 })
+
+/**
+ * P1 de identidade e homônimos (GOAL PDV-RECEBIMENTO-MULTITITULO-UI-G3-005-P1-HOMONYM-FIX)
+ */
+describe("bloqueio de homônimos na fiação e regras do modal", () => {
+  const src = readFileSync(
+    resolve(process.cwd(), "components/dashboard/vendas/pdv-recebimento-modal.tsx"),
+    "utf8",
+  )
+
+  it("11. multi-select permanece funcionando com matchOpts", () => {
+    expect(src).toContain("matchOpts")
+    expect(src).toContain("buildItensLote")
+    expect(src).toContain("toggleTitulo")
+    expect(src).toContain("toggleTodos")
+  })
+
+  it("12. 'Quitar este título' não contorna o bloqueio de ambiguidade", () => {
+    expect(src).toContain("selectedCliente &&")
+    expect(src).toContain("!tituloPertenceAoCliente")
+    expect(src).toContain("Vínculo bloqueado")
+  })
+
+  it("13. parcial de título único não contorna o bloqueio de ambiguidade", () => {
+    expect(src).toContain("Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber.")
+    expect(src).toContain("postRecebimento = useCallback(")
+  })
+
+  it("14. recibo não é emitido para título bloqueado por ambiguidade", () => {
+    expect(src).toContain("tryPrintRecibo = useCallback(")
+    expect(src).toMatch(/if\s*\(\s*selectedCliente\s*&&\s*!tituloPertenceAoCliente/)
+  })
+
+  it("aviso transparente de homônimo é exibido quando há títulos ambíguos", () => {
+    expect(src).toContain("temTitulosAmbiguos")
+    expect(src).toContain("Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber.")
+  })
+})

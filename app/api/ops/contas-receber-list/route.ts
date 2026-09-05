@@ -4,6 +4,7 @@ import { opsLojaIdFromRequest } from "@/lib/ops-api-gate"
 import { apiGuardFinanceiroViewOrOps } from "@/lib/auth/api-enterprise-guard"
 import type { ContaReceberRow } from "@/lib/contas-receber-types"
 import { buildContaReceberAuditTrail, buildContaReceberSummary } from "@/lib/financeiro/services"
+import { mapearNomesAmbiguos } from "@/lib/contas-receber-cliente-match"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -102,6 +103,16 @@ export async function GET(req: Request) {
       )
     }
 
+    // Identifica nomes homônimos da loja para o gate de matching fail-closed
+    let nomesAmbiguos: string[] = []
+    if (prisma.cliente) {
+      const clientes = await prisma.cliente.findMany({
+        where: { storeId: lojaId },
+        select: { id: true, name: true },
+      })
+      nomesAmbiguos = Array.from(mapearNomesAmbiguos(clientes))
+    }
+
     const generatedAt = new Date().toISOString()
 
     return NextResponse.json({
@@ -109,6 +120,7 @@ export async function GET(req: Request) {
       rows: out,
       summary,
       audit,
+      nomesAmbiguos,
       metadata: {
         source: "server",
         storeId: lojaId,

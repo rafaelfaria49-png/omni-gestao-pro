@@ -64,7 +64,11 @@ import {
   resolveReciboLojaNome,
   type ReciboLoteItem,
 } from "@/lib/contas-receber-recibo"
-import { tituloPertenceAoCliente } from "@/lib/contas-receber-cliente-match"
+import {
+  tituloPertenceAoCliente,
+  normalizeNomeCliente,
+  type MatchTituloOptions,
+} from "@/lib/contas-receber-cliente-match"
 import {
   buildItensLote,
   encerrarIdempotencyKey,
@@ -188,6 +192,10 @@ export function PdvRecebimentoModal({
   const [tituloIdMap, setTituloIdMap] = useState<Record<string, string>>({})
   /** `localKey → vencido` calculado pelo servidor (data + saldo), não por status textual. */
   const [vencidoMap, setVencidoMap] = useState<Record<string, boolean>>({})
+  /** Nomes de clientes com homônimos na loja ativa (2+ cadastros com o mesmo nome). */
+  const [nomesAmbiguos, setNomesAmbiguos] = useState<Set<string>>(new Set())
+  /** Sinaliza se a verificação de unicidade/homônimos foi respondida pelo servidor. */
+  const [ambiguityResolved, setAmbiguityResolved] = useState(false)
 
   /**
    * Identidade da OPERAÇÃO de recebimento (não do título), enviada ao servidor.
@@ -233,6 +241,7 @@ export function PdvRecebimentoModal({
         ok?: boolean
         rows?: ContaReceberRow[]
         audit?: Array<{ id?: string; localKey?: string; saldoAberto?: number; vencido?: boolean }>
+        nomesAmbiguos?: string[]
         error?: string
       } | null
       if (!r.ok || !j) throw new Error(j?.error || `HTTP ${r.status}`)
@@ -252,12 +261,19 @@ export function PdvRecebimentoModal({
       setSaldoAbertoMap(map)
       setTituloIdMap(ids)
       setVencidoMap(vencidos)
+      if (Array.isArray(j.nomesAmbiguos)) {
+        setNomesAmbiguos(new Set(j.nomesAmbiguos))
+        setAmbiguityResolved(true)
+      } else {
+        setAmbiguityResolved(false)
+      }
       // A listagem canônica inteira fica em memória: "Recebidos" precisa dos títulos
       // já baixados, que o filtro por status descartava cedo demais.
       setRows(list)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(msg)
+      setAmbiguityResolved(false)
       setRows([])
     } finally {
       setLoadingTitulos(false)
@@ -318,15 +334,33 @@ export function PdvRecebimentoModal({
     [saldoAbertoMap],
   )
 
+  const matchOpts = useMemo<MatchTituloOptions>(() => {
+    return {
+      isNomeUnico: (nomeNorm: string) => {
+        // Fail-closed se a checagem não tiver sido resolvida com o servidor
+        if (!ambiguityResolved) return false
+        return !nomesAmbiguos.has(nomeNorm)
+      },
+      nomesAmbiguos,
+    }
+  }, [ambiguityResolved, nomesAmbiguos])
+
   /**
    * Títulos do cliente selecionado. O casamento é determinístico
    * (`clienteId` → documento → telefone → nome exato): sem substring, "Ana" não
-   * arrasta "Mariana". Sem identificação segura o título simplesmente não aparece.
+   * arrasta "Mariana". Para o degrau 4 (nome), exige prova de unicidade na loja
+   * (nomes com 2+ clientes na loja fazem fail-closed para evitar baixa cruzada).
    */
   const doCliente: LinhaTitulo[] = useMemo(() => {
     if (!selectedCliente) return []
     return rows
-      .filter((r) => tituloPertenceAoCliente({ clienteId: r.clienteId, cliente: r.cliente }, selectedCliente))
+      .filter((r) =>
+        tituloPertenceAoCliente(
+          { clienteId: r.clienteId, cliente: r.cliente },
+          selectedCliente,
+          matchOpts,
+        ),
+      )
       .map((r) => {
         const localKey = String(r.id)
         return {
@@ -341,7 +375,31 @@ export function PdvRecebimentoModal({
           row: r,
         }
       })
-  }, [rows, selectedCliente, saldoAbertoDe, tituloIdMap, vencidoMap])
+  }, [rows, selectedCliente, saldoAbertoDe, tituloIdMap, vencidoMap, matchOpts])
+
+  /**
+   * Detecta se existem títulos na loja cujo nome bate com o cliente selecionado,
+   * mas não puderam ser exibidos porque o nome é homônimo (ou a resolução de unicidade falhou).
+   */
+  const temTitulosAmbiguos = useMemo(() => {
+    if (!selectedCliente) return false
+    const cNome = normalizeNomeCliente(selectedCliente.name)
+    if (!cNome) return false
+    return rows.some((r) => {
+      const rNome = normalizeNomeCliente(r.cliente)
+      if (rNome !== cNome) return false
+      // Se tem clienteId e bate com o selecionado, pertence legitimamente a ele
+      const tId = String(r.clienteId ?? "").trim()
+      const cId = String(selectedCliente.id ?? "").trim()
+      if (tId && cId && tId === cId) return false
+      // Se não casou via tituloPertenceAoCliente com matchOpts, foi bloqueado por ambiguidade
+      return !tituloPertenceAoCliente(
+        { clienteId: r.clienteId, cliente: r.cliente },
+        selectedCliente,
+        matchOpts,
+      )
+    })
+  }, [rows, selectedCliente, matchOpts])
 
   const { abertos, recebidos } = useMemo(() => partitionTitulos(doCliente), [doCliente])
 
@@ -434,6 +492,16 @@ export function PdvRecebimentoModal({
   const tryPrintRecibo = useCallback(
     (linha: LinhaTitulo, valorPago: number, saldoRemanescenteTitulo: number) => {
       if (!podeImprimir) return
+      if (
+        selectedCliente &&
+        !tituloPertenceAoCliente(
+          { clienteId: linha.row.clienteId, cliente: linha.row.cliente },
+          selectedCliente,
+          matchOpts,
+        )
+      ) {
+        return
+      }
       try {
         imprimirReciboPagamento(
           {
@@ -509,6 +577,20 @@ export function PdvRecebimentoModal({
   const postRecebimento = useCallback(
     async (row: ContaReceberRow, op: "liquidar" | "parcial", valor?: number) => {
       if (!storeId || !sessaoId) return { ok: false as const, error: "caixa_fechado" }
+      if (
+        selectedCliente &&
+        !tituloPertenceAoCliente(
+          { clienteId: row.clienteId, cliente: row.cliente },
+          selectedCliente,
+          matchOpts,
+        )
+      ) {
+        return {
+          ok: false as const,
+          error:
+            "Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber.",
+        }
+      }
       const idempotencyKey = idempotencyKeyFor(row, op, valor)
       const r = await fetch("/api/pdv/receber-conta", {
         method: "POST",
@@ -548,13 +630,29 @@ export function PdvRecebimentoModal({
       dropIdempotencyKey(row, op, valor)
       return { ok: true as const, valorRecebido: j.valorRecebido ?? valor ?? Number(row.valor) }
     },
-    [storeId, sessaoId, formaPagto, idempotencyKeyFor, dropIdempotencyKey],
+    [storeId, sessaoId, formaPagto, idempotencyKeyFor, dropIdempotencyKey, selectedCliente, matchOpts],
   )
 
   /** "Quitar este título" — recebimento individual, inalterado no contrato. */
   const callLiquidar = useCallback(
     async (linha: LinhaTitulo) => {
       if (!storeId || travaRef.current.ativo) return
+      if (
+        selectedCliente &&
+        !tituloPertenceAoCliente(
+          { clienteId: linha.row.clienteId, cliente: linha.row.cliente },
+          selectedCliente,
+          matchOpts,
+        )
+      ) {
+        toast({
+          variant: "destructive",
+          title: "Vínculo bloqueado",
+          description:
+            "Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber.",
+        })
+        return
+      }
       setBusyId(linha.localKey)
       try {
         const res = await postRecebimento(linha.row, "liquidar")
@@ -587,6 +685,8 @@ export function PdvRecebimentoModal({
       fetchTitulos,
       tryPrintRecibo,
       onReceived,
+      selectedCliente,
+      matchOpts,
     ],
   )
 
@@ -896,6 +996,23 @@ export function PdvRecebimentoModal({
                 </Button>
               </div>
 
+              {temTitulosAmbiguos && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-950 dark:text-amber-200 flex items-start gap-2.5"
+                >
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="font-semibold text-amber-900 dark:text-amber-300">
+                      Identidade ambígua
+                    </p>
+                    <p className="text-amber-800/90 dark:text-amber-200/90">
+                      Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-2 min-w-0" role="tablist" aria-label="Títulos do cliente">
                 <div className="flex items-center gap-1 rounded-lg border border-border bg-secondary/40 p-1">
                   <TabButton
@@ -980,6 +1097,8 @@ export function PdvRecebimentoModal({
                   <div className="rounded-md border border-dashed border-border bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
                     {error
                       ? "Recebimento bloqueado até a lista carregar."
+                      : temTitulosAmbiguos
+                      ? "Há mais de um cliente com este nome. Vincule o título ao cadastro correto antes de receber."
                       : `${selectedCliente.name} não tem saldo devedor nesta loja. Títulos já quitados ficam na aba Recebidos.`}
                   </div>
                 ) : (
