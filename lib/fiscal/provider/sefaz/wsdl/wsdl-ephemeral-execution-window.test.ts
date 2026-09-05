@@ -152,47 +152,21 @@ describe("janela efêmera WSDL versionada", () => {
     })
   })
 
-  it("constante versionada arma uma terceira janela inédita de 45 minutos sem reutilizar activations mortas", () => {
+  it("constante versionada fica dormente após a activation consumida e a registra como morta", () => {
     expect(WSDL_EPHEMERAL_EXECUTION_WINDOW).toEqual({
-      activationId: "wsdl-h9h10-20260905-1516z-025c3251e20744df",
-      notBeforeUtc: "2026-09-05T15:16:00.000Z",
-      expiresAtUtc: "2026-09-05T16:01:00.000Z",
-    })
-    const durationMs =
-      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.expiresAtUtc!).getTime() -
-      new Date(WSDL_EPHEMERAL_EXECUTION_WINDOW.notBeforeUtc!).getTime()
-    expect(durationMs).toBe(WSDL_EXECUTION_MAX_WINDOW_MS)
-    for (const deadId of [
-      "wsdl-h9h10-20260904-1955z-d2c844a079986c9e",
-      "wsdl-h9h10-20260904-2325z-fcad5be0637f918c",
-    ]) {
-      expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
-    }
-    expect(
-      evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-05T15:15:59.999Z")),
-    ).toEqual({
-      active: false,
-      reason: "not_started",
-    })
-    expect(
-      evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-05T15:16:00.000Z")),
-    ).toEqual({
-      active: true,
-      window: {
-        activationId: "wsdl-h9h10-20260905-1516z-025c3251e20744df",
-        notBefore: new Date("2026-09-05T15:16:00.000Z"),
-        expiresAt: new Date("2026-09-05T16:01:00.000Z"),
-      },
+      activationId: null,
+      notBeforeUtc: null,
+      expiresAtUtc: null,
     })
     expect(
       evaluateWsdlExecutionWindow(WSDL_EPHEMERAL_EXECUTION_WINDOW, new Date("2026-09-05T16:01:00.000Z")),
     ).toEqual({
       active: false,
-      reason: "expired",
+      reason: "disabled",
     })
   })
 
-  it("nenhuma activation morta — históricas, 30/08, 31/08, 02/09, 0037z, 1955z e 2325z expirada — é configurável", () => {
+  it("nenhuma activation morta — históricas, 30/08, 31/08, 02/09, 0037z, 1955z, 2325z e 1516z consumida — é configurável", () => {
     for (const deadId of [
       ...HISTORICAL_ACTIVATION_IDS,
       "wsdl-h9h10-20260830-1440z-fed207ff67bc1c6d",
@@ -206,6 +180,7 @@ describe("janela efêmera WSDL versionada", () => {
       "wsdl-h9h10-20260903-0037z-b3913bea58774deb",
       "wsdl-h9h10-20260904-1955z-d2c844a079986c9e",
       "wsdl-h9h10-20260904-2325z-fcad5be0637f918c",
+      "wsdl-h9h10-20260905-1516z-025c3251e20744df",
     ]) {
       expect(WSDL_EPHEMERAL_EXECUTION_WINDOW.activationId).not.toBe(deadId)
     }
@@ -226,6 +201,7 @@ describe("janela efêmera WSDL versionada", () => {
       "wsdl-h9h10-20260903-0037z-b3913bea58774deb",
       "wsdl-h9h10-20260904-1955z-d2c844a079986c9e",
       "wsdl-h9h10-20260904-2325z-fcad5be0637f918c",
+      "wsdl-h9h10-20260905-1516z-025c3251e20744df",
     ]) {
       expect(`fiscal:wsdl:h9-h10:v1:${sha256Utf8(fixture)}`).not.toBe(
         `fiscal:wsdl:h9-h10:v1:${sha256Utf8(deadId)}`,
