@@ -1,14 +1,14 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 165 · CONTAINMENT OFF pós-janela de arming 23:25z expirada):
- * **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a `null`.
+ * Estado atual (GOAL 020 · 166 · REARM de janela H-9/H-10 inédita):
+ * **ARMADA** — activation nova para uma única execução humana controlada em HOMOLOGAÇÃO.
  *
- * A activation `wsdl-h9h10-20260904-2325z-fcad5be0637f918c` (arming externo 04/09
- * 23:25:00Z → 05/09 00:10:00Z, PR #161) **EXPIROU**. Não há evidência rastreável de
- * execução administrativa ou GET externo desta activation; portanto os contadores locais
- * são `UNKNOWN_OR_ZERO_BY_EVIDENCE` e o consumo não é inferido. É evidência histórica,
- * não é configuração executável e jamais deve ser re-materializada.
+ * A activation `wsdl-h9h10-20260905-1516z-025c3251e20744df` é inédita e válida de
+ * 05/09 15:16:00Z a 16:01:00Z (45 minutos). Nenhuma activation morta foi reutilizada.
+ * O agente não executa a invocation: POST administrativo, GET WSDL, handshake, SOAP e
+ * emissão NFC-e permanecem proibidos nesta etapa; a única execução possível é humana,
+ * same-origin e em HOMOLOGAÇÃO.
  *
  * H-9 e H-10 permanecem **ABERTOS**. A trust anchor ICP-Brasil v10 permanece implantada e
  * intacta. As activations de 30/08, 31/08, 02/09, 03/09 (`b3913bea58774deb`), 19:55z e
@@ -39,9 +39,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260905-1516z-025c3251e20744df",
+  notBeforeUtc: "2026-09-05T15:16:00.000Z",
+  expiresAtUtc: "2026-09-05T16:01:00.000Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
