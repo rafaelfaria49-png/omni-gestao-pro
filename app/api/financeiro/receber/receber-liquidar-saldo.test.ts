@@ -19,6 +19,9 @@ const h = vi.hoisted(() => {
   const titulos = new Map<string, Row>()
   const byId = new Map<string, Row>()
   let seq = 0
+  let relogio = Date.parse("2026-09-04T12:00:00.000Z")
+
+  const tick = () => new Date(++relogio)
 
   const ck = (storeId: string, localKey: string) => `${storeId}::${localKey}`
 
@@ -38,35 +41,38 @@ const h = vi.hoisted(() => {
       vencimento: data.vencimento ?? "",
       status: data.status ?? "pendente",
       payload: data.payload ?? {},
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: tick(),
+      updatedAt: tick(),
     }
   }
   function applyScalars(row: Row, data: Row): Row {
     for (const k of ["descricao", "cliente", "valor", "vencimento", "status", "payload"]) {
       if (data[k] !== undefined) row[k] = data[k]
     }
-    row.updatedAt = new Date()
+    row.updatedAt = tick()
     return row
+  }
+  function snapshot<T extends Row | null | undefined>(row: T): T {
+    return (row ? { ...row } : row) as T
   }
 
   const prisma = {
     contaReceberTitulo: {
       findUnique: async ({ where }: { where: { storeId_localKey: { storeId: string; localKey: string } } }) => {
         const { storeId, localKey } = where.storeId_localKey
-        return titulos.get(ck(storeId, localKey)) ?? null
+        return snapshot(titulos.get(ck(storeId, localKey)) ?? null)
       },
       findFirst: async ({ where }: { where: { id?: string; storeId?: string } }) => {
         if (where?.id) {
           const r = byId.get(where.id)
-          if (r && (!where.storeId || r.storeId === where.storeId)) return r
+          if (r && (!where.storeId || r.storeId === where.storeId)) return snapshot(r)
           return null
         }
-        for (const r of titulos.values()) if (!where?.storeId || r.storeId === where.storeId) return r
+        for (const r of titulos.values()) if (!where?.storeId || r.storeId === where.storeId) return snapshot(r)
         return null
       },
       findMany: async ({ where }: { where?: { storeId?: string } }) =>
-        [...titulos.values()].filter((r) => !where?.storeId || r.storeId === where.storeId),
+        [...titulos.values()].filter((r) => !where?.storeId || r.storeId === where.storeId).map(snapshot),
       upsert: async ({
         where,
         create,
@@ -78,15 +84,30 @@ const h = vi.hoisted(() => {
       }) => {
         const { storeId, localKey } = where.storeId_localKey
         const existing = titulos.get(ck(storeId, localKey))
-        if (existing) return applyScalars(existing, update)
-        return put(makeRow(create))
+        if (existing) return snapshot(applyScalars(existing, update))
+        return snapshot(put(makeRow(create)))
       },
       update: async ({ where, data }: { where: { id?: string }; data: Row }) => {
         const row = where.id ? byId.get(where.id) : undefined
         if (!row) throw new Error("Record to update not found.")
-        return applyScalars(row, data)
+        return snapshot(applyScalars(row, data))
       },
-      create: async ({ data }: { data: Row }) => put(makeRow(data)),
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id?: string; storeId?: string; updatedAt?: unknown }
+        data: Row
+      }) => {
+        const row = where.id ? byId.get(where.id) : undefined
+        if (!row || (where.storeId && row.storeId !== where.storeId)) return { count: 0 }
+        const atual = row.updatedAt as Date | undefined
+        const token = where.updatedAt as Date | undefined
+        if (!atual || !token || atual.getTime() !== token.getTime()) return { count: 0 }
+        applyScalars(row, data)
+        return { count: 1 }
+      },
+      create: async ({ data }: { data: Row }) => snapshot(put(makeRow(data))),
     },
     carteiraFinanceira: {
       findFirst: async () => null,
@@ -105,6 +126,7 @@ const h = vi.hoisted(() => {
       titulos.clear()
       byId.clear()
       seq = 0
+      relogio = Date.parse("2026-09-04T12:00:00.000Z")
     },
   }
 })

@@ -39,7 +39,14 @@ const h = vi.hoisted(() => {
   let ordem: string[] = []
 
   /** Falhas injetadas. 0 = desligado; N = falha na N-ésima chamada. */
-  const falhas = { tituloUpdate: 0, mov: 0, caixa: false, pagarNaLeitura: 0, tocarAposLeitura: 0 }
+  const falhas = {
+    tituloUpdate: 0,
+    mov: 0,
+    caixa: false,
+    pagarNaLeitura: 0,
+    tocarAposLeitura: 0,
+    concorrenteAposCarga: null as { localKey: string; valor: number; origem: "singular" | "batch" } | null,
+  }
   const contadores = { tituloUpdate: 0, mov: 0, tituloRead: 0 }
 
   /**
@@ -118,7 +125,10 @@ const h = vi.hoisted(() => {
           ordem.push(`lock:${key}`)
           const liberar = await adquirirLock(key)
           ctx?.releases.push(liberar)
-          ctx?.resnapshot()
+          // O lock do lote é sempre a primeira operação e pode ter esperado outra
+          // transação commitar. Locks posteriores (carteira) não podem redefinir o
+          // snapshot de rollback depois que o lote já escreveu títulos/movimentos.
+          if (key.startsWith("pdv-rc-lote:")) ctx?.resnapshot()
           return [{ lock: "" }]
         }
         if (sql.includes("sessoes_caixa")) {
@@ -162,7 +172,7 @@ const h = vi.hoisted(() => {
           guard()
           const lk = where?.localKey as { in?: string[] } | string | undefined
           const alvos = lk && typeof lk === "object" && Array.isArray(lk.in) ? new Set(lk.in) : null
-          return db.titulos
+          const lidos = db.titulos
             .filter((r) => {
               if (where?.storeId && r.storeId !== where.storeId) return false
               if (alvos && !alvos.has(String(r.localKey))) return false
@@ -170,6 +180,51 @@ const h = vi.hoisted(() => {
               return true
             })
             .map(snapshot)
+
+          // Commit externo ENTRE a carga T0 e o primeiro CAS do lote. O snapshot entregue
+          // ao lote permanece T0; o store real avança e a mutação concorrente é incorporada
+          // ao snapshot de rollback, portanto sobrevive quando o lote aborta.
+          const concorrente = falhas.concorrenteAposCarga
+          if (concorrente) {
+            const row = db.titulos.find((r) => r.localKey === concorrente.localKey)
+            if (row) {
+              const payload = row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+                ? (row.payload as Row)
+                : {}
+              const historico = Array.isArray(payload.historico) ? [...(payload.historico as Row[])] : []
+              const at = tick()
+              historico.push({ tipo: "pagamento", valor: concorrente.valor, at: at.toISOString(), origem: "concorrente" })
+              row.payload = { ...payload, historico }
+              const pago = historico.reduce((s, item) => {
+                const tipo = String(item.tipo ?? "")
+                return tipo === "pagamento" || tipo === "liquidacao" ? s + money(item.valor) : s
+              }, 0)
+              row.status = pago >= money(row.valor) ? "pago" : "parcial"
+              row.updatedAt = at
+              db.movs.push({
+                id: next("mov-externo"),
+                storeId: row.storeId,
+                tipo: "entrada",
+                origem: pago >= money(row.valor) ? "receber" : "receber_parcial",
+                referenciaId: row.id,
+                valor: concorrente.valor,
+                createdAt: at,
+              })
+              db.caixaOps.push({
+                id: next("cxop-externo"),
+                sessaoId: "sess-concorrente",
+                storeId: row.storeId,
+                tipo: "recebimento_cr",
+                valor: concorrente.valor,
+                payload: { origem: concorrente.origem, localId: `${concorrente.origem}-externo` },
+                createdAt: at,
+              })
+              falhas.concorrenteAposCarga = null
+              ctx?.resnapshot()
+            }
+          }
+
+          return lidos
         },
         upsert: async ({
           where,
@@ -215,7 +270,7 @@ const h = vi.hoisted(() => {
          * Token de concorrência otimista: o `where` traz `updatedAt` da leitura. Se outra
          * escrita tocou a linha nesse meio-tempo, o `count` volta 0 — como no Postgres.
          */
-        updateMany: async ({ where, data }: { where: { id?: string; updatedAt?: unknown }; data: Row }) => {
+        updateMany: async ({ where, data }: { where: { id?: string; storeId?: string; updatedAt?: unknown }; data: Row }) => {
           guard()
           contadores.tituloUpdate += 1
           if (falhas.tituloUpdate > 0 && contadores.tituloUpdate === falhas.tituloUpdate) {
@@ -223,6 +278,7 @@ const h = vi.hoisted(() => {
           }
           const row = db.titulos.find((r) => r.id === where.id)
           if (!row) return { count: 0 }
+          if (where.storeId && row.storeId !== where.storeId) return { count: 0 }
           if (where.updatedAt !== undefined) {
             const atual = row.updatedAt as Date | undefined
             const token = where.updatedAt as Date
@@ -252,6 +308,7 @@ const h = vi.hoisted(() => {
           guard()
           const startsWith = (where.origem as { startsWith?: string } | undefined)?.startsWith
           if (startsWith) ordem.push("mov_idempotencia_aggregate")
+          if (where.carteiraId) ordem.push(`carteira_aggregate:${String(where.carteiraId)}:${String(where.tipo)}`)
           const rows = db.movs.filter((m) => {
             if (where.storeId && m.storeId !== where.storeId) return false
             if (where.referenciaId && m.referenciaId !== where.referenciaId) return false
@@ -399,6 +456,9 @@ const h = vi.hoisted(() => {
     tocarTituloAposLeitura: (n: number) => {
       falhas.tocarAposLeitura = n
     },
+    receberExternamenteAposCarga: (localKey: string, valor: number, origem: "singular" | "batch" = "singular") => {
+      falhas.concorrenteAposCarga = { localKey, valor, origem }
+    },
     seedSessao: (id: string, storeId: string, status = "ABERTA") => db.sessoes.push({ id, storeId, status }),
     fecharSessao: (id: string) => {
       const s = db.sessoes.find((x) => x.id === id)
@@ -415,6 +475,7 @@ const h = vi.hoisted(() => {
       falhas.caixa = false
       falhas.pagarNaLeitura = 0
       falhas.tocarAposLeitura = 0
+      falhas.concorrenteAposCarga = null
       contadores.tituloUpdate = 0
       contadores.mov = 0
       contadores.tituloRead = 0
@@ -454,6 +515,7 @@ import {
 import {
   RECEBIMENTO_LOTE_MAX_ITENS,
   buildRecebimentoLoteLocalId,
+  buildRecebimentoLoteRequestFingerprint,
 } from "@/lib/financeiro/services/recebimento-lote-service"
 
 type ItemBody = { localKey: string; saldoEsperado: number; valorReceber: number; tituloId?: string }
@@ -643,6 +705,7 @@ describe("G2 — caminho feliz do lote", () => {
     expect(payload.origem).toBe("pdv_lote")
     expect(payload.formaPagamento).toBe("dinheiro")
     expect(payload.localId).toBe(`pdv-rc-lote:${STORE}:${SESSAO}:${KEY}`)
+    expect(payload.requestFingerprint).toMatch(/^[a-f0-9]{64}$/)
     const itens = payload.itens as Row[]
     expect(itens).toHaveLength(3)
     expect(itens.map((i) => i.localKey)).toEqual(keys)
@@ -732,8 +795,9 @@ describe("G2 — revalidação server-side do saldo", () => {
 
   it("[T5b] título quitado DEPOIS da revalidação, já com 2 títulos gravados: rollback total", async () => {
     const keys = await seedTitulos(5)
-    // O 3º item lê o título já `pago` (corrida real com outra sessão) — o service recusa.
-    h.pagarNaLeituraDoTitulo(3)
+    // Outra transação quita o 3º título depois da carga T0. Os dois primeiros updates do
+    // lote chegam a acontecer, mas o CAS do terceiro usa T0 e derruba tudo que é do lote.
+    h.receberExternamenteAposCarga(keys[2]!, 100)
 
     const res = await POST(post({ itens: itensDe(keys) }))
     const body = await json(res)
@@ -741,9 +805,16 @@ describe("G2 — revalidação server-side do saldo", () => {
     expect(res.status).toBe(409)
     expect(body.code).toBe("titulo_alterado")
     // Os dois primeiros JÁ tinham sido gravados quando o erro subiu — e voltaram atrás.
-    for (const k of keys) expect(await saldoDe(k)).toBe(100)
-    expect(h.db.movs).toHaveLength(0)
-    expect(h.db.caixaOps).toHaveLength(0)
+    // O commit externo, por outro lado, não pertence ao lote e permanece.
+    expect(await saldoDe(keys[0]!)).toBe(100)
+    expect(await saldoDe(keys[1]!)).toBe(100)
+    expect(await saldoDe(keys[2]!)).toBe(0)
+    expect(await saldoDe(keys[3]!)).toBe(100)
+    expect(await saldoDe(keys[4]!)).toBe(100)
+    expect(h.db.movs).toHaveLength(1)
+    expect(h.db.movs[0]!.valor).toBe(100)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.caixaOps[0]!.valor).toBe(100)
   })
 
   it("título inexistente na loja: 409 titulo_alterado, zero escritas", async () => {
@@ -788,6 +859,27 @@ describe("G2 — atomicidade sob falha injetada", () => {
     expect(h.db.caixaOps).toHaveLength(0)
   })
 
+  it("[T5d/C] dois batches de sessões/keys diferentes: um commit vence e o outro recusa sem excedente", async () => {
+    const keys = await seedTitulos(1)
+    h.receberExternamenteAposCarga(keys[0]!, 30, "batch")
+
+    const perdedor = await POST(post({
+      idempotencyKey: "lote-concorrente-perdedor",
+      itens: [{ localKey: keys[0]!, saldoEsperado: 100, valorReceber: 100 }],
+    }))
+    const body = await json(perdedor)
+
+    expect(perdedor.status).toBe(409)
+    expect(body.code).toBe("titulo_alterado")
+    expect(await saldoDe(keys[0]!)).toBe(70)
+    expect(h.db.movs).toHaveLength(1)
+    expect(h.db.movs[0]!.valor).toBe(30)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.caixaOps[0]!.valor).toBe(30)
+    const titulo = await getContaReceberByLocalKey(STORE, keys[0]!)
+    expect(((titulo!.payload as Row).historico as Row[])).toHaveLength(1)
+  })
+
   it("[T7] falha na MovimentacaoFinanceira do 2º título faz rollback do lote inteiro", async () => {
     const keys = await seedTitulos(4)
     h.falharMovNo(2)
@@ -817,13 +909,12 @@ describe("G2 — atomicidade sob falha injetada", () => {
     expect(h.db.caixaOps).toHaveLength(0)
   })
 
-  it("[T5c] escrita CONCORRENTE no mesmo título (outro lote / rota singular) derruba o lote inteiro", async () => {
-    // O advisory lock só serializa lotes de MESMA identidade. Dois lotes com chaves
-    // diferentes, ou um lote e a rota singular, chegam juntos ao mesmo título — e a
-    // revalidação sozinha não impede o segundo de sobrescrever a baixa do primeiro
-    // (lost update sob READ COMMITTED). O token `updatedAt` fecha essa janela.
+  it("[T5c] o CAS usa o snapshot T0: parcial concorrente após a carga derruba o lote inteiro", async () => {
     const keys = await seedTitulos(4)
-    h.tocarTituloAposLeitura(2) // outra transação grava no 2º título depois da leitura
+    // O lote planeja quitar R$100. Uma baixa singular commita R$20 depois da carga T0.
+    // O bug de 924bc23 relia T1, quitava os R$80 restantes e lançava R$100 em Movimento/
+    // Caixa. Com o snapshot T0 vinculado ao CAS, o segundo título casa zero linhas.
+    h.receberExternamenteAposCarga(keys[1]!, 20)
 
     const res = await POST(post({ itens: itensDe(keys) }))
     const body = await json(res)
@@ -831,10 +922,18 @@ describe("G2 — atomicidade sob falha injetada", () => {
     expect(res.status).toBe(409)
     expect(body.code).toBe("titulo_alterado")
     expect((body.detalhes as Row[])[0]).toMatchObject({ localKey: keys[1], motivo: "titulo_alterado" })
-    // O 1º título já tinha sido gravado quando o conflito apareceu — e voltou atrás.
-    for (const k of keys) expect(await saldoDe(k)).toBe(100)
-    expect(h.db.movs).toHaveLength(0)
-    expect(h.db.caixaOps).toHaveLength(0)
+    // O 1º título já tinha sido gravado quando o conflito apareceu — e voltou atrás; a
+    // parcial externa permanece como único dinheiro aplicado.
+    expect(await saldoDe(keys[0]!)).toBe(100)
+    expect(await saldoDe(keys[1]!)).toBe(80)
+    expect(await saldoDe(keys[2]!)).toBe(100)
+    expect(await saldoDe(keys[3]!)).toBe(100)
+    const concorrente = await getContaReceberByLocalKey(STORE, keys[1]!)
+    expect(((concorrente!.payload as Row).historico as Row[])).toHaveLength(1)
+    expect(h.db.movs).toHaveLength(1)
+    expect(h.db.movs[0]!.valor).toBe(20)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.caixaOps[0]!.valor).toBe(20)
   })
 
   it("o cenário proibido do design é impossível: nunca 'títulos 1 e 2 quitados, 3 falha, 4 e 5 intactos'", async () => {
@@ -848,6 +947,29 @@ describe("G2 — atomicidade sob falha injetada", () => {
 })
 
 describe("G2 — idempotência do lote", () => {
+  it("o fingerprint cobre loja, sessão, forma e todos os campos econômicos normalizados do item", () => {
+    const input = { storeId: STORE, sessaoId: SESSAO, formaPagamento: "dinheiro" }
+    const base = [{ localKey: "titulo-1", tituloId: "id-1", saldoEsperado: 100, valorReceber: 30 }]
+    const fingerprint = buildRecebimentoLoteRequestFingerprint(input, base)
+    const normalizado = buildRecebimentoLoteRequestFingerprint(
+      { storeId: ` ${STORE} `, sessaoId: ` ${SESSAO} `, formaPagamento: " dinheiro " },
+      [{ localKey: " titulo-1 ", tituloId: " id-1 ", saldoEsperado: 100.001, valorReceber: 30.001 }],
+    )
+    expect(normalizado).toBe(fingerprint)
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/)
+
+    const variantes = [
+      buildRecebimentoLoteRequestFingerprint({ ...input, storeId: OUTRA }, base),
+      buildRecebimentoLoteRequestFingerprint({ ...input, sessaoId: SESSAO_OUTRA }, base),
+      buildRecebimentoLoteRequestFingerprint({ ...input, formaPagamento: "pix" }, base),
+      buildRecebimentoLoteRequestFingerprint(input, [{ ...base[0]!, localKey: "titulo-2" }]),
+      buildRecebimentoLoteRequestFingerprint(input, [{ ...base[0]!, tituloId: "id-2" }]),
+      buildRecebimentoLoteRequestFingerprint(input, [{ ...base[0]!, valorReceber: 31 }]),
+      buildRecebimentoLoteRequestFingerprint(input, [{ ...base[0]!, saldoEsperado: 101 }]),
+    ]
+    expect(new Set([fingerprint, ...variantes]).size).toBe(8)
+  })
+
   it("[T9] retry sequencial com a MESMA idempotencyKey devolve replay e não grava de novo", async () => {
     const keys = await seedTitulos(3)
     const r1 = await POST(post({ itens: itensDe(keys) }))
@@ -887,6 +1009,51 @@ describe("G2 — idempotência do lote", () => {
     })
   })
 
+  it("[T9c] retry idêntico continua replay 200 depois que a sessão foi fechada", async () => {
+    const keys = await seedTitulos(2)
+    const primeiro = await POST(post({ itens: itensDe(keys) }))
+    expect(primeiro.status).toBe(200)
+    h.fecharSessao(SESSAO)
+
+    const replay = await POST(post({ itens: itensDe(keys) }))
+    const body = await json(replay)
+
+    expect(replay.status).toBe(200)
+    expect(body.jaRegistrado).toBe(true)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.movs).toHaveLength(2)
+  })
+
+  it("[T9d] mesma key com conteúdo econômico diferente retorna 409 e zero novas escritas", async () => {
+    const keys = await seedTitulos(1)
+    const primeira = await POST(
+      post({ itens: [{ localKey: keys[0]!, saldoEsperado: 100, valorReceber: 30 }] }),
+    )
+    expect(primeira.status).toBe(200)
+
+    const conflito = await POST(
+      post({ itens: [{ localKey: keys[0]!, saldoEsperado: 70, valorReceber: 40 }] }),
+    )
+    const body = await json(conflito)
+
+    expect(conflito.status).toBe(409)
+    expect(body.code).toBe("idempotency_conflict")
+    expect(await saldoDe(keys[0]!)).toBe(70)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.movs).toHaveLength(1)
+  })
+
+  it("fingerprint normaliza a ordem dos itens: mesma intenção reordenada continua replay", async () => {
+    const keys = await seedTitulos(2)
+    expect((await POST(post({ itens: itensDe(keys) }))).status).toBe(200)
+
+    const replay = await POST(post({ itens: itensDe([...keys].reverse()) }))
+    expect(replay.status).toBe(200)
+    expect((await json(replay)).jaRegistrado).toBe(true)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.movs).toHaveLength(2)
+  })
+
   it("[T10] duas requisições SIMULTÂNEAS com a mesma chave: uma efetiva, uma replay", async () => {
     const keys = await seedTitulos(3)
     const [r1, r2] = await Promise.all([POST(post({ itens: itensDe(keys) })), POST(post({ itens: itensDe(keys) }))])
@@ -911,8 +1078,8 @@ describe("G2 — idempotência do lote", () => {
     await POST(post({ itens: itensDe(keys) }))
 
     expect(h.ordem[0]).toBe(`lock:pdv-rc-lote:${STORE}:${SESSAO}:${KEY}`)
-    expect(h.ordem[1]).toBe("sessao_for_update")
-    expect(h.ordem[2]).toBe("caixa_replay_findFirst")
+    expect(h.ordem[1]).toBe("caixa_replay_findFirst")
+    expect(h.ordem[2]).toBe("sessao_for_update")
   })
 
   it("chaves diferentes na mesma sessão são lotes diferentes — a idempotência não engole cobrança nova", async () => {
@@ -1162,6 +1329,106 @@ describe("G2 — carteira e transação", () => {
     expect(res.status).toBe(200)
     expect(h.db.carteiras[0]!.saldoAtual).toBe(300)
     expect(h.ordem.filter((o) => o === "carteira_recalculo")).toHaveLength(1)
+  })
+
+  it("[W1] dois lotes de sessões diferentes na mesma carteira preservam a soma integral do ledger", async () => {
+    const sessaoB = "sess-carteira-b"
+    h.seedSessao(sessaoB, STORE)
+    h.db.carteiras.push({
+      id: "cart-compartilhada",
+      storeId: STORE,
+      nome: "Carteira compartilhada",
+      tipo: "caixa",
+      ativo: true,
+      cor: null,
+      icone: null,
+      saldoInicial: 0,
+      saldoAtual: 0,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    })
+    for (const localKey of ["wallet-a", "wallet-b"]) {
+      await upsertContaReceber({
+        storeId: STORE,
+        localKey,
+        descricao: localKey,
+        cliente: "Cliente",
+        valor: 100,
+        vencimento: "2026-08-10",
+        status: "pendente",
+        payloadPatch: { id: localKey, carteiraId: "cart-compartilhada" },
+        replacePayload: true,
+      })
+    }
+
+    const [loteA, loteB] = await Promise.all([
+      POST(post({
+        sessaoId: SESSAO,
+        idempotencyKey: "wallet-lote-a",
+        itens: itensDe(["wallet-a"]),
+      })),
+      POST(post({
+        sessaoId: sessaoB,
+        idempotencyKey: "wallet-lote-b",
+        itens: itensDe(["wallet-b"]),
+      })),
+    ])
+
+    expect(loteA.status).toBe(200)
+    expect(loteB.status).toBe(200)
+    const ledger = h.db.movs.filter((m) => m.carteiraId === "cart-compartilhada")
+    expect(ledger).toHaveLength(2)
+    expect(ledger.reduce((s, m) => s + Number(m.valor), 0)).toBe(200)
+    expect(h.db.carteiras[0]!.saldoAtual).toBe(200)
+    expect(
+      h.ordem.filter((o) => o === `lock:financeiro:carteira-saldo:${STORE}:cart-compartilhada`),
+    ).toHaveLength(2)
+  })
+
+  it("[W2] lote com várias carteiras adquire os locks em ordem determinística antes das agregações", async () => {
+    for (const id of ["cart-z", "cart-a"]) {
+      h.db.carteiras.push({
+        id,
+        storeId: STORE,
+        nome: id,
+        tipo: "caixa",
+        ativo: true,
+        cor: null,
+        icone: null,
+        saldoInicial: 0,
+        saldoAtual: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+    }
+    for (const [localKey, carteiraId] of [["ordem-z", "cart-z"], ["ordem-a", "cart-a"]] as const) {
+      await upsertContaReceber({
+        storeId: STORE,
+        localKey,
+        descricao: localKey,
+        cliente: "Cliente",
+        valor: 100,
+        vencimento: "2026-08-10",
+        status: "pendente",
+        payloadPatch: { id: localKey, carteiraId },
+        replacePayload: true,
+      })
+    }
+
+    const res = await POST(post({ itens: itensDe(["ordem-z", "ordem-a"]) }))
+    expect(res.status).toBe(200)
+
+    const locks = h.ordem.filter((o) => o.startsWith("lock:financeiro:carteira-saldo:"))
+    expect(locks).toEqual([
+      `lock:financeiro:carteira-saldo:${STORE}:cart-a`,
+      `lock:financeiro:carteira-saldo:${STORE}:cart-z`,
+    ])
+    for (const carteiraId of ["cart-a", "cart-z"]) {
+      const lockIndex = h.ordem.indexOf(`lock:financeiro:carteira-saldo:${STORE}:${carteiraId}`)
+      const aggregateIndex = h.ordem.indexOf(`carteira_aggregate:${carteiraId}:entrada`)
+      expect(lockIndex).toBeGreaterThanOrEqual(0)
+      expect(aggregateIndex).toBeGreaterThan(lockIndex)
+    }
   })
 
   it("a heurística de idempotência do helper de movimentação NÃO roda no lote", async () => {

@@ -72,7 +72,8 @@ export async function POST(request: Request) {
   })
 
   if (!res.ok) {
-    return NextResponse.json({ ok: false, error: res.reason }, { status: 404 })
+    const status = res.reason === "not_found" ? 404 : res.reason === "titulo_alterado" ? 409 : 422
+    return NextResponse.json({ ok: false, error: res.reason, code: res.reason }, { status })
   }
 
   try {

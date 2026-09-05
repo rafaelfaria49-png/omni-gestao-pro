@@ -17,6 +17,10 @@ const h = vi.hoisted(() => {
   const titulos = new Map<string, Row>()
   const byId = new Map<string, Row>()
   let seq = 0
+  let relogio = Date.parse("2026-09-04T12:00:00.000Z")
+  let tocarAntesDoCas = false
+
+  const tick = () => new Date(++relogio)
 
   const ck = (storeId: string, localKey: string) => `${storeId}::${localKey}`
 
@@ -36,35 +40,38 @@ const h = vi.hoisted(() => {
       vencimento: data.vencimento ?? "",
       status: data.status ?? "pendente",
       payload: data.payload ?? {},
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: tick(),
+      updatedAt: tick(),
     }
   }
   function applyScalars(row: Row, data: Row): Row {
     for (const k of ["descricao", "cliente", "valor", "vencimento", "status", "payload"]) {
       if (data[k] !== undefined) row[k] = data[k]
     }
-    row.updatedAt = new Date()
+    row.updatedAt = tick()
     return row
+  }
+  function snapshot<T extends Row | null | undefined>(row: T): T {
+    return (row ? { ...row } : row) as T
   }
 
   const prisma = {
     contaReceberTitulo: {
       findUnique: async ({ where }: { where: { storeId_localKey: { storeId: string; localKey: string } } }) => {
         const { storeId, localKey } = where.storeId_localKey
-        return titulos.get(ck(storeId, localKey)) ?? null
+        return snapshot(titulos.get(ck(storeId, localKey)) ?? null)
       },
       findFirst: async ({ where }: { where: { id?: string; storeId?: string } }) => {
         if (where?.id) {
           const r = byId.get(where.id)
-          if (r && (!where.storeId || r.storeId === where.storeId)) return r
+          if (r && (!where.storeId || r.storeId === where.storeId)) return snapshot(r)
           return null
         }
-        for (const r of titulos.values()) if (!where?.storeId || r.storeId === where.storeId) return r
+        for (const r of titulos.values()) if (!where?.storeId || r.storeId === where.storeId) return snapshot(r)
         return null
       },
       findMany: async ({ where }: { where?: { storeId?: string } }) =>
-        [...titulos.values()].filter((r) => !where?.storeId || r.storeId === where.storeId),
+        [...titulos.values()].filter((r) => !where?.storeId || r.storeId === where.storeId).map(snapshot),
       upsert: async ({
         where,
         create,
@@ -76,24 +83,48 @@ const h = vi.hoisted(() => {
       }) => {
         const { storeId, localKey } = where.storeId_localKey
         const existing = titulos.get(ck(storeId, localKey))
-        if (existing) return applyScalars(existing, update)
-        return put(makeRow(create))
+        if (existing) return snapshot(applyScalars(existing, update))
+        return snapshot(put(makeRow(create)))
       },
       update: async ({ where, data }: { where: { id?: string }; data: Row }) => {
         const row = where.id ? byId.get(where.id) : undefined
         if (!row) throw new Error("Record to update not found.")
-        return applyScalars(row, data)
+        return snapshot(applyScalars(row, data))
       },
-      create: async ({ data }: { data: Row }) => put(makeRow(data)),
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id?: string; storeId?: string; updatedAt?: unknown }
+        data: Row
+      }) => {
+        const row = where.id ? byId.get(where.id) : undefined
+        if (!row || (where.storeId && row.storeId !== where.storeId)) return { count: 0 }
+        if (tocarAntesDoCas) {
+          tocarAntesDoCas = false
+          row.updatedAt = tick()
+        }
+        const atual = row.updatedAt as Date | undefined
+        const token = where.updatedAt as Date | undefined
+        if (!atual || !token || atual.getTime() !== token.getTime()) return { count: 0 }
+        applyScalars(row, data)
+        return { count: 1 }
+      },
+      create: async ({ data }: { data: Row }) => snapshot(put(makeRow(data))),
     },
   }
 
   return {
     prisma,
+    tocarTituloAntesDoCas: () => {
+      tocarAntesDoCas = true
+    },
     reset: () => {
       titulos.clear()
       byId.clear()
       seq = 0
+      relogio = Date.parse("2026-09-04T12:00:00.000Z")
+      tocarAntesDoCas = false
     },
   }
 })
@@ -344,6 +375,57 @@ describe("G1 — regressões: o caminho normal continua funcionando", () => {
     expect(liq.ok).toBe(true)
     if (!liq.ok) throw new Error(liq.reason)
     expect(sumPagamentosFromHistoricoPayload(liq.data.payload)).toBe(100)
+  })
+})
+
+describe("G2 P1 — CAS padrão entre writers singulares", () => {
+  it("CAS é o default mesmo sem snapshot explícito nem flag opt-in", async () => {
+    await persistirSnapshotLegado()
+    h.tocarTituloAntesDoCas()
+
+    const resultado = await registrarPagamentoParcial({
+      storeId: STORE,
+      localKey: LK,
+      valorPago: 40,
+    })
+
+    expect(resultado.ok).toBe(false)
+    if (resultado.ok) throw new Error("writer sem flag não pode fazer update cego")
+    expect(resultado.reason).toBe("titulo_alterado")
+    const final = await getContaReceberByLocalKey(STORE, LK)
+    expect(saldo(final!)).toBe(100)
+    expect(sumPagamentosFromHistoricoPayload(final!.payload)).toBe(0)
+  })
+
+  it("[D] duas baixas com o mesmo snapshot: a segunda recusa sem apagar o primeiro ledger", async () => {
+    await persistirSnapshotLegado()
+    const snapshotA = await getContaReceberByLocalKey(STORE, LK)
+    const snapshotB = await getContaReceberByLocalKey(STORE, LK)
+    expect(snapshotA).not.toBeNull()
+    expect(snapshotB).not.toBeNull()
+
+    const primeira = await registrarPagamentoParcial({
+      storeId: STORE,
+      localKey: LK,
+      valorPago: 40,
+      tituloSnapshot: snapshotA!,
+    })
+    expect(primeira.ok).toBe(true)
+
+    const segunda = await liquidarContaReceber({
+      storeId: STORE,
+      localKey: LK,
+      tituloSnapshot: snapshotB!,
+    })
+    expect(segunda.ok).toBe(false)
+    if (segunda.ok) throw new Error("snapshot obsoleto não pode sobrescrever o primeiro writer")
+    expect(segunda.reason).toBe("titulo_alterado")
+
+    const final = await getContaReceberByLocalKey(STORE, LK)
+    expect(final).not.toBeNull()
+    expect(saldo(final!)).toBe(60)
+    expect(sumPagamentosFromHistoricoPayload(final!.payload)).toBe(40)
+    expect(((final!.payload as { historico?: unknown[] }).historico ?? [])).toHaveLength(1)
   })
 })
 

@@ -365,8 +365,21 @@ export async function PATCH(req: Request) {
       const atual = await getContaReceberByLocalKey(storeId, parsed.data.localKey)
       const abertoAntes = atual ? buildContaReceberAuditTrail([atual])[0]?.saldoAberto ?? 0 : 0
 
-      const res = await liquidarContaReceber({ storeId, localKey: parsed.data.localKey, observacao: parsed.data.observacao, formaPagamento: parsed.data.formaPagamento, userLabel })
-      if (!res.ok) return err(res.reason, `liquidar_${res.reason}`, 422)
+      const res = await liquidarContaReceber({
+        storeId,
+        localKey: parsed.data.localKey,
+        observacao: parsed.data.observacao,
+        formaPagamento: parsed.data.formaPagamento,
+        userLabel,
+        tituloSnapshot: atual ?? undefined,
+      })
+      if (!res.ok) {
+        return err(
+          res.reason,
+          `liquidar_${res.reason}`,
+          res.reason === "titulo_alterado" ? 409 : 422,
+        )
+      }
       const valorMov = abertoAntes > 0 ? abertoAntes : res.data.valor
       const carteiraId = await resolveCarteiraIdFromPayload(res.data.payload, storeId)
       // Gerar movimentação de entrada (idempotente) — vincula à carteira do título se houver
@@ -384,7 +397,13 @@ export async function PATCH(req: Request) {
 
     if (parsed.data.op === "parcial") {
       const res = await registrarPagamentoParcial({ storeId, localKey: parsed.data.localKey, valorPago: parsed.data.valor, observacao: parsed.data.observacao, formaPagamento: parsed.data.formaPagamento, userLabel })
-      if (!res.ok) return err(res.reason, `parcial_${res.reason}`, 422)
+      if (!res.ok) {
+        return err(
+          res.reason,
+          `parcial_${res.reason}`,
+          res.reason === "titulo_alterado" ? 409 : 422,
+        )
+      }
       const carteiraId = await resolveCarteiraIdFromPayload(res.data.payload, storeId)
       // Gerar movimentação de entrada parcial (idempotente por soma total)
       await createMovimentacaoEntradaFromReceber(

@@ -23,6 +23,7 @@
  *  - **Distribuição explícita.** O servidor aplica exatamente o que recebeu por item; não
  *    existe "mais antigos primeiro" aqui — esse cálculo é da UI (G3).
  */
+import { createHash } from "node:crypto"
 import type { Prisma } from "@/generated/prisma"
 import { PAY_EPS, safeMoney } from "@/lib/financeiro/contracts/valores"
 import { RECEBER_STATUS, normalizeReceberStatus } from "@/lib/financeiro/contracts/status"
@@ -107,6 +108,7 @@ export type RecebimentoLoteDetalhe = {
 
 export type RecebimentoLoteErrorCode =
   | "caixa_fechado"
+  | "idempotency_conflict"
   | "saldo_divergente"
   | "titulo_alterado"
   | "movimentacao_financeira_falhou"
@@ -278,6 +280,44 @@ export function buildRecebimentoLoteLocalId(params: {
   return `${RECEBIMENTO_LOTE_LOCAL_ID_PREFIX}:${params.storeId}:${params.sessaoId}:${params.idempotencyKey.trim()}`
 }
 
+/**
+ * Assinatura determinística da intenção econômica protegida pela `idempotencyKey`.
+ *
+ * A ordem visual dos itens não muda a operação; por isso a lista é ordenada antes do
+ * hash. Valores viram centavos inteiros e strings são aparadas. Nenhum segredo nem dado
+ * de cliente entra na assinatura.
+ */
+export function buildRecebimentoLoteRequestFingerprint(
+  input: Pick<RecebimentoLoteInput, "storeId" | "sessaoId" | "formaPagamento">,
+  itens: RecebimentoLoteItemNormalizado[],
+): string {
+  const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+  const normalizados = itens
+    .map((item) => ({
+      localKey: trim(item.localKey),
+      tituloId: trim(item.tituloId) || null,
+      valorReceberCentavos: Math.round(safeMoney(item.valorReceber) * 100),
+      saldoEsperadoCentavos: Math.round(safeMoney(item.saldoEsperado) * 100),
+    }))
+    .sort((a, b) =>
+      compareText(a.localKey, b.localKey) ||
+      compareText(String(a.tituloId ?? ""), String(b.tituloId ?? "")) ||
+      a.valorReceberCentavos - b.valorReceberCentavos ||
+      a.saldoEsperadoCentavos - b.saldoEsperadoCentavos,
+    )
+
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        storeId: trim(input.storeId),
+        sessaoId: trim(input.sessaoId),
+        formaPagamento: trim(input.formaPagamento),
+        itens: normalizados,
+      }),
+    )
+    .digest("hex")
+}
+
 // ─── primitivas transacionais ─────────────────────────────────────────────────
 
 /**
@@ -361,11 +401,18 @@ function lerItensPersistidos(payload: unknown): RecebimentoLoteItemResultado[] {
   return out
 }
 
+function lerRequestFingerprint(payload: unknown): string | null {
+  if (!isRecord(payload)) return null
+  const value = payload.requestFingerprint
+  return typeof value === "string" && value.length > 0 ? value : null
+}
+
 /**
  * Aplica o lote inteiro dentro da transação recebida.
  *
- * Ordem deliberada: lock → sessão travada → replay → carga e revalidação de TODOS os
- * títulos → escrita. Nada é gravado antes da última divergência possível ser descartada.
+ * Ordem deliberada: lock → replay → sessão travada (somente operação nova) → carga e
+ * revalidação de TODOS os títulos → escrita. Nada é gravado antes da última divergência
+ * possível ser descartada.
  */
 export async function executarRecebimentoLote(
   tx: RecebimentoLoteTx,
@@ -378,21 +425,13 @@ export async function executarRecebimentoLote(
     sessaoId: input.sessaoId,
     idempotencyKey: input.idempotencyKey,
   })
+  const requestFingerprint = buildRecebimentoLoteRequestFingerprint(input, itens)
 
   // 1. Serialização: PRIMEIRA instrução da transação, antes de qualquer leitura de estado.
   await recebimentoLoteAdvisoryLock(tx, localId)
 
-  // 2. Sessão de caixa relida e travada dentro da transação.
-  const sessao = await lerSessaoCaixaParaAtualizacao(tx, storeId, input.sessaoId)
-  if (!sessao || sessao.status !== "ABERTA") {
-    throw new RecebimentoLoteError(
-      "caixa_fechado",
-      409,
-      "Sessão de caixa não encontrada ou já fechada. Abra o caixa no PDV.",
-    )
-  }
-
-  // 3. Replay: depois do lock, a checagem é confiável mesmo com POSTs simultâneos.
+  // 2. Replay: depois do lock, a checagem é confiável mesmo com POSTs simultâneos. Vem
+  // ANTES da sessão: retry de uma operação já commitada continua válido após o fechamento.
   // O recorte por `sessaoId` é gratuito e não é redundante: o `localId` já carrega a
   // sessão, então nenhuma operação de outra sessão poderia casar — mas o filtro usa
   // `@@index([sessaoId])` e mantém a varredura do JSONB no tamanho de UMA sessão de
@@ -401,13 +440,20 @@ export async function executarRecebimentoLote(
   const jaRegistrado = await tx.caixaOperacao.findFirst({
     where: {
       storeId,
-      sessaoId: sessao.id,
+      sessaoId: input.sessaoId,
       tipo: "recebimento_cr",
       payload: { path: ["localId"], equals: localId },
     },
     select: { id: true, sessaoId: true, valor: true, payload: true },
   })
   if (jaRegistrado) {
+    if (lerRequestFingerprint(jaRegistrado.payload) !== requestFingerprint) {
+      throw new RecebimentoLoteError(
+        "idempotency_conflict",
+        409,
+        "A idempotencyKey já foi usada com outro conteúdo econômico.",
+      )
+    }
     return {
       jaRegistrado: true,
       localId,
@@ -415,6 +461,17 @@ export async function executarRecebimentoLote(
       totalRecebido: safeMoney(jaRegistrado.valor),
       itens: lerItensPersistidos(jaRegistrado.payload),
     }
+  }
+
+  // 3. Só uma operação NOVA exige sessão aberta. A linha é relida e travada dentro da
+  // transação para fechar a corrida com o endpoint de encerramento do caixa.
+  const sessao = await lerSessaoCaixaParaAtualizacao(tx, storeId, input.sessaoId)
+  if (!sessao || sessao.status !== "ABERTA") {
+    throw new RecebimentoLoteError(
+      "caixa_fechado",
+      409,
+      "Sessão de caixa não encontrada ou já fechada. Abra o caixa no PDV.",
+    )
   }
 
   // 4. Carga de TODOS os títulos numa leitura, já escopada pela loja.
@@ -531,11 +588,9 @@ export async function executarRecebimentoLote(
           formaPagamento: forma,
           userLabel: input.userLabel,
           loteId: input.idempotencyKey,
-          // O advisory lock só serializa lotes de MESMA identidade. Dois lotes com chaves
-          // diferentes (sessões/terminais distintos) chegam juntos ao mesmo título, e a
-          // revalidação sozinha não impede o segundo de sobrescrever a baixa do primeiro.
-          // O token `updatedAt` fecha essa janela: linha tocada desde a leitura ⇒ recusa.
-          exigirTokenDeConcorrencia: true,
+          // O mesmo snapshot que produziu `saldoReal`/`valorAplicado` fornece o updatedAt
+          // do CAS. Não há segunda leitura T1 capaz de dissociar título, movimento e caixa.
+          tituloSnapshot: titulo,
           db: tx,
         })
       : await registrarPagamentoParcial({
@@ -546,11 +601,7 @@ export async function executarRecebimentoLote(
           formaPagamento: forma,
           userLabel: input.userLabel,
           loteId: input.idempotencyKey,
-          // O advisory lock só serializa lotes de MESMA identidade. Dois lotes com chaves
-          // diferentes (sessões/terminais distintos) chegam juntos ao mesmo título, e a
-          // revalidação sozinha não impede o segundo de sobrescrever a baixa do primeiro.
-          // O token `updatedAt` fecha essa janela: linha tocada desde a leitura ⇒ recusa.
-          exigirTokenDeConcorrencia: true,
+          tituloSnapshot: titulo,
           db: tx,
         })
     if (!res.ok) {
@@ -619,7 +670,9 @@ export async function executarRecebimentoLote(
   const totalRecebido = resultados.reduce((acc, r) => safeMoney(acc + r.valorRecebido), 0)
 
   // 8.1. Saldo das carteiras afetadas: uma vez cada, no MESMO cliente transacional.
-  for (const carteiraId of carteirasAfetadas) {
+  // Ordem determinística: transações com várias carteiras nunca invertem a aquisição dos
+  // advisory locks e, portanto, não criam ciclo de deadlock entre si.
+  for (const carteiraId of [...carteirasAfetadas].sort()) {
     await recalcularSaldoCarteira(carteiraId, storeId, tx)
   }
 
@@ -643,6 +696,7 @@ export async function executarRecebimentoLote(
         origem: "pdv_lote",
         formaPagamento: forma,
         idempotencyKey: input.idempotencyKey,
+        requestFingerprint,
         itens: resultados.map((r) => ({
           tituloId: r.tituloId,
           localKey: r.localKey,

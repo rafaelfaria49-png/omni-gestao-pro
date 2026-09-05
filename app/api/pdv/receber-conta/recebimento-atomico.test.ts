@@ -30,8 +30,13 @@ const h = vi.hoisted(() => {
   let db: Db = empty()
   let seq = 0
   let txDepth = 0
+  let relogio = Date.parse("2026-09-04T12:00:00.000Z")
+  let concorrenteAntesDoCas: { localKey: string; valor: number; origem: "batch" | "singular" } | null = null
+  let ordem: string[] = []
   /** Falhas injetadas: "mov" | "caixa" — disparam UMA vez. */
   const falhas = new Set<string>()
+
+  const tick = () => new Date(++relogio)
 
   function next(prefix: string) {
     return `${prefix}-${++seq}`
@@ -52,26 +57,39 @@ const h = vi.hoisted(() => {
     for (const k of ["descricao", "cliente", "valor", "vencimento", "status", "payload"]) {
       if (data[k] !== undefined) row[k] = data[k]
     }
-    row.updatedAt = new Date()
+    row.updatedAt = tick()
     return row
+  }
+
+  /** Prisma devolve snapshots, não referências vivas para a linha armazenada. */
+  function snapshot<T extends Row | null | undefined>(row: T): T {
+    return (row ? { ...row } : row) as T
   }
 
   /** Delegates que operam sobre o store. `guard` recusa uso do cliente global em transação. */
   function makeClient(guard: () => void) {
     return {
+      $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+        guard()
+        if (strings.join("?").includes("pg_advisory_xact_lock")) {
+          ordem.push(`lock:${String(values[0])}`)
+          return [{ lock: "" }]
+        }
+        throw new Error("query raw não suportada no harness singular")
+      },
       contaReceberTitulo: {
         findUnique: async ({ where }: { where: { storeId_localKey: { storeId: string; localKey: string } } }) => {
           guard()
           const { storeId, localKey } = where.storeId_localKey
-          return db.titulos.find((r) => r.storeId === storeId && r.localKey === localKey) ?? null
+          return snapshot(db.titulos.find((r) => r.storeId === storeId && r.localKey === localKey) ?? null)
         },
         findFirst: async ({ where }: { where: Record<string, unknown> }) => {
           guard()
-          return db.titulos.find((r) => matchTitulo(r, where ?? {})) ?? null
+          return snapshot(db.titulos.find((r) => matchTitulo(r, where ?? {})) ?? null)
         },
         findMany: async ({ where }: { where?: { storeId?: string } }) => {
           guard()
-          return db.titulos.filter((r) => !where?.storeId || r.storeId === where.storeId)
+          return db.titulos.filter((r) => !where?.storeId || r.storeId === where.storeId).map(snapshot)
         },
         upsert: async ({
           where,
@@ -96,8 +114,8 @@ const h = vi.hoisted(() => {
             vencimento: create.vencimento ?? "",
             status: create.status ?? "pendente",
             payload: create.payload ?? {},
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            createdAt: tick(),
+            updatedAt: tick(),
           }
           db.titulos.push(row)
           return row
@@ -107,6 +125,57 @@ const h = vi.hoisted(() => {
           const row = db.titulos.find((r) => r.id === where.id)
           if (!row) throw new Error("Record to update not found.")
           return applyScalars(row, data)
+        },
+        updateMany: async ({
+          where,
+          data,
+        }: {
+          where: { id?: string; storeId?: string; updatedAt?: unknown }
+          data: Row
+        }) => {
+          guard()
+          const row = db.titulos.find((r) => r.id === where.id)
+          if (!row || (where.storeId && row.storeId !== where.storeId)) return { count: 0 }
+
+          // Interleaving B: o singular já leu T0; um batch commita antes do CAS.
+          // A mutação externa troca payload + token e deixa seus artefatos financeiros.
+          const concorrente = concorrenteAntesDoCas
+          if (concorrente && concorrente.localKey === row.localKey) {
+            concorrenteAntesDoCas = null
+            const payload = row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+              ? (row.payload as Row)
+              : {}
+            const historico = Array.isArray(payload.historico) ? [...(payload.historico as Row[])] : []
+            const at = tick()
+            historico.push({ tipo: "pagamento", valor: concorrente.valor, at: at.toISOString(), origem: concorrente.origem })
+            row.payload = { ...payload, historico }
+            row.status = money(concorrente.valor) >= money(row.valor) ? "pago" : "parcial"
+            row.updatedAt = at
+            db.movs.push({
+              id: next("mov-externo"),
+              storeId: row.storeId,
+              tipo: "entrada",
+              origem: concorrente.valor >= money(row.valor) ? "receber" : "receber_parcial",
+              referenciaId: row.id,
+              valor: concorrente.valor,
+              createdAt: at,
+            })
+            db.caixaOps.push({
+              id: next("cxop-externo"),
+              sessaoId: "sessao-batch-concorrente",
+              storeId: row.storeId,
+              tipo: "recebimento_cr",
+              valor: concorrente.valor,
+              payload: { origem: concorrente.origem, localId: `${concorrente.origem}-externo` },
+              createdAt: at,
+            })
+          }
+
+          const atual = row.updatedAt as Date | undefined
+          const token = where.updatedAt as Date | undefined
+          if (!atual || !token || atual.getTime() !== token.getTime()) return { count: 0 }
+          applyScalars(row, data)
+          return { count: 1 }
         },
       },
       movimentacaoFinanceira: {
@@ -123,6 +192,7 @@ const h = vi.hoisted(() => {
         },
         aggregate: async ({ where }: { where: Record<string, unknown> }) => {
           guard()
+          if (where.carteiraId) ordem.push(`carteira_aggregate:${String(where.carteiraId)}:${String(where.tipo)}`)
           const startsWith = (where.origem as { startsWith?: string } | undefined)?.startsWith
           const rows = db.movs.filter((m) => {
             if (where.storeId && m.storeId !== where.storeId) return false
@@ -229,12 +299,21 @@ const h = vi.hoisted(() => {
     get db() {
       return db
     },
+    get ordem() {
+      return ordem
+    },
     injetarFalha: (k: "mov" | "caixa") => falhas.add(k),
+    receberExternamenteAntesDoCas: (localKey: string, valor: number, origem: "batch" | "singular" = "batch") => {
+      concorrenteAntesDoCas = { localKey, valor, origem }
+    },
     seedSessao: (id: string, storeId: string) => db.sessoes.push({ id, storeId, status: "ABERTA" }),
     reset: () => {
       db = empty()
       seq = 0
       txDepth = 0
+      relogio = Date.parse("2026-09-04T12:00:00.000Z")
+      concorrenteAntesDoCas = null
+      ordem = []
       falhas.clear()
     },
   }
@@ -355,6 +434,29 @@ describe("G1 §5 — atomicidade da baixa singular", () => {
     const body = await json(res)
     expect(body.ok).toBe(false)
     expect(String(body.error)).toContain("MovimentacaoFinanceira")
+  })
+})
+
+describe("G2 P1 — concorrência entre lote e baixa singular", () => {
+  it("[B] singular lê T0, batch commita e singular recusa 409 sem sobrescrever o batch", async () => {
+    await seedTitulo()
+    h.receberExternamenteAntesDoCas(LK, 40, "batch")
+
+    const res = await POST(post({ op: "liquidar", localKey: LK, idempotencyKey: "singular-perdedor" }))
+    const body = await json(res)
+
+    expect(res.status).toBe(409)
+    expect(body.code).toBe("titulo_alterado")
+    expect(await saldoDe(STORE)).toBe(60)
+    expect(h.db.movs).toHaveLength(1)
+    expect(h.db.movs[0]!.valor).toBe(40)
+    expect(h.db.caixaOps).toHaveLength(1)
+    expect(h.db.caixaOps[0]!.valor).toBe(40)
+
+    const titulo = await getContaReceberByLocalKey(STORE, LK)
+    const historico = ((titulo!.payload as Row).historico as Row[]) ?? []
+    expect(historico).toHaveLength(1)
+    expect(historico[0]).toMatchObject({ tipo: "pagamento", valor: 40, origem: "batch" })
   })
 })
 
@@ -484,7 +586,7 @@ describe("G1 — o caminho normal continua funcionando", () => {
     expect(h.db.caixaOps[0]!.valor).toBe(30)
   })
 
-  it("recebimento com carteira vinculada recalcula o saldo dentro da mesma transação", async () => {
+  it("[W3] recebimento singular usa o mesmo lock da carteira antes da agregação", async () => {
     h.db.carteiras.push({
       id: "cart-1",
       storeId: STORE,
@@ -513,6 +615,9 @@ describe("G1 — o caminho normal continua funcionando", () => {
     const res = await POST(post({ op: "liquidar", localKey: LK }))
     expect(res.status).toBe(200)
     expect(h.db.carteiras[0]!.saldoAtual).toBe(600)
+    const lock = `lock:financeiro:carteira-saldo:${STORE}:cart-1`
+    expect(h.ordem).toContain(lock)
+    expect(h.ordem.indexOf("carteira_aggregate:cart-1:entrada")).toBeGreaterThan(h.ordem.indexOf(lock))
   })
 
   it("caixa fechado bloqueia antes de qualquer escrita", async () => {

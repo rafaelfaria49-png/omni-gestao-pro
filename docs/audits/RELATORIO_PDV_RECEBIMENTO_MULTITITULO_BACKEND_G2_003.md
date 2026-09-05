@@ -5,7 +5,7 @@
 | **GOAL** | `PDV-RECEBIMENTO-MULTITITULO-BACKEND-003` (G2 da sequência G1→G2→G3) |
 | **Tipo** | Backend novo. **Sem schema, sem UI, sem recibo.** |
 | **Data** | 2026-09-04 |
-| **Base** | `origin/main` @ `44fc74e` |
+| **Base conferida no follow-up P1** | `origin/main` @ `2b9ef41c62731223981816f78cca83ea3190ca1e` |
 | **Branch** | `feat/pdv-recebimento-multititulo-backend-003` |
 | **Design aprovado** | [`AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md`](./AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md) — §3 (visual) segue **exclusivo do G3**, intocado |
 | **Pré-requisito** | [`RELATORIO_PDV_RECEBIMENTO_CANONICALIDADE_G1_002.md`](./RELATORIO_PDV_RECEBIMENTO_CANONICALIDADE_G1_002.md) (PR #157, `44fc74e`) |
@@ -22,21 +22,23 @@ ainda **não tem chamador** no repositório (é a fundação do G3).
 
 - `app/api/pdv/receber-conta-lote/route.ts` — borda HTTP (contrato, unidade, permissão, mapeamento de erro)
 - `lib/financeiro/services/recebimento-lote-service.ts` — domínio do lote (lock, revalidação, escrita, idempotência)
-- `app/api/pdv/receber-conta-lote/recebimento-lote.test.ts` — 43 testes com banco fake transacional
-- `app/api/pdv/receber-conta-lote/recebimento-lote-lock.postgres.test.ts` — 4 testes contra PostgreSQL REAL (opt-in)
+- `app/api/pdv/receber-conta-lote/recebimento-lote.test.ts` — testes com banco fake transacional, incluindo A/C, replay e carteira
+- `app/api/pdv/receber-conta-lote/recebimento-lote-lock.postgres.test.ts` — 6 testes contra PostgreSQL REAL (opt-in; 2 novos para carteira)
 
-**Alterados (aditivo; nenhum chamador existente muda de comportamento)**
+**Alterados no follow-up P1 de concorrência**
 
-- `lib/financeiro/services/contas-receber-service.ts` — parâmetro opcional `loteId`, carimbado no histórico
-- `lib/financeiro/services/movimentacoes-service.ts` — dois opts opcionais em `createMovimentacaoEntradaFromReceber` (§5)
+- `lib/financeiro/services/contas-receber-service.ts` — toda baixa usa CAS `id+storeId+updatedAt`; o lote pode vincular o snapshot T0
+- `lib/financeiro/services/carteiras-service.ts` — advisory xact lock por loja+carteira antes da agregação
+- todos os callers produtivos de `liquidarContaReceber`/`registrarPagamentoParcial` — conflito não prossegue para efeitos financeiros; rotas HTTP mapeiam `titulo_alterado` para 409
+- `lib/financeiro/services/recebimento-lote-service.ts` — replay antes da sessão, fingerprint econômico e locks de carteira em ordem determinística
 
-**Não tocados:** `prisma/schema.prisma`, migrations, auth/proxy, Fiscal,
-`app/api/pdv/receber-conta/route.ts` (a rota singular do G1 segue servindo "Quitar este
-título"), painel Financeiro, modal do PDV, recibo.
+**Não tocados:** `prisma/schema.prisma`, migrations, auth/proxy, Fiscal, ContaPagar,
+painel/UI G3, modal multitítulo e recibo consolidado. A rota singular do G1 segue servindo
+"Quitar este título", agora com o mesmo CAS otimista do lote.
 
-`docs/ai/CURRENT_STATUS.md` **não** foi atualizado, de propósito: nenhum módulo mudou de
-estado observável — o endpoint é fundação dormente, sem chamador. A mudança de estado do
-"Receber conta" acontece no G3, quando a UI passar a usá-lo. Mesmo critério do G1.
+`docs/ai/CURRENT_STATUS.md` não muda de fase: o endpoint multitítulo continua dormente e
+sem UI. Este relatório registra o hardening concorrente dos writers compartilhados; G3
+permanece explicitamente fora do escopo.
 
 ---
 
@@ -114,11 +116,14 @@ necessário.
 | 401/403 | — | `apiGuardFinanceiroEditEnterpriseOrLegacy` |
 | 409 | `periodo_fechado` | fechamento financeiro do dia/mês |
 | 409 | `caixa_fechado` | sessão inexistente, de outra loja, ou não `ABERTA` |
+| 409 | `idempotency_conflict` | a mesma `idempotencyKey` reaparece com fingerprint econômico diferente |
 | 409 | `saldo_divergente` | `saldoEsperado` ≠ saldo real, ou `valorReceber` > saldo real |
 | 409 | `titulo_alterado` | título sumiu/não é da loja, `tituloId` não bate, título pago/cancelado/estornado, ou recusado pelo service na hora da gravação |
 | 503 | — | falha de infraestrutura (inclui `movimentacao_financeira_falhou`) |
 
-Todo 4xx/5xx acima é **zero writes**: a recusa é lançada e a transação inteira volta atrás.
+Todo 4xx/5xx acima produz **zero writes atribuíveis à operação recusada**: a recusa é
+lançada e a transação inteira volta atrás. Se o conflito foi causado por outra transação
+que já commitou, os artefatos financeiros válidos dessa transação vencedora permanecem.
 
 `detalhes[]` acompanha os 409 com `{ localKey, motivo, saldoReal?, saldoEsperado? }` —
 é o que a UI do G3 precisa para marcar as linhas que mudaram.
@@ -154,11 +159,11 @@ Escopada por **loja + sessão + lote**. Colisão de `hashtext` só faz uma trans
 a outra; a autoridade continua sendo o `localId` conferido logo depois — o lock não decide
 nada, só serializa.
 
-**A ordem importa e está testada.** O lock é a **primeira** instrução da transação, antes
-da sessão e antes da checagem de replay. Um teste assere literalmente
-`ordem[0] === "lock:pdv-rc-lote:loja-1:sess-1:<key>"`, `ordem[1] === "sessao_for_update"`,
-`ordem[2] === "caixa_replay_findFirst"`. Removido o lock do código, **3 testes quebram**
-(controle negativo executado, §6).
+**A ordem importa e está testada.** O lock é a **primeira** instrução da transação. Em
+seguida vem a busca do replay persistido; somente uma operação nova trava e valida a
+sessão. Um teste assere literalmente `lock → caixa_replay_findFirst →
+sessao_for_update`. Assim, retry idêntico continua 200 mesmo depois do fechamento da
+sessão, sem enfraquecer o `FOR UPDATE` para operações novas.
 
 **Por que a `idempotencyKey` é exigida longa.** Ela é a *única* identidade do lote. Dois
 lotes diferentes com a mesma chave na mesma sessão colapsariam num replay — e o segundo
@@ -185,7 +190,7 @@ FOR UPDATE
 
 - Se o fechamento chegar **depois**, ele espera o lote terminar.
 - Se chegar **antes** e commitar, esta leitura já enxerga `FECHADA` e o lote inteiro é
-  recusado com `409 caixa_fechado`, zero writes.
+  recusado com `409 caixa_fechado`, sem escrita atribuível ao lote.
 
 Não há inversão de ordem de lock possível: o lote toma advisory → linha da sessão; o
 fechamento toma só a linha. O `::text` no enum segue a mesma lição do P2010.
@@ -239,9 +244,9 @@ quebra (controle negativo, §6).
 ### 6.1 Atomicidade
 
 Todo o lote roda numa `prisma.$transaction` (`maxWait: 5 s`, `timeout: 15 s` — os mesmos
-do G1): lock → sessão travada → replay → carga e revalidação → `update` de cada título com
-histórico → uma `MovimentacaoFinanceira` por título → recálculo das carteiras → **uma**
-`CaixaOperacao` consolidada.
+do G1): lock do batch → replay → sessão travada apenas para operação nova → carga T0 e
+revalidação → CAS de cada título com o token T0 → uma `MovimentacaoFinanceira` por título
+→ locks/recálculo das carteiras → **uma** `CaixaOperacao` consolidada.
 
 **Nenhuma recusa é devolvida de dentro da transação** — todas são `RecebimentoLoteError`
 **lançadas**. Isso não é estilo: retornar erro faria o Prisma commitar o que já tivesse
@@ -255,21 +260,22 @@ global recusa qualquer acesso enquanto há transação aberta** — um service q
 porta `db` estouraria em vez de passar despercebido (o controle negativo do G1 foi
 reproduzido aqui).
 
-Cenários provados com falha injetada (todos: 5 títulos seguem em aberto, 0 movimentações,
-0 `CaixaOperacao`):
+Cenários provados com falha injetada própria do lote (todos: os títulos seguem no estado
+anterior ao lote, 0 movimentações e 0 `CaixaOperacao` atribuíveis ao lote):
 
 | Falha injetada | Teste |
 |---|---|
 | gravação do **3º de 5 títulos** | T6 |
 | `MovimentacaoFinanceira` do 2º título | T7 |
 | `CaixaOperacao` (última escrita, depois de tudo) | T8 |
-| título quitado por outra sessão **depois** da revalidação, com 2 títulos já gravados | T5b |
 | `saldoEsperado` divergente | T4 |
 | `valorReceber` acima do saldo real | T4b |
 
-T5b é o que prova rollback **depois de escritas reais** — as outras recusas acontecem antes
-da primeira escrita. O cenário proibido pelo design (*"1 e 2 quitados, 3 falha, 4 e 5
-intactos"*) tem teste próprio.
+T5b e T5c modelam uma transação externa que commita depois de T0. Os updates anteriores
+do lote são desfeitos, enquanto exatamente um `historico`, uma movimentação e uma
+`CaixaOperacao` da transação vencedora permanecem. Isso prova rollback **depois de escritas
+reais do lote** sem apagar dinheiro legítimo de outra transação. O cenário proibido pelo
+design (*"1 e 2 quitados, 3 falha, 4 e 5 intactos"*) tem teste próprio.
 
 ### 6.2 Concorrência e idempotência
 
@@ -278,6 +284,8 @@ intactos"*) tem teste próprio.
 | Retry **sequencial** da mesma `idempotencyKey` (T9) | `200 jaRegistrado:true`, 1 `CaixaOperacao`, 3 movimentações, saldos inalterados |
 | Replay quando os títulos **já estão pagos** (T9b) | continua `200 ok:true` — não vira erro; itens reconstruídos do estado persistido, idênticos ao lote original |
 | Dois POSTs **simultâneos** com a mesma chave (T10) | um `jaRegistrado:false` + um `true`; **1** `CaixaOperacao`; 3 movimentações; **um único** lançamento no `historico` de cada título |
+| Retry idêntico depois de fechar a sessão (T9c) | `200 jaRegistrado:true`; zero escrita nova |
+| Mesma chave com payload econômico diferente (T9d) | `409 idempotency_conflict`; zero escrita nova |
 | Chaves diferentes na mesma sessão | dois lotes distintos, nada é engolido |
 | Mesma chave em **lojas diferentes** (T12) | dois lotes independentes, dois `localId`, sem cruzamento |
 
@@ -294,23 +302,16 @@ intactos"*) tem teste próprio.
 quando não há URL de teste (CI padrão segue verde e sem banco) e **recusa explicitamente**
 o dbname exato `omnigestao_prod`.
 
-Executado em **`omnigestao_prod_candidate`** (Neon, `sa-east-1`) — apenas locks, `SELECT` e
-transações que terminam em rollback intencional; **nenhuma escrita**:
+A rodada original executou os quatro casos read-only em `omnigestao_prod_candidate` e
+passou. O follow-up P1 acrescentou dois casos isolados: (1) duas transações sobre a mesma
+carteira, provando espera e visibilidade do ledger commitado; (2) dois batches de sessões
+diferentes na mesma carteira, exigindo `saldoAtual === soma do ledger`. Esses casos criam
+uma loja aleatória por UUID e limpam somente essa loja no `finally`.
 
-```
-PDV_LOTE_LOCK_TEST_DATABASE_URL=<direct url da candidate> \
-  npx vitest run app/api/pdv/receber-conta-lote/recebimento-lote-lock.postgres.test.ts
-→ Test Files 1 passed · Tests 4 passed
-```
-
-| Teste | Prova |
-|---|---|
-| `pg_advisory_xact_lock(hashtext($1))::text AS lock` via `$queryRaw` | roda sem erro de desserialização |
-| a mesma chamada **sem** o cast | falha com `P2010` — o cast não é decorativo |
-| A segura a chave e fica aberta; B na **mesma** chave espera; B em **outra** chave passa na hora | o lock é transacional, exclusivo e escopado por chave |
-| `SELECT ... FROM "sessoes_caixa" ... FOR UPDATE` | o SQL cru compila contra o schema real (nomes físicos + cast do enum) |
-
-Sem a variável de ambiente: `Test Files 1 skipped · Tests 4 skipped`.
+Nesta rodada do follow-up não havia `PDV_LOTE_LOCK_TEST_DATABASE_URL` nem
+`CONTADOR_FISCAL_HOMOLOGATION_DATABASE_URL` no ambiente: `Test Files 1 skipped · Tests 6
+skipped`. A suíte ficou pronta para execução opt-in; nenhuma conexão foi tentada e nenhum
+banco produtivo foi usado.
 
 ### 6.5 Controles negativos (os testes provam alguma coisa?)
 
@@ -320,51 +321,39 @@ Quatro mutações aplicadas ao código e revertidas em seguida:
 |---|---|
 | advisory lock removido | 3 — T10 (concorrência), ordem do lock, T12b |
 | `idempotenciaDoChamador: false` (heurística antiga de volta) | 3 — parciais legítimas, chaves diferentes, "heurística não roda no lote" |
-| título recusado pelo service vira `continue` em vez de derrubar o lote | 1 — T5b (rollback total) |
-| `exigirTokenDeConcorrencia: false` (token otimista desligado) | 1 — T5c (escrita concorrente no mesmo título) |
+| título recusado pelo service vira `continue` em vez de derrubar o lote | 1 — T5b (rollback integral do lote) |
+| CAS desligado ou snapshot T0 substituído por releitura T1 | T5c/A deixa de preservar o commit singular e os artefatos exatos |
 
 ---
 
-## 6.6 Token de concorrência otimista — o que a revisão independente encontrou
+## 6.6 Follow-up P1 — T0 vinculado e CAS padrão em todos os writers de baixa
 
-A 1ª versão desta entrega **não tinha** o token, e a revisão independente (§13) achou a
-lacuna. Ela é real e vale registrar em detalhe, porque o advisory lock parece cobri-la e
-não cobre.
+A revisão final seguinte mostrou que o primeiro CAS ainda protegia a releitura T1 do
+service, não o snapshot T0 que definiu saldo e valor do lote. Também mostrou a corrida
+inversa: writers singulares ainda podiam sobrescrever o ledger depois do commit de um
+batch.
 
-`liquidarContaReceber` e `registrarPagamentoParcial` calculam `status` e `payload` **em
-JS**, a partir da linha lida, e gravavam com `UPDATE ... WHERE id` cego. Sob READ COMMITTED
-o segundo `UPDATE` apenas espera o commit do primeiro e então escreve valores derivados de
-um estado que já não existe — *lost update* clássico, silencioso, sem erro de serialização.
+A correção vincula a própria linha carregada em T0 ao plano e a entrega como
+`tituloSnapshot`. `gravarBaixaNoTitulo` agora sempre executa:
 
-O advisory lock **não** fecha isso: ele serializa apenas transações que compartilham a
-mesma `dedupeKey` (`storeId+sessaoId+idempotencyKey`). Dois lotes com chaves diferentes —
-dois terminais, duas sessões — nunca se encontram no lock.
+```text
+UPDATE ... WHERE id = T0.id AND storeId = T0.storeId AND updatedAt = T0.updatedAt
+```
 
-**Cenário concreto:** título com saldo R$ 100. Lote X (Terminal 1) e lote Y (Terminal 2)
-leem o título com saldo 100. X grava `pago`, `historico += [100]`, cria movimentação e
-caixa, comita. Y, que leu antes, grava por cima: **duas** movimentações e **duas** operações
-de caixa para uma dívida de R$ 100, e um `historico` que mostra um pagamento só.
+Não existe mais `exigirTokenDeConcorrencia` nem caminho de baixa com `UPDATE WHERE id`
+cego. Quem não possui snapshot prévio faz uma leitura interna e usa aquele token por
+padrão. `count !== 1` vira `titulo_alterado`; callers HTTP devolvem 409 e nenhum efeito
+financeiro posterior é iniciado.
 
-**Correção:** `updatedAt` — que já existe no schema e é exatamente o token que o design
-nomeia (`AUDITORIA_..._DESIGN_001.md` §6, *"serve como token de concorrência otimista"*) —
-entra no `where` do update do lote, via `updateMany` (devolve contagem em vez de lançar, e
-não deixa a transação do chamador abortada). Linha tocada desde a leitura ⇒ `count === 0` ⇒
-o service recusa com `titulo_alterado` ⇒ o lote **inteiro** cai. Coberto por T5c e pelo
-controle negativo acima.
+Todos os callers produtivos foram remapeados: batch G2, PDV singular, painel Financeiro,
+as duas rotas dedicadas de Conta a Receber e `receberOSV3`. Nos caminhos que já calculavam
+saldo antes da baixa, o mesmo snapshot passa a decidir cálculo e CAS. ContaPagar não foi
+tocada.
 
-**Por que é OPT-IN (`exigirTokenDeConcorrencia`) e não o padrão.** Ligá-lo para todos os
-chamadores mudaria o comportamento observável de rotas de produção **fora do escopo deste
-GOAL** — a rota singular do PDV, `/api/financeiro/receber`,
-`/api/financeiro/contas-receber/{liquidar,pagamento-parcial}` e `pdv-servico-actions` —, que
-passariam a recusar onde hoje sobrescrevem. Medido: fazer disso o padrão quebra 4 harnesses
-de outras trilhas (Operações V3 incluída). A lacuna dessas rotas é **pré-existente**, não
-nasce aqui, e mudá-las é decisão de um GOAL próprio (P2-7). O default é byte-idêntico ao
-anterior — a regressão de 1075 testes nos escopos afetados confirma.
-
-**Residual honesto:** o lote está protegido nas duas ordens em que ele próprio escreve. O
-que **não** está fechado é a rota singular sobrescrever um lote já commitado — porque ela
-continua gravando sem token. Isso é a lacuna pré-existente, registrada em P2-7, não uma
-regressão desta entrega.
+Os interleavings A–D têm regressão explícita. Em A e B, o commit vencedor preserva
+exatamente um `historico`, uma movimentação e uma operação de caixa; o perdedor recusa.
+Em C, batches com sessões/keys distintas não cobram além do saldo. Em D, dois snapshots
+singulares iguais não se sobrescrevem silenciosamente.
 
 ---
 
@@ -373,17 +362,17 @@ regressão desta entrega.
 `RECEBIMENTO_LOTE_MAX_ITENS = 25`.
 
 Evidência: a app conecta via pgBouncer em **modo transação** com `connection_limit=1`
-(`.env.example:11`); uma transação interativa fixa a conexão enquanto dura. Com 25 itens o
-pior caso fica em ~85 queries — 1 leitura em bloco dos títulos, 3 por título (releitura do
-service + `update` + `create` da movimentação), 3 por carteira distinta e a operação de
-caixa —, folgado dentro do `timeout: 15 s` herdado do G1 e acima de qualquer seleção que a
-tela de PDV produza.
+(`.env.example:11`); uma transação interativa fixa a conexão enquanto dura. O teto de 25
+itens mantém a transação dentro do `timeout: 15 s` herdado do G1. Não há releitura T1 antes
+do CAS: a leitura posterior existe apenas para devolver a linha já aceita e atualizada.
 
 Otimizações que mantêm a transação curta sem perder correção:
 
 - os títulos são carregados numa **única** `findMany`, não N `findFirst`;
 - a `carteiraId` do payload é validada **uma vez por carteira**, não por título;
-- `recalcularSaldoCarteira` roda **uma vez por carteira distinta**, no fim (§5).
+- `recalcularSaldoCarteira` roda **uma vez por carteira distinta**, no fim (§5), em ordem
+  lexical de id; cada recálculo toma `pg_advisory_xact_lock` por loja+carteira **antes** das
+  agregações.
 
 ---
 
@@ -434,6 +423,7 @@ Histórico apendado por título: `tipo`, `valor`, `formaPagamento`, `observacao`
     "origem": "pdv_lote",
     "formaPagamento": "dinheiro",
     "idempotencyKey": "b1f0c9e2-...",
+    "requestFingerprint": "<sha256 da intenção econômica normalizada>",
     "itens": [
       { "tituloId": "...", "localKey": "A", "valor": 100, "saldoAntes": 100, "saldoDepois": 0,   "statusFinal": "pago" },
       { "tituloId": "...", "localKey": "B", "valor": 50,  "saldoAntes": 200, "saldoDepois": 150, "statusFinal": "parcial" }
@@ -451,48 +441,41 @@ guarda a rastreabilidade completa exigida para estorno futuro.
 `saldoDepois` e `statusFinal` a partir do estado persistido, em vez de devolver um
 resultado empobrecido.
 
+`requestFingerprint` cobre `storeId`, `sessaoId`, forma e, por item, `localKey`,
+`tituloId`, `valorReceber` e `saldoEsperado`, todos normalizados. Ordem visual dos itens
+não altera o hash. Mesma key com hash diferente devolve `409 idempotency_conflict`; nome
+de cliente e segredo não entram na assinatura.
+
 ---
 
 ## 10. Testes e gates
 
 | Escopo | Resultado |
 |---|---|
-| `recebimento-lote.test.ts` (novo) | **44 testes** — contrato, revalidação, atomicidade, idempotência, concorrência, multi-loja, carteira, superfície de persistência |
-| `recebimento-lote-lock.postgres.test.ts` (novo, opt-in) | **4 testes** contra Postgres real; pulados sem a env |
-| Regressão ampla: singular G1 + canonicalidade + parcial + movimentações + caixa/fechamento + Operações V3/V4 + Financeiro | **1075 passando**, 4 pulados (os do Postgres) em 84 arquivos |
-| Suíte completa | 7101 passando · 9 falhas pré-existentes/ambientais (§10.1) |
+| Foco do follow-up: lote + singular + callers/harnesses alterados | **7 arquivos passando, 1 opt-in pulado; 134 testes passando, 6 pulados** |
+| Regressão ampliada: PDV + Financeiro + Operações + services financeiros/Caixa | **65 arquivos passando, 1 opt-in pulado; 1155 testes passando, 6 pulados** |
+| Singular G1 repetido depois do ajuste final de tipagem do harness | **19/19 passando** |
+| `recebimento-lote-lock.postgres.test.ts` (opt-in) | **6 testes** preparados; pulados porque nenhuma URL não-produtiva foi fornecida |
 | `npm run typecheck` | ✅ exit 0 |
 | `git diff --check` | ✅ limpo |
 | `npx eslint` (arquivos tocados) | ✅ 0 erros, 0 warnings |
-| `npm run build` | ✅ exit 0 · `✓ Compiled successfully` · a rota aparece no manifesto como `ƒ /api/pdv/receber-conta-lote` |
-| `git diff origin/main -- prisma/schema.prisma` | ✅ **vazio** |
+| `npm run build` | ✅ exit 0 · `✓ Compiled successfully` · 102 páginas geradas · rota `ƒ /api/pdv/receber-conta-lote` no manifesto |
+| `git diff --exit-code -- prisma/schema.prisma` | ✅ **vazio** |
 
-Comando da regressão focada:
+Comando da regressão ampliada:
 
-```bash
-npx vitest run app/api/pdv/receber-conta app/api/pdv/receber-conta-lote app/api/financeiro/receber app/api/ops/contas-receber-list lib/financeiro lib/caixa lib/contas-receber-aberto.test.ts lib/caixa-fechamento-resumo.test.ts components/operacoes-v4-preview/recebimento-transversal.test.ts
+```powershell
+npx.cmd vitest run --reporter=dot --maxWorkers=2 `
+  --exclude=.qwen/** --exclude=.claude/** --exclude=.agents/** `
+  app/api/pdv app/api/financeiro app/api/ops lib/financeiro lib/caixa `
+  lib/operacoes-v3 components/operacoes-v4-preview
 ```
 
-### 10.1 Suíte completa
-
-`npx vitest run` (493 arquivos): **7101 passando**, 198 pulados, 2 *expected fail* e
-**9 falhas — todas pré-existentes ou ambientais**, nenhuma importando qualquer módulo
-alterado aqui:
-
-| Falha | Causa | Confirmação |
-|---|---|---|
-| 3× `lib/fiscal/xml/nfce-xml-builder.test.ts` | `xmllint` ausente do PATH (o teste falha-fechado de propósito) | já registrado no baseline do G1 |
-| 3× `lib/multi-loja-no-hardcoded-fallback.test.ts` | `Test timed out in 5000ms` — scan de arquivos sob carga paralela | **passa isolado** (verificado) |
-| `lib/fiscal/provider/sefaz/sefaz-envelope-backstop-e2e.test.ts` | idem (scan do grafo de imports) | **passa isolado** (verificado) |
-| `lib/ops-inventory-sync-safety.test.ts` | idem | **passa isolado** (verificado) |
-| `lib/whatsapp-legacy-quarantine.test.ts` | idem | **passa isolado** (verificado) |
-| `tools/fiscal-dry-run-integrity-proof/proof.test.ts` (suíte) | Java local é 8; o verificador foi compilado para 17 (`class file version 61.0`) | trilha Fiscal, ambiente |
-| `scripts/contador/setup-storage.test.ts` (suíte) | `SyntaxError` pré-existente no arquivo | trilha Contador, arquivo não tocado |
-
-Os 6 scans passam quando executados sozinhos (`4 arquivos / 20 testes, todos verdes`) —
-mesma classe de falha já documentada no baseline do G1, e o número deles varia com a carga
-da máquina, não com o diff. As duas primeiras execuções desta entrega registraram 5 e 9
-falhas justamente por isso.
+O primeiro build sem limitação compilou o webpack, mas um worker nativo do Windows caiu na
+coleta de páginas (`3221226505`) quando o Next abriu 11 workers. A repetição, sem mudança de
+código, limitou o paralelismo ambiental (`CIRCLE_NODE_TOTAL=2`), coletou com 1 worker e
+terminou com exit 0. A suíte completa do repositório não foi reexecutada neste follow-up;
+a evidência usada é a regressão ampliada acima, dirigida às superfícies afetadas.
 
 ---
 
@@ -500,12 +483,16 @@ falhas justamente por isso.
 
 **P0: nenhum.**
 
-**P1: um, encontrado pela revisão independente e CORRIGIDO** — ausência de token de
-concorrência no título, que permitia *lost update* entre dois lotes de sessões distintas
-(§6.6). Fechado para o caminho do lote com `updatedAt` + `updateMany`, com teste (T5c) e
-controle negativo. O que sobra é a lacuna **pré-existente** dos outros escritores,
-registrada em P2-7 — não foi corrigida aqui de propósito: muda comportamento de produção
-fora do escopo deste GOAL.
+**P1: zero conhecidos após o follow-up.** Os três P1 da revisão independente sobre o HEAD
+anterior foram corrigidos: CAS sobre T0, CAS padrão nos writers produtivos singulares e
+serialização do saldo de carteira. Essa é uma classificação local; o novo commit ainda
+precisa passar pela revisão independente final exigida em §11.2 antes de qualquer decisão
+de merge.
+
+**P2 do contrato idempotente fechados neste follow-up:** replay idêntico continua 200 após
+o fechamento da sessão; mesma key com conteúdo econômico diferente agora é 409 e não
+escreve. Não há P2 novo conhecido no diff. Permanecem os residuais históricos/fora do
+escopo abaixo.
 
 ### P2-1 — o endpoint ainda não tem chamador
 Fundação dormente até o G3, por decisão do GOAL. Consequência honesta: o caminho é provado
@@ -540,16 +527,6 @@ JSONB (criá-lo seria schema change, vedado). Escopar por `sessaoId` mantém a v
 tamanho de uma sessão de caixa, mas a busca segue sendo um filtro em memória sobre esse
 recorte. A rota singular do G1 tem a mesma consulta **sem** o recorte de sessão.
 
-### P2-7 — o token de concorrência não vale para os outros escritores (pré-existente)
-`liquidarContaReceber`/`registrarPagamentoParcial` só exigem o token quando o chamador pede
-(§6.6). A rota singular do PDV, `/api/financeiro/receber`,
-`/api/financeiro/contas-receber/{liquidar,pagamento-parcial}` e `pdv-servico-actions`
-continuam gravando cego — a mesma janela de *lost update* que existe hoje em `main`, sem
-mudança. `cancelContaReceber` e `estornarContaReceber` também. **Recomendação:** um GOAL
-próprio que ligue `exigirTokenDeConcorrencia` em todos os caminhos de baixa e ajuste os 4
-harnesses afetados; a correção é uma linha por chamador, mas muda comportamento de produção
-(passa a recusar em corrida, em vez de sobrescrever) e merece revisão própria.
-
 ### P2-6 — herdadas do G1, não reabertas
 P2-A (status pelo caminho de merge), P2-D (matching fuzzy do cliente — G3), P2-F (o painel
 Financeiro descarta a listagem canônica com `local wins`), P2-G (`liquidarContaPagar` com o
@@ -557,37 +534,26 @@ mesmo defeito do outro lado), P2-I e P2-J. Nenhuma foi tocada por este GOAL.
 
 ---
 
-## 11.1 Revisão independente
+## 11.1 Revisão independente que originou o follow-up
 
-Executada por **outra família de modelo** (Sonnet 5), read-only, sobre o commit `d3910ed`,
-com as 9 perguntas de auditoria: atomicidade, idempotência concorrente, revalidação de
-saldo, sessão de caixa, multi-loja, regressão nos services compartilhados, epsilon,
-qualidade dos testes e honestidade do relatório.
+A revisão read-only final do HEAD `7ed3b1443cee764b8a29138a3a01252da94c940e`
+classificou `P0=0`, `P1=3` e `VERDICT=REQUEST_CHANGES`. Os três bloqueadores eram:
 
-**Resultado: P0 nenhum · 1 P1 · 3 P2.**
+1. o CAS protegia uma releitura T1, não o snapshot T0 usado no plano do lote;
+2. writers singulares produtivos ainda podiam sobrescrever o ledger com estado stale;
+3. recálculos concorrentes da mesma carteira podiam perder saldo.
 
-| Achado | Situação |
-|---|---|
-| **P1 — nenhum lock/token por título: dois pedidos concorrentes no mesmo título perdem um pagamento** | **Procedente e corrigido** (§6.6). O revisor também notou o mitigador parcial que o `FOR UPDATE` da sessão dá de graça (serializa lotes da MESMA sessão) e que ele não cobre sessões distintas nem a rota singular — confirmado. |
-| P2 — teste T16 promete mais do que checa (varre só `tx.` nos 2 arquivos do lote, não pega o `movimentacaoFinanceira.create` que vive no service compartilhado) | Procedente. O nome foi mantido, mas a garantia real de "sem schema" é o `git diff -- prisma/schema.prisma` vazio, que o próprio teste já aponta no comentário. |
-| P2 — `app/api/financeiro/receber/route.ts` ainda usa `.catch(console.error)` na movimentação (achado K do G1, corrigido só na rota do PDV) | Fora do diff e pré-existente. Registrado, não corrigido. |
-| P2-1..P2-6 do relatório | Relidos e confirmados pelo revisor contra o código. |
+Também pediu o fechamento dos dois P2 de replay: retry depois do fechamento da sessão e
+conflito de payload sob a mesma key. Todos os cinco pontos estão implementados e cobertos
+pelos testes deste follow-up.
 
-O revisor validou de forma independente: que toda recusa é `throw` e não `return`; que
-`recalcularSaldoCarteira` não tem `.catch` engolindo erro; que os nomes físicos do
-`FOR UPDATE` batem com `prisma/schema.prisma`; que não há ciclo de deadlock entre o lote e
-`caixa/fechar`; que **nenhum** dos 5 chamadores de produção dos services alterados passa os
-parâmetros novos; e que `undefined` no `historico` não vira "buraco" no JSONB.
+## 11.2 Nova revisão independente obrigatória
 
-Também registrou uma nota de método honesta: o worktree foi editado durante a revisão
-(estas eram as melhorias de `sessaoId`/total descritas em §9 e §8), e ele refez as leituras
-contra o estado final antes de concluir — inclusive retirando um falso positivo próprio
-sobre P2-5.
-
-Uma segunda rodada de revisão sobre a correção do P1 **não foi executada**: a sessão do
-revisor bateu no limite de uso. O token de concorrência está coberto por T5c e pelo
-controle negativo (§6.5), mas **não** passou por olhos independentes — registrar isso é
-mais honesto que declarar a revisão completa.
+O estado corrigido **ainda não foi revisado por outra família de modelo**. Antes de merge,
+a revisão deve reler o diff completo e validar mecanicamente A–D, o token exato T0, todos
+os callers produtivos, a ordem dos locks de carteira, o replay antes da sessão e o
+fingerprint persistido. Até essa rodada concluir com P0=0/P1=0, este relatório não declara
+merge-ready nem libera G3.
 
 ---
 
@@ -595,9 +561,18 @@ mais honesto que declarar a revisão completa.
 
 ```
 BATCH_ENDPOINT_CREATED=true
+BATCH_T0_TOKEN_BOUND=true
+OPTIMISTIC_TOKEN_VALID=true
+BATCH_TO_BATCH_DIFFERENT_KEYS_SAFE=true
+BATCH_TO_SINGULAR_SAFE=true
+SINGULAR_TO_BATCH_SAFE=true
+SINGULAR_TO_SINGULAR_SAFE=true
+WALLET_RECALC_SERIALIZED=true
+WALLET_BALANCE_LOST_UPDATE=false
+BATCH_REPLAY_SAFE=true
+IDEMPOTENCY_PAYLOAD_CONFLICT_DETECTED=true
 BATCH_ATOMIC=true
 BATCH_CONCURRENT_IDEMPOTENCY=true
-BATCH_REPLAY_SAFE=true
 SERVER_SIDE_BALANCE_REVALIDATION=true
 SESSION_REVALIDATED_IN_TX=true
 ONE_FINANCIAL_MOVEMENT_PER_TITLE=true
@@ -607,14 +582,14 @@ STORE_ISOLATION=true
 SINGULAR_RECEIPT_REGRESSION_FREE=true
 SCHEMA_CHANGED=false
 G3_UI_IMPLEMENTED=false
-READY_FOR_G3_UI=true
+MERGE_READY=false
+READY_FOR_G3_UI=false
+READY_FOR_FINAL_INDEPENDENT_REVIEW=true
 ```
 
-`READY_FOR_G3_UI=true` porque o critério é mecânico — P0=0 e P1=0 — e o único P1 (§6.6)
-está corrigido, com teste e controle negativo. **Ressalva explícita para quem decide o
-merge:** o commit da correção (`924bc23`) **não** passou por revisão independente; a sessão
-do revisor bateu no limite de uso antes da segunda rodada. Se a régua for "tudo revisado por
-outra família", falta essa passada — não falta trabalho de implementação.
+`READY_FOR_FINAL_INDEPENDENT_REVIEW=true` significa somente que implementação, testes e
+gates locais estão concluídos. Não equivale a `MERGE_READY`; a revisão nova de §11.2 é o
+próximo gate obrigatório.
 
 Não implementado, conforme o ponto de parada: checkboxes, "Selecionar todos", modal do
 Claude Design, abas Em aberto/Recebidos, recibo consolidado, distribuição automática

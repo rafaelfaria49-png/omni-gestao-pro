@@ -217,6 +217,7 @@ export async function POST(request: Request) {
             valorPago: parsed.data.valor!,
             observacao,
             userLabel,
+            tituloSnapshot: atual,
             db: tx,
           })
         : await liquidarContaReceber({
@@ -225,10 +226,11 @@ export async function POST(request: Request) {
             localKey: ref.localKey,
             observacao,
             userLabel,
+            tituloSnapshot: atual,
             db: tx,
           })
       if (!res.ok) {
-        const status = res.reason === "not_found" ? 404 : 422
+        const status = res.reason === "not_found" ? 404 : res.reason === "titulo_alterado" ? 409 : 422
         return { kind: "erro" as const, code: res.reason, status }
       }
       // Invariante: o service só aceita quando há saldo acima do epsilon — logo `valorMov`

@@ -16,8 +16,8 @@
  *    saldo real vem do ledger dentro da transação e o total é recalculado aqui.
  *  - IDEMPOTENTE SOB CONCORRÊNCIA: advisory lock transacional sobre a chave do lote +
  *    `payload.localId` determinístico da `CaixaOperacao`.
- *  - A rota singular `/api/pdv/receber-conta` NÃO foi alterada — segue servindo o
- *    "Quitar este título".
+ *  - A rota singular `/api/pdv/receber-conta` segue servindo o "Quitar este título" e
+ *    compartilha o mesmo CAS otimista para não disputar o ledger com o lote.
  *
  * Nenhuma UI multitítulo é implementada neste GOAL (isso é o G3).
  */

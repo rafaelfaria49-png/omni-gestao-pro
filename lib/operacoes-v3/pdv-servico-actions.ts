@@ -33,6 +33,7 @@ import { requireEnterpriseWith } from "@/lib/auth/guard-enterprise";
 import { assertActiveStoreId } from "@/lib/operacoes/assert-active-store";
 import {
   getContaReceberByLocalKey,
+  buildContaReceberAuditTrail,
   liquidarContaReceber,
   registrarPagamentoParcial,
   estornarContaReceber,
@@ -247,10 +248,13 @@ export async function receberOSV3(storeId: string, osId: string, input: ReceberO
   const loaded = await carregarOS(sid, id);
   const { id: osRowId, payload } = loaded;
   const titulo = await resolverTituloOS(sid, id, loaded, { create: true });
+  const tituloSnapshot = await getContaReceberByLocalKey(sid, titulo.localKey);
+  if (!tituloSnapshot) throw new Error("Título financeiro da OS não encontrado.");
 
   // Valida a SOMA do split contra o saldo (proteção contra valor > saldo no motor único).
   const total = somaSplitV3(linhas);
-  const veredito = validarSplitV3(linhas, titulo.saldo);
+  const saldoSnapshot = buildContaReceberAuditTrail([tituloSnapshot])[0]?.saldoAberto ?? 0;
+  const veredito = validarSplitV3(linhas, saldoSnapshot);
   if (!veredito.ok) throw new Error(veredito.motivo ?? "Recebimento inválido.");
   const op: "liquidar" | "parcial" = veredito.op ?? "parcial";
 
@@ -261,51 +265,61 @@ export async function receberOSV3(storeId: string, osId: string, input: ReceberO
   const codigo = (payload as unknown as OrdemServico).codigo ?? id;
   const obs = `${obsBase ? obsBase + " · " : ""}OS ${codigo} · PDV Serviço · ${intencaoLabel} · ${splitDesc}`;
 
-  // 3) Baixa do título: UM único lançamento do TOTAL (estorno limpo + contabilidade correta).
-  let recebidoTotal: number;
-  if (op === "liquidar") {
-    const res = await liquidarContaReceber({ storeId: sid, localKey: titulo.localKey, observacao: obs, userLabel: operador });
-    if (!res.ok) throw new Error(`Não foi possível quitar (${res.reason}).`);
-    recebidoTotal = sumPagamentosFromHistoricoPayload(res.data.payload);
-  } else {
-    const res = await registrarPagamentoParcial({ storeId: sid, localKey: titulo.localKey, valorPago: total, observacao: obs, userLabel: operador });
-    if (!res.ok) throw new Error(`Não foi possível registrar o pagamento (${res.reason}).`);
-    recebidoTotal = sumPagamentosFromHistoricoPayload(res.data.payload);
+  // 3) Baixa do título: o MESMO snapshot que definiu saldo/op/total fornece o token CAS.
+  // Se outro writer tocar a linha, nada financeiro posterior é executado.
+  const baixa = op === "liquidar"
+    ? await liquidarContaReceber({
+        storeId: sid,
+        localKey: titulo.localKey,
+        observacao: obs,
+        userLabel: operador,
+        tituloSnapshot,
+      })
+    : await registrarPagamentoParcial({
+        storeId: sid,
+        localKey: titulo.localKey,
+        valorPago: total,
+        observacao: obs,
+        userLabel: operador,
+        tituloSnapshot,
+      });
+  if (!baixa.ok) {
+    const prefixo = op === "liquidar" ? "quitar" : "registrar o pagamento";
+    throw new Error(`Não foi possível ${prefixo} (${baixa.reason}).`);
   }
+  const tituloRow = baixa.data;
+  const recebidoTotal = sumPagamentosFromHistoricoPayload(tituloRow.payload);
 
   // 4) Movimentação financeira (best-effort, idempotente no service).
-  const tituloRow = await getContaReceberByLocalKey(sid, titulo.localKey);
-  if (tituloRow) {
-    await createMovimentacaoEntradaFromReceber(
-      { id: tituloRow.id, storeId: tituloRow.storeId, descricao: tituloRow.descricao, cliente: tituloRow.cliente },
-      total,
-      { parcial: op === "parcial" },
-    ).catch((e) => console.error("[receberOSV3 mov]", e));
+  await createMovimentacaoEntradaFromReceber(
+    { id: tituloRow.id, storeId: tituloRow.storeId, descricao: tituloRow.descricao, cliente: tituloRow.cliente },
+    total,
+    { parcial: op === "parcial" },
+  ).catch((e) => console.error("[receberOSV3 mov]", e));
 
-    // 5) Operação de caixa POR FORMA → fechamento separa por forma; dinheiro entra na gaveta.
-    for (const l of linhas) {
-      await prisma.caixaOperacao
-        .create({
-          data: {
-            sessaoId: sessao.id,
-            storeId: sid,
-            tipo: "recebimento_cr",
-            valor: money(l.valor),
-            motivo: `Serviço/OS ${codigo} — ${tituloRow.cliente || ""} (${formaLabelRecebimentoV3(l.forma)})`,
-            operador,
-            payload: {
-              origem: "operacoes-v3-os",
-              ordemServicoId: id,
-              tituloId: tituloRow.id,
-              localKey: titulo.localKey,
-              formaPagamento: l.forma,
-              intencao: intencaoLabel,
-              op: op,
-            } as Prisma.InputJsonValue,
-          },
-        })
-        .catch((e) => console.error("[receberOSV3 caixaOperacao]", e));
-    }
+  // 5) Operação de caixa POR FORMA → fechamento separa por forma; dinheiro entra na gaveta.
+  for (const l of linhas) {
+    await prisma.caixaOperacao
+      .create({
+        data: {
+          sessaoId: sessao.id,
+          storeId: sid,
+          tipo: "recebimento_cr",
+          valor: money(l.valor),
+          motivo: `Serviço/OS ${codigo} — ${tituloRow.cliente || ""} (${formaLabelRecebimentoV3(l.forma)})`,
+          operador,
+          payload: {
+            origem: "operacoes-v3-os",
+            ordemServicoId: id,
+            tituloId: tituloRow.id,
+            localKey: titulo.localKey,
+            formaPagamento: l.forma,
+            intencao: intencaoLabel,
+            op: op,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch((e) => console.error("[receberOSV3 caixaOperacao]", e));
   }
 
   // 6) Espelho no payload da OS + timeline + comprovante.

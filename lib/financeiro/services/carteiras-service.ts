@@ -28,6 +28,12 @@ export type TipoCarteira = (typeof TIPOS_CARTEIRA)[number]
 /** Cliente Prisma aceito: o singleton global OU um `Prisma.TransactionClient`. */
 export type CarteirasDbClient = Prisma.TransactionClient
 
+export const CARTEIRA_SALDO_LOCK_PREFIX = "financeiro:carteira-saldo"
+
+export function buildCarteiraSaldoLockKey(storeId: string, carteiraId: string): string {
+  return `${CARTEIRA_SALDO_LOCK_PREFIX}:${storeId}:${carteiraId}`
+}
+
 export type CarteiraPublica = {
   id: string
   storeId: string
@@ -167,16 +173,18 @@ export async function atualizarCarteira(
 }
 
 // ─── recalcularSaldoCarteira ─────────────────────────────────────────────────
-/**
- * Recalcula `saldoAtual` somando saldoInicial + entradas - saídas
- * a partir das movimentações vinculadas.
- */
-export async function recalcularSaldoCarteira(
+/** Recalcula com o lock já pertencendo à MESMA transação das agregações e do update. */
+async function recalcularSaldoCarteiraTransacional(
   id: string,
   storeId: string,
-  db?: CarteirasDbClient
+  client: CarteirasDbClient,
 ): Promise<CarteiraPublica> {
-  const client = db ?? prisma
+  // Duas baixas podem inserir movimentações em transações distintas e calcular o mesmo
+  // saldo antes de qualquer uma commitar. O advisory xact lock serializa por loja+carteira
+  // ANTES das agregações; quem esperar passa a enxergar o ledger já commitado do vencedor.
+  const lockKey = buildCarteiraSaldoLockKey(storeId, id)
+  await client.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))::text AS lock`
+
   const carteira = await client.carteiraFinanceira.findFirst({
     where: { id, storeId },
   })
@@ -197,11 +205,29 @@ export async function recalcularSaldoCarteira(
   const saldoAtual = safeMoney(carteira.saldoInicial + totalEntradas - totalSaidas)
 
   const updated = await client.carteiraFinanceira.update({
-    where: { id },
+    where: { id, storeId },
     data: { saldoAtual },
   })
 
   return toPublica(updated)
+}
+
+/**
+ * Recalcula `saldoAtual` somando saldoInicial + entradas - saídas a partir do ledger.
+ *
+ * Com `db`, participa da transação do recebimento. Sem `db`, abre uma transação curta
+ * própria para que o advisory lock permaneça retido até agregação + update terminarem.
+ */
+export async function recalcularSaldoCarteira(
+  id: string,
+  storeId: string,
+  db?: CarteirasDbClient,
+): Promise<CarteiraPublica> {
+  if (db) return recalcularSaldoCarteiraTransacional(id, storeId, db)
+  return prisma.$transaction((tx) => recalcularSaldoCarteiraTransacional(id, storeId, tx), {
+    maxWait: 5_000,
+    timeout: 15_000,
+  })
 }
 
 // ─── transferirEntreCarteiras ─────────────────────────────────────────────────

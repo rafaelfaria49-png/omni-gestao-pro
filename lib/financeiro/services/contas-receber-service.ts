@@ -164,6 +164,31 @@ async function findTitulo(
 }
 
 /**
+ * Resolve a linha usada para calcular E gravar uma baixa.
+ *
+ * Quando o chamador já leu o título para calcular saldo/valor (lote e PDV singular), ele
+ * precisa entregar exatamente esse snapshot. Relê-lo aqui abriria uma janela T0 → T1 em
+ * que o título poderia mudar, fazendo o CAS proteger uma versão diferente da usada para
+ * calcular a movimentação e o caixa.
+ */
+async function findTituloParaBaixa(
+  storeId: string,
+  opts: {
+    id?: string
+    localKey?: string
+    tituloSnapshot?: ContaReceberTitulo
+    db?: ContaReceberDbClient
+  },
+): Promise<ContaReceberTitulo | null> {
+  const snapshot = opts.tituloSnapshot
+  if (!snapshot) return findTitulo(storeId, opts)
+  if (snapshot.storeId !== storeId) return null
+  if (opts.id && snapshot.id !== opts.id) return null
+  if (opts.localKey && snapshot.localKey !== opts.localKey) return null
+  return snapshot
+}
+
+/**
  * Status canônico quando um snapshot legado reescreve o título (`replacePayload`) sem
  * trazer o próprio livro-razão.
  *
@@ -308,10 +333,8 @@ export async function cancelContaReceber(params: {
 /**
  * Grava a baixa no título.
  *
- * Com `exigirTokenDeConcorrencia`, a escrita carrega um **token otimista** (`updatedAt`
- * lido junto com a linha). Sem ele, é o `UPDATE ... WHERE id` de sempre.
- *
- * Por que o token existe: `status` e `payload` são calculados em JS a partir da leitura de
+ * A escrita sempre carrega um **token otimista** (`updatedAt` lido junto com a linha).
+ * `status` e `payload` são calculados em JS a partir da leitura de
  * `row`, então um update cego sobrescreve **em silêncio** o que outra transação tenha
  * gravado no intervalo. Nem o Postgres nem o Prisma barram isso — sob READ COMMITTED o
  * segundo `UPDATE` apenas espera o commit do primeiro e então grava valores derivados de
@@ -320,12 +343,6 @@ export async function cancelContaReceber(params: {
  * `updatedAt` já existe no schema e é o token indicado pelo design do multitítulo
  * (`AUDITORIA_PDV_RECEBIMENTO_MULTITITULO_DESIGN_001.md` §6).
  *
- * Por que é OPT-IN e não o padrão: ligá-lo para todo mundo mudaria o comportamento
- * observável de rotas de produção fora do escopo do GOAL do lote (PDV singular, Financeiro,
- * `pdv-servico-actions`), que passariam a **recusar** onde hoje sobrescrevem. A lacuna
- * dessas rotas é **pré-existente** e está registrada como pendência para um GOAL próprio —
- * a correção é a mesma linha, mas a decisão de mudar produção não é deste GOAL.
- *
  * `updateMany` de propósito: devolve contagem em vez de lançar, e não deixa a transação do
  * chamador em estado abortado.
  */
@@ -333,25 +350,21 @@ async function gravarBaixaNoTitulo(
   db: ContaReceberDbClient,
   row: ContaReceberTitulo,
   next: { status: ReceberStatusCanon; payload: Record<string, unknown> },
-  exigirTokenDeConcorrencia?: boolean,
 ): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
   const data = {
     status: next.status,
     payload: next.payload as unknown as Prisma.InputJsonValue,
   }
 
-  if (!exigirTokenDeConcorrencia) {
-    const updated = await db.contaReceberTitulo.update({ where: { id: row.id }, data })
-    return { ok: true, data: updated }
-  }
-
   const res = await db.contaReceberTitulo.updateMany({
-    where: { id: row.id, updatedAt: row.updatedAt },
+    where: { id: row.id, storeId: row.storeId, updatedAt: row.updatedAt },
     data,
   })
   if (res.count !== 1) return { ok: false, reason: "titulo_alterado" }
 
-  const updated = await db.contaReceberTitulo.findUnique({ where: { id: row.id } })
+  const updated = await db.contaReceberTitulo.findFirst({
+    where: { id: row.id, storeId: row.storeId },
+  })
   if (!updated) return { ok: false, reason: "titulo_alterado" }
   return { ok: true, data: updated }
 }
@@ -373,11 +386,16 @@ export async function liquidarContaReceber(params: {
   userLabel?: string
   /** Identidade da operação em LOTE (G2), carimbada no histórico para rastreabilidade. */
   loteId?: string
-  /** Ver {@link gravarBaixaNoTitulo}. Ligado pelo lote (G2); default preserva o comportamento atual. */
-  exigirTokenDeConcorrencia?: boolean
+  /** Snapshot já usado pelo chamador para calcular saldo/valor; também fornece o token CAS. */
+  tituloSnapshot?: ContaReceberTitulo
   db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
-  const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
+  const row = await findTituloParaBaixa(params.storeId, {
+    id: params.id,
+    localKey: params.localKey,
+    tituloSnapshot: params.tituloSnapshot,
+    db: params.db,
+  })
   if (!row) return { ok: false, reason: "not_found" }
 
   const cur = normalizeReceberStatus(row.status)
@@ -406,7 +424,6 @@ export async function liquidarContaReceber(params: {
     dbOf(params.db),
     row,
     { status: RECEBER_STATUS.PAGO, payload: merged },
-    params.exigirTokenDeConcorrencia,
   )
 }
 
@@ -420,11 +437,16 @@ export async function registrarPagamentoParcial(params: {
   userLabel?: string
   /** Identidade da operação em LOTE (G2), carimbada no histórico para rastreabilidade. */
   loteId?: string
-  /** Ver {@link gravarBaixaNoTitulo}. Ligado pelo lote (G2); default preserva o comportamento atual. */
-  exigirTokenDeConcorrencia?: boolean
+  /** Snapshot já usado pelo chamador para calcular saldo/valor; também fornece o token CAS. */
+  tituloSnapshot?: ContaReceberTitulo
   db?: ContaReceberDbClient
 }): Promise<ContaReceberServiceResult<ContaReceberTitulo>> {
-  const row = await findTitulo(params.storeId, { id: params.id, localKey: params.localKey, db: params.db })
+  const row = await findTituloParaBaixa(params.storeId, {
+    id: params.id,
+    localKey: params.localKey,
+    tituloSnapshot: params.tituloSnapshot,
+    db: params.db,
+  })
   if (!row) return { ok: false, reason: "not_found" }
 
   const cur = normalizeReceberStatus(row.status)
@@ -457,7 +479,6 @@ export async function registrarPagamentoParcial(params: {
     dbOf(params.db),
     row,
     { status: nextStatus, payload: merged },
-    params.exigirTokenDeConcorrencia,
   )
 }
 
