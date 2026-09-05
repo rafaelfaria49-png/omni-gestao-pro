@@ -1,18 +1,19 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 166 · REARM de janela H-9/H-10 inédita):
- * **ARMADA** — activation nova para uma única execução humana controlada em HOMOLOGAÇÃO.
+ * Estado atual (GOAL 020 · 168 · CONTAINMENT da janela H-9/H-10 consumida):
+ * **DORMENTE** — a janela foi consumida pela única execução humana autorizada e está fechada.
  *
- * A activation `wsdl-h9h10-20260905-1516z-025c3251e20744df` é inédita e válida de
- * 05/09 15:16:00Z a 16:01:00Z (45 minutos). Nenhuma activation morta foi reutilizada.
- * O agente não executa a invocation: POST administrativo, GET WSDL, handshake, SOAP e
- * emissão NFC-e permanecem proibidos nesta etapa; a única execução possível é humana,
- * same-origin e em HOMOLOGAÇÃO.
+ * A activation `wsdl-h9h10-20260905-1516z-025c3251e20744df` foi consumida uma única vez
+ * por execução humana autenticada e está histórica/proibida de reutilização. A evidência real
+ * registrou 6/6 GETs de rede SEFAZ com HTTP 200 e mTLS real; H-9 e H-10 ficaram parciais
+ * (5/6) porque somente NFeAutorizacao4 teve `extraction:operacao_ambigua`.
+ * O blocker TLS anterior não se reproduziu. POST administrativo, novos GETs WSDL, handshake,
+ * SOAP e emissão NFC-e permanecem proibidos neste containment; não há correção do extractor aqui.
  *
- * H-9 e H-10 permanecem **ABERTOS**. A trust anchor ICP-Brasil v10 permanece implantada e
- * intacta. As activations de 30/08, 31/08, 02/09, 03/09 (`b3913bea58774deb`), 19:55z e
- * 23:25z seguem históricas/proibidas.
+ * H-9 e H-10 permanecem **PARCIAL_5_DE_6**. A trust anchor ICP-Brasil v10 permanece implantada
+ * e intacta. As activations de 30/08, 31/08, 02/09, 03/09 (`b3913bea58774deb`), 19:55z,
+ * 23:25z e 05/09 15:16z seguem históricas/proibidas.
  * Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
@@ -39,9 +40,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260905-1516z-025c3251e20744df",
-  notBeforeUtc: "2026-09-05T15:16:00.000Z",
-  expiresAtUtc: "2026-09-05T16:01:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
