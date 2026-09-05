@@ -1,19 +1,18 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 163 · CONTAINMENT OFF pós-janela de arming 19:55z expirada
- * sem consumo): **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a
- * `null`.
+ * Estado atual (GOAL 020 · 165 · CONTAINMENT OFF pós-janela de arming 23:25z expirada):
+ * **DORMENTE** — `activationId`, `notBeforeUtc` e `expiresAtUtc` restaurados a `null`.
  *
- * A activation `wsdl-h9h10-20260904-1955z-d2c844a079986c9e` (arming externo 04/09
- * 19:55:00Z → 20:40:00Z, PR #159) **EXPIROU SEM CONSUMO**: nenhuma chamada administrativa
- * foi autorizada/realizada dentro do prazo (`WSDL_ADMIN_CALL_COUNT_FOR_ACTIVATION=0`,
- * `WSDL_EXTERNAL_GET_COUNT_FOR_ACTIVATION=0`, `SEFAZ_SOAP_POST_COUNT=0`,
- * `SEFAZ_PRODUCTION_REQUEST_COUNT=0`). One-shot permaneceu íntegro (não gasto).
- * É evidência histórica; não é configuração executável e jamais deve ser re-materializada.
+ * A activation `wsdl-h9h10-20260904-2325z-fcad5be0637f918c` (arming externo 04/09
+ * 23:25:00Z → 05/09 00:10:00Z, PR #161) **EXPIROU**. Não há evidência rastreável de
+ * execução administrativa ou GET externo desta activation; portanto os contadores locais
+ * são `UNKNOWN_OR_ZERO_BY_EVIDENCE` e o consumo não é inferido. É evidência histórica,
+ * não é configuração executável e jamais deve ser re-materializada.
  *
  * H-9 e H-10 permanecem **ABERTOS**. A trust anchor ICP-Brasil v10 permanece implantada e
- * intacta. As activations de 30/08, 31/08, 02/09 e 03/09 (`b3913bea58774deb`) seguem históricas/proibidas.
+ * intacta. As activations de 30/08, 31/08, 02/09, 03/09 (`b3913bea58774deb`), 19:55z e
+ * 23:25z seguem históricas/proibidas.
  * Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
@@ -40,9 +39,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260904-2325z-fcad5be0637f918c",
-  notBeforeUtc: "2026-09-04T23:25:00.000Z",
-  expiresAtUtc: "2026-09-05T00:10:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
