@@ -18,6 +18,12 @@ export type ContaReceberRow = {
    * coluna é o valor BRUTO e não diminui em baixas parciais.
    */
   saldoAberto?: number
+  /**
+   * `Cliente.id` do dono do título, quando a origem gravou (`payload.clienteId`).
+   * Único identificador estável disponível para casar cliente × título — o nome não
+   * distingue homônimos. Ausente em títulos criados sem vínculo de cliente.
+   */
+  clienteId?: string
   movimentoBaixaId?: string
   /** Linhas de recebimento (local); status PENDENTE após estorno. */
   historicoPagamentos?: PagamentoLinha[]
