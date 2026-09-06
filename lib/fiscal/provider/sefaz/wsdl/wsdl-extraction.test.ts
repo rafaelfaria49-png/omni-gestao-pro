@@ -11,6 +11,7 @@ import {
   WSDL_COM_DTD,
   WSDL_MALFORMADO,
   WSDL_RAIZ_ERRADA,
+  nfeAutorizacao4MultiOpFixture,
   wsdlFixture,
   type WsdlFixtureOptions,
 } from "./__fixtures__/wsdl-fixtures"
@@ -221,5 +222,220 @@ describe("extractSefazWsdlContract · documento inaceitável", () => {
         documento,
       }),
     ).toMatchObject({ ok: false, codigo: "documento_excede_limite" })
+  })
+})
+
+describe("extractSefazWsdlContract · NFeAutorizacao4 multi-operação canônica", () => {
+  it("1. seleciona nfeAutorizacaoLote por nome exato em binding multi-operação", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado.ok).toBe(true)
+    if (!resultado.ok) return
+    expect(resultado.fechaH9).toBe(true)
+    expect(resultado.fechaH10).toBe(true)
+    expect(resultado.contrato.operationName).toBe("nfeAutorizacaoLote")
+    expect(resultado.contrato.servico).toBe("NFeAutorizacao4")
+  })
+
+  it("2. ordem invertida das operações no binding não altera o resultado", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const docNormal = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+    })
+    const docInvertido = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLoteZip", "nfeAutorizacaoLote"],
+    })
+
+    const resNormal = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento: docNormal,
+    })
+    const resInvertido = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento: docInvertido,
+    })
+
+    expect(resNormal.ok).toBe(true)
+    expect(resInvertido.ok).toBe(true)
+    if (!resNormal.ok || !resInvertido.ok) return
+
+    expect(resInvertido.contrato).toEqual(resNormal.contrato)
+    expect(resInvertido.contrato.operationName).toBe("nfeAutorizacaoLote")
+  })
+
+  it("3. não seleciona nfeAutorizacaoLoteZip por prefixo quando a operação esperada é nfeAutorizacaoLote", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLoteZip"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado).toMatchObject({
+      ok: false,
+      codigo: "operacao_ausente",
+      fechaH9: false,
+      fechaH10: false,
+    })
+  })
+
+  it("4. expected operation ausente do binding => fail-closed com operacao_ausente", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["outraOperacao1", "outraOperacao2"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado).toMatchObject({
+      ok: false,
+      codigo: "operacao_ausente",
+      fechaH9: false,
+      fechaH10: false,
+    })
+  })
+
+  it("5. expected operation duplicada no binding => fail-closed com operacao_ambigua", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+      duplicateOperation: "nfeAutorizacaoLote",
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado).toMatchObject({
+      ok: false,
+      codigo: "operacao_ambigua",
+      fechaH9: false,
+      fechaH10: false,
+    })
+  })
+
+  it("6. multi-op sem expectedOperationName no alvo => fail-closed com operacao_ambigua", () => {
+    const alvoSemExpected: SefazWsdlTarget = {
+      ...alvoDe("NFeAutorizacao4"),
+      expectedOperationName: undefined,
+    }
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo: alvoSemExpected,
+      documento,
+    })
+
+    expect(resultado).toMatchObject({
+      ok: false,
+      codigo: "operacao_ambigua",
+      fechaH9: false,
+      fechaH10: false,
+    })
+  })
+
+  it("7. soapAction vem literalmente da operação selecionada (nunca de outra operação)", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const customSoapActionLote = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote"
+    const customSoapActionZip = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLoteZip"
+
+    const documento = nfeAutorizacao4MultiOpFixture({
+      soapActionLote: customSoapActionLote,
+      soapActionZip: customSoapActionZip,
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado.ok).toBe(true)
+    if (!resultado.ok) return
+    expect(resultado.contrato.soapAction).toBe(customSoapActionLote)
+    expect(resultado.contrato.soapAction).not.toBe(customSoapActionZip)
+  })
+
+  it("8. portType correspondente é resolvido pela mesma operationName exata", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado.ok).toBe(true)
+    if (!resultado.ok) return
+    expect(resultado.contrato.operationName).toBe("nfeAutorizacaoLote")
+  })
+
+  it("9. input/output wrappers vêm da operação selecionada", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado.ok).toBe(true)
+    if (!resultado.ok) return
+    expect(resultado.contrato.inputMessageName).toBe("nfeAutorizacaoLoteSoapIn")
+    expect(resultado.contrato.inputWrapperLocalName).toBe("nfeDadosMsg")
+    expect(resultado.contrato.inputWrapperNamespace).toBe(
+      sefazServiceNamespace("NFeAutorizacao4"),
+    )
+    expect(resultado.contrato.outputMessageName).toBe("nfeAutorizacaoLoteSoapOut")
+    expect(resultado.contrato.outputWrapperLocalName).toBe("nfeResultMsg")
+    expect(resultado.contrato.outputWrapperNamespace).toBe(
+      sefazServiceNamespace("NFeAutorizacao4"),
+    )
+  })
+
+  it("10. prova offline equivalente ao caso real: NFeAutorizacao4 multi-op fecha H9 e H10", () => {
+    const alvo = alvoDe("NFeAutorizacao4")
+    expect(alvo.expectedOperationName).toBe("nfeAutorizacaoLote")
+
+    const documento = nfeAutorizacao4MultiOpFixture({
+      operations: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"],
+    })
+    const resultado = extractSefazWsdlContract({
+      servico: "NFeAutorizacao4",
+      alvo,
+      documento,
+    })
+
+    expect(resultado.ok).toBe(true)
+    if (!resultado.ok) return
+    expect(resultado.fechaH9).toBe(true)
+    expect(resultado.fechaH10).toBe(true)
+    expect(resultado.contrato.servico).toBe("NFeAutorizacao4")
+    expect(resultado.contrato.operationName).toBe("nfeAutorizacaoLote")
+    expect(resultado.contrato.addressLocation).toBe(
+      "https://homologacao.nfce.fazenda.sp.gov.br/ws/NFeAutorizacao4.asmx",
+    )
   })
 })

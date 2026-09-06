@@ -11,6 +11,7 @@
  * e cada ruptura dela recusa), nunca o CONTEÚDO.
  */
 import { sefazServiceNamespace, type SefazServico } from "../../sefaz-endpoint-catalog"
+import { SEFAZ_WSDL_EXPECTED_OPERATIONS } from "../wsdl-acquisition-target"
 
 const HOST_HOMOLOGACAO_SP = "homologacao.nfce.fazenda.sp.gov.br"
 
@@ -56,8 +57,7 @@ function acaoSintetica(servico: SefazServico, operacao: string): string {
 }
 
 function operacaoDe(servico: SefazServico): string {
-  // Nome arbitrário e estável por serviço. NÃO reflete o WSDL oficial.
-  return `op${servico}`
+  return SEFAZ_WSDL_EXPECTED_OPERATIONS[servico] ?? `op${servico}`
 }
 
 /** Monta um WSDL 1.1 sintético, opcionalmente com um defeito estrutural específico. */
@@ -198,3 +198,104 @@ export const WSDL_COM_DTD = `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE definitions [<!ENTITY x "y">]>
 <wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"/>
 `
+
+export type NFeAutorizacao4FixtureOptions = {
+  /** Lista e ordem das operações no binding (padrão: ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"]). */
+  readonly operations?: readonly string[]
+  /** Substitui a soapAction de nfeAutorizacaoLote. */
+  readonly soapActionLote?: string
+  /** Substitui a soapAction de nfeAutorizacaoLoteZip. */
+  readonly soapActionZip?: string
+  /** Se true, duplica a operação especificada no binding. */
+  readonly duplicateOperation?: string
+  /** Se true, omite a declaração de portType. */
+  readonly semPortType?: boolean
+}
+
+/**
+ * Fixture que simula a estrutura real do WSDL do NFeAutorizacao4 (multi-operação).
+ * Publica nfeAutorizacaoLote (XML nfeDadosMsg) e nfeAutorizacaoLoteZip (GZip Base64 nfeDadosMsgZip).
+ */
+export function nfeAutorizacao4MultiOpFixture(
+  options: NFeAutorizacao4FixtureOptions = {},
+): string {
+  const servico: SefazServico = "NFeAutorizacao4"
+  const tns = sefazServiceNamespace(servico)
+  const location = `https://${HOST_HOMOLOGACAO_SP}/ws/${servico}.asmx`
+  const operations = options.operations ?? ["nfeAutorizacaoLote", "nfeAutorizacaoLoteZip"]
+
+  const defaultAction = (op: string): string => {
+    if (op === "nfeAutorizacaoLote" && options.soapActionLote) return options.soapActionLote
+    if (op === "nfeAutorizacaoLoteZip" && options.soapActionZip) return options.soapActionZip
+    return acaoSintetica(servico, op)
+  }
+
+  const wrapperIn = (op: string): string =>
+    op === "nfeAutorizacaoLoteZip" ? "nfeDadosMsgZip" : "nfeDadosMsg"
+
+  const bindingOperations = [...operations]
+  if (options.duplicateOperation) {
+    bindingOperations.push(options.duplicateOperation)
+  }
+
+  const distinctOps = Array.from(new Set(operations))
+
+  return (
+    `<?xml version="1.0" encoding="utf-8"?>\n` +
+    `<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"\n` +
+    `                  xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/"\n` +
+    `                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"\n` +
+    `                  xmlns:tns="${tns}"\n` +
+    `                  targetNamespace="${tns}">\n` +
+    `  <wsdl:types>\n` +
+    `    <xsd:schema targetNamespace="${tns}">\n` +
+    `      <xsd:element name="nfeDadosMsg"/>\n` +
+    `      <xsd:element name="nfeDadosMsgZip"/>\n` +
+    `      <xsd:element name="nfeResultMsg"/>\n` +
+    `    </xsd:schema>\n` +
+    `  </wsdl:types>\n` +
+    distinctOps
+      .map(
+        (op) =>
+          `  <wsdl:message name="${op}SoapIn">\n` +
+          `    <wsdl:part name="${wrapperIn(op)}" element="tns:${wrapperIn(op)}"/>\n` +
+          `  </wsdl:message>\n` +
+          `  <wsdl:message name="${op}SoapOut">\n` +
+          `    <wsdl:part name="nfeResultMsg" element="tns:nfeResultMsg"/>\n` +
+          `  </wsdl:message>\n`,
+      )
+      .join("") +
+    (options.semPortType
+      ? ""
+      : `  <wsdl:portType name="${servico}Soap12">\n` +
+        distinctOps
+          .map(
+            (op) =>
+              `    <wsdl:operation name="${op}">\n` +
+              `      <wsdl:input message="tns:${op}SoapIn"/>\n` +
+              `      <wsdl:output message="tns:${op}SoapOut"/>\n` +
+              `    </wsdl:operation>\n`,
+          )
+          .join("") +
+        `  </wsdl:portType>\n`) +
+    `  <wsdl:binding name="${servico}Soap12" type="tns:${servico}Soap12">\n` +
+    `    <soap12:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>\n` +
+    bindingOperations
+      .map(
+        (op) =>
+          `    <wsdl:operation name="${op}">\n` +
+          `      <soap12:operation soapAction="${defaultAction(op)}" style="document" soapActionRequired="true"/>\n` +
+          `      <wsdl:input><soap12:body use="literal"/></wsdl:input>\n` +
+          `      <wsdl:output><soap12:body use="literal"/></wsdl:output>\n` +
+          `    </wsdl:operation>\n`,
+      )
+      .join("") +
+    `  </wsdl:binding>\n` +
+    `  <wsdl:service name="${servico}">\n` +
+    `    <wsdl:port name="${servico}Soap12" binding="tns:${servico}Soap12">\n` +
+    `      <soap12:address location="${location}"/>\n` +
+    `    </wsdl:port>\n` +
+    `  </wsdl:service>\n` +
+    `</wsdl:definitions>\n`
+  )
+}

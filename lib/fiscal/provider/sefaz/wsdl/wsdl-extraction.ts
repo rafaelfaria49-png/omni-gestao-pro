@@ -322,17 +322,38 @@ export function extractSefazWsdlContract(input: {
     return recusa("binding_style_invalido", "soap12:binding/@style não é document.")
   }
 
-  // ── 9. Exatamente uma operação no binding ────────────────────────────────────────────────
+  // ── 9. Operação no binding ───────────────────────────────────────────────────────────────
   const operacoes = filhos(binding, "operation", WSDL11_NS)
-  const operacao = exatamenteUm(operacoes)
-  if (operacao === "ausente") {
+  if (operacoes.length === 0) {
     return recusa("operacao_ausente", "Binding SOAP 1.2 sem wsdl:operation.")
   }
-  if (operacao === "ambiguo") {
-    return recusa(
-      "operacao_ambigua",
-      "Binding com mais de uma wsdl:operation; escolha por nome do serviço recusada.",
+
+  let operacao: C14nElement
+  if (alvo.expectedOperationName) {
+    const matches = operacoes.filter(
+      (op) => attrOf(op, "name").trim() === alvo.expectedOperationName,
     )
+    if (matches.length === 0) {
+      return recusa(
+        "operacao_ausente",
+        `Operação canônica esperada "${alvo.expectedOperationName}" não encontrada no binding.`,
+      )
+    }
+    if (matches.length > 1) {
+      return recusa(
+        "operacao_ambigua",
+        `Mais de uma wsdl:operation com o nome "${alvo.expectedOperationName}" no binding.`,
+      )
+    }
+    operacao = matches[0]!
+  } else {
+    if (operacoes.length > 1) {
+      return recusa(
+        "operacao_ambigua",
+        "Binding com mais de uma wsdl:operation; escolha por nome do serviço recusada.",
+      )
+    }
+    operacao = operacoes[0]!
   }
   const operationName = attrOf(operacao, "name").trim()
   if (!operationName) {
