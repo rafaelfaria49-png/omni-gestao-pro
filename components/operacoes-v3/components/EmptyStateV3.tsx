@@ -19,7 +19,7 @@ export function EmptyStateV3({
   return (
     <div
       className={cn(
-        "flex flex-col items-center justify-center rounded-[12px] border border-dashed border-[var(--ops-v3-dashed)] bg-[var(--ops-v3-soft)] px-6 py-12 text-center",
+        "flex flex-col items-center justify-center rounded-[10px] border border-dashed border-[var(--ops-v3-dashed)] bg-[var(--ops-v3-soft)] px-6 py-10 text-center",
         className,
       )}
     >

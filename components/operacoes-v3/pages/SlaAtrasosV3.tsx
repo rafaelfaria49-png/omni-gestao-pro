@@ -25,19 +25,19 @@ export function SlaAtrasosV3() {
 
   if (!storeId) {
     return (
-      <SectionShellV3 titulo={SCREEN_COPY.sla.titulo} subtitulo={SCREEN_COPY.sla.subtitulo}>
+      <SectionShellV3 kicker="Prazos · risco e estourados" titulo={SCREEN_COPY.sla.titulo} subtitulo={SCREEN_COPY.sla.subtitulo}>
         <NoStoreBlockV3 />
       </SectionShellV3>
     );
   }
 
   return (
-    <SectionShellV3 titulo={SCREEN_COPY.sla.titulo} subtitulo={SCREEN_COPY.sla.subtitulo}>
+    <SectionShellV3 kicker="Prazos · risco e estourados" titulo={SCREEN_COPY.sla.titulo} subtitulo={SCREEN_COPY.sla.subtitulo}>
       {primeiraCarga && loading ? (
         <LoadingBlockV3 />
       ) : (
-        <div className="space-y-5">
-          <div className="grid grid-cols-3 gap-3">
+        <div className="space-y-4 sm:space-y-5">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
             <MetricCardV3 label="Atrasadas" value={atrasadas.length} tone="danger" />
             <MetricCardV3 label="Em risco" value={emRisco.length} tone="warning" />
             <MetricCardV3 label="No prazo" value={noPrazo} tone="success" />

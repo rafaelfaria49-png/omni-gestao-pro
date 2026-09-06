@@ -34,27 +34,27 @@ export function OSHeaderV3({ os, actions }: { os: OrdemServico; actions?: ReactN
   const marcaModelo = [os.equipamento?.marca, os.equipamento?.modelo].filter(Boolean).join(" ").trim() || os.equipamento?.tipo || "";
 
   return (
-    <div className="sticky top-0 z-10 rounded-[12px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)]/95 p-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-[var(--ops-v3-surface)]/85">
+    <div className="sticky top-0 z-10 rounded-[10px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)]/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-[var(--ops-v3-surface)]/85">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h2 className="truncate text-[17px] font-bold text-[var(--ops-v3-ink)]">{os.codigo}</h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <h2 className="truncate text-[16px] font-extrabold tracking-tight tabular-nums text-[var(--ops-v3-ink)]">{os.codigo}</h2>
           <StatusBadgeV3 status={statusV3FromOS(os)} />
           <PaymentBadgeV3 estado={pagEstado} total={pagV3.total} recebido={pagV3.recebido} />
         </div>
         <div className="text-right">
-          <p className="text-[10px] uppercase tracking-wide text-[var(--ops-v3-subtle)]">Total da OS</p>
-          <p className="text-[20px] font-bold tabular-nums text-[var(--ops-v3-ink)]">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-[var(--ops-v3-subtle)]">Total da OS</p>
+          <p className="text-lg font-extrabold tabular-nums text-[var(--ops-v3-ink)]">
             {pagV3.total > 0 ? formatBRL(pagV3.total) : "—"}
           </p>
           {pagV3.saldo > 0 && pagV3.recebido > 0 ? (
-            <p className="text-[11px] text-[var(--ops-v3-warning-fg)]">saldo {formatBRL(pagV3.saldo)}</p>
+            <p className="text-[11px] font-medium text-[var(--ops-v3-warning-fg)]">saldo {formatBRL(pagV3.saldo)}</p>
           ) : null}
         </div>
       </div>
 
-      {actions ? <div className="mt-3 flex flex-wrap items-center gap-2">{actions}</div> : null}
+      {actions ? <div className="mt-2 flex flex-wrap items-center gap-1.5">{actions}</div> : null}
 
-      <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
         <Field icon={<User className="h-3 w-3" />} label="Cliente" value={os.cliente?.nome} />
         <Field icon={<Smartphone className="h-3 w-3" />} label="Equipamento" value={marcaModelo} />
         <Field icon={<Tag className="h-3 w-3" />} label="Marca / modelo" value={[os.equipamento?.marca, os.equipamento?.modelo].filter(Boolean).join(" ")} />

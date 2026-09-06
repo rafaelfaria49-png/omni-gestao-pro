@@ -33,30 +33,31 @@ export function OSCardV3({
     <button
       type="button"
       onClick={() => onOpen?.(os.id)}
+      aria-label={`Abrir ${os.codigo}`}
       className={cn(
-        "group w-full min-w-0 rounded-[12px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] p-3 text-left shadow-sm transition-colors hover:border-[var(--ops-v3-line-hover)] hover:bg-[var(--ops-v3-soft)]",
+        "v3-lift v3-press group w-full min-w-0 rounded-[10px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] p-2.5 text-left shadow-sm transition-all duration-150 hover:border-[var(--ops-v3-line-hover)] hover:bg-[var(--ops-v3-soft)]",
         className,
       )}
     >
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-sm font-semibold text-[var(--ops-v3-ink)]">{os.codigo}</span>
+          <span className="truncate text-[13px] font-bold tabular-nums text-[var(--ops-v3-ink)]">{os.codigo}</span>
           <PrioridadeBadgeV3 os={os} />
         </span>
         <StatusBadgeV3 status={statusV3FromOS(os)} />
       </div>
 
-      <div className="mt-2 flex items-center gap-1.5 text-sm text-[var(--ops-v3-body)]">
+      <div className="mt-1.5 flex items-center gap-1.5 text-[13px] text-[var(--ops-v3-body)]">
         <User className="h-3.5 w-3.5 shrink-0 text-[var(--ops-v3-subtle)]" aria-hidden />
-        <span className="truncate">{os.cliente?.nome ?? "Cliente não identificado"}</span>
+        <span className="truncate font-medium">{os.cliente?.nome ?? "Cliente não identificado"}</span>
       </div>
-      <div className="mt-1 flex items-center gap-1.5 text-xs text-[var(--ops-v3-muted)]">
+      <div className="mt-0.5 flex items-center gap-1.5 text-xs text-[var(--ops-v3-muted)]">
         <Smartphone className="h-3.5 w-3.5 shrink-0" aria-hidden />
         <span className="truncate">{equipamentoLabel(os)}</span>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-semibold tabular-nums text-[var(--ops-v3-ink)]">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[13px] font-bold tabular-nums text-[var(--ops-v3-ink)]">
           {pag.total > 0 ? formatBRL(pag.total) : "—"}
         </span>
         <PaymentBadgeV3 estado={pag.estado} total={pag.total} showValor={false} />

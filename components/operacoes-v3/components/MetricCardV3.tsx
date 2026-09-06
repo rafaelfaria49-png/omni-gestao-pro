@@ -36,25 +36,25 @@ export function MetricCardV3({
 }: MetricCardV3Props) {
   const aConectar = estado === "a-conectar";
   return (
-    <div className={cn("min-w-0 rounded-[12px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] p-4 shadow-sm", className)}>
+    <div className={cn("v3-lift min-w-0 rounded-[10px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] p-3 shadow-sm transition-transform", className)}>
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-xs font-medium uppercase tracking-wide text-[var(--ops-v3-muted)]">
+        <span className="truncate text-[11px] font-semibold uppercase tracking-wide text-[var(--ops-v3-muted)]">
           {label}
         </span>
         {icon ? <span className="shrink-0 text-[var(--ops-v3-subtle)]">{icon}</span> : null}
       </div>
       {aConectar ? (
-        <div className="mt-2">
+        <div className="mt-1.5">
           <span className="inline-flex items-center rounded-md border border-dashed border-[var(--ops-v3-dashed)] bg-[var(--ops-v3-soft)] px-2 py-0.5 text-xs text-[var(--ops-v3-muted)]">
             a conectar
           </span>
         </div>
       ) : (
-        <p className={cn("mt-2 truncate text-2xl font-semibold tabular-nums", TONE_ACCENT[tone])}>
+        <p className={cn("mt-1.5 truncate text-xl font-bold tabular-nums", TONE_ACCENT[tone])}>
           {value}
         </p>
       )}
-      {hint ? <p className="mt-1 truncate text-xs text-[var(--ops-v3-muted)]">{hint}</p> : null}
+      {hint ? <p className="mt-0.5 truncate text-[11px] text-[var(--ops-v3-muted)]">{hint}</p> : null}
     </div>
   );
 }

@@ -51,7 +51,7 @@ export function FilaOSV3() {
 
   if (!storeId) {
     return (
-      <SectionShellV3 titulo={SCREEN_COPY.fila.titulo} subtitulo={SCREEN_COPY.fila.subtitulo}>
+      <SectionShellV3 kicker="Operação · fila de ordens" titulo={SCREEN_COPY.fila.titulo} subtitulo={SCREEN_COPY.fila.subtitulo}>
         <NoStoreBlockV3 />
       </SectionShellV3>
     );
@@ -59,17 +59,21 @@ export function FilaOSV3() {
 
   const tabs = (
     <>
-      <div className="flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+      <div className="flex items-center gap-0.5 rounded-[10px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-muted-bg)] p-[3px]" role="tablist" aria-label="Visão da fila">
         {TABS.map((t) => {
           const Icon = t.icon;
           return (
             <button
               key={t.id}
               type="button"
+              role="tab"
+              aria-selected={tab === t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
-                tab === t.id ? "bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground",
+                "v3-mtap inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap rounded-[7px] px-2.5 py-1.5 text-xs font-bold transition-colors",
+                tab === t.id
+                  ? "bg-[var(--ops-v3-surface)] text-[var(--ops-v3-ink)] shadow-sm"
+                  : "text-[var(--ops-v3-muted)] hover:text-[var(--ops-v3-ink)]",
               )}
             >
               <Icon className="h-3.5 w-3.5" aria-hidden />
@@ -86,22 +90,24 @@ export function FilaOSV3() {
   );
 
   return (
-    <SectionShellV3 titulo={SCREEN_COPY.fila.titulo} subtitulo={SCREEN_COPY.fila.subtitulo} actions={tabs}>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+    <SectionShellV3 kicker="Operação · fila de ordens" titulo={SCREEN_COPY.fila.titulo} subtitulo={SCREEN_COPY.fila.subtitulo} actions={tabs}>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <input
-            className={cn(inputCls, "pl-9")}
+            className={cn(inputCls, "v3-mtap min-h-[var(--ops-v3-btn-h)] pl-9")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Buscar por OS, cliente, aparelho, técnico…"
+            aria-label="Buscar ordens"
           />
         </div>
         {tab === "lista" ? (
           <select
-            className={cn(inputCls, "w-auto")}
+            className={cn(inputCls, "v3-mtap w-auto min-h-[var(--ops-v3-btn-h)]")}
             value={statusFiltro}
             onChange={(e) => setStatusFiltro(e.target.value as OperacaoStatusV3 | "todas")}
+            aria-label="Filtrar por status"
           >
             <option value="todas">Todos os status</option>
             {STATUS_V3_LIST.map((s) => (
@@ -111,7 +117,7 @@ export function FilaOSV3() {
             ))}
           </select>
         ) : null}
-        <span className="text-xs text-muted-foreground">{filtradas.length} OS</span>
+        <span className="text-xs tabular-nums text-muted-foreground">{filtradas.length} OS</span>
       </div>
 
       {primeiraCarga && loading ? (
@@ -169,58 +175,63 @@ function KanbanView({
       <p className="mb-2 text-xs text-muted-foreground">
         Arraste um card para outra coluna para mudar o status — validado pela máquina única da V3.
       </p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-        {KANBAN_PIPELINE_V3.map((col) => {
-          const meta = statusMetaV3(col);
-          const cards = ordens.filter((o) => statusV3FromOS(o) === col);
-          const alvoValido = drag ? podeTransicionarV3(drag.from, col).ok : false;
-          const isOver = overCol === col;
-          return (
-            <div
-              key={col}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setOverCol(col);
-              }}
-              onDragLeave={() => setOverCol((c) => (c === col ? null : c))}
-              onDrop={(e) => {
-                e.preventDefault();
-                soltarEm(col);
-              }}
-              className={cn(
-                "flex min-w-0 flex-col rounded-xl border bg-muted/20 transition-colors",
-                isOver && alvoValido
-                  ? "border-primary ring-2 ring-primary/30"
-                  : drag && alvoValido
-                    ? "border-primary/40"
-                    : "border-border",
-              )}
-            >
-              <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-                <span className="truncate text-sm font-semibold text-foreground">{meta.label}</span>
-                <span className="rounded-full bg-card px-2 py-0.5 text-xs text-muted-foreground">{cards.length}</span>
-              </div>
-              <div className="min-h-[80px] space-y-2 p-2">
-                {cards.length > 0 ? (
-                  cards.map((os) => (
-                    <div
-                      key={os.id}
-                      draggable
-                      onDragStart={() => setDrag({ osId: os.id, from: statusV3FromOS(os) })}
-                      onDragEnd={limparDrag}
-                      className="cursor-grab active:cursor-grabbing"
-                    >
-                      <OSCardV3 os={os} onOpen={onOpen} />
-                    </div>
-                  ))
-                ) : (
-                  <p className="px-2 py-6 text-center text-xs text-muted-foreground">—</p>
+      {/* Mobile/tablet estreito: scroll SÓ dentro do quadro (a página nunca rola
+          para o lado). Desktop: grade fixa. */}
+      <div className="-mx-1 overflow-x-auto px-1 pb-2 md:mx-0 md:overflow-visible md:px-0 md:pb-0">
+        <div className="flex min-w-min gap-2 md:grid md:min-w-0 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+          {KANBAN_PIPELINE_V3.map((col) => {
+            const meta = statusMetaV3(col);
+            const cards = ordens.filter((o) => statusV3FromOS(o) === col);
+            const alvoValido = drag ? podeTransicionarV3(drag.from, col).ok : false;
+            const isOver = overCol === col;
+            return (
+              <div
+                key={col}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setOverCol(col);
+                }}
+                onDragLeave={() => setOverCol((c) => (c === col ? null : c))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  soltarEm(col);
+                }}
+                className={cn(
+                  "flex w-[248px] min-w-0 shrink-0 flex-col rounded-[10px] border bg-[var(--ops-v3-muted-bg)]/60 transition-colors md:w-auto",
+                  isOver && alvoValido
+                    ? "border-primary ring-2 ring-primary/30"
+                    : drag && alvoValido
+                      ? "border-primary/40"
+                      : "border-border",
                 )}
+              >
+                <div className="flex items-center justify-between gap-2 border-b border-border px-2.5 py-2">
+                  <span className="truncate text-xs font-bold text-foreground">{meta.label}</span>
+                  <span className="shrink-0 rounded-full bg-card px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground">{cards.length}</span>
+                </div>
+                <div className="max-h-[480px] min-h-[80px] space-y-2 overflow-y-auto p-2">
+                  {cards.length > 0 ? (
+                    cards.map((os) => (
+                      <div
+                        key={os.id}
+                        draggable
+                        onDragStart={() => setDrag({ osId: os.id, from: statusV3FromOS(os) })}
+                        onDragEnd={limparDrag}
+                        className="cursor-grab active:cursor-grabbing"
+                      >
+                        <OSCardV3 os={os} onOpen={onOpen} />
+                      </div>
+                    ))
+                  ) : (
+                    <p className="px-2 py-6 text-center text-xs text-muted-foreground">—</p>
+                  )}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
+      <p className="mt-1 text-[11px] text-muted-foreground md:hidden">↔ Deslize o quadro para o lado — a página não rola.</p>
     </div>
   );
 }
@@ -242,51 +253,60 @@ function ListaView({
     );
   }
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full min-w-[760px] border-collapse text-sm">
-        <thead>
-          <tr className="border-b border-border bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <th className="px-3 py-2 font-medium">OS</th>
-            <th className="px-3 py-2 font-medium">Cliente</th>
-            <th className="px-3 py-2 font-medium">Equipamento</th>
-            <th className="px-3 py-2 font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Pagamento</th>
-            <th className="px-3 py-2 font-medium">Técnico</th>
-            <th className="px-3 py-2 text-right font-medium">Prazo</th>
-            <th className="px-3 py-2 text-right font-medium">Valor</th>
-          </tr>
-        </thead>
-        <tbody>
-          {ordens.map((os) => {
-            const pagV3 = lerPagamentoV3(os);
-            const pagEstado: PagamentoEstado = pagV3.status === "sem_cobranca" ? "sem-cobranca" : pagV3.status;
-            const equip =
-              [os.equipamento?.marca, os.equipamento?.modelo].filter(Boolean).join(" ").trim() ||
-              os.equipamento?.tipo ||
-              "—";
-            return (
-              <tr
-                key={os.id}
-                onClick={() => onOpen(os.id)}
-                className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/30"
-              >
-                <td className="px-3 py-2 font-medium text-foreground">{os.codigo}</td>
-                <td className="max-w-[160px] truncate px-3 py-2 text-foreground">{os.cliente?.nome ?? "—"}</td>
-                <td className="max-w-[160px] truncate px-3 py-2 text-muted-foreground">{equip}</td>
-                <td className="px-3 py-2"><StatusBadgeV3 status={statusV3FromOS(os)} /></td>
-                <td className="px-3 py-2"><PaymentBadgeV3 estado={pagEstado} showValor={false} /></td>
-                <td className="max-w-[120px] truncate px-3 py-2 text-muted-foreground">{os.tecnico?.nome ?? "—"}</td>
-                <td className="whitespace-nowrap px-3 py-2 text-right text-muted-foreground">
-                  {os.sla?.prazo ? formatRelativo(os.sla.prazo) : "—"}
-                </td>
-                <td className="whitespace-nowrap px-3 py-2 text-right font-medium tabular-nums text-foreground">
-                  {orcamentoTotal(os) > 0 ? formatBRL(orcamentoTotal(os)) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <>
+      {/* Desktop/tablet largo: tabela compacta e legível. */}
+      <div className="hidden overflow-x-auto rounded-[10px] border border-border bg-[var(--ops-v3-surface)] shadow-sm md:block">
+        <table className="w-full min-w-[680px] border-collapse text-[12.5px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/40 text-left text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
+              <th className="px-2.5 py-2 font-extrabold">OS</th>
+              <th className="px-2.5 py-2 font-extrabold">Cliente</th>
+              <th className="px-2.5 py-2 font-extrabold">Equipamento</th>
+              <th className="px-2.5 py-2 font-extrabold">Status</th>
+              <th className="px-2.5 py-2 font-extrabold">Pagamento</th>
+              <th className="px-2.5 py-2 font-extrabold">Técnico</th>
+              <th className="px-2.5 py-2 text-right font-extrabold">Prazo</th>
+              <th className="px-2.5 py-2 text-right font-extrabold">Valor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordens.map((os) => {
+              const pagV3 = lerPagamentoV3(os);
+              const pagEstado: PagamentoEstado = pagV3.status === "sem_cobranca" ? "sem-cobranca" : pagV3.status;
+              const equip =
+                [os.equipamento?.marca, os.equipamento?.modelo].filter(Boolean).join(" ").trim() ||
+                os.equipamento?.tipo ||
+                "—";
+              return (
+                <tr
+                  key={os.id}
+                  onClick={() => onOpen(os.id)}
+                  className="cursor-pointer border-b border-border/60 transition-colors last:border-0 hover:bg-muted/30"
+                >
+                  <td className="px-2.5 py-2 font-semibold tabular-nums text-foreground">{os.codigo}</td>
+                  <td className="max-w-[160px] truncate px-2.5 py-2 text-foreground">{os.cliente?.nome ?? "—"}</td>
+                  <td className="max-w-[160px] truncate px-2.5 py-2 text-muted-foreground">{equip}</td>
+                  <td className="px-2.5 py-2"><StatusBadgeV3 status={statusV3FromOS(os)} /></td>
+                  <td className="px-2.5 py-2"><PaymentBadgeV3 estado={pagEstado} showValor={false} /></td>
+                  <td className="max-w-[120px] truncate px-2.5 py-2 text-muted-foreground">{os.tecnico?.nome ?? "—"}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2 text-right text-muted-foreground">
+                    {os.sla?.prazo ? formatRelativo(os.sla.prazo) : "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-2.5 py-2 text-right font-medium tabular-nums text-foreground">
+                    {orcamentoTotal(os) > 0 ? formatBRL(orcamentoTotal(os)) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {/* Mobile: cards próprios (nunca tabela espremida). */}
+      <div className="flex flex-col gap-2 md:hidden">
+        {ordens.map((os) => (
+          <OSCardV3 key={os.id} os={os} onOpen={onOpen} />
+        ))}
+      </div>
+    </>
   );
 }

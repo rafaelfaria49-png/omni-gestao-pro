@@ -203,8 +203,8 @@ export function OperacoesV3Shell() {
     <OperacoesV3Context.Provider value={ctx}>
       <div className={cn(styles.skin, "flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-[12px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-app)] text-[var(--ops-v3-ink)]")}>
 
-        {/* ── Top bar (40 px) ────────────────────────────────────────────── */}
-        <header className="flex h-10 flex-none items-center gap-3 border-b border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] px-3">
+        {/* ── Top bar (40 px, slim — vive dentro do AppShell real) ────────── */}
+        <header className="flex h-10 flex-none items-center gap-2 border-b border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] px-2 sm:gap-3 sm:px-3">
           {/* Identidade */}
           <div className="flex flex-none items-center gap-2">
             <span className="inline-flex h-[23px] w-[23px] shrink-0 items-center justify-center rounded-md bg-[var(--ops-v3-ink)] text-[12px] font-bold text-white">
@@ -221,11 +221,12 @@ export function OperacoesV3Shell() {
             type="button"
             onClick={() => navigate("workspace", null)}
             title="Buscar ordem de serviço"
+            aria-label="Buscar ordem de serviço"
             className="flex h-7 min-w-0 max-w-[380px] flex-1 items-center gap-2 rounded-lg border border-[var(--ops-v3-line)] bg-[var(--ops-v3-muted-bg)] px-2.5 text-[12.5px] text-[var(--ops-v3-subtle)] transition-colors hover:bg-[var(--ops-v3-muted-bg-2)] hover:text-[var(--ops-v3-body)]"
           >
             <Search className="h-[13px] w-[13px] shrink-0" aria-hidden />
             <span className="min-w-0 flex-1 truncate text-left">Ir para OS, cliente, IMEI…</span>
-            <kbd className="shrink-0 rounded border border-[var(--ops-v3-input)] bg-[var(--ops-v3-surface)] px-1 py-px text-[10px] font-medium text-[var(--ops-v3-subtle)]">⌘K</kbd>
+            <kbd className="hidden shrink-0 rounded border border-[var(--ops-v3-input)] bg-[var(--ops-v3-surface)] px-1 py-px text-[10px] font-medium text-[var(--ops-v3-subtle)] sm:inline">⌘K</kbd>
           </button>
 
           {/* Modo de uso — segmented no command header, imediatamente após a busca global */}
@@ -244,7 +245,7 @@ export function OperacoesV3Shell() {
           </ButtonV3>
 
           {/* Grupo direito */}
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
             {unidade ? (
               <span className="hidden truncate text-[11.5px] text-[var(--ops-v3-muted)] lg:inline" title={unidade}>
                 {unidade}
@@ -276,10 +277,12 @@ export function OperacoesV3Shell() {
             </div>
           )}
 
-          {/* Centro: conteúdo principal */}
-          <main ref={mainRef} className="min-w-0 flex-1 overflow-y-auto bg-[var(--ops-v3-app)]">
-            <div className="w-full px-4 py-4 sm:px-5">
-              <ActiveScreen />
+          {/* Centro: conteúdo principal (1 coluna; largura útil contida) */}
+          <main ref={mainRef} className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-[var(--ops-v3-app)]">
+            <div className="mx-auto w-full max-w-[1080px] min-w-0 px-3 py-3 sm:px-5 sm:py-4">
+              <div key={`${activeScreen}-${selectedOsId ?? "none"}`} className={styles.viewEnter}>
+                <ActiveScreen />
+              </div>
             </div>
           </main>
 
@@ -332,13 +335,13 @@ export function OperacoesV3Shell() {
           )}
         </div>
 
-        {/* ── Toasts ──────────────────────────────────────────────────────── */}
+        {/* ── Toasts (feedback único, role=status) ────────────────────────── */}
         {toasts.length > 0 ? (
-          <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4">
+          <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4" role="status" aria-live="polite">
             {toasts.map((t) => (
               <div
                 key={t.id}
-                className="pointer-events-auto max-w-md rounded-lg border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] px-4 py-2 text-center text-sm text-[var(--ops-v3-body)] shadow-[var(--ops-v3-shadow-toast)]"
+                className={`${styles.toastIn} pointer-events-auto max-w-md rounded-full border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] px-4 py-2 text-center text-[12.5px] font-medium text-[var(--ops-v3-body)] shadow-[var(--ops-v3-shadow-toast)]`}
               >
                 {t.msg}
               </div>

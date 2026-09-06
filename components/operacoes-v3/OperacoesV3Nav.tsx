@@ -38,7 +38,10 @@ export function OperacoesV3TopTabs({
   onNavigate: (id: ScreenId) => void;
 }) {
   return (
-    <nav className="flex h-[46px] flex-none items-center gap-2 overflow-x-auto border-b border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] px-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+    <nav
+      aria-label="Operações"
+      className="flex h-11 flex-none items-center gap-0.5 overflow-x-auto border-b border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] px-2 [scrollbar-width:none] [-ms-overflow-style:none] sm:px-3 [&::-webkit-scrollbar]:hidden"
+    >
       {TOP_ITEMS.map((item) => {
         const Icon = item.icon;
         const isActive = item.id === active;
@@ -50,10 +53,10 @@ export function OperacoesV3TopTabs({
             title={item.description}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[8px] border px-3 text-[12px] font-semibold transition-colors",
+              "relative inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[8px] border px-3 text-[12.5px] font-semibold transition-colors",
               isActive
                 ? "border-[var(--ops-v3-primary-bd)] bg-[var(--ops-v3-primary-bg)] text-[var(--ops-v3-primary)] shadow-[var(--ops-v3-shadow-tab-active)]"
-                : "border-transparent bg-transparent text-[var(--ops-v3-muted)] hover:border-[var(--ops-v3-line)] hover:bg-[var(--ops-v3-muted-bg)] hover:text-[var(--ops-v3-ink)]",
+                : "border-transparent bg-transparent text-[var(--ops-v3-muted)] hover:bg-[var(--ops-v3-muted-bg)] hover:text-[var(--ops-v3-ink)]",
             )}
           >
             <Icon className="h-[14px] w-[14px]" aria-hidden />
@@ -76,7 +79,10 @@ export function OperacoesV3MiniRail({
   onNavigate: (id: ScreenId) => void;
 }) {
   return (
-    <nav className="hidden w-[62px] shrink-0 flex-col gap-px border-r border-[var(--ops-v3-line)] bg-[var(--ops-v3-soft-2)] py-[7px] lg:flex">
+    <nav
+      aria-label="Módulos principais"
+      className="hidden w-[62px] shrink-0 flex-col gap-px border-r border-[var(--ops-v3-line)] bg-[var(--ops-v3-soft-2)] py-[7px] xl:flex"
+    >
       {RAIL_IDS.map((id) => {
         const item = NAV_BY_ID[id];
         if (!item) return null;

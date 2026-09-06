@@ -5,7 +5,11 @@ import { EmptyStateV3 } from "./EmptyStateV3";
 
 export function LoadingBlockV3({ label = "Carregando ordens de serviço…" }: { label?: string }) {
   return (
-    <div className="flex items-center justify-center gap-2 rounded-[12px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] py-16 text-sm text-[var(--ops-v3-muted)] shadow-sm">
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center justify-center gap-2 rounded-[10px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] py-12 text-sm text-[var(--ops-v3-muted)] shadow-sm"
+    >
       <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
       {label}
     </div>

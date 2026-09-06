@@ -74,6 +74,7 @@ import { ButtonV3 } from "./UiV3";
 import { PatternPadV3 } from "./PatternPadV3";
 import { ProductPickerV3 } from "./ProductPickerV3";
 import { formatBRL } from "../lib/format";
+import styles from "../operacoes-v3-skin.module.css";
 
 interface ClienteOpcao {
   id: string;
@@ -437,11 +438,11 @@ export function NovaOSEnterpriseModalV3({ open, storeId, onClose, onCreated }: P
   const stepId = STEPS[step].id;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6">
+    <div className="fixed inset-0 z-[60] flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label="Nova OS">
       <button type="button" aria-label="Fechar" className="absolute inset-0 bg-foreground/40 backdrop-blur-sm" onClick={requestClose} />
-      <div className="relative flex max-h-[92vh] w-full max-w-4xl min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+      <div className={`${styles.popIn} relative flex max-h-[94vh] w-full min-w-0 flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl sm:max-h-[92vh] sm:max-w-4xl sm:rounded-2xl`}>
         {/* Header */}
-        <header className="flex flex-none items-center gap-3 border-b border-border px-5 py-3.5">
+        <header className="flex flex-none items-center gap-2.5 border-b border-border px-4 py-3 sm:gap-3 sm:px-5 sm:py-3.5">
           <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <FileCheck2 className="h-4 w-4" aria-hidden />
           </span>
@@ -487,7 +488,7 @@ export function NovaOSEnterpriseModalV3({ open, storeId, onClose, onCreated }: P
         </nav>
 
         {/* Body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
           {stepId === "cliente" && (
             <div className="space-y-4">
               {draft.cliente.id ? (

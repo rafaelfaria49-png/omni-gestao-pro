@@ -79,9 +79,10 @@ export function OSCommandBarV3({
   const busy = pendingTo !== null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-[12px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)] p-3 shadow-sm">
+    <div className="sticky bottom-0 z-10 rounded-[10px] border border-[var(--ops-v3-line)] bg-[var(--ops-v3-surface)]/95 p-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-[var(--ops-v3-surface)]/85 sm:p-2.5">
+      {/* Ação primária evidente — única por estado, sempre na cor do sistema. */}
       {primaria ? (
-        <ButtonV3 variant="primary" disabled={busy} onClick={() => handle(primaria.to)}>
+        <ButtonV3 variant="primary" disabled={busy} onClick={() => handle(primaria.to)} className="v3-mtap w-full sm:w-auto">
           {pendingTo === primaria.to ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
           {primaria.label}
         </ButtonV3>
@@ -92,26 +93,30 @@ export function OSCommandBarV3({
         </span>
       )}
 
-      {secundarias.map((to) => (
-        <ButtonV3 key={to} variant="outline" disabled={busy} onClick={() => handle(to)}>
-          {pendingTo === to ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          {LABEL_TRANSICAO_V3[to]}
+      {/* Transições válidas + destrutiva: rolagem horizontal no mobile para não
+          empilhar CTAs concorrentes; "Mais ações" preserva o restante. */}
+      <div className="mt-2 flex gap-1.5 overflow-x-auto pb-0.5 sm:mt-2 sm:flex-wrap sm:overflow-visible">
+        {secundarias.map((to) => (
+          <ButtonV3 key={to} variant="outline" disabled={busy} onClick={() => handle(to)} className="v3-mtap shrink-0">
+            {pendingTo === to ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {LABEL_TRANSICAO_V3[to]}
+          </ButtonV3>
+        ))}
+
+        {podeCancelar ? (
+          <ButtonV3 variant="danger" disabled={busy} onClick={handleCancelar} className="v3-mtap shrink-0">
+            {pendingTo === "cancelada" ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+            Cancelar OS
+          </ButtonV3>
+        ) : null}
+
+        <ButtonV3 variant="ghost" disabled={busy} onClick={() => onAcao("Mais ações")} className="v3-mtap shrink-0">
+          <MoreHorizontal className="h-4 w-4" />
+          Mais ações
         </ButtonV3>
-      ))}
+      </div>
 
-      {podeCancelar ? (
-        <ButtonV3 variant="danger" disabled={busy} onClick={handleCancelar}>
-          {pendingTo === "cancelada" ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
-          Cancelar OS
-        </ButtonV3>
-      ) : null}
-
-      <ButtonV3 variant="ghost" disabled={busy} onClick={() => onAcao("Mais ações")}>
-        <MoreHorizontal className="h-4 w-4" />
-        Mais ações
-      </ButtonV3>
-
-      <span className="ml-auto text-xs text-[var(--ops-v3-subtle)]">
+      <span className="mt-1.5 hidden text-[11px] text-[var(--ops-v3-subtle)] sm:block">
         Transições validadas pela máquina única da V3.
       </span>
     </div>
