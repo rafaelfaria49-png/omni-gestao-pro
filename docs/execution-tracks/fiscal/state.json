@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "fiscal",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "ALTO",
-  "current_goal": "FISCAL-NFCE-CONTINGENCY-020",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": null,
   "counters": {
-    "goals_done": 2,
+    "goals_done": 3,
     "goals_blocked": 0,
     "goals_imported": 0,
-    "ledger_lines": 2
+    "ledger_lines": 3
   },
-  "last_goal": "FISCAL-NFCE-INVALIDATION-019",
+  "last_goal": "FISCAL-NFCE-CONTINGENCY-020",
   "last_result": "DONE",
-  "last_ratified_at": "2026-08-28T02:41:14.667Z"
+  "last_ratified_at": "2026-09-06T17:49:52.021Z"
 }
