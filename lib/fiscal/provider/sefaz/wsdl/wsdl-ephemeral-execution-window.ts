@@ -1,19 +1,20 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 168 · CONTAINMENT da janela H-9/H-10 consumida):
- * **DORMENTE** — a janela foi consumida pela única execução humana autorizada e está fechada.
+ * Estado atual (GOAL 020 · 172 · REARM de janela H-9/H-10 FINAL):
+ * **ARMADA** — activation nova para uma única execução humana controlada em HOMOLOGAÇÃO
+ * para validar o fix multi-op de NFeAutorizacao4 já publicado.
  *
- * A activation `wsdl-h9h10-20260905-1516z-025c3251e20744df` foi consumida uma única vez
- * por execução humana autenticada e está histórica/proibida de reutilização. A evidência real
- * registrou 6/6 GETs de rede SEFAZ com HTTP 200 e mTLS real; H-9 e H-10 ficaram parciais
- * (5/6) porque somente NFeAutorizacao4 teve `extraction:operacao_ambigua`.
- * O blocker TLS anterior não se reproduziu. POST administrativo, novos GETs WSDL, handshake,
- * SOAP e emissão NFC-e permanecem proibidos neste containment; não há correção do extractor aqui.
+ * A activation `wsdl-h9h10-20260906-1520z-eb237492a9c8eb17` é inédita e válida de
+ * 06/09 15:20:00Z a 16:05:00Z (45 minutos). Nenhuma activation morta foi reutilizada.
+ * O agente não executa a invocation: POST administrativo, GET WSDL, handshake, SOAP e
+ * emissão NFC-e permanecem proibidos nesta etapa; a única execução possível é humana,
+ * same-origin e em HOMOLOGAÇÃO.
  *
- * H-9 e H-10 permanecem **PARCIAL_5_DE_6**. A trust anchor ICP-Brasil v10 permanece implantada
- * e intacta. As activations de 30/08, 31/08, 02/09, 03/09 (`b3913bea58774deb`), 19:55z,
- * 23:25z e 05/09 15:16z seguem históricas/proibidas.
+ * H-9 e H-10 permanecem **PARCIAL_5_DE_6** até validação final. A trust anchor ICP-Brasil v10
+ * permanece implantada e intacta. As activations anteriores (incluindo `025c3251e20744df`,
+ * `fcad5be0637f918c`, `d2c844a079986c9e`, `b3913bea58774deb` e históricas) seguem
+ * mortas/proibidas.
  * Gate 2 permanece humano e separado.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
@@ -40,9 +41,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: null,
-  notBeforeUtc: null,
-  expiresAtUtc: null,
+  activationId: "wsdl-h9h10-20260906-1520z-eb237492a9c8eb17",
+  notBeforeUtc: "2026-09-06T15:20:00.000Z",
+  expiresAtUtc: "2026-09-06T16:05:00.000Z",
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
