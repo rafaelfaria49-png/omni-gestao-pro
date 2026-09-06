@@ -7,5 +7,5 @@ Semáforo: 🟢 rodando · 🟡 esperando humano · 🔴 bloqueado ou check falh
 | Trilha | Semáforo | Status | Risco | GOAL atual | Próximo | DONE | BLOCKED | Última ratificação |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | contador | 🟡 amarelo | PAUSED | MEDIO | — | — | 17 | 0 | 2026-08-20T20:16:31.782Z |
-| fiscal | 🟢 verde | RUNNING | ALTO | FISCAL-NFCE-CONTINGENCY-020 | — | 2 | 0 | 2026-08-28T02:41:14.667Z |
+| fiscal | 🟡 amarelo | PAUSED | ALTO | — | — | 3 | 0 | 2026-09-06T17:49:52.021Z |
 | pdv | 🟡 amarelo | PAUSED | ALTO | — | — | 3 | 0 | 2026-08-29T21:00:50.288Z |
