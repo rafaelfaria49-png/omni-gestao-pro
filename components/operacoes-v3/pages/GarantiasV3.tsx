@@ -27,19 +27,20 @@ function GarantiaCard({ linha, onOpen }: { linha: GarantiaLinhaV3; onOpen: (id: 
     <button
       type="button"
       onClick={() => onOpen(os.id)}
-      className="w-full min-w-0 rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-colors hover:border-border-hover hover:bg-muted/30"
+      aria-label={`Abrir ${os.codigo}`}
+      className="v3-lift v3-press w-full min-w-0 rounded-[10px] border border-border bg-card p-2.5 text-left shadow-sm transition-all duration-150 hover:border-border-hover hover:bg-muted/30"
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-semibold text-foreground">{os.codigo}</span>
+        <span className="truncate text-[13px] font-bold tabular-nums text-foreground">{os.codigo}</span>
         {typeof dias === "number" ? (
-          <span className={`shrink-0 text-xs ${dias < 0 ? "text-destructive" : dias <= DIAS_VENCENDO ? "text-warning" : "text-muted-foreground"}`}>
+          <span className={`shrink-0 text-[11px] font-semibold tabular-nums ${dias < 0 ? "text-destructive" : dias <= DIAS_VENCENDO ? "text-warning" : "text-muted-foreground"}`}>
             {dias >= 0 ? `${dias} dias` : `vencida há ${Math.abs(dias)}d`}
           </span>
         ) : (
-          <span className="shrink-0 text-xs text-muted-foreground">na entrega</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">na entrega</span>
         )}
       </div>
-      <p className="mt-1 truncate text-sm text-foreground">{os.cliente?.nome ?? "Cliente não identificado"}</p>
+      <p className="mt-0.5 truncate text-[13px] font-medium text-foreground">{os.cliente?.nome ?? "Cliente não identificado"}</p>
       <p className="truncate text-xs text-muted-foreground">
         {[os.equipamento?.marca, os.equipamento?.modelo].filter(Boolean).join(" ") || os.equipamento?.tipo || "Equipamento"}
       </p>
@@ -78,7 +79,7 @@ export function GarantiasV3() {
 
   if (!storeId) {
     return (
-      <SectionShellV3 titulo={SCREEN_COPY.garantias.titulo} subtitulo={SCREEN_COPY.garantias.subtitulo}>
+      <SectionShellV3 kicker="Pós-venda · cobertura por OS" titulo={SCREEN_COPY.garantias.titulo} subtitulo={SCREEN_COPY.garantias.subtitulo}>
         <NoStoreBlockV3 />
       </SectionShellV3>
     );
@@ -87,7 +88,7 @@ export function GarantiasV3() {
   const total = seg.ativas.length + seg.vencendo.length + seg.vencidas.length + seg.previstas.length;
 
   return (
-    <SectionShellV3 titulo={SCREEN_COPY.garantias.titulo} subtitulo={SCREEN_COPY.garantias.subtitulo}>
+    <SectionShellV3 kicker="Pós-venda · cobertura por OS" titulo={SCREEN_COPY.garantias.titulo} subtitulo={SCREEN_COPY.garantias.subtitulo}>
       {primeiraCarga && loading ? (
         <LoadingBlockV3 />
       ) : total === 0 ? (
@@ -97,8 +98,8 @@ export function GarantiasV3() {
           descricao="Quando uma OS com garantia for entregue, ela aparece aqui segmentada por validade. Garantias previstas aguardam a entrega."
         />
       ) : (
-        <div className="space-y-5">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="space-y-4 sm:space-y-5">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
             <MetricCardV3 label="Ativas" value={seg.ativas.length} tone="success" icon={<ShieldCheck className="h-4 w-4" />} />
             <MetricCardV3 label="Vencendo (≤15d)" value={seg.vencendo.length} tone="warning" />
             <MetricCardV3 label="Vencidas" value={seg.vencidas.length} tone="danger" />

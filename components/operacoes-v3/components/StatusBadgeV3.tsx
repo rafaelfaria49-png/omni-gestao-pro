@@ -20,12 +20,12 @@ export function StatusBadgeV3({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium",
+        "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-px text-[11px] font-semibold",
         TONE_BADGE_CLASS[meta.tone],
         className,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
+      <span className="h-1 w-1 rounded-full bg-current" aria-hidden />
       {meta.label}
     </span>
   );

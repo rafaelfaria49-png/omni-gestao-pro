@@ -13,7 +13,9 @@ const VARIANTS: Record<Variant, string> = {
   danger: "border border-[var(--ops-v3-danger-bd)] bg-[var(--ops-v3-danger-bg)] text-[var(--ops-v3-danger-fg)] hover:bg-[var(--ops-v3-danger-hover)]",
 };
 
-/** Botão self-contained da V3 (sem depender do kit shadcn global). */
+/** Botão self-contained da V3 (sem depender do kit shadcn global).
+ *  Densidade LAB-002: 38px no desktop. Controles de conteúdo que precisam de
+ *  ~44px no mobile recebem .v3-mtap explicitamente (nunca no header fixo). */
 export function ButtonV3({
   variant = "outline",
   className,
@@ -24,7 +26,7 @@ export function ButtonV3({
     <button
       type="button"
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex min-h-[var(--ops-v3-btn-h)] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100",
         VARIANTS[variant],
         className,
       )}

@@ -62,10 +62,10 @@ function BancadaRow({
   };
 
   return (
-    <div className="rounded-lg border border-border bg-background p-3">
+    <div className="v3-lift rounded-[10px] border border-border bg-background p-2.5 transition-transform">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-sm font-semibold text-foreground">{os.codigo}</span>
+          <span className="truncate text-[13px] font-bold tabular-nums text-foreground">{os.codigo}</span>
           <PrioridadeBadgeV3 os={os} />
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
@@ -74,12 +74,12 @@ function BancadaRow({
         </span>
       </div>
 
-      <div className="mt-1.5 grid gap-0.5 sm:grid-cols-2">
-        <p className="truncate text-sm text-foreground">{os.cliente?.nome ?? "Cliente"}</p>
+      <div className="mt-1 grid gap-0.5 sm:grid-cols-2">
+        <p className="truncate text-[13px] font-medium text-foreground">{os.cliente?.nome ?? "Cliente"}</p>
         <p className="truncate text-xs text-muted-foreground sm:text-right">{equipamentoLabel(os)}</p>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2">
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-1.5">
         <span className="text-xs text-muted-foreground">
           {total > 0 ? <strong className="text-foreground">{formatBRL(total)}</strong> : "—"}
           {" · "}
@@ -113,22 +113,22 @@ export function BancadaV3() {
 
   if (!storeId) {
     return (
-      <SectionShellV3 titulo={SCREEN_COPY.bancada.titulo} subtitulo={SCREEN_COPY.bancada.subtitulo}>
+      <SectionShellV3 kicker="Produção interna · por técnico" titulo={SCREEN_COPY.bancada.titulo} subtitulo={SCREEN_COPY.bancada.subtitulo}>
         <NoStoreBlockV3 />
       </SectionShellV3>
     );
   }
 
   return (
-    <SectionShellV3 titulo={SCREEN_COPY.bancada.titulo} subtitulo={SCREEN_COPY.bancada.subtitulo}>
+    <SectionShellV3 kicker="Produção interna · por técnico" titulo={SCREEN_COPY.bancada.titulo} subtitulo={SCREEN_COPY.bancada.subtitulo}>
       {primeiraCarga && loading ? (
         <LoadingBlockV3 />
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-4 sm:space-y-5">
           {/* Produção do dia */}
           <div>
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Produção do dia</p>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">Produção do dia</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6">
               <MetricCardV3 label="Em diagnóstico" value={dia.emDiagnostico} tone="info" icon={<Wrench className="h-4 w-4" />} />
               <MetricCardV3 label="Em execução" value={dia.emExecucao} tone="primary" icon={<Loader className="h-4 w-4" />} />
               <MetricCardV3 label="Prontas" value={dia.prontas} tone="success" icon={<CheckCircle2 className="h-4 w-4" />} />
@@ -140,17 +140,17 @@ export function BancadaV3() {
 
           {/* Fila de produção (reusa a máquina de status) */}
           <div>
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Fila de produção</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.06em] text-muted-foreground">Fila de produção</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-2 lg:grid-cols-5">
               {FILA_COLUNAS_V3.map((c) => (
                 <button
                   key={c.id}
                   type="button"
                   onClick={() => navigate("fila")}
-                  className="rounded-xl border border-border bg-card p-3 text-left shadow-sm transition-colors hover:border-border-hover hover:bg-muted/30"
+                  className="v3-mtap v3-press rounded-[10px] border border-border bg-card p-2.5 text-left shadow-sm transition-colors hover:border-border-hover hover:bg-muted/30"
                 >
-                  <p className="text-xs text-muted-foreground">{c.label}</p>
-                  <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{fila[c.id].length}</p>
+                  <p className="text-[11px] font-medium text-muted-foreground">{c.label}</p>
+                  <p className="mt-0.5 text-xl font-bold tabular-nums text-foreground">{fila[c.id].length}</p>
                 </button>
               ))}
             </div>
