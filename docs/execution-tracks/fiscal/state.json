@@ -1,18 +1,18 @@
 {
   "aep": "1.0-R2",
   "track": "fiscal",
-  "status": "RUNNING",
+  "status": "PAUSED",
   "risk_tier": "ALTO",
-  "current_goal": "FISCAL-OBSERVABILITY-SCENARIO-BATTERY-021",
+  "current_goal": null,
   "next_goal": null,
   "bootstrap_commit": null,
   "counters": {
-    "goals_done": 3,
+    "goals_done": 4,
     "goals_blocked": 0,
     "goals_imported": 0,
-    "ledger_lines": 3
+    "ledger_lines": 4
   },
-  "last_goal": "FISCAL-NFCE-CONTINGENCY-020",
+  "last_goal": "FISCAL-OBSERVABILITY-SCENARIO-BATTERY-021",
   "last_result": "DONE",
-  "last_ratified_at": "2026-09-06T17:49:52.021Z"
+  "last_ratified_at": "2026-09-06T21:08:27.105Z"
 }
