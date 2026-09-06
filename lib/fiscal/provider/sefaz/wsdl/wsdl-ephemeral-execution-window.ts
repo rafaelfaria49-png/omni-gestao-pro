@@ -1,21 +1,22 @@
 /**
  * Janela efêmera versionada para a coleta oficial de WSDL (H-9/H-10).
  *
- * Estado atual (GOAL 020 · 172 · REARM de janela H-9/H-10 FINAL):
- * **ARMADA** — activation nova para uma única execução humana controlada em HOMOLOGAÇÃO
- * para validar o fix multi-op de NFeAutorizacao4 já publicado.
+ * Estado atual (GOAL 020 · 173 · CONTAINMENT FINAL da janela H-9/H-10 consumida):
+ * **DORMENTE** — a janela foi consumida com sucesso pela única execução humana autorizada
+ * (6/6 alvos com HTTP 200, mTLS real e extração canônica multi-op validada) e está fechada.
  *
- * A activation `wsdl-h9h10-20260906-1520z-eb237492a9c8eb17` é inédita e válida de
- * 06/09 15:20:00Z a 16:05:00Z (45 minutos). Nenhuma activation morta foi reutilizada.
- * O agente não executa a invocation: POST administrativo, GET WSDL, handshake, SOAP e
- * emissão NFC-e permanecem proibidos nesta etapa; a única execução possível é humana,
- * same-origin e em HOMOLOGAÇÃO.
+ * A activation `wsdl-h9h10-20260906-1520z-eb237492a9c8eb17` foi consumida uma única vez
+ * por execução humana autenticada e está histórica e proibida de reutilização. A evidência real
+ * registrou 6/6 GETs de rede SEFAZ com HTTP 200, mTLS real e todos os 6 alvos fechando
+ * H-9 e H-10 (incluindo NFeAutorizacao4 com expectedOperationName=nfeAutorizacaoLote).
  *
- * H-9 e H-10 permanecem **PARCIAL_5_DE_6** até validação final. A trust anchor ICP-Brasil v10
- * permanece implantada e intacta. As activations anteriores (incluindo `025c3251e20744df`,
- * `fcad5be0637f918c`, `d2c844a079986c9e`, `b3913bea58774deb` e históricas) seguem
- * mortas/proibidas.
- * Gate 2 permanece humano e separado.
+ * H-9 e H-10 estão **FECHADOS** (6/6). GOAL 020 está **COMPLETED**. GOAL 021 **NOT_STARTED**.
+ * A trust anchor ICP-Brasil v10 permanece implantada e intacta. As activations anteriores
+ * (incluindo `eb237492a9c8eb17`, `025c3251e20744df`, `fcad5be0637f918c`, `d2c844a079986c9e`,
+ * `b3913bea58774deb` e históricas) seguem mortas/proibidas.
+ *
+ * POST administrativo, novos GETs WSDL, handshake, SOAP e emissão NFC-e permanecem proibidos;
+ * Fiscal Production permanece OFF.
  *
  * A loja-piloto NÃO é literal. Ela é resolvida dinamicamente por `resolveWsdlPilotStore`
  * (ADR-0016 · regra do 132: `fiscalEnabled=false`, provider em {`STUB_HOMOLOGACAO`,
@@ -41,9 +42,9 @@ import {
 } from "./wsdl-acquisition-target"
 
 export const WSDL_EPHEMERAL_EXECUTION_WINDOW = Object.freeze({
-  activationId: "wsdl-h9h10-20260906-1520z-eb237492a9c8eb17",
-  notBeforeUtc: "2026-09-06T15:20:00.000Z",
-  expiresAtUtc: "2026-09-06T16:05:00.000Z",
+  activationId: null,
+  notBeforeUtc: null,
+  expiresAtUtc: null,
 }) satisfies WsdlExecutionWindowConfig
 
 export const WSDL_EXECUTION_EXPECTED_TARGETS = 6 as const
